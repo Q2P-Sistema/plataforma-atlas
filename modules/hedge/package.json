@@ -1,0 +1,7 @@
+{
+  "name": "@atlas/hedge",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Motor hedge cambial USD/BRL (Motor MV), buckets, NDFs, mark-to-market"
+}

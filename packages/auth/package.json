@@ -1,0 +1,7 @@
+{
+  "name": "@atlas/auth",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "JWT + roles (operador/gestor/diretor)"
+}

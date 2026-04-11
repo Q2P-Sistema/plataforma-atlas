@@ -1,0 +1,7 @@
+{
+  "name": "@atlas/forecast",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Forecast Planner — pedidos planejados, lead times, sazonalidade"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "@atlas/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Utilit\u00e1rios compartilhados sem estado: db pool, logger, config"
+}

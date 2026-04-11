@@ -1,0 +1,7 @@
+{
+  "name": "@atlas/comexinsight",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Rastreador mar\u00edtimo, 14 fases, dono das 3 localidades virtuais de tr\u00e2nsito"
+}

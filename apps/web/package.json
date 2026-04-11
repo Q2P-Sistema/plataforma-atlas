@@ -1,0 +1,7 @@
+{
+  "name": "@atlas/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shell React \u00fanico — rotas por m\u00f3dulo, identidade visual compartilhada via @atlas/ui"
+}

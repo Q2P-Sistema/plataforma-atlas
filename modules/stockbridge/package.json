@@ -1,0 +1,7 @@
+{
+  "name": "@atlas/stockbridge",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Controle f\u00edsico de estoque — lotes, dual-CNPJ, fase pescado, recebimento. Porte do sistema legado PHP."
+}

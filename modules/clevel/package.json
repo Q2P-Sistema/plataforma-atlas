@@ -1,0 +1,7 @@
+{
+  "name": "@atlas/clevel",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Dashboard C-Level — sa\u00fade financeira global (DRE, FX sensitivity, intercompany elim)"
+}

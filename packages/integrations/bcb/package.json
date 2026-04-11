@@ -1,0 +1,7 @@
+{
+  "name": "@atlas/integration-bcb",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cliente BCB — PTAX di\u00e1ria e hist\u00f3rica"
+}

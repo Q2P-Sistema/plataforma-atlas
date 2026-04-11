@@ -1,0 +1,7 @@
+{
+  "name": "@atlas/integration-omie",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cliente OMIE \u00fanico — polling, sync incremental por dDtAlt, rate limit"
+}

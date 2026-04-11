@@ -1,0 +1,7 @@
+{
+  "name": "@atlas/integration-crm",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cliente HTTP do CRM Q2P externo — x-api-key, retry, fallback gracioso"
+}
