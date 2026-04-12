@@ -37,3 +37,6 @@ apps/web/dist/
 
 # Ignorar arquivos de vibecoding legado até importarmos
 /legacy/
+
+# Portainer deploy env (contains secrets)
+deploy/portainer/*.env

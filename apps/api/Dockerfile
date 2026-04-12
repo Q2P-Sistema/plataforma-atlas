@@ -15,6 +15,10 @@ RUN pnpm --filter @atlas/core build && \
     pnpm --filter @atlas/db build && \
     pnpm --filter @atlas/auth build && \
     pnpm --filter @atlas/api build
+# Rewrite main fields to point to compiled dist for production
+RUN for pkg in packages/core packages/auth packages/db; do \
+      sed -i 's|"main": "./src/index.ts"|"main": "./dist/index.js"|' $pkg/package.json; \
+    done
 
 FROM node:20-alpine
 RUN corepack enable && corepack prepare pnpm@latest --activate
