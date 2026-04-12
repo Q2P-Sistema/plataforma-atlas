@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { eq, isNull, type SQL } from 'drizzle-orm';
+import { eq, isNull } from 'drizzle-orm';
 import { getDb } from '@atlas/core';
 import { users, type User } from '@atlas/db';
 import { hashPassword } from './password.js';
