@@ -1,5 +1,6 @@
 import { useState, type ChangeEvent } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useAuthStore } from '../../stores/auth.store.js';
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -13,6 +14,16 @@ interface EstoqueRow {
   valor_brl: number;
   custo_usd_estimado: number;
   ptax_ref: number;
+}
+
+interface LocalidadeInfo {
+  localidade: string;
+  empresa: string;
+  origem: string;
+  valor_brl: number;
+  itens: number;
+  selecionada: boolean;
+  em_transito: boolean;
 }
 
 const fmtBrlM = (v: number) => 'R$' + (v / 1e6).toFixed(1) + 'M';
@@ -54,6 +65,9 @@ function KpiCard({ label, value, color, src, sub }: { label: string; value: stri
 
 export function InventoryPage() {
   const [empresa, setEmpresa] = useState('');
+  const [showLocalidades, setShowLocalidades] = useState(false);
+  const queryClient = useQueryClient();
+  const csrfToken = useAuthStore((s) => s.csrfToken);
 
   const { data: estoque = [], isLoading } = useQuery<EstoqueRow[]>({
     queryKey: ['hedge', 'estoque', empresa],
@@ -64,6 +78,46 @@ export function InventoryPage() {
       return body.data ?? [];
     },
   });
+
+  const { data: localidadesData } = useQuery<{ localidades: LocalidadeInfo[]; total: number; valor_total: number }>({
+    queryKey: ['hedge', 'localidades'],
+    queryFn: async () => {
+      const res = await fetch('/api/v1/hedge/estoque/localidades', { credentials: 'include' });
+      const body = (await res.json()) as any;
+      return body.data;
+    },
+  });
+
+  const salvarLocalidadesMut = useMutation({
+    mutationFn: async (localidades_ativas: string[]) => {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (csrfToken) headers['x-csrf-token'] = csrfToken;
+      await fetch('/api/v1/hedge/estoque/localidades', {
+        method: 'PUT', credentials: 'include', headers,
+        body: JSON.stringify({ localidades_ativas }),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['hedge', 'estoque'] });
+      queryClient.invalidateQueries({ queryKey: ['hedge', 'localidades'] });
+    },
+  });
+
+  const toggleLocalidade = (nome: string) => {
+    if (!localidadesData) return;
+    const current = localidadesData.localidades.filter((l) => l.selecionada).map((l) => l.localidade);
+    const next = current.includes(nome) ? current.filter((l) => l !== nome) : [...current, nome];
+    salvarLocalidadesMut.mutate(next);
+  };
+
+  const selectAll = () => {
+    if (!localidadesData) return;
+    salvarLocalidadesMut.mutate(localidadesData.localidades.map((l) => l.localidade));
+  };
+
+  const selectNone = () => {
+    salvarLocalidadesMut.mutate([]);
+  };
 
   if (isLoading) {
     return <div className="flex items-center justify-center min-h-[40vh]"><p className="text-atlas-muted">Carregando...</p></div>;
@@ -103,11 +157,50 @@ export function InventoryPage() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-heading font-bold text-atlas-text">Estoque Importado</h1>
-        <select value={empresa} onChange={(e: ChangeEvent<HTMLSelectElement>) => setEmpresa(e.target.value)}
-          className="px-3 py-1.5 rounded-lg border border-atlas-border bg-atlas-bg text-atlas-text text-sm focus:outline-none focus:ring-2 focus:ring-acxe">
-          <option value="">Todas</option><option value="acxe">ACXE</option><option value="q2p">Q2P</option>
-        </select>
+        <div className="flex items-center gap-3">
+          <button onClick={() => setShowLocalidades(!showLocalidades)}
+            className="text-xs px-3 py-1.5 rounded-lg border border-atlas-border bg-atlas-bg text-atlas-muted hover:text-atlas-text transition-colors">
+            {showLocalidades ? 'Ocultar localidades' : 'Filtrar localidades'}
+          </button>
+          <select value={empresa} onChange={(e: ChangeEvent<HTMLSelectElement>) => setEmpresa(e.target.value)}
+            className="px-3 py-1.5 rounded-lg border border-atlas-border bg-atlas-bg text-atlas-text text-sm focus:outline-none focus:ring-2 focus:ring-acxe">
+            <option value="">Todas</option><option value="acxe">ACXE</option><option value="q2p">Q2P</option>
+          </select>
+        </div>
       </div>
+
+      {/* Localidade selector */}
+      {showLocalidades && localidadesData && (
+        <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-[9px] text-atlas-muted uppercase tracking-[3px]">Localidades para calculo de exposicao</p>
+            <div className="flex gap-2">
+              <button onClick={selectAll} className="text-[9px] px-2 py-1 rounded bg-emerald-600/10 text-emerald-600 hover:bg-emerald-600/20 transition-colors">Todas</button>
+              <button onClick={selectNone} className="text-[9px] px-2 py-1 rounded bg-red-600/10 text-red-600 hover:bg-red-600/20 transition-colors">Nenhuma</button>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+            {localidadesData.localidades.map((loc) => (
+              <label key={`${loc.localidade}-${loc.empresa}`}
+                className={`flex items-start gap-2 p-2 rounded border cursor-pointer transition-colors ${loc.selecionada ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-atlas-border/50 bg-atlas-bg/50 opacity-60'}`}>
+                <input type="checkbox" checked={loc.selecionada} onChange={() => toggleLocalidade(loc.localidade)}
+                  className="mt-0.5 accent-emerald-600" />
+                <div className="min-w-0">
+                  <p className="text-[11px] font-medium text-atlas-text truncate">{loc.localidade}</p>
+                  <p className="text-[9px] text-atlas-muted">
+                    {loc.empresa.toUpperCase()} | {ORIGEM_LABELS[loc.origem] ?? loc.origem} | {loc.itens} itens
+                  </p>
+                  <p className="text-[9px] font-mono text-atlas-muted">{fmtBrlM(loc.valor_brl)}</p>
+                </div>
+              </label>
+            ))}
+          </div>
+          <p className="text-[9px] text-atlas-muted mt-2">
+            {localidadesData.localidades.filter((l) => l.selecionada).length}/{localidadesData.total} localidades selecionadas
+            {' | '}Total: {fmtBrlM(localidadesData.localidades.filter((l) => l.selecionada).reduce((s, l) => s + l.valor_brl, 0))}
+          </p>
+        </div>
+      )}
 
       {/* KPI Strip — 5 fases */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-3">

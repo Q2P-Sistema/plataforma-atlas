@@ -101,7 +101,7 @@ export function MotorMVPage() {
     };
   });
 
-  // Sim margem chart
+  // Sim margem chart — uses motor layers for accurate coverage split
   const simData: { cambio: string; sem_hedge: number; com_hedge: number; floor: number }[] = [];
   const fat = 25e6;
   const pctImp = 0.7;
@@ -109,11 +109,12 @@ export function MotorMVPage() {
   const l2 = result?.camadas.l2_pct ?? 16;
   const pctAberta = (100 - l1 - l2) / 100;
   const vu = fat * pctImp / spotRate;
-  for (let c = 4.5; c <= 7.5; c += 0.25) {
+  for (let c = 4.5; c <= 7.5; c += 0.10) {
+    const cambio = parseFloat(c.toFixed(2));
     simData.push({
-      cambio: `R$${c.toFixed(2)}`,
-      sem_hedge: +((fat - vu * c - fat * 0.1) / fat * 100).toFixed(2),
-      com_hedge: +((fat - vu * (ndf90Rate * (1 - pctAberta) + c * pctAberta) - fat * 0.1) / fat * 100).toFixed(2),
+      cambio: `R$${cambio.toFixed(2)}`,
+      sem_hedge: +((fat - vu * cambio - fat * 0.1) / fat * 100).toFixed(2),
+      com_hedge: +((fat - vu * (ndf90Rate * (1 - pctAberta) + cambio * pctAberta) - fat * 0.1) / fat * 100).toFixed(2),
       floor: 15,
     });
   }
@@ -258,7 +259,7 @@ export function MotorMVPage() {
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={simData}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(221,225,232,0.5)" />
-              <XAxis dataKey="cambio" tick={{ fontSize: 9 }} interval={3} />
+              <XAxis dataKey="cambio" tick={{ fontSize: 9 }} interval={4} />
               <YAxis tick={{ fontSize: 9 }} tickFormatter={(v: number) => `${v}%`} />
               <Tooltip formatter={(v) => `${Number(v).toFixed(2)}%`} />
               <Legend />
