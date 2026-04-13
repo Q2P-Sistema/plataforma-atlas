@@ -1,4 +1,4 @@
-import { useState, useEffect, type ChangeEvent } from 'react';
+import { useState, useEffect, useRef, useCallback, type ChangeEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { DataTable, type Column } from '@atlas/ui';
 import { useAuthStore } from '../../stores/auth.store.js';
@@ -54,14 +54,16 @@ export function MotorMVPage() {
     onSuccess: (data) => setResult(data),
   });
 
-  function doCalc(l?: number, e?: number) {
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+
+  const doCalc = useCallback((l?: number, e?: number) => {
     const lv = l ?? lambda;
     const ev = e ?? pctEstoque;
-    calcMutation.mutate({ lambda: lv, pct_estoque_nao_pago: ev / 100 });
-  }
-
-  // Auto-calc on mount
-  useEffect(() => { doCalc(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      calcMutation.mutate({ lambda: lv, pct_estoque_nao_pago: ev / 100 });
+    }, 400);
+  }, [lambda, pctEstoque]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const lambdaDesc = lambda < 0.3 ? 'Conservador' : lambda < 0.5 ? 'Moderado' : lambda < 0.7 ? 'Moderado-alto' : 'Alto — max. protecao';
 

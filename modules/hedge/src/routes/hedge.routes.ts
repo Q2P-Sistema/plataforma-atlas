@@ -90,7 +90,6 @@ router.get('/api/v1/hedge/posicao/historico', async (req: Request, res: Response
 // POST /api/v1/hedge/motor/calcular
 router.post(
   '/api/v1/hedge/motor/calcular',
-  requireRole('gestor', 'diretor'),
   async (req: Request, res: Response) => {
     try {
       const { lambda = 0.5, pct_estoque_nao_pago = 0 } = req.body;
@@ -253,7 +252,6 @@ router.patch('/api/v1/hedge/ndfs/:id/cancelar', async (req: Request, res: Respon
 // POST /api/v1/hedge/simulacao/margem
 router.post(
   '/api/v1/hedge/simulacao/margem',
-  requireRole('gestor', 'diretor'),
   async (req: Request, res: Response) => {
     try {
       const { faturamento_brl, outros_custos_brl, volume_usd, ndf_taxa_media = 5.50, pct_cobertura = 0 } = req.body;
