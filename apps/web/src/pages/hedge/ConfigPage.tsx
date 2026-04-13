@@ -51,7 +51,12 @@ export function ConfigPage() {
 
   const { data: configs = [] } = useQuery<ConfigRow[]>({
     queryKey: ['hedge', 'config'],
-    queryFn: async () => { const b = await hedgeFetch('/api/v1/hedge/config'); return b.data; },
+    queryFn: async () => {
+      const res = await fetch('/api/v1/hedge/config', { credentials: 'include' });
+      const body = (await res.json()) as any;
+      if (!res.ok) throw new Error(body.error?.message ?? 'Erro ao carregar config');
+      return body.data;
+    },
   });
 
   const configMap = new Map(configs.map(c => [c.chave, c.valor]));

@@ -336,7 +336,7 @@ router.patch('/api/v1/hedge/alertas/:id/resolver', async (req: Request, res: Res
 
 // ── Config ─────────────────────────────────────────────────
 
-router.get('/api/v1/hedge/config', requireRole('gestor', 'diretor'), async (_req: Request, res: Response) => {
+router.get('/api/v1/hedge/config', async (_req: Request, res: Response) => {
   try { sendSuccess(res, await getConfig()); }
   catch (err) { sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
 });
