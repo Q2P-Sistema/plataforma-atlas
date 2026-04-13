@@ -1,6 +1,6 @@
 import Decimal from 'decimal.js';
 import { eq, inArray } from 'drizzle-orm';
-import { getDb, createLogger } from '@atlas/core';
+import { getDb, getPool, createLogger } from '@atlas/core';
 import { bucketMensal, configMotor, ndfTaxas } from '@atlas/db';
 
 const logger = createLogger('hedge:motor');
@@ -167,11 +167,22 @@ export async function calcularMotor(params: MotorParams): Promise<MotorResult> {
     .from(bucketMensal)
     .orderBy(bucketMensal.mesRef);
 
+  // Distribute est_nao_pago_usd proportionally (GAP-01)
+  const pool = getPool();
+  const { rows: resumoRows } = await pool.query('SELECT est_nao_pago_usd FROM public.vw_hedge_resumo LIMIT 1');
+  const estNaoPagoTotal = new Decimal(resumoRows[0]?.est_nao_pago_usd ?? 0);
+  let totalPagarAll = new Decimal(0);
+  for (const b of buckets) totalPagarAll = totalPagarAll.plus(b.pagarUsd ?? '0');
+
   const hoje = new Date();
   const recomendacoes: Recomendacao[] = [];
 
   for (const bucket of buckets) {
-    const pagarUsd = new Decimal(bucket.pagarUsd ?? '0');
+    const pagarUsdRaw = new Decimal(bucket.pagarUsd ?? '0');
+    const parcelaEstNaoPago = totalPagarAll.isZero()
+      ? new Decimal(0)
+      : estNaoPagoTotal.times(pagarUsdRaw).div(totalPagarAll);
+    const pagarUsd = pagarUsdRaw.plus(parcelaEstNaoPago); // exposicao total
     const ndfUsd = new Decimal(bucket.ndfUsd ?? '0');
 
     if (pagarUsd.isZero()) continue;

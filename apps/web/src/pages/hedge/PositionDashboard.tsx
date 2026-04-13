@@ -36,6 +36,8 @@ interface Bucket {
   mes_ref: string;
   empresa: string;
   pagar_usd: number;
+  est_nao_pago_usd: number;
+  exposicao_usd: number;
   ndf_usd: number;
   cobertura_pct: number;
   status: string;
@@ -127,7 +129,7 @@ export function PositionDashboard() {
   // Bar: exposure vs NDF per bucket
   const barData = buckets.map(b => ({
     mes: b.mes_ref.slice(0, 7),
-    exposicao: b.pagar_usd / 1e6,
+    exposicao: b.exposicao_usd / 1e6,
     ndf: b.ndf_usd / 1e6,
   }));
 
@@ -141,11 +143,13 @@ export function PositionDashboard() {
   const bucketColumns: Column<Bucket>[] = [
     { key: 'mes_ref', header: 'Bucket', sortable: true, render: (r) => r.mes_ref.slice(0, 7) },
     { key: 'pagar_usd', header: 'A pagar USD', sortable: true, render: (r) => fmtK(r.pagar_usd) },
+    { key: 'est_nao_pago_usd', header: 'Est. N/Pago', sortable: true, render: (r) => r.est_nao_pago_usd > 0 ? <span className="text-amber-600">{fmtK(r.est_nao_pago_usd)}</span> : '—' },
+    { key: 'exposicao_usd', header: 'Exposicao', sortable: true, render: (r) => <span className="font-semibold">{fmtK(r.exposicao_usd)}</span> },
     { key: 'ndf_usd', header: 'NDF Contrat.', sortable: true, render: (r) => <span className="text-purple-600">{fmtK(r.ndf_usd)}</span> },
     {
       key: 'gap' as any, header: 'Liquido',
       render: (r) => {
-        const liq = r.pagar_usd - r.ndf_usd;
+        const liq = r.exposicao_usd - r.ndf_usd;
         return <span style={{ color: liq > 500000 ? '#dc2626' : '#059669' }}>{fmtK(liq)}</span>;
       },
     },

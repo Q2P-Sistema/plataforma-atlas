@@ -37,9 +37,14 @@ export interface PosicaoKpis {
   resumo: ResumoVPS;
 }
 
+export interface BucketEnriquecido extends BucketMensal {
+  est_nao_pago_usd: number;
+  exposicao_usd: number;
+}
+
 export interface PosicaoResult {
   kpis: PosicaoKpis;
-  buckets: BucketMensal[];
+  buckets: BucketEnriquecido[];
 }
 
 interface PosicaoFiltros {
@@ -102,12 +107,32 @@ export async function calcularPosicao(
     .where(whereClause)
     .orderBy(bucketMensal.mesRef);
 
-  // Calculate KPIs from buckets
+  // Distribute est_nao_pago_usd proportionally across buckets (GAP-01)
+  const estNaoPagoTotal = new Decimal(resumo.est_nao_pago_usd);
+  let totalPagarUsd = new Decimal(0);
+  for (const bucket of buckets) {
+    totalPagarUsd = totalPagarUsd.plus(bucket.pagarUsd ?? '0');
+  }
+
+  const bucketsEnriquecidos: BucketEnriquecido[] = buckets.map((bucket) => {
+    const pagarD = new Decimal(bucket.pagarUsd ?? '0');
+    const parcela = totalPagarUsd.isZero()
+      ? new Decimal(0)
+      : estNaoPagoTotal.times(pagarD).div(totalPagarUsd);
+    const exposicao = pagarD.plus(parcela);
+    return {
+      ...bucket,
+      est_nao_pago_usd: parcela.toDecimalPlaces(2).toNumber(),
+      exposicao_usd: exposicao.toDecimalPlaces(2).toNumber(),
+    };
+  });
+
+  // Calculate KPIs from enriched buckets
   let totalExposure = new Decimal(0);
   let totalNdf = new Decimal(0);
 
-  for (const bucket of buckets) {
-    totalExposure = totalExposure.plus(bucket.pagarUsd ?? '0');
+  for (const bucket of bucketsEnriquecidos) {
+    totalExposure = totalExposure.plus(bucket.exposicao_usd);
     totalNdf = totalNdf.plus(bucket.ndfUsd ?? '0');
   }
 
@@ -125,7 +150,7 @@ export async function calcularPosicao(
     resumo,
   };
 
-  return { kpis, buckets };
+  return { kpis, buckets: bucketsEnriquecidos };
 }
 
 /**

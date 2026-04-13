@@ -11,6 +11,7 @@ import { simularMargem } from '../services/simulacao.service.js';
 import { getEstoque, getLocalidades, salvarLocalidadesAtivas } from '../services/estoque.service.js';
 import { listarAlertas, marcarLido, resolver, gerarAlertas } from '../services/alerta.service.js';
 import { getConfig, updateConfig, getTaxasNdf, inserirTaxaNdf } from '../services/config.service.js';
+import { cached, invalidate } from '../services/cache.service.js';
 
 const logger = createLogger('hedge:routes');
 const router: Router = Router();
@@ -33,37 +34,47 @@ router.use('/api/v1/hedge', requireAuth);
 // GET /api/v1/hedge/posicao
 router.get('/api/v1/hedge/posicao', async (req: Request, res: Response) => {
   try {
-    // Recalculate buckets from OMIE view before returning position
-    await recalcularBuckets();
     const empresa = req.query.empresa as 'acxe' | 'q2p' | undefined;
-    const result = await calcularPosicao({ empresa });
+    const cacheKey = `atlas:hedge:posicao:${empresa ?? 'all'}`;
 
-    // Generate alerts for sub-hedged buckets (GAP-13)
-    gerarAlertas(result.buckets).catch((err) => logger.warn({ err }, 'Erro ao gerar alertas'));
+    const { data, hit } = await cached(cacheKey, 300, async () => {
+      // Recalculate buckets from OMIE view before returning position
+      await recalcularBuckets();
+      const result = await calcularPosicao({ empresa });
 
-    // PTAX 30d variation (non-blocking)
-    const variacao30d = await getVariacao30d().catch(() => 0);
+      // Generate alerts for sub-hedged buckets (GAP-13)
+      gerarAlertas(result.buckets).catch((err) => logger.warn({ err }, 'Erro ao gerar alertas'));
 
-    sendSuccess(res, {
-      kpis: {
-        exposure_usd: result.kpis.exposure_usd,
-        cobertura_pct: result.kpis.cobertura_pct,
-        ndf_ativo_usd: result.kpis.ndf_ativo_usd,
-        gap_usd: result.kpis.gap_usd,
-        ptax_atual: result.kpis.ptax_atual,
-        variacao_30d_pct: variacao30d,
-        ...result.kpis.resumo,
-      },
-      buckets: result.buckets.map((b) => ({
-        id: b.id,
-        mes_ref: b.mesRef,
-        empresa: b.empresa,
-        pagar_usd: Number(b.pagarUsd),
-        ndf_usd: Number(b.ndfUsd),
-        cobertura_pct: Number(b.coberturaPct),
-        status: b.status,
-      })),
+      // PTAX 30d variation (non-blocking)
+      const variacao30d = await getVariacao30d().catch(() => 0);
+
+      return {
+        kpis: {
+          exposure_usd: result.kpis.exposure_usd,
+          cobertura_pct: result.kpis.cobertura_pct,
+          ndf_ativo_usd: result.kpis.ndf_ativo_usd,
+          gap_usd: result.kpis.gap_usd,
+          ptax_atual: result.kpis.ptax_atual,
+          variacao_30d_pct: variacao30d,
+          est_nao_pago_usd: result.kpis.resumo.est_nao_pago_usd,
+          ...result.kpis.resumo,
+        },
+        buckets: result.buckets.map((b) => ({
+          id: b.id,
+          mes_ref: b.mesRef,
+          empresa: b.empresa,
+          pagar_usd: Number(b.pagarUsd),
+          est_nao_pago_usd: b.est_nao_pago_usd,
+          exposicao_usd: b.exposicao_usd,
+          ndf_usd: Number(b.ndfUsd),
+          cobertura_pct: Number(b.coberturaPct),
+          status: b.status,
+        })),
+      };
     });
+
+    res.setHeader('X-Cache', hit ? 'HIT' : 'MISS');
+    sendSuccess(res, data);
   } catch (err) {
     logger.error({ err }, 'Erro ao calcular posicao');
     sendError(res, 'INTERNAL_ERROR', 'Erro ao calcular posicao', 500);
@@ -183,6 +194,7 @@ router.post('/api/v1/hedge/ndfs', async (req: Request, res: Response) => {
       tipo, notional_usd, taxa_ndf, prazo_dias, data_vencimento, empresa, banco, observacao,
     });
 
+    invalidate('atlas:hedge:posicao:*').catch(() => {});
     sendSuccess(res, {
       id: ndf.id,
       tipo: ndf.tipo,
@@ -206,6 +218,7 @@ router.patch('/api/v1/hedge/ndfs/:id/ativar', async (req: Request, res: Response
   try {
     const id = req.params.id as string;
     await ativarNdf(id);
+    invalidate('atlas:hedge:posicao:*').catch(() => {});
     sendSuccess(res, { status: 'ativo' });
   } catch (err) {
     if (err instanceof NdfError) {
@@ -229,6 +242,7 @@ router.patch('/api/v1/hedge/ndfs/:id/liquidar', async (req: Request, res: Respon
     }
 
     const ndf = await liquidarNdf(id, { ptax_liquidacao, resultado_brl });
+    invalidate('atlas:hedge:posicao:*').catch(() => {});
     sendSuccess(res, {
       status: 'liquidado',
       resultado_brl: Number(ndf.resultadoBrl),
@@ -249,6 +263,7 @@ router.patch('/api/v1/hedge/ndfs/:id/cancelar', async (req: Request, res: Respon
   try {
     const id = req.params.id as string;
     await cancelarNdf(id);
+    invalidate('atlas:hedge:posicao:*').catch(() => {});
     sendSuccess(res, { status: 'cancelado' });
   } catch (err) {
     if (err instanceof NdfError) {
@@ -285,7 +300,8 @@ router.post(
 // GET /api/v1/hedge/estoque/localidades
 router.get('/api/v1/hedge/estoque/localidades', async (_req: Request, res: Response) => {
   try {
-    const data = await getLocalidades();
+    const { data, hit } = await cached('atlas:hedge:localidades', 3600, () => getLocalidades());
+    res.setHeader('X-Cache', hit ? 'HIT' : 'MISS');
     sendSuccess(res, data);
   } catch (err) {
     logger.error({ err }, 'Erro ao buscar localidades');
@@ -302,6 +318,8 @@ router.put('/api/v1/hedge/estoque/localidades', async (req: Request, res: Respon
       return;
     }
     await salvarLocalidadesAtivas(localidades_ativas);
+    invalidate('atlas:hedge:localidades').catch(() => {});
+    invalidate('atlas:hedge:posicao:*').catch(() => {});
     sendSuccess(res, { localidades_ativas });
   } catch (err) {
     logger.error({ err }, 'Erro ao salvar localidades');
@@ -312,7 +330,9 @@ router.put('/api/v1/hedge/estoque/localidades', async (req: Request, res: Respon
 router.get('/api/v1/hedge/estoque', async (req: Request, res: Response) => {
   try {
     const empresa = req.query.empresa as 'acxe' | 'q2p' | undefined;
-    const data = await getEstoque({ empresa });
+    const cacheKey = `atlas:hedge:estoque:${empresa ?? 'all'}`;
+    const { data, hit } = await cached(cacheKey, 3600, () => getEstoque({ empresa }));
+    res.setHeader('X-Cache', hit ? 'HIT' : 'MISS');
     sendSuccess(res, data);
   } catch (err) {
     logger.error({ err }, 'Erro ao buscar estoque');
