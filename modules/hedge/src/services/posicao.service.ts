@@ -11,12 +11,30 @@ import { fetchPtaxAtual, type PtaxQuote } from '@atlas/integration-bcb';
 
 const logger = createLogger('hedge:posicao');
 
+export interface ResumoVPS {
+  total_pagar_usd: number;
+  total_pagar_brl: number;
+  pagar_mercadoria_usd: number;
+  pagar_despesa_usd: number;
+  total_est_brl: number;
+  est_importado_brl: number;
+  est_transito_brl: number;
+  est_nacional_brl: number;
+  pct_nao_pago: number;
+  est_nao_pago_usd: number;
+  recebiveis_brl: number;
+  recebiveis_usd: number;
+  importacoes_pendentes_usd: number;
+  exposicao_usd_total: number;
+}
+
 export interface PosicaoKpis {
   exposure_usd: number;
   cobertura_pct: number;
   ndf_ativo_usd: number;
   gap_usd: number;
   ptax_atual: PtaxQuote;
+  resumo: ResumoVPS;
 }
 
 export interface PosicaoResult {
@@ -28,13 +46,47 @@ interface PosicaoFiltros {
   empresa?: 'acxe' | 'q2p';
 }
 
+async function getResumoVPS(): Promise<ResumoVPS> {
+  const pool = getPool();
+  const { rows } = await pool.query('SELECT * FROM public.vw_hedge_resumo LIMIT 1');
+  const r = rows[0];
+  if (!r) {
+    return {
+      total_pagar_usd: 0, total_pagar_brl: 0, pagar_mercadoria_usd: 0,
+      pagar_despesa_usd: 0, total_est_brl: 0, est_importado_brl: 0,
+      est_transito_brl: 0, est_nacional_brl: 0, pct_nao_pago: 0,
+      est_nao_pago_usd: 0, recebiveis_brl: 0, recebiveis_usd: 0,
+      importacoes_pendentes_usd: 0, exposicao_usd_total: 0,
+    };
+  }
+  return {
+    total_pagar_usd: Number(r.total_pagar_usd ?? 0),
+    total_pagar_brl: Number(r.total_pagar_brl ?? 0),
+    pagar_mercadoria_usd: Number(r.pagar_mercadoria_usd ?? 0),
+    pagar_despesa_usd: Number(r.pagar_despesa_usd ?? 0),
+    total_est_brl: Number(r.total_est_brl ?? 0),
+    est_importado_brl: Number(r.est_importado_brl ?? 0),
+    est_transito_brl: Number(r.est_transito_brl ?? 0),
+    est_nacional_brl: Number(r.est_nacional_brl ?? 0),
+    pct_nao_pago: Number(r.pct_nao_pago ?? 0),
+    est_nao_pago_usd: Number(r.est_nao_pago_usd ?? 0),
+    recebiveis_brl: Number(r.total_receber_brl ?? 0),
+    recebiveis_usd: Number(r.total_receber_usd ?? 0),
+    importacoes_pendentes_usd: Number(r.importacoes_pendentes_usd ?? 0),
+    exposicao_usd_total: Number(r.exposicao_usd_total ?? 0),
+  };
+}
+
 export async function calcularPosicao(
   filtros: PosicaoFiltros = {},
 ): Promise<PosicaoResult> {
   const db = getDb();
 
-  // Get current PTAX
-  const ptax = await fetchPtaxAtual();
+  // Fetch PTAX and VPS resumo in parallel
+  const [ptax, resumo] = await Promise.all([
+    fetchPtaxAtual(),
+    getResumoVPS(),
+  ]);
 
   // Build filter conditions for buckets
   const conditions: SQL[] = [];
@@ -70,6 +122,7 @@ export async function calcularPosicao(
     gap_usd: gap.toNumber(),
     cobertura_pct: cobertura.toDecimalPlaces(2).toNumber(),
     ptax_atual: ptax,
+    resumo,
   };
 
   return { kpis, buckets };

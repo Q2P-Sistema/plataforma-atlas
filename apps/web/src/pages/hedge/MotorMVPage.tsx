@@ -1,47 +1,50 @@
-import { useState, type ChangeEvent } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useState, useEffect, type ChangeEvent } from 'react';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { DataTable, type Column } from '@atlas/ui';
 import { useAuthStore } from '../../stores/auth.store.js';
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+} from 'recharts';
 
-interface CamadasResult {
-  l1_pct: number;
-  l2_pct: number;
-  l3_pct: number;
-}
-
+interface CamadasResult { l1_pct: number; l2_pct: number; l3_pct: number; }
 interface Recomendacao {
-  bucket_id: string;
-  mes_ref: string;
-  instrumento: string;
-  notional_sugerido: number;
-  gap_atual: number;
-  cobertura_alvo: number;
+  bucket_id: string; mes_ref: string; instrumento: string;
+  notional_sugerido: number; gap_atual: number; cobertura_alvo: number;
 }
-
 interface MotorResult {
-  camadas: CamadasResult;
-  recomendacoes: Recomendacao[];
+  camadas: CamadasResult; recomendacoes: Recomendacao[];
+  cobertura_global_pct: number; gap_total_usd: number;
 }
 
-function formatUsd(val: number): string {
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'USD' }).format(val);
-}
+const fmtK = (v: number) => '$' + Math.round(v / 1000) + 'K';
+const fmtM = (v: number) => '$' + (v / 1e6).toFixed(2) + 'M';
 
 export function MotorMVPage() {
   const csrfToken = useAuthStore((s) => s.csrfToken);
-  const [lambda, setLambda] = useState(0.5);
-  const [pctEstoque, setPctEstoque] = useState(0.3);
+  const [lambda, setLambda] = useState(0.65);
+  const [pctEstoque, setPctEstoque] = useState(52);
   const [result, setResult] = useState<MotorResult | null>(null);
+
+  // Get pct_nao_pago from posicao on mount
+  const { data: posData } = useQuery({
+    queryKey: ['hedge', 'posicao-motor'],
+    queryFn: async () => {
+      const res = await fetch('/api/v1/hedge/posicao', { credentials: 'include' });
+      const body = await res.json() as any;
+      return body.data?.kpis;
+    },
+  });
+
+  useEffect(() => {
+    if (posData?.pct_nao_pago != null) setPctEstoque(Number(posData.pct_nao_pago));
+  }, [posData]);
 
   const calcMutation = useMutation({
     mutationFn: async (params: { lambda: number; pct_estoque_nao_pago: number }) => {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (csrfToken) headers['x-csrf-token'] = csrfToken;
-
       const res = await fetch('/api/v1/hedge/motor/calcular', {
-        method: 'POST',
-        credentials: 'include',
-        headers,
+        method: 'POST', credentials: 'include', headers,
         body: JSON.stringify(params),
       });
       const body = (await res.json()) as any;
@@ -51,164 +54,189 @@ export function MotorMVPage() {
     onSuccess: (data) => setResult(data),
   });
 
-  function handleCalc() {
-    calcMutation.mutate({ lambda, pct_estoque_nao_pago: pctEstoque });
+  function doCalc(l?: number, e?: number) {
+    const lv = l ?? lambda;
+    const ev = e ?? pctEstoque;
+    calcMutation.mutate({ lambda: lv, pct_estoque_nao_pago: ev / 100 });
+  }
+
+  // Auto-calc on mount
+  useEffect(() => { doCalc(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const lambdaDesc = lambda < 0.3 ? 'Conservador' : lambda < 0.5 ? 'Moderado' : lambda < 0.7 ? 'Moderado-alto' : 'Alto — max. protecao';
+
+  // Charts: Custo vs Protecao by lambda
+  const mvChartData = Array.from({ length: 11 }, (_, i) => {
+    const l = i * 0.1;
+    const ptax = posData?.ptax_atual?.venda ?? 5.0;
+    const ndfRate = 5.10; // approx
+    const volUsd = 1e6; // reference
+    return {
+      lambda: l.toFixed(1),
+      custo: Math.round(volUsd * (ndfRate - ptax) * l / 1000),
+      protecao: Math.round(volUsd * ptax * 0.05 * l / 1000),
+    };
+  });
+
+  // Sim margem chart
+  const simData: { cambio: string; sem_hedge: number; com_hedge: number; floor: number }[] = [];
+  const fat = 25e6;
+  const pctImp = 0.7;
+  const ptaxRef = posData?.ptax_atual?.venda ?? 5.0;
+  const ndf90 = 5.10;
+  const l1 = result?.camadas.l1_pct ?? 60;
+  const l2 = result?.camadas.l2_pct ?? 16;
+  const pctAberta = (100 - l1 - l2) / 100;
+  const vu = fat * pctImp / ptaxRef;
+  for (let c = 4.5; c <= 7.5; c += 0.25) {
+    simData.push({
+      cambio: `R$${c.toFixed(2)}`,
+      sem_hedge: +((fat - vu * c - fat * 0.1) / fat * 100).toFixed(2),
+      com_hedge: +((fat - vu * (ndf90 * (1 - pctAberta) + c * pctAberta) - fat * 0.1) / fat * 100).toFixed(2),
+      floor: 15,
+    });
   }
 
   const columns: Column<Recomendacao>[] = [
-    {
-      key: 'mes_ref',
-      header: 'Bucket',
-      render: (row) => row.mes_ref.slice(0, 7),
-    },
-    { key: 'instrumento', header: 'Instrumento' },
-    {
-      key: 'notional_sugerido',
-      header: 'Notional Sugerido',
-      render: (row) => formatUsd(row.notional_sugerido),
-    },
-    {
-      key: 'gap_atual',
-      header: 'Gap Atual',
-      render: (row) => formatUsd(row.gap_atual),
-    },
-    {
-      key: 'cobertura_alvo',
-      header: 'Cobertura Alvo',
-      render: (row) => `${row.cobertura_alvo.toFixed(1)}%`,
-    },
+    { key: 'mes_ref', header: 'Bucket', render: (r) => r.mes_ref.slice(0, 7) },
+    { key: 'gap_atual', header: 'Posicao USD', render: (r) => fmtK(r.gap_atual) },
+    { key: 'notional_sugerido', header: 'NDF a contratar', render: (r) => <span className="text-red-600">{fmtK(r.notional_sugerido)}</span> },
+    { key: 'instrumento', header: 'Instrumento', render: (r) => <span className="text-xs font-semibold">{r.instrumento}</span> },
+    { key: 'cobertura_alvo', header: 'Cobertura Alvo', render: (r) => `${r.cobertura_alvo.toFixed(1)}%` },
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <h1 className="text-2xl font-heading font-bold text-atlas-text">Motor de Minima Variancia</h1>
 
-      {/* Sliders */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <SliderControl
-          label="Lambda (aversao ao risco)"
-          value={lambda}
-          min={0}
-          max={1}
-          step={0.05}
-          onChange={(v) => { setLambda(v); handleCalc(); }}
-          display={lambda.toFixed(2)}
-        />
-        <SliderControl
-          label="% Estoque nao-pago"
-          value={pctEstoque}
-          min={0}
-          max={1}
-          step={0.05}
-          onChange={(v) => { setPctEstoque(v); handleCalc(); }}
-          display={`${(pctEstoque * 100).toFixed(0)}%`}
-        />
-      </div>
+      {/* Engine container */}
+      <div className="bg-atlas-card border border-emerald-500/30 rounded-lg p-5 shadow-sm shadow-emerald-500/5">
+        <p className="text-[9px] uppercase tracking-[3px] text-emerald-600 mb-5">Motor de Minima Variancia — Recomendacao de Hedge Otimo</p>
 
-      <button
-        onClick={handleCalc}
-        disabled={calcMutation.isPending}
-        className="px-4 py-2 rounded-lg bg-acxe text-white text-sm font-medium hover:bg-acxe/90 disabled:opacity-50 transition-colors"
-      >
-        {calcMutation.isPending ? 'Calculando...' : 'Calcular'}
-      </button>
-
-      {/* Camadas Cards */}
-      {result && (
-        <>
-          <div className="grid grid-cols-3 gap-4">
-            <CamadaCard
-              label="L1 — Base"
-              pct={result.camadas.l1_pct}
-              desc="Cobertura automatica"
-              color="bg-acxe"
-            />
-            <CamadaCard
-              label="L2 — Tatica"
-              pct={result.camadas.l2_pct}
-              desc={`Lambda × 25 = ${result.camadas.l2_pct.toFixed(1)}%`}
-              color="bg-q2p"
-            />
-            <CamadaCard
-              label="L3 — Aberta"
-              pct={result.camadas.l3_pct}
-              desc="Gap intencional"
-              color="bg-warn"
-            />
-          </div>
-
-          {/* Recomendacoes Table */}
+        {/* Lambda control */}
+        <div className="grid grid-cols-[auto_1fr_auto] gap-4 items-center bg-atlas-bg rounded-lg p-4 border border-atlas-border mb-5">
           <div>
-            <h2 className="text-lg font-heading font-semibold text-atlas-text mb-3">Recomendacoes</h2>
-            <DataTable
-              columns={columns}
-              data={result.recomendacoes}
-              rowKey={(row) => row.bucket_id}
-              emptyMessage="Nenhuma recomendacao — cobertura ja atinge o alvo"
-            />
+            <p className="text-[9px] tracking-[2px] text-atlas-muted uppercase mb-1">AVERSAO AO RISCO (lambda)</p>
+            <p className="text-[9px] text-atlas-muted">0 = minimiza custo / 1 = maximiza protecao</p>
           </div>
-        </>
-      )}
+          <input type="range" min={0} max={1} step={0.05} value={lambda}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => { const v = parseFloat(e.target.value); setLambda(v); doCalc(v); }}
+            className="w-full accent-emerald-600" />
+          <div className="text-right">
+            <p className="text-3xl font-bold text-emerald-600">{lambda.toFixed(2)}</p>
+            <p className="text-[9px] text-atlas-muted mt-1">{lambdaDesc}</p>
+          </div>
+        </div>
+
+        {/* Summary cards */}
+        {result && (
+          <div className="grid grid-cols-2 gap-3 mb-5">
+            <div className="bg-atlas-bg border border-atlas-border rounded-lg p-3">
+              <p className="text-[9px] tracking-[2px] text-atlas-muted uppercase mb-1">Cobertura Global</p>
+              <p className="text-2xl font-bold" style={{ color: result.cobertura_global_pct >= 60 ? '#059669' : result.cobertura_global_pct >= 40 ? '#d97706' : '#dc2626' }}>
+                {result.cobertura_global_pct.toFixed(1)}%
+              </p>
+              <p className="text-[10px] text-atlas-muted mt-1">% da exposicao total coberta</p>
+            </div>
+            <div className="bg-atlas-bg border border-atlas-border rounded-lg p-3">
+              <p className="text-[9px] tracking-[2px] text-atlas-muted uppercase mb-1">Gap Total USD</p>
+              <p className="text-2xl font-bold" style={{ color: result.gap_total_usd > 0 ? '#dc2626' : '#059669' }}>
+                {fmtM(Math.abs(result.gap_total_usd))}
+              </p>
+              <p className="text-[10px] text-atlas-muted mt-1">Exposicao residual descoberta</p>
+            </div>
+          </div>
+        )}
+
+        {/* Extra sliders */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+          <div>
+            <div className="flex justify-between text-[10px] text-atlas-muted mb-1">
+              <span>% Estoque nao pago</span>
+              <span className="font-bold text-amber-600">{pctEstoque}%</span>
+            </div>
+            <input type="range" min={0} max={100} step={5} value={pctEstoque}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => { const v = parseInt(e.target.value); setPctEstoque(v); doCalc(undefined, v); }}
+              className="w-full accent-amber-600" />
+          </div>
+          <div>
+            <div className="flex justify-between text-[10px] text-atlas-muted mb-1">
+              <span>PTAX Spot</span>
+              <span className="font-bold text-blue-600">R$ {Number(posData?.ptax_atual?.venda ?? 0).toFixed(2)}</span>
+            </div>
+            <input type="range" min={4.5} max={7.5} step={0.05} value={posData?.ptax_atual?.venda ?? 5.0} disabled
+              className="w-full accent-blue-600 opacity-50" />
+          </div>
+        </div>
+
+        {/* 3 Layers */}
+        {result && (
+          <div className="grid grid-cols-3 gap-3 mb-5">
+            <LayerCard num="01" name="Automatico" pct={result.camadas.l1_pct} color="#059669"
+              desc="Contratado automaticamente ao consolidar o bucket." />
+            <LayerCard num="02" name="Tatico" pct={result.camadas.l2_pct} color="#7c3aed"
+              desc="Decisao semanal — spot vs. media 30d e tendencia." />
+            <LayerCard num="03" name="Aberto" pct={result.camadas.l3_pct} color="#d97706"
+              desc="Exposicao intencional — captura ganho se cambio cair." />
+          </div>
+        )}
+
+        {/* Recommendation table */}
+        {result && (
+          <div>
+            <p className="text-[9px] tracking-[2px] text-atlas-muted uppercase mb-2">Recomendacao por Bucket</p>
+            <DataTable columns={columns} data={result.recomendacoes} rowKey={(r) => r.bucket_id}
+              emptyMessage="Nenhuma recomendacao — cobertura ja atinge o alvo" />
+          </div>
+        )}
+      </div>
+
+      {/* Charts */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
+          <p className="text-[9px] text-atlas-muted uppercase tracking-[2px] mb-2">Custo do Hedge vs Protecao — por lambda</p>
+          <ResponsiveContainer width="100%" height={220}>
+            <LineChart data={mvChartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(221,225,232,0.5)" />
+              <XAxis dataKey="lambda" tick={{ fontSize: 9 }} />
+              <YAxis tick={{ fontSize: 9 }} />
+              <Tooltip />
+              <Legend />
+              <Line type="monotone" dataKey="custo" name="Custo hedge (R$K)" stroke="#d97706" strokeWidth={2} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="protecao" name="Protecao (R$K)" stroke="#059669" strokeWidth={2} dot={{ r: 3 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
+          <p className="text-[9px] text-atlas-muted uppercase tracking-[2px] mb-2">Simulacao: Impacto na Margem por Variacao Cambial</p>
+          <ResponsiveContainer width="100%" height={220}>
+            <LineChart data={simData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(221,225,232,0.5)" />
+              <XAxis dataKey="cambio" tick={{ fontSize: 9 }} interval={3} />
+              <YAxis tick={{ fontSize: 9 }} tickFormatter={(v: number) => `${v}%`} />
+              <Tooltip formatter={(v) => `${Number(v).toFixed(2)}%`} />
+              <Legend />
+              <Line type="monotone" dataKey="sem_hedge" name="Sem hedge" stroke="#dc2626" strokeWidth={1.5} strokeDasharray="3 2" dot={false} />
+              <Line type="monotone" dataKey="com_hedge" name={`Modelo MV (${l1}/${l2}/${100 - l1 - l2})`} stroke="#059669" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="floor" name="Floor 15%" stroke="rgba(220,38,38,0.3)" strokeWidth={1} strokeDasharray="2 4" dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
     </div>
   );
 }
 
-function SliderControl({
-  label,
-  value,
-  min,
-  max,
-  step,
-  onChange,
-  display,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  onChange: (v: number) => void;
-  display: string;
-}) {
+function LayerCard({ num, name, pct, color, desc }: { num: string; name: string; pct: number; color: string; desc: string }) {
   return (
-    <div className="bg-atlas-card border border-atlas-border rounded-xl p-4">
-      <div className="flex items-center justify-between mb-2">
-        <label className="text-sm font-medium text-atlas-text">{label}</label>
-        <span className="text-sm font-mono text-acxe">{display}</span>
+    <div className="rounded-lg p-4 border border-atlas-border" style={{ borderColor: color + '33', background: color + '0a' }}>
+      <p className="text-[9px] tracking-[2px] uppercase mb-2" style={{ color }}>{`CAMADA ${num}`}</p>
+      <p className="text-sm font-bold mb-1" style={{ color }}>{name}</p>
+      <p className="text-2xl font-extrabold leading-none mb-2" style={{ color }}>{pct.toFixed(1)}%</p>
+      <p className="text-[10px] text-atlas-muted leading-relaxed">{desc}</p>
+      <div className="h-1.5 rounded bg-atlas-border/50 mt-3">
+        <div className="h-full rounded transition-all duration-300" style={{ width: `${pct}%`, backgroundColor: color }} />
       </div>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(parseFloat(e.target.value))}
-        className="w-full accent-acxe"
-        aria-label={label}
-      />
-    </div>
-  );
-}
-
-function CamadaCard({
-  label,
-  pct,
-  desc,
-  color,
-}: {
-  label: string;
-  pct: number;
-  desc: string;
-  color: string;
-}) {
-  return (
-    <div className="bg-atlas-card border border-atlas-border rounded-xl p-4">
-      <p className="text-xs text-atlas-muted uppercase tracking-wider mb-1">{label}</p>
-      <p className="text-2xl font-bold text-atlas-text mb-1">{pct.toFixed(1)}%</p>
-      <div className="w-full h-2 bg-atlas-border rounded-full overflow-hidden">
-        <div className={`h-full ${color} rounded-full`} style={{ width: `${pct}%` }} />
-      </div>
-      <p className="text-xs text-atlas-muted mt-2">{desc}</p>
     </div>
   );
 }

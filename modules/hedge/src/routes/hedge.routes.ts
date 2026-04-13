@@ -7,7 +7,7 @@ import { calcularMotor } from '../services/motor.service.js';
 import { criarNdf, ativarNdf, liquidarNdf, cancelarNdf, listarNdfs, NdfError } from '../services/ndf.service.js';
 import { getHistoricoPtax } from '../services/ptax.service.js';
 import { simularMargem } from '../services/simulacao.service.js';
-import { getEstoque } from '../services/estoque.service.js';
+import { getEstoque, getLocalidades, salvarLocalidadesAtivas } from '../services/estoque.service.js';
 import { listarAlertas, marcarLido, resolver } from '../services/alerta.service.js';
 import { getConfig, updateConfig, getTaxasNdf, inserirTaxaNdf } from '../services/config.service.js';
 
@@ -38,7 +38,14 @@ router.get('/api/v1/hedge/posicao', async (req: Request, res: Response) => {
     const result = await calcularPosicao({ empresa });
 
     sendSuccess(res, {
-      kpis: result.kpis,
+      kpis: {
+        exposure_usd: result.kpis.exposure_usd,
+        cobertura_pct: result.kpis.cobertura_pct,
+        ndf_ativo_usd: result.kpis.ndf_ativo_usd,
+        gap_usd: result.kpis.gap_usd,
+        ptax_atual: result.kpis.ptax_atual,
+        ...result.kpis.resumo,
+      },
       buckets: result.buckets.map((b) => ({
         id: b.id,
         mes_ref: b.mesRef,
@@ -88,7 +95,12 @@ router.post(
     try {
       const { lambda = 0.5, pct_estoque_nao_pago = 0 } = req.body;
       const result = await calcularMotor({ lambda, pct_estoque_nao_pago });
-      sendSuccess(res, result);
+      sendSuccess(res, {
+        camadas: result.camadas,
+        recomendacoes: result.recomendacoes,
+        cobertura_global_pct: result.cobertura_global_pct,
+        gap_total_usd: result.gap_total_usd,
+      });
     } catch (err) {
       logger.error({ err }, 'Erro ao calcular motor');
       sendError(res, 'INTERNAL_ERROR', 'Erro ao calcular motor', 500);
@@ -258,6 +270,33 @@ router.post(
 );
 
 // ── Estoque ────────────────────────────────────────────────
+
+// GET /api/v1/hedge/estoque/localidades
+router.get('/api/v1/hedge/estoque/localidades', async (_req: Request, res: Response) => {
+  try {
+    const data = await getLocalidades();
+    sendSuccess(res, data);
+  } catch (err) {
+    logger.error({ err }, 'Erro ao buscar localidades');
+    sendError(res, 'INTERNAL_ERROR', 'Erro ao buscar localidades', 500);
+  }
+});
+
+// PUT /api/v1/hedge/estoque/localidades
+router.put('/api/v1/hedge/estoque/localidades', async (req: Request, res: Response) => {
+  try {
+    const { localidades_ativas } = req.body;
+    if (!Array.isArray(localidades_ativas)) {
+      sendError(res, 'VALIDATION_ERROR', 'localidades_ativas deve ser um array', 400);
+      return;
+    }
+    await salvarLocalidadesAtivas(localidades_ativas);
+    sendSuccess(res, { localidades_ativas });
+  } catch (err) {
+    logger.error({ err }, 'Erro ao salvar localidades');
+    sendError(res, 'INTERNAL_ERROR', 'Erro ao salvar localidades', 500);
+  }
+});
 
 router.get('/api/v1/hedge/estoque', async (req: Request, res: Response) => {
   try {

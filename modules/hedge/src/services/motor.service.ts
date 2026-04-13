@@ -23,6 +23,8 @@ export interface Recomendacao {
 export interface MotorResult {
   camadas: CamadasResult;
   recomendacoes: Recomendacao[];
+  cobertura_global_pct: number;
+  gap_total_usd: number;
 }
 
 interface MotorParams {
@@ -137,12 +139,29 @@ export async function calcularMotor(params: MotorParams): Promise<MotorResult> {
     }
   }
 
+  // Calculate global stats
+  let totalExpo = new Decimal(0);
+  let totalNdf = new Decimal(0);
+  for (const bucket of buckets) {
+    totalExpo = totalExpo.plus(bucket.pagarUsd ?? '0');
+    totalNdf = totalNdf.plus(bucket.ndfUsd ?? '0');
+  }
+  const coberturaGlobal = totalExpo.isZero()
+    ? new Decimal(0)
+    : totalNdf.div(totalExpo).times(100);
+  const gapTotal = totalExpo.minus(totalNdf);
+
   logger.info(
     { lambda: params.lambda, l1: camadas.l1_pct, l2: camadas.l2_pct, recomendacoes: recomendacoes.length },
     'Motor MV calculado',
   );
 
-  return { camadas, recomendacoes };
+  return {
+    camadas,
+    recomendacoes,
+    cobertura_global_pct: coberturaGlobal.toDecimalPlaces(1).toNumber(),
+    gap_total_usd: gapTotal.toDecimalPlaces(2).toNumber(),
+  };
 }
 
 /**
