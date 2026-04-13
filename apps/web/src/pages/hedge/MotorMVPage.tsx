@@ -90,33 +90,34 @@ export function MotorMVPage() {
 
   const lambdaDesc = lambda < 0.3 ? 'Conservador' : lambda < 0.5 ? 'Moderado' : lambda < 0.7 ? 'Moderado-alto' : 'Alto — max. protecao';
 
-  // Charts: Custo vs Protecao — from motor recomendacoes (real data)
-  const mvChartData = (result?.recomendacoes ?? [])
-    .filter((r) => r.notional_sugerido > 0 || r.custo_ndf_brl > 0)
-    .map((r) => ({
-      bucket: r.mes_ref.slice(0, 7),
-      custo: Math.round(r.custo_ndf_brl / 1000),
-      gap: Math.round(r.gap_atual / 1000),
-      cobertura: r.cobertura_alvo,
-    }));
+  // Charts: Custo vs Protecao by lambda (slider-reactive)
+  const mvChartData = Array.from({ length: 11 }, (_, i) => {
+    const l = i * 0.1;
+    const volUsd = 1e6; // reference
+    return {
+      lambda: l.toFixed(1),
+      custo: Math.round(volUsd * (ndf90Rate - spotRate) * l / 1000),
+      protecao: Math.round(volUsd * spotRate * 0.05 * l / 1000),
+    };
+  });
 
-  // Sim margem chart — uses motor layers for accurate coverage split
+  // Sim margem chart — uses motor layers + real taxa from motor when available
   const l1 = result?.camadas.l1_pct ?? 60;
   const l2 = result?.camadas.l2_pct ?? 16;
   const pctAberta = (100 - l1 - l2) / 100;
   const fat = 25e6;
   const pctImp = 0.7;
   const vu = fat * pctImp / spotRate;
-  // Use average taxa_ndf from motor recomendacoes when available
+  // Use average taxa_ndf from motor recomendacoes, fallback to slider
   const taxasReais = (result?.recomendacoes ?? []).filter((r) => r.taxa_ndf > 0).map((r) => r.taxa_ndf);
-  const taxaMedia = taxasReais.length > 0 ? taxasReais.reduce((a, b) => a + b, 0) / taxasReais.length : ndf90Rate;
+  const taxaEfetiva = taxasReais.length > 0 ? taxasReais.reduce((a, b) => a + b, 0) / taxasReais.length : ndf90Rate;
   const simData: { cambio: string; sem_hedge: number; com_hedge: number; floor: number }[] = [];
   for (let c = 4.5; c <= 7.5; c += 0.10) {
     const cambio = parseFloat(c.toFixed(2));
     simData.push({
       cambio: `R$${cambio.toFixed(2)}`,
       sem_hedge: +((fat - vu * cambio - fat * 0.1) / fat * 100).toFixed(2),
-      com_hedge: +((fat - vu * (taxaMedia * (1 - pctAberta) + cambio * pctAberta) - fat * 0.1) / fat * 100).toFixed(2),
+      com_hedge: +((fat - vu * (taxaEfetiva * (1 - pctAberta) + cambio * pctAberta) - fat * 0.1) / fat * 100).toFixed(2),
       floor: 15,
     });
   }
@@ -243,16 +244,16 @@ export function MotorMVPage() {
       {/* Charts */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-          <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-2">Custo do Hedge vs Gap — por bucket</p>
+          <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-2">Custo do Hedge vs Protecao — por lambda</p>
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={mvChartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(221,225,232,0.5)" />
-              <XAxis dataKey="bucket" tick={{ fontSize: 9 }} />
+              <XAxis dataKey="lambda" tick={{ fontSize: 9 }} />
               <YAxis tick={{ fontSize: 9 }} />
               <Tooltip />
               <Legend />
-              <Line type="monotone" dataKey="custo" name="Custo NDF (R$K)" stroke="#d97706" strokeWidth={2} dot={{ r: 3 }} />
-              <Line type="monotone" dataKey="gap" name="Gap (US$K)" stroke="#dc2626" strokeWidth={2} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="custo" name="Custo hedge (R$K)" stroke="#d97706" strokeWidth={2} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="protecao" name="Protecao (R$K)" stroke="#059669" strokeWidth={2} dot={{ r: 3 }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
