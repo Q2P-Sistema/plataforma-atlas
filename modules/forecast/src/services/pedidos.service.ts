@@ -60,9 +60,9 @@ export async function getPedidosEmRota(): Promise<PedidoEmRota[]> {
  * Groups pending arrivals by Q2P product codigo.
  * Returns Map<codigo, Array<{date, qty}>> for forecast injection.
  */
-export async function getChegadasPorProduto(): Promise<Map<string, Array<{ data: string; qtd: number }>>> {
+export async function getChegadasPorProduto(): Promise<Map<string, Array<{ data: string; qtd: number; valor_brl: number }>>> {
   const pedidos = await getPedidosEmRota();
-  const map = new Map<string, Array<{ data: string; qtd: number }>>();
+  const map = new Map<string, Array<{ data: string; qtd: number; valor_brl: number }>>();
 
   for (const p of pedidos) {
     if (!map.has(p.codigo_produto_q2p)) {
@@ -71,6 +71,7 @@ export async function getChegadasPorProduto(): Promise<Map<string, Array<{ data:
     map.get(p.codigo_produto_q2p)!.push({
       data: p.data_chegada,
       qtd: p.qtd_pendente,
+      valor_brl: p.valor_brl,
     });
   }
 

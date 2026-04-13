@@ -226,6 +226,49 @@ export function ForecastDashboard() {
           )}
         </div>
       )}
+      {/* Definitions */}
+      <DefinitionsPanel />
+    </div>
+  );
+}
+
+function DefinitionsPanel() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border border-atlas-border rounded-lg overflow-hidden">
+      <button onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-4 py-2.5 bg-atlas-bg text-xs text-atlas-muted hover:text-atlas-text transition-colors">
+        <span className="uppercase tracking-[2px] font-medium">Definicoes e Metodologia</span>
+        <span className="text-sm">{open ? '\u25B2' : '\u25BC'}</span>
+      </button>
+      {open && (
+        <div className="px-4 py-3 bg-atlas-card text-xs text-atlas-muted space-y-3 leading-relaxed">
+          <div>
+            <p className="font-semibold text-atlas-text mb-0.5">Pool de Estoque (3 camadas)</p>
+            <p><strong>Disponivel</strong> = saldo - reservado. <strong>Bloqueado</strong> = reservado para pedidos em carteira. <strong>Transito</strong> = pedidos de compra pendentes de recebimento. <strong>Total</strong> = disponivel + bloqueado + transito.</p>
+          </div>
+          <div>
+            <p className="font-semibold text-atlas-text mb-0.5">Cobertura (dias)</p>
+            <p>Estoque total dividido pela demanda diaria sazonalizada. Indica quantos dias o estoque atual cobre sem novas chegadas.</p>
+          </div>
+          <div>
+            <p className="font-semibold text-atlas-text mb-0.5">Sazonalidade</p>
+            <p>Fator multiplicador mensal aplicado a demanda diaria media. Valores &gt;1.0 indicam mes de alta demanda, &lt;1.0 indica baixa. Editavel em Config &gt; Sazonalidade.</p>
+          </div>
+          <div>
+            <p className="font-semibold text-atlas-text mb-0.5">Qtd Sugerida (net-of-pipeline)</p>
+            <p>Demanda total para LT + 60 dias de cobertura, descontando pedidos em rota. Arredondada para cima ao MOQ (Internacional: 25t, Nacional: 12t). So calculada se ruptura detectada.</p>
+          </div>
+          <div>
+            <p className="font-semibold text-atlas-text mb-0.5">Compra Local Emergencial</p>
+            <p>Quando o prazo de pedido internacional esta perdido (dia ideal &lt; 0), sugere compra local com LT curto (7d) para cobrir o gap ate a chegada do pedido internacional.</p>
+          </div>
+          <div>
+            <p className="font-semibold text-atlas-text mb-0.5">Status</p>
+            <p><strong>Critico</strong> = ruptura em ate 30 dias. <strong>Atencao</strong> = ruptura entre 31-60 dias. <strong>OK</strong> = sem ruptura nos proximos 60 dias.</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
