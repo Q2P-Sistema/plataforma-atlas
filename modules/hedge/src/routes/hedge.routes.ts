@@ -4,6 +4,7 @@ import { createLogger } from '@atlas/core';
 import { requireRole } from '@atlas/auth';
 import { calcularPosicao, recalcularBuckets, getHistorico } from '../services/posicao.service.js';
 import { calcularMotor } from '../services/motor.service.js';
+import { getVariacao30d } from '../services/ptax.service.js';
 import { criarNdf, ativarNdf, liquidarNdf, cancelarNdf, listarNdfs, NdfError } from '../services/ndf.service.js';
 import { getHistoricoPtax } from '../services/ptax.service.js';
 import { simularMargem } from '../services/simulacao.service.js';
@@ -40,6 +41,9 @@ router.get('/api/v1/hedge/posicao', async (req: Request, res: Response) => {
     // Generate alerts for sub-hedged buckets (GAP-13)
     gerarAlertas(result.buckets).catch((err) => logger.warn({ err }, 'Erro ao gerar alertas'));
 
+    // PTAX 30d variation (non-blocking)
+    const variacao30d = await getVariacao30d().catch(() => 0);
+
     sendSuccess(res, {
       kpis: {
         exposure_usd: result.kpis.exposure_usd,
@@ -47,6 +51,7 @@ router.get('/api/v1/hedge/posicao', async (req: Request, res: Response) => {
         ndf_ativo_usd: result.kpis.ndf_ativo_usd,
         gap_usd: result.kpis.gap_usd,
         ptax_atual: result.kpis.ptax_atual,
+        variacao_30d_pct: variacao30d,
         ...result.kpis.resumo,
       },
       buckets: result.buckets.map((b) => ({
@@ -262,10 +267,10 @@ router.post(
   '/api/v1/hedge/simulacao/margem',
   async (req: Request, res: Response) => {
     try {
-      const { faturamento_brl, outros_custos_brl, volume_usd, ndf_taxa_media = 5.50, pct_cobertura = 0 } = req.body;
+      const { faturamento_brl, outros_custos_brl, volume_usd, pct_custo_importado, ndf_taxa_media = 5.50, pct_cobertura, l1, l2 } = req.body;
       const cenarios = simularMargem(
-        { faturamento_brl, outros_custos_brl, volume_usd },
-        { ndf_taxa_media, pct_cobertura },
+        { faturamento_brl, outros_custos_brl, volume_usd, pct_custo_importado },
+        { ndf_taxa_media, pct_cobertura, l1, l2 },
       );
       sendSuccess(res, { cenarios });
     } catch (err) {
