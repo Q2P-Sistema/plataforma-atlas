@@ -69,8 +69,8 @@ router.get('/api/v1/forecast/familias', async (_req: Request, res: Response) => 
 // POST /api/v1/forecast/calcular
 router.post('/api/v1/forecast/calcular', async (req: Request, res: Response) => {
   try {
-    const { familia_id } = req.body;
-    const results = await calcularForecast(familia_id);
+    const { familia_id, ajustes_demanda } = req.body;
+    const results = await calcularForecast(familia_id, ajustes_demanda);
     sendSuccess(res, results);
   } catch (err) {
     logger.error({ err }, 'Erro ao calcular forecast');

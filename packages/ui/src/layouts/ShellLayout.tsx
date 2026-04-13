@@ -31,6 +31,7 @@ export function ShellLayout({
         onNavigate={onNavigate}
         collapsed={collapsed}
         onToggleCollapse={() => setCollapsed(!collapsed)}
+        userRole={userRole}
       />
 
       <div className="flex-1 flex flex-col min-w-0">

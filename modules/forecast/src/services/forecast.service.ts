@@ -96,14 +96,17 @@ async function buildForecastFamilia(
   vendasMap: Map<string, number>,
   chegadasMap: Map<string, Array<{ data: string; qtd: number }>>,
   config: ForecastConfig,
+  ajustesDemanda: Record<string, number> = {},
 ): Promise<FamiliaForecast> {
   const hoje = new Date();
   const horizonte = config.horizonte_dias;
 
-  // vendas12m for this family = sum across SKUs
+  // vendas12m for this family = sum across SKUs, with per-SKU demand adjustments
   let vendas12m = 0;
   for (const sku of familia.skus) {
-    vendas12m += vendasMap.get(sku.codigo) ?? 0;
+    const base = vendasMap.get(sku.codigo) ?? 0;
+    const ajuste = ajustesDemanda[sku.codigo] ?? 0;
+    vendas12m += base * (1 + ajuste / 100);
   }
   const vendaDiariaMedia = vendas12m > 0 ? vendas12m / 365 : 0;
 
@@ -292,7 +295,7 @@ async function buildForecastFamilia(
 /**
  * Runs forecast for all families or a specific one.
  */
-export async function calcularForecast(familiaId?: string): Promise<FamiliaForecast[]> {
+export async function calcularForecast(familiaId?: string, ajustesDemanda: Record<string, number> = {}): Promise<FamiliaForecast[]> {
   const [config, familias, vendasMap, chegadasMap] = await Promise.all([
     getConfig(),
     getFamilias(),
@@ -306,7 +309,7 @@ export async function calcularForecast(familiaId?: string): Promise<FamiliaForec
 
   const results: FamiliaForecast[] = [];
   for (const fam of alvo) {
-    const forecast = await buildForecastFamilia(fam, vendasMap, chegadasMap, config);
+    const forecast = await buildForecastFamilia(fam, vendasMap, chegadasMap, config, ajustesDemanda);
     results.push(forecast);
   }
 

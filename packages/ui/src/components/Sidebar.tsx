@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Menu, X, ChevronLeft } from 'lucide-react';
+import { Menu, X, ChevronLeft, Users } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 export interface SidebarSubItem {
@@ -24,6 +24,7 @@ interface SidebarProps {
   onNavigate: (path: string) => void;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  userRole?: string;
 }
 
 export function Sidebar({
@@ -32,6 +33,7 @@ export function Sidebar({
   onNavigate,
   collapsed = false,
   onToggleCollapse,
+  userRole,
 }: SidebarProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -163,6 +165,24 @@ export function Sidebar({
             );
           })}
         </nav>
+
+        {/* Admin — only for diretor */}
+        {userRole === 'diretor' && (
+          <div className="px-2 pb-1">
+            <button
+              onClick={() => { onNavigate('/admin/users'); setMobileOpen(false); }}
+              title={collapsed ? 'Usuarios' : undefined}
+              className={`
+                w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium
+                transition-colors focus:outline-none focus:ring-2 focus:ring-acxe
+                ${currentPath.startsWith('/admin') ? 'bg-acxe/10 text-acxe' : 'text-atlas-muted hover:text-atlas-text hover:bg-atlas-border/50'}
+              `}
+            >
+              <Users size={18} className="shrink-0" />
+              {!collapsed && <span>Usuarios</span>}
+            </button>
+          </div>
+        )}
 
         {/* Footer */}
         {!collapsed && (
