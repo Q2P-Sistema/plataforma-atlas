@@ -71,4 +71,13 @@ export function registerModuleRoutes(app: Express): void {
       logger.error({ err }, 'Failed to load Hedge Engine module');
     });
   }
+
+  if (config.MODULE_FORECAST_ENABLED) {
+    import('@atlas/forecast').then(({ forecastRouter }) => {
+      app.use(forecastRouter);
+      logger.info('Forecast Planner routes registered');
+    }).catch((err) => {
+      logger.error({ err }, 'Failed to load Forecast Planner module');
+    });
+  }
 }

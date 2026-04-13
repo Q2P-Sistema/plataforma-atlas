@@ -40,3 +40,13 @@ export {
   type ConfigMotor,
   type SyncLog,
 } from './schemas/hedge.js';
+
+export {
+  forecastSchema,
+  configSazonalidade,
+  configForecast,
+  sazonalidadeLog,
+  type ConfigSazonalidade,
+  type ConfigForecast,
+  type SazonalidadeLog,
+} from './schemas/forecast.js';
