@@ -31,11 +31,26 @@ import { MarginSimulationPage } from './pages/hedge/MarginSimulationPage.js';
 import { InventoryPage } from './pages/hedge/InventoryPage.js';
 import { AlertsPage } from './pages/hedge/AlertsPage.js';
 import { ConfigPage } from './pages/hedge/ConfigPage.js';
+import { ForecastDashboard } from './pages/forecast/ForecastDashboard.js';
+import { RollingForecastPage } from './pages/forecast/RollingForecastPage.js';
+import { ShoppingListPage } from './pages/forecast/ShoppingListPage.js';
+import { ForecastConfigPage } from './pages/forecast/ForecastConfigPage.js';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage.js';
 import { ResetPasswordPage } from './pages/ResetPasswordPage.js';
 import { useAuth } from './hooks/useAuth.js';
 import { useModules, type ModuleInfo } from './hooks/useModules.js';
 import { useAuthStore } from './stores/auth.store.js';
+import {
+  TrendingUp,
+  ShoppingCart,
+} from 'lucide-react';
+
+const FORECAST_SUB_ITEMS: SidebarSubItem[] = [
+  { id: 'forecast-dashboard', name: 'Dashboard', path: '/forecast', icon: LayoutDashboard },
+  { id: 'forecast-rolling', name: 'Forecast 120d', path: '/forecast/rolling', icon: TrendingUp },
+  { id: 'forecast-shopping', name: 'Shopping List', path: '/forecast/shopping', icon: ShoppingCart },
+  { id: 'forecast-config', name: 'Config', path: '/forecast/config', icon: Settings },
+];
 
 const HEDGE_SUB_ITEMS: SidebarSubItem[] = [
   { id: 'hedge-dashboard', name: 'Dashboard', path: '/hedge', icon: LayoutDashboard },
@@ -120,7 +135,7 @@ function ProtectedShell() {
     enabled: m.enabled,
     path: m.path,
     icon: m.icon,
-    subItems: m.id === 'hedge' ? HEDGE_SUB_ITEMS : undefined,
+    subItems: m.id === 'hedge' ? HEDGE_SUB_ITEMS : m.id === 'forecast' ? FORECAST_SUB_ITEMS : undefined,
   }));
 
   // Build set of enabled module IDs for route guard
@@ -148,7 +163,15 @@ function ProtectedShell() {
         {enabledSet.has('hedge') && <Route path="hedge/alertas" element={<AlertsPage />} />}
         {enabledSet.has('hedge') && <Route path="hedge/config" element={<ConfigPage />} />}
         {!enabledSet.has('hedge') && <Route path="hedge" element={<ModuleRoute moduleId="hedge" moduleName="Hedge Engine" enabled={false} />} />}
-        {ALL_MODULE_IDS.filter((id) => id !== 'hedge').map((id) => (
+
+        {/* Forecast Planner */}
+        {enabledSet.has('forecast') && <Route path="forecast" element={<ForecastDashboard />} />}
+        {enabledSet.has('forecast') && <Route path="forecast/rolling" element={<RollingForecastPage />} />}
+        {enabledSet.has('forecast') && <Route path="forecast/shopping" element={<ShoppingListPage />} />}
+        {enabledSet.has('forecast') && <Route path="forecast/config" element={<ForecastConfigPage />} />}
+        {!enabledSet.has('forecast') && <Route path="forecast" element={<ModuleRoute moduleId="forecast" moduleName="Forecast Planner" enabled={false} />} />}
+
+        {ALL_MODULE_IDS.filter((id) => id !== 'hedge' && id !== 'forecast').map((id) => (
           <Route
             key={id}
             path={id}
