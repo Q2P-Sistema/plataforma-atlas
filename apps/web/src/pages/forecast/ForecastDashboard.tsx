@@ -1,6 +1,5 @@
 import { useState, type ChangeEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { DataTable, type Column } from '@atlas/ui';
 
 interface Sku {
   codigo: string; descricao: string; disponivel: number; bloqueado: number;
@@ -43,30 +42,6 @@ export function ForecastDashboard() {
   const atencao = familias.filter((f) => f.status === 'atencao').length;
   const proxRuptura = familias.filter((f) => f.cobertura_dias < 999).sort((a, b) => a.cobertura_dias - b.cobertura_dias)[0];
 
-  const columns: Column<FamiliaRow>[] = [
-    { key: 'familia_nome', header: 'Familia', sortable: true, render: (r) => (
-      <button onClick={() => setExpanded(expanded === r.familia_id ? null : r.familia_id)}
-        className="text-left text-xs font-semibold text-atlas-text hover:text-blue-600 transition-colors">
-        <span className="mr-1">{expanded === r.familia_id ? '\u25BC' : '\u25B6'}</span>
-        {r.familia_nome}
-        {r.is_internacional && <span className="ml-1 text-xs text-blue-500">INTL</span>}
-      </button>
-    )},
-    { key: 'pool_disponivel', header: 'Disponivel', sortable: true, render: (r) => fmtT(r.pool_disponivel) },
-    { key: 'pool_bloqueado', header: 'Reservado', render: (r) => r.pool_bloqueado > 0 ? <span className="text-amber-600">{fmtT(r.pool_bloqueado)}</span> : '—' },
-    { key: 'pool_transito', header: 'Transito', render: (r) => r.pool_transito > 0 ? <span className="text-blue-600">{fmtT(r.pool_transito)}</span> : '—' },
-    { key: 'pool_total', header: 'Total', sortable: true, render: (r) => <span className="font-semibold">{fmtT(r.pool_total)}</span> },
-    { key: 'cmc_medio', header: 'CMC R$/kg', render: (r) => `R$ ${r.cmc_medio.toFixed(2)}` },
-    { key: 'venda_diaria_media', header: 'Venda/dia', sortable: true, render: (r) => r.venda_diaria_media > 0 ? fmtT(r.venda_diaria_media) : <span className="text-atlas-muted">—</span> },
-    { key: 'cobertura_dias', header: 'Cobertura', sortable: true, render: (r) => {
-      if (r.cobertura_dias >= 999) return <span className="text-atlas-muted">sem hist.</span>;
-      const color = r.cobertura_dias <= 30 ? '#dc2626' : r.cobertura_dias <= 60 ? '#d97706' : '#059669';
-      return <span style={{ color }} className="font-semibold">{r.cobertura_dias}d</span>;
-    }},
-    { key: 'status', header: 'Status', sortable: true, render: (r) => (
-      <span className={`inline-flex text-xs px-1.5 py-0.5 rounded border font-semibold ${STATUS_STYLE[r.status] ?? ''}`}>{r.status}</span>
-    )},
-  ];
 
   if (isLoading) return <div className="flex items-center justify-center min-h-[40vh]"><p className="text-atlas-muted">Carregando...</p></div>;
 
@@ -93,55 +68,80 @@ export function ForecastDashboard() {
           sub={`${familias.filter((f) => f.is_internacional).length} internacionais`} />
       </div>
 
-      {/* Families table */}
+      {/* Families table — manual with inline expandable SKU rows */}
       <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
         <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Familias de Produto — Estoque e Cobertura</p>
-        <DataTable columns={columns} data={filtered} rowKey={(r) => r.familia_id} pageSize={20} />
-
-        {/* Expanded SKU grid */}
-        {expanded && (() => {
-          const fam = familias.find((f) => f.familia_id === expanded);
-          if (!fam) return null;
-          return (
-            <div className="mt-3 bg-atlas-bg border border-atlas-border rounded-lg p-3">
-              <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-2">SKUs — {fam.familia_nome}</p>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs font-mono">
-                  <thead>
-                    <tr className="border-b border-atlas-border">
-                      <th className="px-2 py-1.5 text-left text-xs text-atlas-muted">Codigo</th>
-                      <th className="px-2 py-1.5 text-left text-xs text-atlas-muted">Descricao</th>
-                      <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Disp.</th>
-                      <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Reserv.</th>
-                      <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Transit.</th>
-                      <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Total</th>
-                      <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">CMC</th>
-                      <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Venda/dia</th>
-                      <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Cobert.</th>
-                      <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">LT</th>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-atlas-bg border-b border-atlas-border">
+                <th className="px-3 py-2.5 text-left text-xs text-atlas-muted uppercase">Familia</th>
+                <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Disponivel</th>
+                <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Reservado</th>
+                <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Transito</th>
+                <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Total</th>
+                <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">CMC R$/kg</th>
+                <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Venda/dia</th>
+                <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Cobertura</th>
+                <th className="px-3 py-2.5 text-center text-xs text-atlas-muted uppercase">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r) => {
+                const isOpen = expanded === r.familia_id;
+                return (
+                  <>{/* Family row */}
+                    <tr key={r.familia_id}
+                      onClick={() => setExpanded(isOpen ? null : r.familia_id)}
+                      className="border-b border-atlas-border/50 cursor-pointer hover:bg-atlas-bg/50 transition-colors">
+                      <td className="px-3 py-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-blue-600">{isOpen ? '\u25BC' : '\u25B6'}</span>
+                          <div>
+                            <span className="font-semibold text-atlas-text">{r.familia_nome}</span>
+                            {r.is_internacional && <span className="ml-2 text-xs text-blue-500">INTL</span>}
+                            <p className="text-xs text-atlas-muted">{r.skus_count} SKUs</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 text-right">{fmtT(r.pool_disponivel)}</td>
+                      <td className="px-3 py-3 text-right">{r.pool_bloqueado > 0 ? <span className="text-amber-600">{fmtT(r.pool_bloqueado)}</span> : '—'}</td>
+                      <td className="px-3 py-3 text-right">{r.pool_transito > 0 ? <span className="text-blue-600">{fmtT(r.pool_transito)}</span> : '—'}</td>
+                      <td className="px-3 py-3 text-right font-semibold">{fmtT(r.pool_total)}</td>
+                      <td className="px-3 py-3 text-right">R$ {r.cmc_medio.toFixed(2)}</td>
+                      <td className="px-3 py-3 text-right">{r.venda_diaria_media > 0 ? fmtT(r.venda_diaria_media) : <span className="text-atlas-muted">—</span>}</td>
+                      <td className="px-3 py-3 text-right">
+                        {r.cobertura_dias >= 999 ? <span className="text-atlas-muted">sem hist.</span> : (
+                          <span style={{ color: r.cobertura_dias <= 30 ? '#dc2626' : r.cobertura_dias <= 60 ? '#d97706' : '#059669' }} className="font-semibold">{r.cobertura_dias}d</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-3 text-center">
+                        <span className={`inline-flex text-xs px-1.5 py-0.5 rounded border font-semibold ${STATUS_STYLE[r.status] ?? ''}`}>{r.status}</span>
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-atlas-border/50">
-                    {fam.skus.map((sk) => (
-                      <tr key={sk.codigo} className="hover:bg-atlas-card/50">
-                        <td className="px-2 py-1.5 text-atlas-text">{sk.codigo}</td>
-                        <td className="px-2 py-1.5 text-atlas-text truncate max-w-[200px]">{sk.descricao}</td>
-                        <td className="px-2 py-1.5 text-right">{fmtT(sk.disponivel)}</td>
-                        <td className="px-2 py-1.5 text-right text-amber-600">{sk.bloqueado > 0 ? fmtT(sk.bloqueado) : '—'}</td>
-                        <td className="px-2 py-1.5 text-right text-blue-600">{sk.transito > 0 ? fmtT(sk.transito) : '—'}</td>
-                        <td className="px-2 py-1.5 text-right font-semibold">{fmtT(sk.total)}</td>
-                        <td className="px-2 py-1.5 text-right">R$ {sk.cmc.toFixed(2)}</td>
-                        <td className="px-2 py-1.5 text-right">{sk.venda_dia > 0 ? fmtT(sk.venda_dia) : '—'}</td>
-                        <td className="px-2 py-1.5 text-right">{sk.cobertura < 999 ? `${sk.cobertura}d` : '—'}</td>
-                        <td className="px-2 py-1.5 text-right">{sk.lt}d</td>
+                    {/* Expanded SKU rows — inline */}
+                    {isOpen && r.skus.map((sk) => (
+                      <tr key={`${r.familia_id}-${sk.codigo}`} className="bg-blue-50/30 dark:bg-blue-900/10 border-b border-atlas-border/30">
+                        <td className="px-3 py-2 pl-10">
+                          <span className="text-xs font-mono font-semibold text-blue-600">{sk.codigo}</span>
+                          <span className="ml-2 text-xs text-atlas-muted truncate">{sk.descricao}</span>
+                        </td>
+                        <td className="px-3 py-2 text-right text-xs">{fmtT(sk.disponivel)}</td>
+                        <td className="px-3 py-2 text-right text-xs text-amber-600">{sk.bloqueado > 0 ? fmtT(sk.bloqueado) : '—'}</td>
+                        <td className="px-3 py-2 text-right text-xs text-blue-600">{sk.transito > 0 ? fmtT(sk.transito) : '—'}</td>
+                        <td className="px-3 py-2 text-right text-xs font-semibold">{fmtT(sk.total)}</td>
+                        <td className="px-3 py-2 text-right text-xs">R$ {sk.cmc.toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right text-xs">{sk.venda_dia > 0 ? fmtT(sk.venda_dia) : '—'}</td>
+                        <td className="px-3 py-2 text-right text-xs">{sk.cobertura < 999 ? `${sk.cobertura}d` : '—'}</td>
+                        <td className="px-3 py-2 text-center text-xs text-atlas-muted">{sk.lt}d LT</td>
                       </tr>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          );
-        })()}
+                  </>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

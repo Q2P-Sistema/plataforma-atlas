@@ -189,18 +189,35 @@ async function buildForecastFamilia(
     ? Math.round(familia.pool_total / vendaDiariaSaz)
     : 999;
 
-  // MOQ suggestion
-  const moqAtivo = familia.is_internacional ? config.moq_internacional : config.moq_nacional;
-  let qtdBruta = 0;
-  for (let d = 0; d < familia.lt_efetivo + config.horizonte_cobertura; d++) {
+  // vendaDiaria30d — average of next 30 days (seasonalized)
+  let soma30d = 0;
+  for (let d = 0; d < 30; d++) {
     const dataD = addDays(hoje, d);
     const mesD = dataD.getMonth() + 1;
     const sazD = sazFactors.get(mesD) ?? 1.0;
-    qtdBruta += Math.round(vendaDiariaMedia * (1 + config.variacao_anual_pct / 100) * sazD);
+    soma30d += vendaDiariaMedia * (1 + config.variacao_anual_pct / 100) * sazD;
+  }
+  const vendaDiaria30d = soma30d / 30;
+
+  // MOQ suggestion — only if ruptura detected (CALC-2 fix: legado so calcula se diaRuptura >= 0)
+  const moqAtivo = familia.is_internacional ? config.moq_internacional : config.moq_nacional;
+  let qtdBruta = 0;
+  if (diaRuptura >= 0) {
+    for (let d = 0; d < familia.lt_efetivo + config.horizonte_cobertura; d++) {
+      const dataD = addDays(hoje, d);
+      const mesD = dataD.getMonth() + 1;
+      const sazD = sazFactors.get(mesD) ?? 1.0;
+      qtdBruta += Math.round(vendaDiariaMedia * (1 + config.variacao_anual_pct / 100) * sazD);
+    }
   }
   const qtdLiquida = Math.max(0, qtdBruta - qtdEmRota);
-  const qtdSugerida = arredMOQ(qtdLiquida, moqAtivo);
-  const valorBrl = Math.round(qtdSugerida * familia.cmc_medio);
+  const qtdSugerida = diaRuptura >= 0 ? arredMOQ(qtdLiquida, moqAtivo) : 0;
+
+  // CALC-1 fix: use real price from pipeline orders, fallback to CMC
+  const totalKgPedidos = pedidosEmRota.reduce((s, p) => s + p.qtd_pendente, 0);
+  const totalBrlPedidos = pedidosEmRota.reduce((s, p) => s + p.valor_brl, 0);
+  const precoPorKg = totalKgPedidos > 0 ? totalBrlPedidos / totalKgPedidos : familia.cmc_medio;
+  const valorBrl = Math.round(qtdSugerida * precoPorKg);
 
   // Compra local emergencial
   let compraLocal: CompraLocal | null = null;
@@ -212,7 +229,7 @@ async function buildForecastFamilia(
       vendaGap += serie[d]?.venda_dia ?? 0;
     }
     const custoOportunidade = Math.round(vendaGap * familia.cmc_medio);
-    const qtdLocal = arredMOQ(Math.max(vendaGap, Math.round(vendaDiariaSaz * config.lead_time_local)), config.moq_nacional);
+    const qtdLocal = arredMOQ(Math.max(vendaGap, Math.round(vendaDiaria30d * config.lead_time_local)), config.moq_nacional);
     compraLocal = {
       dia_abrir: diaAbrir,
       lt_local: config.lead_time_local,
