@@ -1,6 +1,9 @@
 import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { useAuthStore } from '../../stores/auth.store.js';
+
+interface AIRecomendacao { familia: string; acao: string; justificativa: string; prioridade: number; }
+interface AIResult { resumo_executivo: string; alertas: string[]; recomendacoes: AIRecomendacao[]; }
 
 interface ForecastResult {
   familia_id: string; familia_nome: string; is_internacional: boolean;
@@ -73,6 +76,37 @@ export function ShoppingListPage() {
   const selectedItems = items.filter((it) => it.selected);
   const totalValor = selectedItems.reduce((s, it) => s + it.valor, 0);
 
+  // AI Analysis
+  const [aiResult, setAiResult] = useState<AIResult | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const aiMutation = useMutation({
+    mutationFn: async (selected: ShoppingItem[]) => {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (csrfToken) headers['x-csrf-token'] = csrfToken;
+      const res = await fetch('/api/v1/forecast/shopping-list/analyze', {
+        method: 'POST', credentials: 'include', headers,
+        body: JSON.stringify({
+          itens: selected.map((it) => ({
+            familia: it.familia_nome, qtd_kg: it.qtd, valor_brl: it.valor,
+            ruptura_dias: it.ruptura, lt_dias: it.lt, cobertura_dias: Math.round(it.estoque_rota / Math.max(it.qtd / 90, 1)),
+            is_local: it.is_local,
+          })),
+        }),
+      });
+      const body = (await res.json()) as any;
+      if (!res.ok) throw new Error(body.error?.message ?? 'Erro na analise');
+      return body.data as AIResult;
+    },
+    onSuccess: (data) => { setAiResult(data); setAiError(null); },
+    onError: (err: Error) => { setAiResult(null); setAiError(err.message); },
+  });
+
+  const runAnalysis = () => {
+    setAiResult(null);
+    setAiError(null);
+    aiMutation.mutate(selectedItems);
+  };
+
   const copyToClipboard = () => {
     const lines = selectedItems.map((it) =>
       `${it.familia_nome} | ${fmtT(it.qtd)} | LT ${it.lt}d | ${fmtBrl(it.valor)}${it.is_local ? ' [LOCAL]' : ''}${it.obs ? ` — ${it.obs}` : ''}`
@@ -87,6 +121,10 @@ export function ShoppingListPage() {
         <h1 className="text-2xl font-heading font-bold text-atlas-text">Shopping List</h1>
         <div className="flex items-center gap-3">
           <span className="text-xs text-atlas-muted">{selectedItems.length} itens | {fmtBrl(totalValor)}</span>
+          <button onClick={runAnalysis} disabled={selectedItems.length === 0 || aiMutation.isPending}
+            className="px-4 py-2 rounded-lg bg-purple-600 text-white text-xs font-medium hover:bg-purple-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            {aiMutation.isPending ? 'Analisando...' : 'Analisar com IA'}
+          </button>
           <button onClick={copyToClipboard}
             className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 transition-colors">
             Copiar para Executor
@@ -148,6 +186,61 @@ export function ShoppingListPage() {
           </table>
         </div>
       )}
+
+      {/* AI Analysis Error */}
+      {aiError && (
+        <div className="bg-red-500/5 border border-red-500/20 rounded-lg p-4">
+          <p className="text-sm text-red-600 font-semibold">Analise indisponivel</p>
+          <p className="text-xs text-red-500 mt-1">{aiError}</p>
+        </div>
+      )}
+
+      {/* AI Analysis Result */}
+      {aiResult && (
+        <div className="space-y-3">
+          <div className="bg-purple-500/5 border border-purple-500/20 rounded-lg p-4">
+            <p className="text-xs text-purple-600 uppercase tracking-[3px] mb-2">Analise IA</p>
+            <p className="text-sm text-atlas-text">{aiResult.resumo_executivo}</p>
+            {aiResult.alertas.length > 0 && (
+              <div className="mt-3 space-y-1">
+                {aiResult.alertas.map((a, i) => (
+                  <p key={i} className="text-xs text-amber-600">⚠ {a}</p>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="bg-atlas-card border border-atlas-border rounded-lg overflow-hidden">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-atlas-bg border-b border-atlas-border">
+                  <th className="px-3 py-2 text-left text-xs text-atlas-muted uppercase">Familia</th>
+                  <th className="px-3 py-2 text-center text-xs text-atlas-muted uppercase">Acao</th>
+                  <th className="px-3 py-2 text-left text-xs text-atlas-muted uppercase">Justificativa</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-atlas-border/50">
+                {aiResult.recomendacoes.sort((a, b) => a.prioridade - b.prioridade).map((r) => (
+                  <tr key={r.familia}>
+                    <td className="px-3 py-2 font-medium">{r.familia}</td>
+                    <td className="px-3 py-2 text-center">
+                      <AcaoBadge acao={r.acao} />
+                    </td>
+                    <td className="px-3 py-2 text-atlas-muted">{r.justificativa}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+function AcaoBadge({ acao }: { acao: string }) {
+  const style = acao === 'COMPRAR AGORA' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
+    : acao === 'AGUARDAR' ? 'bg-amber-500/10 text-amber-600 border-amber-500/20'
+    : acao === 'REVISAR' ? 'bg-blue-500/10 text-blue-600 border-blue-500/20'
+    : 'bg-gray-500/10 text-gray-500 border-gray-500/20';
+  return <span className={`inline-flex text-xs px-1.5 py-0.5 rounded border font-semibold ${style}`}>{acao}</span>;
 }

@@ -7,6 +7,9 @@ import { getVendas12mByCodigo } from '../services/vendas.service.js';
 import { calcularForecast, getFamiliasUrgentes } from '../services/forecast.service.js';
 import { getSazonalidade, updateSazFactor } from '../services/sazonalidade.service.js';
 import { getAllConfig, updateConfig } from '../services/config.service.js';
+import { getVendasMensais } from '../services/demanda.service.js';
+import { getInsights } from '../services/insights.service.js';
+import { analyzeShoppingList } from '../services/ai-analysis.service.js';
 
 const logger = createLogger('forecast:routes');
 const router: Router = Router();
@@ -139,6 +142,54 @@ router.patch('/api/v1/forecast/config', requireRole('gestor', 'diretor'), async 
     sendSuccess(res, { chave, valor });
   } catch (err) {
     sendError(res, 'INTERNAL_ERROR', 'Erro ao atualizar config', 500);
+  }
+});
+
+// ── Demanda Mensal ───────────────────────────────────────
+
+// GET /api/v1/forecast/demanda
+router.get('/api/v1/forecast/demanda', async (_req: Request, res: Response) => {
+  try {
+    const data = await getVendasMensais();
+    sendSuccess(res, data);
+  } catch (err) {
+    logger.error({ err }, 'Erro ao buscar demanda mensal');
+    sendError(res, 'INTERNAL_ERROR', 'Erro ao buscar demanda mensal', 500);
+  }
+});
+
+// ── Business Insights ────────────────────────────────────
+
+// GET /api/v1/forecast/insights
+router.get('/api/v1/forecast/insights', async (_req: Request, res: Response) => {
+  try {
+    const data = await getInsights();
+    sendSuccess(res, data);
+  } catch (err) {
+    logger.error({ err }, 'Erro ao buscar insights');
+    sendError(res, 'INTERNAL_ERROR', 'Erro ao buscar insights', 500);
+  }
+});
+
+// ── Shopping List AI Analysis ────────────────────────────
+
+// POST /api/v1/forecast/shopping-list/analyze
+router.post('/api/v1/forecast/shopping-list/analyze', async (req: Request, res: Response) => {
+  try {
+    const { itens } = req.body;
+    if (!Array.isArray(itens) || itens.length === 0) {
+      sendError(res, 'VALIDATION_ERROR', 'itens deve ser um array nao vazio');
+      return;
+    }
+    const result = await analyzeShoppingList(itens);
+    if (!result) {
+      sendError(res, 'LLM_UNAVAILABLE', 'Servico de analise temporariamente indisponivel. Tente novamente em alguns minutos.', 503);
+      return;
+    }
+    sendSuccess(res, result);
+  } catch (err) {
+    logger.error({ err }, 'Erro na analise IA');
+    sendError(res, 'INTERNAL_ERROR', 'Erro na analise', 500);
   }
 });
 

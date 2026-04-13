@@ -35,6 +35,8 @@ import { ForecastDashboard } from './pages/forecast/ForecastDashboard.js';
 import { RollingForecastPage } from './pages/forecast/RollingForecastPage.js';
 import { ShoppingListPage } from './pages/forecast/ShoppingListPage.js';
 import { ForecastConfigPage } from './pages/forecast/ForecastConfigPage.js';
+import { DemandAnalysisPage } from './pages/forecast/DemandAnalysisPage.js';
+import { BusinessInsightsPage } from './pages/forecast/BusinessInsightsPage.js';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage.js';
 import { ResetPasswordPage } from './pages/ResetPasswordPage.js';
 import { useAuth } from './hooks/useAuth.js';
@@ -43,11 +45,15 @@ import { useAuthStore } from './stores/auth.store.js';
 import {
   TrendingUp,
   ShoppingCart,
+  BarChart3,
+  Lightbulb,
 } from 'lucide-react';
 
 const FORECAST_SUB_ITEMS: SidebarSubItem[] = [
   { id: 'forecast-dashboard', name: 'Dashboard', path: '/forecast', icon: LayoutDashboard },
   { id: 'forecast-rolling', name: 'Forecast 120d', path: '/forecast/rolling', icon: TrendingUp },
+  { id: 'forecast-demanda', name: 'Demanda', path: '/forecast/demanda', icon: BarChart3 },
+  { id: 'forecast-insights', name: 'Insights', path: '/forecast/insights', icon: Lightbulb },
   { id: 'forecast-shopping', name: 'Shopping List', path: '/forecast/shopping', icon: ShoppingCart },
   { id: 'forecast-config', name: 'Config', path: '/forecast/config', icon: Settings },
 ];
@@ -167,6 +173,8 @@ function ProtectedShell() {
         {/* Forecast Planner */}
         {enabledSet.has('forecast') && <Route path="forecast" element={<ForecastDashboard />} />}
         {enabledSet.has('forecast') && <Route path="forecast/rolling" element={<RollingForecastPage />} />}
+        {enabledSet.has('forecast') && <Route path="forecast/demanda" element={<DemandAnalysisPage />} />}
+        {enabledSet.has('forecast') && <Route path="forecast/insights" element={<BusinessInsightsPage />} />}
         {enabledSet.has('forecast') && <Route path="forecast/shopping" element={<ShoppingListPage />} />}
         {enabledSet.has('forecast') && <Route path="forecast/config" element={<ForecastConfigPage />} />}
         {!enabledSet.has('forecast') && <Route path="forecast" element={<ModuleRoute moduleId="forecast" moduleName="Forecast Planner" enabled={false} />} />}

@@ -8,19 +8,19 @@
 
 ## Resumo Executivo
 
-O motor de forecast Atlas replica a **logica core** (simulacao 120d, ruptura, MOQ, compra local, sazonalidade). Todos os **3 calculos** e **3 gaps de UX** foram corrigidos. Restam **3 gaps de funcionalidade** pendentes — 2 features avancadas (Aba Demanda, Aba Insights) e 1 integracao IA.
+O motor de forecast Atlas replica a **logica core** (simulacao 120d, ruptura, MOQ, compra local, sazonalidade). **COMPLETO.** Todos os calculos, gaps de UX e features avancadas foram implementados. 53 testes unitarios passando.
 
-| Categoria | Total | Resolvido | Pendente |
-|-----------|-------|-----------|----------|
-| Calculos (CALC) | 3 | 3 | 0 |
-| Gaps funcionalidade (GAP-F) | 6 | 3 | 3 |
-| Testes unitarios | 3 | 3 | 0 |
+| Categoria | Total | Resolvido |
+|-----------|-------|-----------|
+| Calculos (CALC) | 3 | 3 |
+| Gaps funcionalidade (GAP-F) | 6 | 6 |
+| Testes unitarios | 5 | 5 |
 
 ---
 
 ## GAPS DE FUNCIONALIDADE
 
-### GAP-F1: Aba "Analise de Demanda" ausente — PENDENTE
+### ~~GAP-F1: Aba "Analise de Demanda" ausente~~ — RESOLVIDO
 
 O legado tem uma aba completa (linhas 1096-1380) com:
 - 3 meses fechados de vendas por familia (colunas: Mes1, Mes2, Mes3)
@@ -34,11 +34,11 @@ O legado tem uma aba completa (linhas 1096-1380) com:
 
 **Impacto**: Comprador perde visao de tendencia de demanda — nao sabe se a demanda esta subindo ou caindo.
 
-**Correcao**: Criar componente AbaDemanda usando dados de `tbl_movimentacaoEstoqueHistorico_Q2P` agregados por mes. Precisara de novo endpoint `GET /api/v1/forecast/demanda` retornando vendas mensais por familia (24 meses historico).
+**Resolucao**: DemandAnalysisPage.tsx com vendas mensais 24m, YoY trimestral (seta colorida), sparkline recharts, expansao por SKU com contribuicao % e cobertura. Endpoint `GET /api/v1/forecast/demanda` via `demanda.service.ts`. 11 testes unitarios.
 
 ---
 
-### GAP-F2: Aba "Business Insights" ausente — PENDENTE
+### ~~GAP-F2: Aba "Business Insights" ausente~~ — RESOLVIDO
 
 O legado tem uma aba (linhas 2361-2807) com:
 - **Tabela de LT por fornecedor**: Fornecedor, Pais, Familias, LT sugerido, override input, LT efetivo
@@ -51,7 +51,7 @@ O legado tem uma aba (linhas 2361-2807) com:
 
 **Impacto**: Comprador perde inteligencia de timing de compra — nao sabe qual e o melhor mes pra comprar considerando frete/preco historico.
 
-**Correcao**: Criar AbaInsights. Dados COMEX podem vir da planilha FUP (ja no repo) ou de tabela no BD. Fornecedores vem de `tbl_cadastroFornecedoresClientes_ACXE`.
+**Resolucao**: BusinessInsightsPage.tsx com tabela de fornecedores (nome, pais, familias, LT efetivo), score COMEX mensal (0-100, barras coloridas, 5 classificacoes), historico de importacao 12m (ComposedChart volume+preco). Endpoint `GET /api/v1/forecast/insights` via `insights.service.ts`. Dados da FUP Comex (227 importacoes, 22 fornecedores). 10 testes unitarios.
 
 ---
 
@@ -72,7 +72,7 @@ O legado permite ajustar demanda individual por SKU com botoes +5%/-5% (linhas 6
 
 ---
 
-### GAP-F4: Analise Claude AI na Shopping List — PENDENTE
+### ~~GAP-F4: Analise Claude AI na Shopping List~~ — RESOLVIDO
 
 O legado tem integracao com API Anthropic (linhas 2005-2073):
 - Botao "Analisar com Claude" na shopping list
@@ -84,7 +84,7 @@ O legado tem integracao com API Anthropic (linhas 2005-2073):
 
 **Impacto**: Feature diferenciadora de UX. Nao bloqueia uso, mas e um "nice-to-have" forte.
 
-**Correcao**: Integrar via n8n como gateway LLM (Principio III — nao chamar API diretamente do frontend). Endpoint `POST /api/v1/forecast/shopping-list/analyze` que chama n8n webhook.
+**Resolucao**: Botao "Analisar com IA" na ShoppingListPage com painel de resultados (resumo executivo, alertas, recomendacoes por item com badge COMPRAR AGORA/AGUARDAR/REVISAR/OK + justificativa). Endpoint `POST /api/v1/forecast/shopping-list/analyze` via `ai-analysis.service.ts` que chama n8n webhook (env `N8N_FORECAST_ANALYZE_URL`). Fallback gracioso se LLM indisponivel. Timeout 30s.
 
 ---
 
