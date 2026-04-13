@@ -37,10 +37,19 @@ export function MotorMVPage() {
     },
   });
 
+  const initialCalcDone = useRef(false);
+
   useEffect(() => {
-    if (posData?.pct_nao_pago != null) setPctEstoque(Number(posData.pct_nao_pago));
-    if (posData?.ptax_atual?.venda != null) setSpotRate(Number(posData.ptax_atual.venda));
-  }, [posData]);
+    if (!posData) return;
+    if (posData.pct_nao_pago != null) setPctEstoque(Number(posData.pct_nao_pago));
+    if (posData.ptax_atual?.venda != null) setSpotRate(Number(posData.ptax_atual.venda));
+    // Auto-calc once when posicao data arrives
+    if (!initialCalcDone.current) {
+      initialCalcDone.current = true;
+      const ep = posData.pct_nao_pago != null ? Number(posData.pct_nao_pago) : 52;
+      calcMutation.mutate({ lambda, pct_estoque_nao_pago: ep / 100 });
+    }
+  }, [posData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const calcMutation = useMutation({
     mutationFn: async (params: { lambda: number; pct_estoque_nao_pago: number }) => {
