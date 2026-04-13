@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, type ChangeEvent } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { DataTable, type Column } from '@atlas/ui';
 import { useAuthStore } from '../../stores/auth.store.js';
 import {
@@ -25,7 +25,6 @@ export function MotorMVPage() {
   const [pctEstoque, setPctEstoque] = useState(52);
   const [spotRate, setSpotRate] = useState(5.0);
   const [ndf90Rate, setNdf90Rate] = useState(5.10);
-  const [result, setResult] = useState<MotorResult | null>(null);
 
   // Get pct_nao_pago and ptax from posicao on mount
   const { data: posData } = useQuery({
@@ -37,45 +36,44 @@ export function MotorMVPage() {
     },
   });
 
-  const initialCalcDone = useRef(false);
-
+  // Sync posData values into local state once
+  const posDataApplied = useRef(false);
   useEffect(() => {
-    if (!posData) return;
+    if (!posData || posDataApplied.current) return;
+    posDataApplied.current = true;
     if (posData.pct_nao_pago != null) setPctEstoque(Number(posData.pct_nao_pago));
     if (posData.ptax_atual?.venda != null) setSpotRate(Number(posData.ptax_atual.venda));
-    // Auto-calc once when posicao data arrives
-    if (!initialCalcDone.current) {
-      initialCalcDone.current = true;
-      const ep = posData.pct_nao_pago != null ? Number(posData.pct_nao_pago) : 52;
-      calcMutation.mutate({ lambda, pct_estoque_nao_pago: ep / 100 });
-    }
-  }, [posData]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [posData]);
 
-  const calcMutation = useMutation({
-    mutationFn: async (params: { lambda: number; pct_estoque_nao_pago: number }) => {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (csrfToken) headers['x-csrf-token'] = csrfToken;
-      const res = await fetch('/api/v1/hedge/motor/calcular', {
-        method: 'POST', credentials: 'include', headers,
-        body: JSON.stringify(params),
-      });
-      const body = (await res.json()) as any;
-      if (!res.ok) throw new Error(body.error?.message ?? 'Erro');
-      return body.data as MotorResult;
-    },
-    onSuccess: (data) => setResult(data),
+  // Motor calculation as useQuery — fires automatically, refetches on param change
+  const fetchMotor = async (l: number, ep: number): Promise<MotorResult> => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (csrfToken) headers['x-csrf-token'] = csrfToken;
+    const res = await fetch('/api/v1/hedge/motor/calcular', {
+      method: 'POST', credentials: 'include', headers,
+      body: JSON.stringify({ lambda: l, pct_estoque_nao_pago: ep / 100 }),
+    });
+    const body = (await res.json()) as any;
+    if (!res.ok) throw new Error(body.error?.message ?? 'Erro');
+    return body.data as MotorResult;
+  };
+
+  const { data: result = null } = useQuery<MotorResult | null>({
+    queryKey: ['hedge', 'motor', lambda, pctEstoque],
+    queryFn: () => fetchMotor(lambda, pctEstoque),
+    enabled: !!posData,
+    staleTime: 30_000,
   });
 
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
   const doCalc = useCallback((l?: number, e?: number) => {
-    const lv = l ?? lambda;
-    const ev = e ?? pctEstoque;
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      calcMutation.mutate({ lambda: lv, pct_estoque_nao_pago: ev / 100 });
-    }, 400);
-  }, [lambda, pctEstoque]); // eslint-disable-line react-hooks/exhaustive-deps
+      if (l != null) setLambda(l);
+      if (e != null) setPctEstoque(e);
+    }, 300);
+  }, []);
 
   const lambdaDesc = lambda < 0.3 ? 'Conservador' : lambda < 0.5 ? 'Moderado' : lambda < 0.7 ? 'Moderado-alto' : 'Alto — max. protecao';
 
@@ -130,7 +128,7 @@ export function MotorMVPage() {
             <p className="text-[9px] text-atlas-muted">0 = minimiza custo / 1 = maximiza protecao</p>
           </div>
           <input type="range" min={0} max={1} step={0.05} value={lambda}
-            onChange={(e: ChangeEvent<HTMLInputElement>) => { const v = parseFloat(e.target.value); setLambda(v); doCalc(v); }}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => { const v = parseFloat(e.target.value); doCalc(v, undefined); setLambda(v); }}
             className="w-full accent-emerald-600" />
           <div className="text-right">
             <p className="text-3xl font-bold text-emerald-600">{lambda.toFixed(2)}</p>
@@ -184,7 +182,7 @@ export function MotorMVPage() {
               <span className="font-bold text-amber-600">{pctEstoque}%</span>
             </div>
             <input type="range" min={0} max={100} step={5} value={pctEstoque}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => { const v = parseInt(e.target.value); setPctEstoque(v); doCalc(undefined, v); }}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => { const v = parseInt(e.target.value); doCalc(undefined, v); setPctEstoque(v); }}
               className="w-full accent-amber-600" />
           </div>
         </div>
