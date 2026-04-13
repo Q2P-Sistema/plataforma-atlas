@@ -62,13 +62,13 @@ export function ForecastConfigPage() {
 
       {/* Config params */}
       <div className="bg-atlas-card border border-atlas-border rounded-lg p-5">
-        <p className="text-[9px] text-atlas-muted uppercase tracking-[3px] mb-4">Parametros do Modelo</p>
+        <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-4">Parametros do Modelo</p>
         <div className="space-y-0">
           {configs.map((c) => (
             <div key={c.chave} className="flex items-center justify-between py-2.5 border-b border-atlas-border/50 last:border-0">
               <div>
-                <p className="text-[11px] font-medium text-atlas-text">{c.chave.replace(/_/g, ' ')}</p>
-                <p className="text-[9px] text-atlas-muted">{c.descricao}</p>
+                <p className="text-sm font-medium text-atlas-text">{c.chave.replace(/_/g, ' ')}</p>
+                <p className="text-xs text-atlas-muted">{c.descricao}</p>
               </div>
               <div className="flex items-center gap-2">
                 {editKey === c.chave ? (
@@ -76,8 +76,8 @@ export function ForecastConfigPage() {
                     <input type="number" value={editVal} onChange={(e: ChangeEvent<HTMLInputElement>) => setEditVal(e.target.value)}
                       className="w-20 px-2 py-1 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-xs text-right font-mono" />
                     <button onClick={() => configMut.mutate({ chave: c.chave, valor: editVal })}
-                      className="text-[9px] px-2 py-1 rounded bg-emerald-600 text-white">OK</button>
-                    <button onClick={() => setEditKey(null)} className="text-[9px] px-2 py-1 rounded bg-atlas-border text-atlas-text">X</button>
+                      className="text-xs px-2 py-1 rounded bg-emerald-600 text-white">OK</button>
+                    <button onClick={() => setEditKey(null)} className="text-xs px-2 py-1 rounded bg-atlas-border text-atlas-text">X</button>
                   </>
                 ) : (
                   <span className="text-xs font-mono text-atlas-text cursor-pointer hover:text-emerald-600"
@@ -93,19 +93,19 @@ export function ForecastConfigPage() {
 
       {/* Sazonalidade */}
       <div className="bg-atlas-card border border-atlas-border rounded-lg p-5">
-        <p className="text-[9px] text-atlas-muted uppercase tracking-[3px] mb-4">Sazonalidade por Familia</p>
+        <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-4">Sazonalidade por Familia</p>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-atlas-border">
-                <th className="px-2 py-2 text-left text-[9px] text-atlas-muted sticky left-0 bg-atlas-card">Familia</th>
-                {MESES.map((m) => <th key={m} className="px-2 py-2 text-center text-[9px] text-atlas-muted w-14">{m}</th>)}
+                <th className="px-2 py-2 text-left text-xs text-atlas-muted sticky left-0 bg-atlas-card">Familia</th>
+                {MESES.map((m) => <th key={m} className="px-2 py-2 text-center text-xs text-atlas-muted w-14">{m}</th>)}
               </tr>
             </thead>
             <tbody className="divide-y divide-atlas-border/50">
               {sazData.map((fam) => (
                 <tr key={fam.familia_id}>
-                  <td className="px-2 py-2 text-[11px] font-medium text-atlas-text sticky left-0 bg-atlas-card whitespace-nowrap">{fam.familia_id}</td>
+                  <td className="px-2 py-2 text-sm font-medium text-atlas-text sticky left-0 bg-atlas-card whitespace-nowrap">{fam.familia_id}</td>
                   {Array.from({ length: 12 }, (_, i) => {
                     const mesData = fam.meses.find((m) => m.mes === i + 1);
                     const fator = mesData?.fator_efetivo ?? 1.0;
@@ -118,7 +118,7 @@ export function ForecastConfigPage() {
                             const v = parseFloat(e.target.value);
                             if (v >= 0.1 && v <= 3.0) sazMut.mutate({ familia_id: fam.familia_id, mes: i + 1, fator: v });
                           }}
-                          className={`w-12 px-1 py-0.5 text-center text-[10px] font-mono rounded border ${isOverride ? 'border-amber-400 bg-amber-50 text-amber-800' : 'border-atlas-border/30 bg-transparent text-atlas-text'}`} />
+                          className={`w-12 px-1 py-0.5 text-center text-xs font-mono rounded border ${isOverride ? 'border-amber-400 bg-amber-50 text-amber-800' : 'border-atlas-border/30 bg-transparent text-atlas-text'}`} />
                       </td>
                     );
                   })}
@@ -127,7 +127,7 @@ export function ForecastConfigPage() {
             </tbody>
           </table>
         </div>
-        <p className="text-[9px] text-atlas-muted mt-2">Valores com borda amarela foram editados pelo usuario. 1.00 = media, &gt;1 = pico, &lt;1 = baixa.</p>
+        <p className="text-xs text-atlas-muted mt-2">Valores com borda amarela foram editados pelo usuario. 1.00 = media, &gt;1 = pico, &lt;1 = baixa.</p>
       </div>
     </div>
   );

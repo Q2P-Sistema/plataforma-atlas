@@ -104,15 +104,15 @@ export function ShoppingListPage() {
             <thead>
               <tr className="bg-atlas-bg border-b border-atlas-border">
                 <th className="px-2 py-2.5 w-8"></th>
-                <th className="px-2 py-2.5 text-left text-[9px] text-atlas-muted uppercase">Familia</th>
-                <th className="px-2 py-2.5 text-right text-[9px] text-atlas-muted uppercase">Qtd</th>
-                <th className="px-2 py-2.5 text-center text-[9px] text-atlas-muted uppercase">Comprar em</th>
-                <th className="px-2 py-2.5 text-center text-[9px] text-atlas-muted uppercase">Chega em</th>
-                <th className="px-2 py-2.5 text-right text-[9px] text-atlas-muted uppercase">LT</th>
-                <th className="px-2 py-2.5 text-right text-[9px] text-atlas-muted uppercase">Ruptura</th>
-                <th className="px-2 py-2.5 text-right text-[9px] text-atlas-muted uppercase">Est+Rota</th>
-                <th className="px-2 py-2.5 text-right text-[9px] text-atlas-muted uppercase">Valor</th>
-                <th className="px-2 py-2.5 text-left text-[9px] text-atlas-muted uppercase">Obs</th>
+                <th className="px-2 py-2.5 text-left text-xs text-atlas-muted uppercase">Familia</th>
+                <th className="px-2 py-2.5 text-right text-xs text-atlas-muted uppercase">Qtd</th>
+                <th className="px-2 py-2.5 text-center text-xs text-atlas-muted uppercase">Comprar em</th>
+                <th className="px-2 py-2.5 text-center text-xs text-atlas-muted uppercase">Chega em</th>
+                <th className="px-2 py-2.5 text-right text-xs text-atlas-muted uppercase">LT</th>
+                <th className="px-2 py-2.5 text-right text-xs text-atlas-muted uppercase">Ruptura</th>
+                <th className="px-2 py-2.5 text-right text-xs text-atlas-muted uppercase">Est+Rota</th>
+                <th className="px-2 py-2.5 text-right text-xs text-atlas-muted uppercase">Valor</th>
+                <th className="px-2 py-2.5 text-left text-xs text-atlas-muted uppercase">Obs</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-atlas-border/50">
@@ -123,13 +123,13 @@ export function ShoppingListPage() {
                   </td>
                   <td className="px-2 py-2 font-medium text-atlas-text">
                     {it.familia_nome}
-                    {it.is_local && <span className="ml-1 text-[8px] px-1 py-0.5 rounded bg-purple-500/10 text-purple-600 border border-purple-500/20">LOCAL</span>}
+                    {it.is_local && <span className="ml-1 text-xs px-1 py-0.5 rounded bg-purple-500/10 text-purple-600 border border-purple-500/20">LOCAL</span>}
                   </td>
                   <td className="px-2 py-2 text-right">
                     <div className="flex items-center justify-end gap-1">
-                      <button onClick={() => adjustQtd(idx, -1)} className="text-[10px] px-1 rounded bg-atlas-border hover:bg-red-100">-</button>
+                      <button onClick={() => adjustQtd(idx, -1)} className="text-xs px-1 rounded bg-atlas-border hover:bg-red-100">-</button>
                       <span className="font-mono font-semibold min-w-[40px] text-center">{fmtT(it.qtd)}</span>
-                      <button onClick={() => adjustQtd(idx, 1)} className="text-[10px] px-1 rounded bg-atlas-border hover:bg-emerald-100">+</button>
+                      <button onClick={() => adjustQtd(idx, 1)} className="text-xs px-1 rounded bg-atlas-border hover:bg-emerald-100">+</button>
                     </div>
                   </td>
                   <td className="px-2 py-2 text-center">{it.comprar_em >= 0 ? `Dia ${it.comprar_em}` : <span className="text-red-600 font-semibold">AGORA</span>}</td>
@@ -140,7 +140,7 @@ export function ShoppingListPage() {
                   <td className="px-2 py-2 text-right font-mono">{fmtBrl(it.valor)}</td>
                   <td className="px-2 py-2">
                     <input type="text" value={it.obs} onChange={(e) => setObs(idx, e.target.value)} placeholder="..."
-                      className="w-full px-1 py-0.5 text-[10px] rounded border border-atlas-border/30 bg-transparent" />
+                      className="w-full px-1 py-0.5 text-xs rounded border border-atlas-border/30 bg-transparent" />
                   </td>
                 </tr>
               ))}

@@ -92,8 +92,8 @@ export function ConfigPage() {
         {PARAM_GROUPS.map((group) => (
           <div key={group.title} className="bg-atlas-card border border-atlas-border rounded-lg p-5">
             <div className="flex justify-between items-center mb-4 pb-3 border-b border-atlas-border">
-              <span className="text-[9px] tracking-[2px] text-atlas-muted uppercase">{group.title}</span>
-              <span className="text-[8px] px-1.5 py-0.5 rounded border font-semibold tracking-wider uppercase"
+              <span className="text-xs tracking-[2px] text-atlas-muted uppercase">{group.title}</span>
+              <span className="text-xs px-1.5 py-0.5 rounded border font-semibold tracking-wider uppercase"
                 style={{ backgroundColor: group.srcColor + '15', color: group.srcColor, borderColor: group.srcColor + '30' }}>
                 {group.src}
               </span>
@@ -105,8 +105,8 @@ export function ConfigPage() {
                 return (
                   <div key={p.key} className="flex items-center justify-between py-2.5 border-b border-atlas-border/50 last:border-0">
                     <div className="flex-1 min-w-0">
-                      <p className="text-[11px] font-medium text-atlas-text">{p.label}</p>
-                      <p className="text-[9px] text-atlas-muted">{p.desc}</p>
+                      <p className="text-sm font-medium text-atlas-text">{p.label}</p>
+                      <p className="text-xs text-atlas-muted">{p.desc}</p>
                     </div>
                     <div className="flex items-center gap-2 ml-3">
                       {isEditing ? (
@@ -114,10 +114,10 @@ export function ConfigPage() {
                           <input type="number" step={p.step} min={p.min} max={p.max} value={editVal}
                             onChange={(e: ChangeEvent<HTMLInputElement>) => setEditVal(e.target.value)}
                             className="w-20 px-2 py-1 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-xs text-right font-mono focus:outline-none focus:ring-1 focus:ring-emerald-600" />
-                          <span className="text-[10px] text-atlas-muted min-w-[28px]">{p.unit}</span>
+                          <span className="text-xs text-atlas-muted min-w-[28px]">{p.unit}</span>
                           <button onClick={() => updateMut.mutate({ chave: p.key, valor: editVal })}
-                            className="text-[9px] px-2 py-1 rounded bg-emerald-600 text-white">OK</button>
-                          <button onClick={() => setEditKey(null)} className="text-[9px] px-2 py-1 rounded bg-atlas-border text-atlas-text">X</button>
+                            className="text-xs px-2 py-1 rounded bg-emerald-600 text-white">OK</button>
+                          <button onClick={() => setEditKey(null)} className="text-xs px-2 py-1 rounded bg-atlas-border text-atlas-text">X</button>
                         </>
                       ) : (
                         <>
@@ -125,7 +125,7 @@ export function ConfigPage() {
                             onClick={() => { setEditKey(p.key); setEditVal(val != null ? String(val) : ''); }}>
                             {val != null ? String(val) : '—'}
                           </span>
-                          <span className="text-[10px] text-atlas-muted min-w-[28px]">{p.unit}</span>
+                          <span className="text-xs text-atlas-muted min-w-[28px]">{p.unit}</span>
                         </>
                       )}
                     </div>
@@ -139,8 +139,8 @@ export function ConfigPage() {
         {/* NDF Rates */}
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-5">
           <div className="flex justify-between items-center mb-4 pb-3 border-b border-atlas-border">
-            <span className="text-[9px] tracking-[2px] text-atlas-muted uppercase">Taxas NDF — Input Manual</span>
-            <span className="text-[8px] px-1.5 py-0.5 rounded border font-semibold tracking-wider uppercase bg-purple-500/10 text-purple-600 border-purple-500/20">
+            <span className="text-xs tracking-[2px] text-atlas-muted uppercase">Taxas NDF — Input Manual</span>
+            <span className="text-xs px-1.5 py-0.5 rounded border font-semibold tracking-wider uppercase bg-purple-500/10 text-purple-600 border-purple-500/20">
               BANCO - Atualizar semanalmente
             </span>
           </div>
@@ -150,17 +150,17 @@ export function ConfigPage() {
             const isEditing = editKey === key;
             return (
               <div key={prazo} className="flex items-center justify-between py-2.5 border-b border-atlas-border/50 last:border-0">
-                <p className="text-[11px] font-medium text-atlas-text">NDF {prazo} dias</p>
+                <p className="text-sm font-medium text-atlas-text">NDF {prazo} dias</p>
                 <div className="flex items-center gap-2">
                   {isEditing ? (
                     <>
                       <input type="number" step={0.01} value={editVal}
                         onChange={(e: ChangeEvent<HTMLInputElement>) => setEditVal(e.target.value)}
                         className="w-20 px-2 py-1 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-xs text-right font-mono focus:outline-none focus:ring-1 focus:ring-purple-600" />
-                      <span className="text-[10px] text-atlas-muted">R$/USD</span>
+                      <span className="text-xs text-atlas-muted">R$/USD</span>
                       <button onClick={() => updateMut.mutate({ chave: key, valor: editVal })}
-                        className="text-[9px] px-2 py-1 rounded bg-purple-600 text-white">OK</button>
-                      <button onClick={() => setEditKey(null)} className="text-[9px] px-2 py-1 rounded bg-atlas-border text-atlas-text">X</button>
+                        className="text-xs px-2 py-1 rounded bg-purple-600 text-white">OK</button>
+                      <button onClick={() => setEditKey(null)} className="text-xs px-2 py-1 rounded bg-atlas-border text-atlas-text">X</button>
                     </>
                   ) : (
                     <>
@@ -168,7 +168,7 @@ export function ConfigPage() {
                         onClick={() => { setEditKey(key); setEditVal(val != null ? String(val) : ''); }}>
                         {val != null ? `R$ ${Number(val).toFixed(2)}` : '—'}
                       </span>
-                      <span className="text-[10px] text-atlas-muted">R$/USD</span>
+                      <span className="text-xs text-atlas-muted">R$/USD</span>
                     </>
                   )}
                 </div>
@@ -180,17 +180,17 @@ export function ConfigPage() {
         {/* Insert new NDF rate */}
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-5">
           <div className="flex justify-between items-center mb-4 pb-3 border-b border-atlas-border">
-            <span className="text-[9px] tracking-[2px] text-atlas-muted uppercase">Inserir Nova Cotacao NDF</span>
+            <span className="text-xs tracking-[2px] text-atlas-muted uppercase">Inserir Nova Cotacao NDF</span>
           </div>
           <div className="space-y-3">
             <div>
-              <label htmlFor="taxa-data" className="block text-[10px] text-atlas-muted mb-1">Data referencia</label>
+              <label htmlFor="taxa-data" className="block text-xs text-atlas-muted mb-1">Data referencia</label>
               <input id="taxa-data" type="date" value={taxaForm.data_ref}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setTaxaForm({ ...taxaForm, data_ref: e.target.value })}
                 className="w-full px-3 py-2 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-xs focus:outline-none focus:ring-1 focus:ring-acxe" />
             </div>
             <div>
-              <label htmlFor="taxa-prazo" className="block text-[10px] text-atlas-muted mb-1">Prazo</label>
+              <label htmlFor="taxa-prazo" className="block text-xs text-atlas-muted mb-1">Prazo</label>
               <select id="taxa-prazo" value={taxaForm.prazo_dias}
                 onChange={(e: ChangeEvent<HTMLSelectElement>) => setTaxaForm({ ...taxaForm, prazo_dias: e.target.value })}
                 className="w-full px-3 py-2 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-xs focus:outline-none focus:ring-1 focus:ring-acxe">
@@ -198,7 +198,7 @@ export function ConfigPage() {
               </select>
             </div>
             <div>
-              <label htmlFor="taxa-valor" className="block text-[10px] text-atlas-muted mb-1">Taxa (R$/USD)</label>
+              <label htmlFor="taxa-valor" className="block text-xs text-atlas-muted mb-1">Taxa (R$/USD)</label>
               <input id="taxa-valor" type="number" step="0.0001" value={taxaForm.taxa} placeholder="5.8500"
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setTaxaForm({ ...taxaForm, taxa: e.target.value })}
                 className="w-full px-3 py-2 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-xs focus:outline-none focus:ring-1 focus:ring-acxe" />

@@ -49,7 +49,7 @@ export function ForecastDashboard() {
         className="text-left text-xs font-semibold text-atlas-text hover:text-blue-600 transition-colors">
         <span className="mr-1">{expanded === r.familia_id ? '\u25BC' : '\u25B6'}</span>
         {r.familia_nome}
-        {r.is_internacional && <span className="ml-1 text-[8px] text-blue-500">INTL</span>}
+        {r.is_internacional && <span className="ml-1 text-xs text-blue-500">INTL</span>}
       </button>
     )},
     { key: 'pool_disponivel', header: 'Disponivel', sortable: true, render: (r) => fmtT(r.pool_disponivel) },
@@ -64,7 +64,7 @@ export function ForecastDashboard() {
       return <span style={{ color }} className="font-semibold">{r.cobertura_dias}d</span>;
     }},
     { key: 'status', header: 'Status', sortable: true, render: (r) => (
-      <span className={`inline-flex text-[10px] px-1.5 py-0.5 rounded border font-semibold ${STATUS_STYLE[r.status] ?? ''}`}>{r.status}</span>
+      <span className={`inline-flex text-xs px-1.5 py-0.5 rounded border font-semibold ${STATUS_STYLE[r.status] ?? ''}`}>{r.status}</span>
     )},
   ];
 
@@ -95,7 +95,7 @@ export function ForecastDashboard() {
 
       {/* Families table */}
       <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-        <p className="text-[9px] text-atlas-muted uppercase tracking-[3px] mb-3">Familias de Produto — Estoque e Cobertura</p>
+        <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Familias de Produto — Estoque e Cobertura</p>
         <DataTable columns={columns} data={filtered} rowKey={(r) => r.familia_id} pageSize={20} />
 
         {/* Expanded SKU grid */}
@@ -104,21 +104,21 @@ export function ForecastDashboard() {
           if (!fam) return null;
           return (
             <div className="mt-3 bg-atlas-bg border border-atlas-border rounded-lg p-3">
-              <p className="text-[9px] text-atlas-muted uppercase tracking-[2px] mb-2">SKUs — {fam.familia_nome}</p>
+              <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-2">SKUs — {fam.familia_nome}</p>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs font-mono">
                   <thead>
                     <tr className="border-b border-atlas-border">
-                      <th className="px-2 py-1.5 text-left text-[9px] text-atlas-muted">Codigo</th>
-                      <th className="px-2 py-1.5 text-left text-[9px] text-atlas-muted">Descricao</th>
-                      <th className="px-2 py-1.5 text-right text-[9px] text-atlas-muted">Disp.</th>
-                      <th className="px-2 py-1.5 text-right text-[9px] text-atlas-muted">Reserv.</th>
-                      <th className="px-2 py-1.5 text-right text-[9px] text-atlas-muted">Transit.</th>
-                      <th className="px-2 py-1.5 text-right text-[9px] text-atlas-muted">Total</th>
-                      <th className="px-2 py-1.5 text-right text-[9px] text-atlas-muted">CMC</th>
-                      <th className="px-2 py-1.5 text-right text-[9px] text-atlas-muted">Venda/dia</th>
-                      <th className="px-2 py-1.5 text-right text-[9px] text-atlas-muted">Cobert.</th>
-                      <th className="px-2 py-1.5 text-right text-[9px] text-atlas-muted">LT</th>
+                      <th className="px-2 py-1.5 text-left text-xs text-atlas-muted">Codigo</th>
+                      <th className="px-2 py-1.5 text-left text-xs text-atlas-muted">Descricao</th>
+                      <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Disp.</th>
+                      <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Reserv.</th>
+                      <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Transit.</th>
+                      <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Total</th>
+                      <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">CMC</th>
+                      <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Venda/dia</th>
+                      <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Cobert.</th>
+                      <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">LT</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-atlas-border/50">
@@ -151,9 +151,9 @@ function KpiCard({ label, value, color, sub }: { label: string; value: string; c
   return (
     <div className="bg-atlas-card border border-atlas-border rounded-lg p-4 relative overflow-hidden">
       <div className="absolute top-0 left-0 right-0 h-0.5" style={{ backgroundColor: color }} />
-      <p className="text-[9px] text-atlas-muted uppercase tracking-wider mb-2">{label}</p>
+      <p className="text-xs text-atlas-muted uppercase tracking-wider mb-2">{label}</p>
       <p className="text-xl font-bold" style={{ color }}>{value}</p>
-      {sub && <p className="text-[10px] text-atlas-muted mt-1">{sub}</p>}
+      {sub && <p className="text-xs text-atlas-muted mt-1">{sub}</p>}
     </div>
   );
 }

@@ -90,7 +90,7 @@ export function NDFListPage() {
 
   const columns: Column<NdfRow>[] = [
     { key: 'tipo', header: 'Tipo', sortable: true, render: (r) => r.tipo.toUpperCase() },
-    { key: 'notional_usd', header: 'Notional', sortable: true, render: (r) => formatUsd(r.notional_usd) },
+    { key: 'notional_usd', header: 'Valor USD', sortable: true, render: (r) => formatUsd(r.notional_usd) },
     { key: 'taxa_ndf', header: 'Taxa', sortable: true, render: (r) => r.taxa_ndf.toFixed(4) },
     { key: 'data_vencimento', header: 'Vencimento', sortable: true, render: (r) => r.data_vencimento },
     { key: 'custo_brl', header: 'Custo BRL', render: (r) => formatBrl(r.custo_brl) },
@@ -187,7 +187,7 @@ export function NDFListPage() {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label htmlFor="ndf-notional" className="block text-sm font-medium text-atlas-text mb-1">Notional USD</label>
+              <label htmlFor="ndf-notional" className="block text-sm font-medium text-atlas-text mb-1">Valor USD</label>
               <input id="ndf-notional" type="number" step="0.01" value={form.notional_usd}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setForm({ ...form, notional_usd: e.target.value })}
                 className="w-full px-3 py-2 rounded-lg border border-atlas-border bg-atlas-bg text-atlas-text text-sm focus:outline-none focus:ring-2 focus:ring-acxe" />
@@ -238,11 +238,11 @@ export function NDFListPage() {
             <input id="ptax-liq" type="number" step="0.0001" value={ptaxLiq} placeholder="5.4500"
               onChange={(e: ChangeEvent<HTMLInputElement>) => setPtaxLiq(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border border-atlas-border bg-atlas-bg text-atlas-text text-sm focus:outline-none focus:ring-2 focus:ring-acxe" />
-            <p className="text-[9px] text-atlas-muted mt-1">Preencha para calculo automatico: resultado = notional * (taxa - ptax)</p>
+            <p className="text-xs text-atlas-muted mt-1">Preencha para calculo automatico: resultado = notional * (taxa - ptax)</p>
           </div>
           <div className="relative">
             <div className="absolute inset-x-0 top-0 flex items-center justify-center -mt-1">
-              <span className="text-[9px] text-atlas-muted bg-atlas-card px-2">ou informe direto</span>
+              <span className="text-xs text-atlas-muted bg-atlas-card px-2">ou informe direto</span>
             </div>
           </div>
           <div>
@@ -250,7 +250,7 @@ export function NDFListPage() {
             <input id="resultado-liq" type="number" step="0.01" value={resultadoManual} placeholder="-50000.00"
               onChange={(e: ChangeEvent<HTMLInputElement>) => setResultadoManual(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border border-atlas-border bg-atlas-bg text-atlas-text text-sm focus:outline-none focus:ring-2 focus:ring-acxe" />
-            <p className="text-[9px] text-atlas-muted mt-1">Valor informado pelo banco. Sobrescreve o calculo automatico.</p>
+            <p className="text-xs text-atlas-muted mt-1">Valor informado pelo banco. Sobrescreve o calculo automatico.</p>
           </div>
         </div>
       </Modal>

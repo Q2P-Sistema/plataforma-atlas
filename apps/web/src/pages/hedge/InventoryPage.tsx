@@ -52,13 +52,13 @@ function KpiCard({ label, value, color, src, sub }: { label: string; value: stri
     <div className="bg-atlas-card border border-atlas-border rounded-lg p-4 relative overflow-hidden">
       <div className="absolute top-0 left-0 right-0 h-0.5" style={{ backgroundColor: color }} />
       <div className="flex items-center gap-2 mb-2">
-        <p className="text-[9px] text-atlas-muted uppercase tracking-wider">{label}</p>
-        <span className={`inline-flex text-[8px] px-1.5 py-0.5 rounded border font-semibold tracking-wider uppercase ${srcStyles[src] ?? srcStyles.calc}`}>
+        <p className="text-xs text-atlas-muted uppercase tracking-wider">{label}</p>
+        <span className={`inline-flex text-xs px-1.5 py-0.5 rounded border font-semibold tracking-wider uppercase ${srcStyles[src] ?? srcStyles.calc}`}>
           {src.toUpperCase()}
         </span>
       </div>
       <p className="text-xl font-bold" style={{ color }}>{value}</p>
-      {sub && <p className="text-[10px] text-atlas-muted mt-1">{sub}</p>}
+      {sub && <p className="text-xs text-atlas-muted mt-1">{sub}</p>}
     </div>
   );
 }
@@ -173,10 +173,10 @@ export function InventoryPage() {
       {showLocalidades && localidadesData && (
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-[9px] text-atlas-muted uppercase tracking-[3px]">Localidades para calculo de exposicao</p>
+            <p className="text-xs text-atlas-muted uppercase tracking-[3px]">Localidades para calculo de exposicao</p>
             <div className="flex gap-2">
-              <button onClick={selectAll} className="text-[9px] px-2 py-1 rounded bg-emerald-600/10 text-emerald-600 hover:bg-emerald-600/20 transition-colors">Todas</button>
-              <button onClick={selectNone} className="text-[9px] px-2 py-1 rounded bg-red-600/10 text-red-600 hover:bg-red-600/20 transition-colors">Nenhuma</button>
+              <button onClick={selectAll} className="text-xs px-2 py-1 rounded bg-emerald-600/10 text-emerald-600 hover:bg-emerald-600/20 transition-colors">Todas</button>
+              <button onClick={selectNone} className="text-xs px-2 py-1 rounded bg-red-600/10 text-red-600 hover:bg-red-600/20 transition-colors">Nenhuma</button>
             </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
@@ -186,16 +186,16 @@ export function InventoryPage() {
                 <input type="checkbox" checked={loc.selecionada} onChange={() => toggleLocalidade(loc.localidade)}
                   className="mt-0.5 accent-emerald-600" />
                 <div className="min-w-0">
-                  <p className="text-[11px] font-medium text-atlas-text truncate">{loc.localidade}</p>
-                  <p className="text-[9px] text-atlas-muted">
+                  <p className="text-sm font-medium text-atlas-text truncate">{loc.localidade}</p>
+                  <p className="text-xs text-atlas-muted">
                     {loc.empresa.toUpperCase()} | {ORIGEM_LABELS[loc.origem] ?? loc.origem} | {loc.itens} itens
                   </p>
-                  <p className="text-[9px] font-mono text-atlas-muted">{fmtBrlM(loc.valor_brl)}</p>
+                  <p className="text-xs font-mono text-atlas-muted">{fmtBrlM(loc.valor_brl)}</p>
                 </div>
               </label>
             ))}
           </div>
-          <p className="text-[9px] text-atlas-muted mt-2">
+          <p className="text-xs text-atlas-muted mt-2">
             {localidadesData.localidades.filter((l) => l.selecionada).length}/{localidadesData.total} localidades selecionadas
             {' | '}Total: {fmtBrlM(localidadesData.localidades.filter((l) => l.selecionada).reduce((s, l) => s + l.valor_brl, 0))}
           </p>
@@ -214,7 +214,7 @@ export function InventoryPage() {
       {/* Estados chart + Pie */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-          <p className="text-[9px] text-atlas-muted uppercase tracking-[3px] mb-3">Estados do Estoque — Fluxo Completo</p>
+          <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Estados do Estoque — Fluxo Completo</p>
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={estadosData} layout="vertical">
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(221,225,232,0.5)" />
@@ -228,7 +228,7 @@ export function InventoryPage() {
           </ResponsiveContainer>
         </div>
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-          <p className="text-[9px] text-atlas-muted uppercase tracking-[3px] mb-3">Estoque por Origem (R$M)</p>
+          <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Estoque por Origem (R$M)</p>
           <ResponsiveContainer width="100%" height={200}>
             <PieChart>
               <Pie data={pieData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} dataKey="value">
@@ -243,7 +243,7 @@ export function InventoryPage() {
 
       {/* Depot grid cards */}
       <div>
-        <p className="text-[9px] text-atlas-muted uppercase tracking-[3px] mb-3">Depositos Regionais + Transito</p>
+        <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Depositos Regionais + Transito</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
           {estoque.map((d) => (
             <div key={`${d.localidade}-${d.empresa}`}
@@ -251,7 +251,7 @@ export function InventoryPage() {
               <p className="text-xs font-semibold mb-2" style={{ color: d.empresa === 'acxe' ? '#0077cc' : '#1a9944' }}>
                 {d.localidade}
               </p>
-              <div className="space-y-1 text-[11px]">
+              <div className="space-y-1 text-sm">
                 <div className="flex justify-between border-b border-atlas-border/50 pb-1">
                   <span className="text-atlas-muted">Empresa</span>
                   <span className="font-mono text-atlas-text">{d.empresa.toUpperCase()}</span>

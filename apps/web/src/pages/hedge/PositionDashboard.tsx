@@ -61,7 +61,7 @@ function SourceBadge({ src }: { src: 'acxe' | 'q2p' | 'bcb' | 'calc' | 'manual' 
     manual: 'bg-purple-500/10 text-purple-600 border-purple-500/20',
   };
   return (
-    <span className={`inline-flex text-[8px] px-1.5 py-0.5 rounded border font-semibold tracking-wider uppercase ${styles[src]}`}>
+    <span className={`inline-flex text-xs px-1.5 py-0.5 rounded border font-semibold tracking-wider uppercase ${styles[src]}`}>
       {src}
     </span>
   );
@@ -72,11 +72,11 @@ function KpiCard({ label, value, color, src, sub }: { label: string; value: stri
     <div className="bg-atlas-card border border-atlas-border rounded-lg p-4 relative overflow-hidden">
       <div className="absolute top-0 left-0 right-0 h-0.5" style={{ backgroundColor: color }} />
       <div className="flex items-center gap-2 mb-2">
-        <p className="text-[9px] text-atlas-muted uppercase tracking-wider">{label}</p>
+        <p className="text-xs text-atlas-muted uppercase tracking-wider">{label}</p>
         <SourceBadge src={src} />
       </div>
       <p className="text-xl font-bold" style={{ color }}>{value}</p>
-      {sub && <p className="text-[10px] text-atlas-muted mt-1">{sub}</p>}
+      {sub && <p className="text-xs text-atlas-muted mt-1">{sub}</p>}
     </div>
   );
 }
@@ -155,14 +155,14 @@ export function PositionDashboard() {
         const cls = r.cobertura_pct >= 60 ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
           : r.cobertura_pct >= 40 ? 'bg-amber-500/10 text-amber-600 border-amber-500/20'
             : 'bg-red-500/10 text-red-600 border-red-500/20';
-        return <span className={`inline-flex text-[10px] px-1.5 py-0.5 rounded border font-semibold ${cls}`}>{fmtPct(r.cobertura_pct)}</span>;
+        return <span className={`inline-flex text-xs px-1.5 py-0.5 rounded border font-semibold ${cls}`}>{fmtPct(r.cobertura_pct)}</span>;
       },
     },
     {
       key: 'status', header: 'Acao',
       render: (r) => {
-        if (r.cobertura_pct >= 60) return <span className="text-emerald-600 text-[10px] font-semibold">OK</span>;
-        return <span className="text-red-600 text-[10px] font-semibold">NDF NEEDED</span>;
+        if (r.cobertura_pct >= 60) return <span className="text-emerald-600 text-xs font-semibold">OK</span>;
+        return <span className="text-red-600 text-xs font-semibold">NDF NEEDED</span>;
       },
     },
   ];
@@ -191,14 +191,14 @@ export function PositionDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 bg-atlas-card border border-atlas-border rounded-lg p-4">
           <div className="flex items-center gap-2 mb-3">
-            <p className="text-[9px] text-atlas-muted uppercase tracking-[3px]">Posicao Agregada por Bucket de Vencimento</p>
+            <p className="text-xs text-atlas-muted uppercase tracking-[3px]">Posicao Agregada por Bucket de Vencimento</p>
             <SourceBadge src="acxe" />
             <SourceBadge src="calc" />
           </div>
           <DataTable columns={bucketColumns} data={buckets} rowKey={(r) => r.id} />
         </div>
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-          <p className="text-[9px] text-atlas-muted uppercase tracking-[2px] mb-2">Composicao da Posicao</p>
+          <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-2">Composicao da Posicao</p>
           <ResponsiveContainer width="100%" height={220}>
             <PieChart>
               <Pie data={donutData} cx="50%" cy="50%" innerRadius={55} outerRadius={85} dataKey="value">
@@ -215,7 +215,7 @@ export function PositionDashboard() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
           <div className="flex items-center gap-2 mb-2">
-            <p className="text-[9px] text-atlas-muted uppercase tracking-[2px]">Cambio PTAX</p>
+            <p className="text-xs text-atlas-muted uppercase tracking-[2px]">Cambio PTAX</p>
             <SourceBadge src="bcb" />
           </div>
           <ResponsiveContainer width="100%" height={180}>
@@ -229,7 +229,7 @@ export function PositionDashboard() {
           </ResponsiveContainer>
         </div>
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-          <p className="text-[9px] text-atlas-muted uppercase tracking-[2px] mb-2">Exposicao por Bucket ($M)</p>
+          <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-2">Exposicao por Bucket ($M)</p>
           <ResponsiveContainer width="100%" height={180}>
             <BarChart data={barData}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(221,225,232,0.5)" />
@@ -242,7 +242,7 @@ export function PositionDashboard() {
           </ResponsiveContainer>
         </div>
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-          <p className="text-[9px] text-atlas-muted uppercase tracking-[2px] mb-2">PTAX Atual</p>
+          <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-2">PTAX Atual</p>
           <div className="space-y-3 mt-4">
             <div className="flex justify-between items-center">
               <span className="text-xs text-atlas-muted">Spot (venda)</span>

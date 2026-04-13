@@ -56,22 +56,22 @@ export function MarginSimulationPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-          <label htmlFor="sim-fat" className="block text-[10px] text-atlas-muted uppercase tracking-wider mb-1">Faturamento BRL</label>
+          <label htmlFor="sim-fat" className="block text-xs text-atlas-muted uppercase tracking-wider mb-1">Faturamento BRL</label>
           <input id="sim-fat" type="number" value={faturamento} onChange={(e: ChangeEvent<HTMLInputElement>) => setFaturamento(e.target.value)}
             className="w-full px-3 py-2 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-sm font-mono focus:outline-none focus:ring-1 focus:ring-acxe" />
-          <p className="text-[9px] text-atlas-muted mt-1">R$ {(parseFloat(faturamento || '0') / 1e6).toFixed(1)}M</p>
+          <p className="text-xs text-atlas-muted mt-1">R$ {(parseFloat(faturamento || '0') / 1e6).toFixed(1)}M</p>
         </div>
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-          <label htmlFor="sim-custos" className="block text-[10px] text-atlas-muted uppercase tracking-wider mb-1">Outros Custos BRL</label>
+          <label htmlFor="sim-custos" className="block text-xs text-atlas-muted uppercase tracking-wider mb-1">Outros Custos BRL</label>
           <input id="sim-custos" type="number" value={custos} onChange={(e: ChangeEvent<HTMLInputElement>) => setCustos(e.target.value)}
             className="w-full px-3 py-2 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-sm font-mono focus:outline-none focus:ring-1 focus:ring-acxe" />
-          <p className="text-[9px] text-atlas-muted mt-1">{((parseFloat(custos || '0') / parseFloat(faturamento || '1')) * 100).toFixed(0)}% do faturamento</p>
+          <p className="text-xs text-atlas-muted mt-1">{((parseFloat(custos || '0') / parseFloat(faturamento || '1')) * 100).toFixed(0)}% do faturamento</p>
         </div>
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-          <label htmlFor="sim-vol" className="block text-[10px] text-atlas-muted uppercase tracking-wider mb-1">Volume USD (exposicao)</label>
+          <label htmlFor="sim-vol" className="block text-xs text-atlas-muted uppercase tracking-wider mb-1">Volume USD (exposicao)</label>
           <input id="sim-vol" type="number" value={volume} onChange={(e: ChangeEvent<HTMLInputElement>) => setVolume(e.target.value)}
             className="w-full px-3 py-2 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-sm font-mono focus:outline-none focus:ring-1 focus:ring-acxe" />
-          <p className="text-[9px] text-atlas-muted mt-1">$ {(parseFloat(volume || '0') / 1e6).toFixed(2)}M</p>
+          <p className="text-xs text-atlas-muted mt-1">$ {(parseFloat(volume || '0') / 1e6).toFixed(2)}M</p>
         </div>
       </div>
 
@@ -84,7 +84,7 @@ export function MarginSimulationPage() {
         <>
           {/* Chart */}
           <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-            <p className="text-[9px] text-atlas-muted uppercase tracking-[2px] mb-3">Margem vs Variacao Cambial — Sem Hedge vs Com NDF</p>
+            <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-3">Margem vs Variacao Cambial — Sem Hedge vs Com NDF</p>
             <ResponsiveContainer width="100%" height={260}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(221,225,232,0.5)" />
@@ -104,10 +104,10 @@ export function MarginSimulationPage() {
             <table className="w-full text-xs font-mono">
               <thead>
                 <tr className="bg-atlas-bg border-b border-atlas-border">
-                  <th className="px-3 py-2.5 text-left text-[9px] font-normal text-atlas-muted uppercase tracking-wider">Cambio</th>
-                  <th className="px-3 py-2.5 text-right text-[9px] font-normal text-atlas-muted uppercase tracking-wider">Custo c/ Hedge</th>
-                  <th className="px-3 py-2.5 text-right text-[9px] font-normal text-atlas-muted uppercase tracking-wider">Custo s/ Hedge</th>
-                  <th className="px-3 py-2.5 text-right text-[9px] font-normal text-atlas-muted uppercase tracking-wider">Margem %</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-normal text-atlas-muted uppercase tracking-wider">Cambio</th>
+                  <th className="px-3 py-2.5 text-right text-xs font-normal text-atlas-muted uppercase tracking-wider">Custo c/ Hedge</th>
+                  <th className="px-3 py-2.5 text-right text-xs font-normal text-atlas-muted uppercase tracking-wider">Custo s/ Hedge</th>
+                  <th className="px-3 py-2.5 text-right text-xs font-normal text-atlas-muted uppercase tracking-wider">Margem %</th>
                 </tr>
               </thead>
               <tbody className="bg-atlas-card divide-y divide-atlas-border/50">

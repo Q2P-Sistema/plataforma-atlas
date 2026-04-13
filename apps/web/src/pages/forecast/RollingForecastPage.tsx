@@ -75,7 +75,7 @@ export function RollingForecastPage() {
 
           {/* Chart */}
           <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-            <p className="text-[9px] text-atlas-muted uppercase tracking-[3px] mb-3">Projecao de Estoque — {selected.familia_nome}</p>
+            <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Projecao de Estoque — {selected.familia_nome}</p>
             <ResponsiveContainer width="100%" height={300}>
               <AreaChart data={chartData}>
                 <defs>
@@ -103,7 +103,7 @@ export function RollingForecastPage() {
           {/* Compra local card */}
           {selected.compra_local && (
             <div className="bg-red-500/5 border border-red-500/20 rounded-lg p-4">
-              <p className="text-[9px] text-red-600 uppercase tracking-[3px] mb-2">Compra Local Emergencial</p>
+              <p className="text-xs text-red-600 uppercase tracking-[3px] mb-2">Compra Local Emergencial</p>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                 <div><span className="text-atlas-muted">Abrir pedido em</span><p className="font-bold text-red-600">Dia {selected.compra_local.dia_abrir}</p></div>
                 <div><span className="text-atlas-muted">Gap sem estoque</span><p className="font-bold">{selected.compra_local.gap_dias} dias</p></div>
@@ -115,19 +115,19 @@ export function RollingForecastPage() {
 
           {/* SKU grid */}
           <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-            <p className="text-[9px] text-atlas-muted uppercase tracking-[2px] mb-2">SKUs — {selected.familia_nome}</p>
+            <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-2">SKUs — {selected.familia_nome}</p>
             <div className="overflow-x-auto">
               <table className="w-full text-xs font-mono">
                 <thead>
                   <tr className="border-b border-atlas-border">
-                    <th className="px-2 py-1.5 text-left text-[9px] text-atlas-muted">Codigo</th>
-                    <th className="px-2 py-1.5 text-left text-[9px] text-atlas-muted">Descricao</th>
-                    <th className="px-2 py-1.5 text-right text-[9px] text-atlas-muted">Disp.</th>
-                    <th className="px-2 py-1.5 text-right text-[9px] text-atlas-muted">Transit.</th>
-                    <th className="px-2 py-1.5 text-right text-[9px] text-atlas-muted">Total</th>
-                    <th className="px-2 py-1.5 text-right text-[9px] text-atlas-muted">Venda/dia</th>
-                    <th className="px-2 py-1.5 text-right text-[9px] text-atlas-muted">Cobert.</th>
-                    <th className="px-2 py-1.5 text-right text-[9px] text-atlas-muted">LT</th>
+                    <th className="px-2 py-1.5 text-left text-xs text-atlas-muted">Codigo</th>
+                    <th className="px-2 py-1.5 text-left text-xs text-atlas-muted">Descricao</th>
+                    <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Disp.</th>
+                    <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Transit.</th>
+                    <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Total</th>
+                    <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Venda/dia</th>
+                    <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Cobert.</th>
+                    <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">LT</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-atlas-border/50">
@@ -151,7 +151,7 @@ export function RollingForecastPage() {
           {/* Pedidos em rota */}
           {selected.pedidos_em_rota.length > 0 && (
             <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-              <p className="text-[9px] text-atlas-muted uppercase tracking-[2px] mb-2">Pedidos em Rota</p>
+              <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-2">Pedidos em Rota</p>
               <div className="space-y-1">
                 {selected.pedidos_em_rota.map((p, i) => (
                   <div key={i} className="flex items-center justify-between text-xs py-1.5 border-b border-atlas-border/50 last:border-0">
@@ -172,9 +172,9 @@ export function RollingForecastPage() {
 function MiniCard({ label, value, color, sub }: { label: string; value: string; color?: string; sub?: string }) {
   return (
     <div className="bg-atlas-card border border-atlas-border rounded-lg p-3">
-      <p className="text-[9px] text-atlas-muted uppercase tracking-wider mb-1">{label}</p>
+      <p className="text-xs text-atlas-muted uppercase tracking-wider mb-1">{label}</p>
       <p className="text-lg font-bold" style={{ color }}>{value}</p>
-      {sub && <p className="text-[9px] text-atlas-muted mt-0.5">{sub}</p>}
+      {sub && <p className="text-xs text-atlas-muted mt-0.5">{sub}</p>}
     </div>
   );
 }

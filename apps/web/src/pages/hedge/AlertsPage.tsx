@@ -85,7 +85,7 @@ export function AlertsPage() {
           : r.status === 'liquidado' ? 'bg-blue-500/10 text-blue-600 border-blue-500/20'
           : r.status === 'cancelado' ? 'bg-red-500/10 text-red-600 border-red-500/20'
           : 'bg-amber-500/10 text-amber-600 border-amber-500/20';
-        return <span className={`inline-flex text-[10px] px-1.5 py-0.5 rounded border font-semibold ${cls}`}>{r.status}</span>;
+        return <span className={`inline-flex text-xs px-1.5 py-0.5 rounded border font-semibold ${cls}`}>{r.status}</span>;
       },
     },
   ];
@@ -118,18 +118,18 @@ export function AlertsPage() {
                 <span className="text-base leading-none mt-0.5 shrink-0">{icon}</span>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-semibold mb-0.5">{a.mensagem}</p>
-                  <p className="text-[9px] tracking-wider text-atlas-muted">{new Date(a.created_at).toLocaleString('pt-BR')}</p>
+                  <p className="text-xs tracking-wider text-atlas-muted">{new Date(a.created_at).toLocaleString('pt-BR')}</p>
                 </div>
                 <div className="flex gap-2 shrink-0">
                   {!a.lido && (
                     <button onClick={() => actionMut.mutate({ id: a.id, action: 'lido' })}
-                      className="text-[9px] px-2.5 py-1 rounded border font-mono transition-colors"
+                      className="text-xs px-2.5 py-1 rounded border font-mono transition-colors"
                       style={{ background: 'rgba(221,225,232,0.3)', borderColor: 'rgba(221,225,232,0.5)', color: '#8492a6' }}>
                       Lido
                     </button>
                   )}
                   <button onClick={() => actionMut.mutate({ id: a.id, action: 'resolver' })}
-                    className="text-[9px] px-2.5 py-1 rounded border font-mono transition-colors"
+                    className="text-xs px-2.5 py-1 rounded border font-mono transition-colors"
                     style={{ background: 'rgba(5,150,105,0.1)', borderColor: 'rgba(0,229,160,0.3)', color: '#059669' }}>
                     Resolver
                   </button>
@@ -142,7 +142,7 @@ export function AlertsPage() {
 
       {/* NDF History */}
       <div>
-        <p className="text-[9px] text-atlas-muted uppercase tracking-[3px] mb-3">Historico — NDFs Registrados</p>
+        <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Historico — NDFs Registrados</p>
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
           <DataTable columns={ndfColumns} data={ndfs} rowKey={(r) => r.id}
             emptyMessage="Nenhum NDF registrado ainda" />

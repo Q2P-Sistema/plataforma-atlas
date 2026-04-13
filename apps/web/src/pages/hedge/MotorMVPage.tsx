@@ -132,7 +132,7 @@ export function MotorMVPage() {
     { key: 'instrumento', header: 'Instrumento', render: (r) => <span className="text-xs font-semibold">{r.instrumento}</span> },
     { key: 'taxa_ndf', header: 'Taxa NDF', render: (r) => r.taxa_ndf > 0 ? `R$ ${r.taxa_ndf.toFixed(2)}` : '—' },
     { key: 'cobertura_alvo', header: 'Cobertura Alvo', render: (r) => `${r.cobertura_alvo.toFixed(1)}%` },
-    { key: 'prioridade', header: 'Prioridade', render: (r) => <span className={`inline-flex text-[10px] px-1.5 py-0.5 rounded border font-semibold ${prioridadeStyle(r.prioridade)}`}>{r.prioridade}</span> },
+    { key: 'prioridade', header: 'Prioridade', render: (r) => <span className={`inline-flex text-xs px-1.5 py-0.5 rounded border font-semibold ${prioridadeStyle(r.prioridade)}`}>{r.prioridade}</span> },
   ];
 
   return (
@@ -141,20 +141,20 @@ export function MotorMVPage() {
 
       {/* Engine container */}
       <div className="bg-atlas-card border border-emerald-500/30 rounded-lg p-5 shadow-sm shadow-emerald-500/5">
-        <p className="text-[9px] uppercase tracking-[3px] text-emerald-600 mb-5">Motor de Minima Variancia — Recomendacao de Hedge Otimo</p>
+        <p className="text-xs uppercase tracking-[3px] text-emerald-600 mb-5">Motor de Minima Variancia — Recomendacao de Hedge Otimo</p>
 
         {/* Lambda control */}
         <div className="grid grid-cols-[auto_1fr_auto] gap-4 items-center bg-atlas-bg rounded-lg p-4 border border-atlas-border mb-5">
           <div>
-            <p className="text-[9px] tracking-[2px] text-atlas-muted uppercase mb-1">AVERSAO AO RISCO (lambda)</p>
-            <p className="text-[9px] text-atlas-muted">0 = minimiza custo / 1 = maximiza protecao</p>
+            <p className="text-xs tracking-[2px] text-atlas-muted uppercase mb-1">AVERSAO AO RISCO (lambda)</p>
+            <p className="text-xs text-atlas-muted">0 = minimiza custo / 1 = maximiza protecao</p>
           </div>
           <input type="range" min={0} max={1} step={0.05} value={lambda}
             onChange={(e: ChangeEvent<HTMLInputElement>) => { const v = parseFloat(e.target.value); setLambda(v); commitSliders(v, pctEstoque); }}
             className="w-full accent-emerald-600" />
           <div className="text-right">
             <p className="text-3xl font-bold text-emerald-600">{lambda.toFixed(2)}</p>
-            <p className="text-[9px] text-atlas-muted mt-1">{lambdaDesc}</p>
+            <p className="text-xs text-atlas-muted mt-1">{lambdaDesc}</p>
           </div>
         </div>
 
@@ -162,25 +162,25 @@ export function MotorMVPage() {
         {result && (
           <div className="grid grid-cols-3 gap-3 mb-5">
             <div className="bg-atlas-bg border border-atlas-border rounded-lg p-3">
-              <p className="text-[9px] tracking-[2px] text-atlas-muted uppercase mb-1">Cobertura Global</p>
+              <p className="text-xs tracking-[2px] text-atlas-muted uppercase mb-1">Cobertura Global</p>
               <p className="text-2xl font-bold" style={{ color: result.cobertura_global_pct >= 60 ? '#059669' : result.cobertura_global_pct >= 40 ? '#d97706' : '#dc2626' }}>
                 {result.cobertura_global_pct.toFixed(1)}%
               </p>
-              <p className="text-[10px] text-atlas-muted mt-1">% da exposicao total coberta</p>
+              <p className="text-xs text-atlas-muted mt-1">% da exposicao total coberta</p>
             </div>
             <div className="bg-atlas-bg border border-atlas-border rounded-lg p-3">
-              <p className="text-[9px] tracking-[2px] text-atlas-muted uppercase mb-1">Gap Total USD</p>
+              <p className="text-xs tracking-[2px] text-atlas-muted uppercase mb-1">Gap Total USD</p>
               <p className="text-2xl font-bold" style={{ color: result.gap_total_usd > 0 ? '#dc2626' : '#059669' }}>
                 {fmtM(Math.abs(result.gap_total_usd))}
               </p>
-              <p className="text-[10px] text-atlas-muted mt-1">Exposicao residual descoberta</p>
+              <p className="text-xs text-atlas-muted mt-1">Exposicao residual descoberta</p>
             </div>
             <div className="bg-atlas-bg border border-atlas-border rounded-lg p-3">
-              <p className="text-[9px] tracking-[2px] text-atlas-muted uppercase mb-1">Custo da Acao</p>
+              <p className="text-xs tracking-[2px] text-atlas-muted uppercase mb-1">Custo da Acao</p>
               <p className="text-2xl font-bold text-purple-600">
                 R$ {Math.round(result.custo_acao_brl / 1000)}K
               </p>
-              <p className="text-[10px] text-atlas-muted mt-1">Custo estimado para fechar gaps</p>
+              <p className="text-xs text-atlas-muted mt-1">Custo estimado para fechar gaps</p>
             </div>
           </div>
         )}
@@ -188,7 +188,7 @@ export function MotorMVPage() {
         {/* Extra sliders — like legacy */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
           <div>
-            <div className="flex justify-between text-[10px] text-atlas-muted mb-1">
+            <div className="flex justify-between text-xs text-atlas-muted mb-1">
               <span>Cambio Spot (R$)</span>
               <span className="font-bold text-blue-600">R$ {spotRate.toFixed(2)}</span>
             </div>
@@ -197,7 +197,7 @@ export function MotorMVPage() {
               className="w-full accent-blue-600" />
           </div>
           <div>
-            <div className="flex justify-between text-[10px] text-atlas-muted mb-1">
+            <div className="flex justify-between text-xs text-atlas-muted mb-1">
               <span>Taxa NDF 90d (R$)</span>
               <span className="font-bold text-purple-600">R$ {ndf90Rate.toFixed(2)}</span>
             </div>
@@ -206,7 +206,7 @@ export function MotorMVPage() {
               className="w-full accent-purple-600" />
           </div>
           <div>
-            <div className="flex justify-between text-[10px] text-atlas-muted mb-1">
+            <div className="flex justify-between text-xs text-atlas-muted mb-1">
               <span>% Estoque nao pago</span>
               <span className="font-bold text-amber-600">{pctEstoque}%</span>
             </div>
@@ -231,7 +231,7 @@ export function MotorMVPage() {
         {/* Recommendation table */}
         {result && (
           <div>
-            <p className="text-[9px] tracking-[2px] text-atlas-muted uppercase mb-2">Recomendacao por Bucket</p>
+            <p className="text-xs tracking-[2px] text-atlas-muted uppercase mb-2">Recomendacao por Bucket</p>
             <DataTable columns={columns} data={result.recomendacoes} rowKey={(r) => r.bucket_id}
               emptyMessage="Nenhuma recomendacao — cobertura ja atinge o alvo" />
           </div>
@@ -241,7 +241,7 @@ export function MotorMVPage() {
       {/* Charts */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-          <p className="text-[9px] text-atlas-muted uppercase tracking-[2px] mb-2">Custo do Hedge vs Protecao — por lambda</p>
+          <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-2">Custo do Hedge vs Protecao — por lambda</p>
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={mvChartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(221,225,232,0.5)" />
@@ -255,7 +255,7 @@ export function MotorMVPage() {
           </ResponsiveContainer>
         </div>
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-          <p className="text-[9px] text-atlas-muted uppercase tracking-[2px] mb-2">Simulacao: Impacto na Margem por Variacao Cambial</p>
+          <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-2">Simulacao: Impacto na Margem por Variacao Cambial</p>
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={simData}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(221,225,232,0.5)" />
@@ -277,10 +277,10 @@ export function MotorMVPage() {
 function LayerCard({ num, name, pct, color, desc }: { num: string; name: string; pct: number; color: string; desc: string }) {
   return (
     <div className="rounded-lg p-4 border border-atlas-border" style={{ borderColor: color + '33', background: color + '0a' }}>
-      <p className="text-[9px] tracking-[2px] uppercase mb-2" style={{ color }}>{`CAMADA ${num}`}</p>
+      <p className="text-xs tracking-[2px] uppercase mb-2" style={{ color }}>{`CAMADA ${num}`}</p>
       <p className="text-sm font-bold mb-1" style={{ color }}>{name}</p>
       <p className="text-2xl font-extrabold leading-none mb-2" style={{ color }}>{pct.toFixed(1)}%</p>
-      <p className="text-[10px] text-atlas-muted leading-relaxed">{desc}</p>
+      <p className="text-xs text-atlas-muted leading-relaxed">{desc}</p>
       <div className="h-1.5 rounded bg-atlas-border/50 mt-3">
         <div className="h-full rounded transition-all duration-300" style={{ width: `${pct}%`, backgroundColor: color }} />
       </div>
