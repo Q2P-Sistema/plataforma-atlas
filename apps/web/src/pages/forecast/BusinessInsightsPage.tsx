@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import {
-  BarChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart,
+  Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart,
 } from 'recharts';
 
 interface Fornecedor { fornecedor: string; pais_origem: string; familias: string[]; lt_efetivo_dias: number; total_importacoes: number; ultimo_embarque: string; }
