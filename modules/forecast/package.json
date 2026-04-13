@@ -6,7 +6,9 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "description": "Forecast Planner — pedidos planejados, lead times, sazonalidade, rolling forecast 120d",
   "dependencies": {

@@ -91,10 +91,10 @@ function fmtDate(d: Date): string {
 /**
  * Runs the 120-day rolling forecast for a single family.
  */
-async function buildForecastFamilia(
+export async function buildForecastFamilia(
   familia: FamiliaEstoque,
   vendasMap: Map<string, number>,
-  chegadasMap: Map<string, Array<{ data: string; qtd: number }>>,
+  chegadasMap: Map<string, Array<{ data: string; qtd: number; valor_brl: number }>>,
   config: ForecastConfig,
   ajustesDemanda: Record<string, number> = {},
 ): Promise<FamiliaForecast> {
@@ -134,7 +134,7 @@ async function buildForecastFamilia(
         codigo: sku.codigo,
         qtd_pendente: c.qtd,
         data_chegada: c.data,
-        valor_brl: 0,
+        valor_brl: c.valor_brl,
       });
     }
   }

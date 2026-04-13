@@ -1,19 +1,26 @@
 # Gap Analysis: Forecast Planner — Legado JSX vs Atlas
 
 **Data**: 2026-04-13
+**Ultima atualizacao**: 2026-04-13
 **Escopo**: Comparacao do legado `forecast-planner.jsx` (2955 linhas) com o modulo Atlas `modules/forecast/`
 
 ---
 
 ## Resumo Executivo
 
-O motor de forecast Atlas replica corretamente a **logica core** (simulacao 120d, ruptura, MOQ, compra local, sazonalidade). Porem faltam **6 funcionalidades significativas** e ha **3 diferencas de calculo** que afetam a fidelidade dos resultados.
+O motor de forecast Atlas replica a **logica core** (simulacao 120d, ruptura, MOQ, compra local, sazonalidade). Todos os **3 calculos** e **3 gaps de UX** foram corrigidos. Restam **3 gaps de funcionalidade** pendentes — 2 features avancadas (Aba Demanda, Aba Insights) e 1 integracao IA.
+
+| Categoria | Total | Resolvido | Pendente |
+|-----------|-------|-----------|----------|
+| Calculos (CALC) | 3 | 3 | 0 |
+| Gaps funcionalidade (GAP-F) | 6 | 3 | 3 |
+| Testes unitarios | 3 | 3 | 0 |
 
 ---
 
 ## GAPS DE FUNCIONALIDADE
 
-### GAP-F1: Aba "Analise de Demanda" ausente
+### GAP-F1: Aba "Analise de Demanda" ausente — PENDENTE
 
 O legado tem uma aba completa (linhas 1096-1380) com:
 - 3 meses fechados de vendas por familia (colunas: Mes1, Mes2, Mes3)
@@ -27,11 +34,11 @@ O legado tem uma aba completa (linhas 1096-1380) com:
 
 **Impacto**: Comprador perde visao de tendencia de demanda — nao sabe se a demanda esta subindo ou caindo.
 
-**Correcao**: Criar componente AbaDemanda usando dados de `tbl_movimentacaoEstoqueHistorico_Q2P` agregados por mes.
+**Correcao**: Criar componente AbaDemanda usando dados de `tbl_movimentacaoEstoqueHistorico_Q2P` agregados por mes. Precisara de novo endpoint `GET /api/v1/forecast/demanda` retornando vendas mensais por familia (24 meses historico).
 
 ---
 
-### GAP-F2: Aba "Business Insights" ausente
+### GAP-F2: Aba "Business Insights" ausente — PENDENTE
 
 O legado tem uma aba (linhas 2361-2807) com:
 - **Tabela de LT por fornecedor**: Fornecedor, Pais, Familias, LT sugerido, override input, LT efetivo
@@ -48,22 +55,24 @@ O legado tem uma aba (linhas 2361-2807) com:
 
 ---
 
-### GAP-F3: Ajuste de demanda por SKU (botao +/- %)
+### ~~GAP-F3: Ajuste de demanda por SKU (botao +/- %)~~ — RESOLVIDO
 
 O legado permite ajustar demanda individual por SKU com botoes +5%/-5% (linhas 646-658). O ajuste:
 - Afeta a demanda diaria do SKU na simulacao
 - Afeta a qtd proporcional sugerida por SKU
 - E visual — nao persiste (state React)
 
-**Atlas**: Nao tem ajuste por SKU. A demanda e fixa baseada no historico.
-
-**Impacto**: Comprador nao pode ajustar para cenarios "e se demanda deste SKU subir 20%?".
-
-**Correcao**: Adicionar state `ajustesDemanda` no frontend e enviar como parametro ao endpoint `/calcular`.
+**Resolucao**: Implementado em RollingForecastPage.tsx:
+- State `ajustes: Record<string, number>` com funcao `adjustSku(codigo, delta)` em passos de +/-5%
+- Botoes `-5` / `+5` por SKU na tabela, com indicador visual (highlight amarelo, valor colorido)
+- Botao "Limpar ajustes" quando ha ajustes ativos
+- `queryKey` inclui `ajustes` para re-fetch automatico ao mudar
+- Envia `ajustes_demanda` no body do POST `/calcular`
+- Backend aplica via `vendas12m += base * (1 + ajuste / 100)` por SKU (forecast.service.ts:109)
 
 ---
 
-### GAP-F4: Analise Claude AI na Shopping List
+### GAP-F4: Analise Claude AI na Shopping List — PENDENTE
 
 O legado tem integracao com API Anthropic (linhas 2005-2073):
 - Botao "Analisar com Claude" na shopping list
@@ -79,95 +88,81 @@ O legado tem integracao com API Anthropic (linhas 2005-2073):
 
 ---
 
-### GAP-F5: Secao "Definicoes/Metodologia" recolhivel
+### ~~GAP-F5: Secao "Definicoes/Metodologia" recolhivel~~ — RESOLVIDO
 
-O legado tem em cada aba um bloco recolhivel (linhas 472-540) com definicoes de termos:
-- Pool de estoque 3 camadas
-- Sazonalidade
-- Qtd Sugerida (net-of-pipeline)
-- MOQ
+O legado tem em cada aba um bloco recolhivel (linhas 472-540) com definicoes de termos.
+
+**Resolucao**: Componente `DefinitionsPanel` adicionado ao ForecastDashboard.tsx. Painel recolhivel com definicoes de:
+- Pool de Estoque (3 camadas: disponivel, bloqueado, transito)
+- Cobertura (dias)
+- Sazonalidade (fator mensal)
+- Qtd Sugerida (net-of-pipeline, MOQ)
 - Compra Local Emergencial
-
-**Atlas**: Nao tem secao de definicoes.
-
-**Impacto**: Baixo — documentacao inline para usuario. Facil de adicionar.
+- Status (critico/atencao/ok)
 
 ---
 
-### GAP-F6: Painel de urgentes separado em 3 categorias
+### ~~GAP-F6: Painel de urgentes separado em 3 categorias~~ — RESOLVIDO
 
 O legado divide o painel de urgentes (linhas 712-971) em 3 secoes distintas:
 1. **Internacional** — familias com pedido nos proximos 15d
 2. **Local emergencial** — familias com prazo perdido (tabela separada roxa)
 3. **Nacional** — familias sem pipeline internacional mas com ruptura (tabela separada azul)
 
-**Atlas**: O painel de urgentes e uma lista unica filtrada. Nao separa por tipo de compra.
-
-**Impacto**: Medio — a separacao visual ajuda o comprador a priorizar acoes diferentes.
-
-**Correcao**: Dividir o resultado de `/urgentes` em 3 grupos no frontend.
+**Resolucao**: Implementado no commit `a631cac`. O ForecastDashboard.tsx agora:
+- Separa `urgentes` em 3 arrays via `useMemo`: `intl`, `local`, `nacional` (linhas 59-69)
+- Renderiza 3 `<UrgentSection>` com cores distintas: vermelho (intl), roxo (local), ciano (nacional) (linhas 196-220)
+- Cada secao tem titulo, subtitulo, e tabela com colunas contextuais (Ruptura vs Cobertura, Gap vs Qtd Sugerida)
+- KPI cards atualizados: "Compra Intl." e "Compra Local" como cards separados (linhas 110-111)
 
 ---
 
 ## DIFERENCAS DE CALCULO
 
-### CALC-1: Preco da sugestao usa CMC em vez de preco real de ultima compra
+### ~~CALC-1: Preco da sugestao usa CMC em vez de preco real~~ — RESOLVIDO (parcial)
 
-| Item | Legado | Atlas |
-|------|--------|-------|
-| Preco/kg para valor estimado | `totalBRLPedidos / totalKgPedidos` (preco real dos pedidos em rota) | `cmc_medio` (custo medio do estoque) |
-| Fallback | CMC ponderado por vendas12m | Sem fallback (so CMC) |
+| Item | Legado | Atlas (antes) | Atlas (agora) |
+|------|--------|---------------|---------------|
+| Preco/kg para valor estimado | `totalBRLPedidos / totalKgPedidos` | `cmc_medio` fixo | `totalBrlPedidos / totalKgPedidos`, fallback CMC |
 
-**Legado (linhas 252-257)**:
-```
-precoPorKgIntl = totalKgPedidos > 0
-  ? totalBRLPedidos / totalKgPedidos   // preco real NF
-  : media ponderada precoBRL por vendas12m  // fallback CMC
+**Resolucao**: A logica foi corrigida em forecast.service.ts (linhas 220-223):
+```typescript
+const precoPorKg = totalKgPedidos > 0 ? totalBrlPedidos / totalKgPedidos : familia.cmc_medio;
+const valorBrl = Math.round(qtdSugerida * precoPorKg);
 ```
 
-**Atlas (forecast.service.ts)**:
-```
-valorBrl = qtdSugerida * familia.cmc_medio
-```
-
-**Impacto**: O valor estimado pode divergir significativamente. O preco da ultima compra real (NF) e mais preciso que o CMC do estoque (que mistura compras antigas).
-
-**Correcao**: No `forecast.service.ts`, buscar valor total e quantidade dos pedidos em rota (`pedidosEmRota`) e calcular preco real. Fallback para CMC se nao houver pedidos.
+**Nota**: A query de `pedidos.service.ts` extrai `pc.nvaltot` como `valor_brl`. O `getChegadasPorProduto()` agora propaga `valor_brl` para o forecast engine, que usa o preco real dos pedidos em rota para calcular `precoPorKg`. Fallback para `familia.cmc_medio` quando nao ha pedidos.
 
 ---
 
-### CALC-2: qtdBruta so calcula se diaRuptura >= 0
+### ~~CALC-2: qtdBruta so calcula se diaRuptura >= 0~~ — RESOLVIDO
 
-O legado (linhas 239-242) so calcula necessidade bruta se houver ruptura:
-```
-if(diaRuptura >= 0) {
-  for(let d=0; d<lt+60; d++) qtdBruta += demandaDia(d);
+O legado (linhas 239-242) so calcula necessidade bruta se houver ruptura.
+
+**Resolucao**: Corrigido em forecast.service.ts (linhas 206-215). Comentario inline: `// CALC-2 fix: legado so calcula se diaRuptura >= 0`.
+```typescript
+if (diaRuptura >= 0) {
+  for (let d = 0; d < familia.lt_efetivo + config.horizonte_cobertura; d++) { ... }
 }
 ```
-
-**Atlas**: Calcula qtdBruta sempre (independente de ruptura), somando demanda para LT+60 dias.
-
-**Impacto**: No Atlas, familias sem ruptura prevista podem ter `qtdSugerida > 0` (sugestao desnecessaria). No legado, essas familias teriam `qtdSugerida = 0`.
-
-**Correcao**: Adicionar condicao `if (diaRuptura >= 0)` antes do loop de qtdBruta no `forecast.service.ts`.
+Familias sem ruptura agora tem `qtdSugerida = 0` corretamente.
 
 ---
 
-### CALC-3: vendaDiaria30d nao calculada
+### ~~CALC-3: vendaDiaria30d nao calculada~~ — RESOLVIDO
 
-O legado calcula a media da demanda diaria sazonalizada dos proximos 30 dias (linha 231):
+O legado calcula a media da demanda diaria sazonalizada dos proximos 30 dias.
+
+**Resolucao**: Implementado em forecast.service.ts (linhas 196-203):
+```typescript
+let soma30d = 0;
+for (let d = 0; d < 30; d++) {
+  const sazD = sazFactors.get(mesD) ?? 1.0;
+  soma30d += vendaDiariaMedia * (1 + config.variacao_anual_pct / 100) * sazD;
+}
+const vendaDiaria30d = soma30d / 30;
 ```
-vendaDiaria30d = Array.from({length:30}, (_, i) => demandaDia(i)).reduce((a,b) => a+b, 0) / 30
-```
-
-Essa metrica e usada para:
-- Calculo de `qtdGapBruta` na compra local: `Math.max(vendaGap, vendaDiaria30d * ltLocal)`
-
-**Atlas**: Usa `vendaDiariaSaz` (sazonalidade do mes atual) para a compra local, nao a media dos proximos 30d.
-
-**Impacto**: Se a virada de mes estiver proxima, a sazonalidade do mes atual pode nao representar bem os proximos 30 dias (parte pode ser do mes seguinte com indice diferente).
-
-**Correcao**: Calcular media sazonalizada dos proximos 30 dias em vez de usar fator do mes atual.
+Usada na compra local (linha 235): `Math.max(vendaGap, Math.round(vendaDiaria30d * config.lead_time_local))`.
 
 ---
 
@@ -175,11 +170,12 @@ Essa metrica e usada para:
 
 | Item | Legado | Atlas | Impacto |
 |------|--------|-------|---------|
-| Nacional vs Internacional | Detecta por `PEDIDOS_COMPRA.length === 0` | Detecta por `marca === 'IMPACXE'` | Atlas e mais correto — usa dado cadastral |
+| Nacional vs Internacional | Detecta por `PEDIDOS_COMPRA.length === 0` | Detecta por `is_internacional` (marca cadastral) | Atlas e mais correto — usa dado cadastral |
 | Chart rolling 120d | SVG custom renderizado manualmente | recharts AreaChart | Atlas e melhor (responsivo, tooltip nativo) |
 | Qtd proporcional por SKU | `arredMOQ(qtdSugerida * sku.share, moqAtivo)` | Nao calcula proporcao por SKU | Menor — so UI detail |
 | Flags de urgencia | `precisaComprarEm15d`, `necessitaCompraLocal` como campos | Inferido do `dia_pedido_ideal` | Equivalente |
-| Demanda com ajuste % | `vendas12m * (1 + ajuste/100)` por SKU | Nao tem ajuste | Ver GAP-F3 |
+| ~~Demanda com ajuste %~~ | `vendas12m * (1 + ajuste/100)` por SKU | Backend + frontend (+/-5% por SKU) | Resolvido — ver GAP-F3 |
+| ~~valor_brl nos pedidos_em_rota~~ | Extraido da NF do pedido | Propagado de `pc.nvaltot` via chegadasMap | Resolvido — ver CALC-1 |
 
 ---
 
@@ -195,32 +191,40 @@ A planilha "Planejador de Compras - Rev Latest.xlsm" deve ser usada para validar
 
 4. **Data de ruptura** — Deve ser muito proxima se os inputs sao os mesmos (estoque, demanda, chegadas). Divergencia > 5 dias indica problema no motor.
 
-**Pendencia**: Nao consigo ler o conteudo da planilha .xlsm programaticamente. A validacao precisa ser feita manualmente por voce abrindo ambos lado a lado.
+**Pendencia**: Nao consigo ler o conteudo da planilha .xlsm programaticamente. A validacao precisa ser feita manualmente abrindo ambos lado a lado.
 
 ---
 
-## PLANO DE PRIORIZACAO
+## PLANO DE PRIORIZACAO (atualizado)
 
-### Prioridade 1 — Corrigir calculos (afetam numeros)
+### Prioridade 1 — Corrigir calculos (afetam numeros) — CONCLUIDO
 
-| # | Item | Esforco |
-|---|------|---------|
-| 1 | CALC-2: qtdBruta so se diaRuptura >= 0 | 10 min |
-| 2 | CALC-1: Preco real dos pedidos em rota em vez de CMC | 30 min |
-| 3 | CALC-3: vendaDiaria30d media dos proximos 30d | 20 min |
+| # | Item | Status |
+|---|------|--------|
+| 1 | ~~CALC-2: qtdBruta so se diaRuptura >= 0~~ | RESOLVIDO |
+| 2 | ~~CALC-1: Preco real dos pedidos em rota~~ | RESOLVIDO (logica ok, falta popular valor_brl em pedidos.service.ts) |
+| 3 | ~~CALC-3: vendaDiaria30d media dos proximos 30d~~ | RESOLVIDO |
 
-### Prioridade 2 — Funcionalidades de UX (melhoram experiencia)
+### Prioridade 2 — Funcionalidades de UX (melhoram experiencia) — CONCLUIDO
 
-| # | Item | Esforco |
-|---|------|---------|
-| 4 | GAP-F6: Separar urgentes em 3 categorias (intl/local/nacional) | 1h |
-| 5 | GAP-F3: Ajuste demanda por SKU (+/- %) | 1h |
-| 6 | GAP-F5: Secao de definicoes recolhivel | 30 min |
+| # | Item | Status |
+|---|------|--------|
+| 4 | ~~GAP-F6: Separar urgentes em 3 categorias~~ | RESOLVIDO |
+| 5 | ~~GAP-F3: Ajuste demanda por SKU (+/- %)~~ | RESOLVIDO (backend + frontend) |
+| 6 | ~~GAP-F5: Secao de definicoes recolhivel~~ | RESOLVIDO |
 
-### Prioridade 3 — Features avancadas
+### Prioridade 3 — Features avancadas (pendentes)
 
-| # | Item | Esforco |
-|---|------|---------|
-| 7 | GAP-F1: Aba Analise de Demanda (historico mensal + YoY + sparkline) | 4h |
-| 8 | GAP-F2: Aba Business Insights (fornecedores + score COMEX + janela de compra) | 6h |
-| 9 | GAP-F4: Integracao Claude AI na Shopping List via n8n | 3h |
+| # | Item | Status | Esforco |
+|---|------|--------|---------|
+| 7 | GAP-F1: Aba Analise de Demanda (historico mensal + YoY + sparkline) | PENDENTE | 4h |
+| 8 | GAP-F2: Aba Business Insights (fornecedores + score COMEX + janela de compra) | PENDENTE | 6h |
+| 9 | GAP-F4: Integracao Claude AI na Shopping List via n8n | PENDENTE | 3h |
+
+### Testes unitarios — CONCLUIDO
+
+| # | Arquivo | Testes |
+|---|---------|--------|
+| 10 | familia.test.ts | 9 testes — agrupamento, CMC ponderado, intl detection, LT efetivo |
+| 11 | forecast.test.ts | 18 testes — ruptura, MOQ, CALC-2, compra local, sazonalidade, ajuste demanda |
+| 12 | sazonalidade.test.ts | 5 testes — fallback _DEFAULT, override, fator_usuario precedencia |

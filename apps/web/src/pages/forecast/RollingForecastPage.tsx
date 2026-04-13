@@ -24,15 +24,18 @@ const fmtBrl = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency'
 
 export function RollingForecastPage() {
   const [selectedFamilia, setSelectedFamilia] = useState('');
+  const [ajustes, setAjustes] = useState<Record<string, number>>({});
   const csrfToken = useAuthStore((s) => s.csrfToken);
 
   const { data: results = [] } = useQuery<ForecastResult[]>({
-    queryKey: ['forecast', 'calcular'],
+    queryKey: ['forecast', 'calcular', ajustes],
     queryFn: async () => {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (csrfToken) headers['x-csrf-token'] = csrfToken;
+      const hasAjustes = Object.keys(ajustes).length > 0;
       const res = await fetch('/api/v1/forecast/calcular', {
-        method: 'POST', credentials: 'include', headers, body: JSON.stringify({}),
+        method: 'POST', credentials: 'include', headers,
+        body: JSON.stringify(hasAjustes ? { ajustes_demanda: ajustes } : {}),
       });
       const body = (await res.json()) as any;
       return body.data ?? [];
@@ -40,6 +43,20 @@ export function RollingForecastPage() {
     staleTime: 60_000,
     placeholderData: keepPreviousData,
   });
+
+  const adjustSku = (codigo: string, delta: number) => {
+    setAjustes((prev) => {
+      const cur = prev[codigo] ?? 0;
+      const next = cur + delta;
+      if (next === 0) {
+        const { [codigo]: _, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [codigo]: next };
+    });
+  };
+
+  const resetAjustes = () => setAjustes({});
 
   const selected = selectedFamilia
     ? results.find((r) => r.familia_id === selectedFamilia)
@@ -115,7 +132,14 @@ export function RollingForecastPage() {
 
           {/* SKU grid */}
           <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-            <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-2">SKUs — {selected.familia_nome}</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs text-atlas-muted uppercase tracking-[2px]">SKUs — {selected.familia_nome}</p>
+              {Object.keys(ajustes).length > 0 && (
+                <button onClick={resetAjustes} className="text-xs px-2 py-1 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20 hover:bg-amber-500/20 transition-colors">
+                  Limpar ajustes ({Object.keys(ajustes).length})
+                </button>
+              )}
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs font-mono">
                 <thead>
@@ -128,21 +152,36 @@ export function RollingForecastPage() {
                     <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Venda/dia</th>
                     <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Cobert.</th>
                     <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">LT</th>
+                    <th className="px-2 py-1.5 text-center text-xs text-atlas-muted">Ajuste %</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-atlas-border/50">
-                  {selected.skus.map((sk) => (
-                    <tr key={sk.codigo}>
-                      <td className="px-2 py-1.5">{sk.codigo}</td>
-                      <td className="px-2 py-1.5 truncate max-w-[180px]">{sk.descricao}</td>
-                      <td className="px-2 py-1.5 text-right">{fmtT(sk.disponivel)}</td>
-                      <td className="px-2 py-1.5 text-right text-blue-600">{sk.transito > 0 ? fmtT(sk.transito) : '—'}</td>
-                      <td className="px-2 py-1.5 text-right font-semibold">{fmtT(sk.total)}</td>
-                      <td className="px-2 py-1.5 text-right">{sk.venda_dia > 0 ? fmtT(sk.venda_dia) : '—'}</td>
-                      <td className="px-2 py-1.5 text-right">{sk.cobertura < 999 ? `${sk.cobertura}d` : '—'}</td>
-                      <td className="px-2 py-1.5 text-right">{sk.lt}d</td>
-                    </tr>
-                  ))}
+                  {selected.skus.map((sk) => {
+                    const adj = ajustes[sk.codigo] ?? 0;
+                    return (
+                      <tr key={sk.codigo} className={adj !== 0 ? 'bg-amber-500/5' : ''}>
+                        <td className="px-2 py-1.5">{sk.codigo}</td>
+                        <td className="px-2 py-1.5 truncate max-w-[180px]">{sk.descricao}</td>
+                        <td className="px-2 py-1.5 text-right">{fmtT(sk.disponivel)}</td>
+                        <td className="px-2 py-1.5 text-right text-blue-600">{sk.transito > 0 ? fmtT(sk.transito) : '—'}</td>
+                        <td className="px-2 py-1.5 text-right font-semibold">{fmtT(sk.total)}</td>
+                        <td className="px-2 py-1.5 text-right">{sk.venda_dia > 0 ? fmtT(sk.venda_dia) : '—'}</td>
+                        <td className="px-2 py-1.5 text-right">{sk.cobertura < 999 ? `${sk.cobertura}d` : '—'}</td>
+                        <td className="px-2 py-1.5 text-right">{sk.lt}d</td>
+                        <td className="px-2 py-1.5 text-center">
+                          <div className="flex items-center justify-center gap-1">
+                            <button onClick={() => adjustSku(sk.codigo, -5)}
+                              className="px-1.5 py-0.5 rounded bg-atlas-border hover:bg-red-100 text-xs transition-colors">-5</button>
+                            <span className={`min-w-[36px] text-center font-semibold ${adj > 0 ? 'text-emerald-600' : adj < 0 ? 'text-red-600' : 'text-atlas-muted'}`}>
+                              {adj > 0 ? `+${adj}%` : adj < 0 ? `${adj}%` : '0%'}
+                            </span>
+                            <button onClick={() => adjustSku(sk.codigo, 5)}
+                              className="px-1.5 py-0.5 rounded bg-atlas-border hover:bg-emerald-100 text-xs transition-colors">+5</button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
