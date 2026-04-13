@@ -23,9 +23,11 @@ export function MotorMVPage() {
   const csrfToken = useAuthStore((s) => s.csrfToken);
   const [lambda, setLambda] = useState(0.65);
   const [pctEstoque, setPctEstoque] = useState(52);
+  const [spotRate, setSpotRate] = useState(5.0);
+  const [ndf90Rate, setNdf90Rate] = useState(5.10);
   const [result, setResult] = useState<MotorResult | null>(null);
 
-  // Get pct_nao_pago from posicao on mount
+  // Get pct_nao_pago and ptax from posicao on mount
   const { data: posData } = useQuery({
     queryKey: ['hedge', 'posicao-motor'],
     queryFn: async () => {
@@ -37,6 +39,7 @@ export function MotorMVPage() {
 
   useEffect(() => {
     if (posData?.pct_nao_pago != null) setPctEstoque(Number(posData.pct_nao_pago));
+    if (posData?.ptax_atual?.venda != null) setSpotRate(Number(posData.ptax_atual.venda));
   }, [posData]);
 
   const calcMutation = useMutation({
@@ -70,13 +73,11 @@ export function MotorMVPage() {
   // Charts: Custo vs Protecao by lambda
   const mvChartData = Array.from({ length: 11 }, (_, i) => {
     const l = i * 0.1;
-    const ptax = posData?.ptax_atual?.venda ?? 5.0;
-    const ndfRate = 5.10; // approx
     const volUsd = 1e6; // reference
     return {
       lambda: l.toFixed(1),
-      custo: Math.round(volUsd * (ndfRate - ptax) * l / 1000),
-      protecao: Math.round(volUsd * ptax * 0.05 * l / 1000),
+      custo: Math.round(volUsd * (ndf90Rate - spotRate) * l / 1000),
+      protecao: Math.round(volUsd * spotRate * 0.05 * l / 1000),
     };
   });
 
@@ -84,17 +85,15 @@ export function MotorMVPage() {
   const simData: { cambio: string; sem_hedge: number; com_hedge: number; floor: number }[] = [];
   const fat = 25e6;
   const pctImp = 0.7;
-  const ptaxRef = posData?.ptax_atual?.venda ?? 5.0;
-  const ndf90 = 5.10;
   const l1 = result?.camadas.l1_pct ?? 60;
   const l2 = result?.camadas.l2_pct ?? 16;
   const pctAberta = (100 - l1 - l2) / 100;
-  const vu = fat * pctImp / ptaxRef;
+  const vu = fat * pctImp / spotRate;
   for (let c = 4.5; c <= 7.5; c += 0.25) {
     simData.push({
       cambio: `R$${c.toFixed(2)}`,
       sem_hedge: +((fat - vu * c - fat * 0.1) / fat * 100).toFixed(2),
-      com_hedge: +((fat - vu * (ndf90 * (1 - pctAberta) + c * pctAberta) - fat * 0.1) / fat * 100).toFixed(2),
+      com_hedge: +((fat - vu * (ndf90Rate * (1 - pctAberta) + c * pctAberta) - fat * 0.1) / fat * 100).toFixed(2),
       floor: 15,
     });
   }
@@ -150,8 +149,26 @@ export function MotorMVPage() {
           </div>
         )}
 
-        {/* Extra sliders */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+        {/* Extra sliders — like legacy */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+          <div>
+            <div className="flex justify-between text-[10px] text-atlas-muted mb-1">
+              <span>Cambio Spot (R$)</span>
+              <span className="font-bold text-blue-600">R$ {spotRate.toFixed(2)}</span>
+            </div>
+            <input type="range" min={4.5} max={7.5} step={0.05} value={spotRate}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setSpotRate(parseFloat(e.target.value))}
+              className="w-full accent-blue-600" />
+          </div>
+          <div>
+            <div className="flex justify-between text-[10px] text-atlas-muted mb-1">
+              <span>Taxa NDF 90d (R$)</span>
+              <span className="font-bold text-purple-600">R$ {ndf90Rate.toFixed(2)}</span>
+            </div>
+            <input type="range" min={4.5} max={8.0} step={0.05} value={ndf90Rate}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setNdf90Rate(parseFloat(e.target.value))}
+              className="w-full accent-purple-600" />
+          </div>
           <div>
             <div className="flex justify-between text-[10px] text-atlas-muted mb-1">
               <span>% Estoque nao pago</span>
@@ -160,14 +177,6 @@ export function MotorMVPage() {
             <input type="range" min={0} max={100} step={5} value={pctEstoque}
               onChange={(e: ChangeEvent<HTMLInputElement>) => { const v = parseInt(e.target.value); setPctEstoque(v); doCalc(undefined, v); }}
               className="w-full accent-amber-600" />
-          </div>
-          <div>
-            <div className="flex justify-between text-[10px] text-atlas-muted mb-1">
-              <span>PTAX Spot</span>
-              <span className="font-bold text-blue-600">R$ {Number(posData?.ptax_atual?.venda ?? 0).toFixed(2)}</span>
-            </div>
-            <input type="range" min={4.5} max={7.5} step={0.05} value={posData?.ptax_atual?.venda ?? 5.0} disabled
-              className="w-full accent-blue-600 opacity-50" />
           </div>
         </div>
 
