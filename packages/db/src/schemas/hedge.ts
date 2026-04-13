@@ -63,6 +63,7 @@ export const ndfRegistro = hedgeSchema.table(
       .$type<'pendente' | 'ativo' | 'liquidado' | 'cancelado'>(),
     bucketId: uuid('bucket_id').references(() => bucketMensal.id),
     empresa: varchar('empresa', { length: 10 }).notNull(),
+    banco: varchar('banco', { length: 100 }),
     observacao: text('observacao'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

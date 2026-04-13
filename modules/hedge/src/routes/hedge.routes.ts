@@ -154,6 +154,7 @@ router.get('/api/v1/hedge/ndfs', async (req: Request, res: Response) => {
         resultado_brl: n.resultadoBrl ? Number(n.resultadoBrl) : null,
         status: n.status,
         empresa: n.empresa,
+        banco: n.banco,
         observacao: n.observacao,
       })),
     );
@@ -166,7 +167,7 @@ router.get('/api/v1/hedge/ndfs', async (req: Request, res: Response) => {
 // POST /api/v1/hedge/ndfs
 router.post('/api/v1/hedge/ndfs', async (req: Request, res: Response) => {
   try {
-    const { tipo, notional_usd, taxa_ndf, prazo_dias, data_vencimento, empresa, observacao } = req.body;
+    const { tipo, notional_usd, taxa_ndf, prazo_dias, data_vencimento, empresa, banco, observacao } = req.body;
 
     if (!tipo || !notional_usd || !taxa_ndf || !prazo_dias || !data_vencimento || !empresa) {
       sendError(res, 'VALIDATION_ERROR', 'Campos obrigatorios faltando', 400);
@@ -174,7 +175,7 @@ router.post('/api/v1/hedge/ndfs', async (req: Request, res: Response) => {
     }
 
     const ndf = await criarNdf({
-      tipo, notional_usd, taxa_ndf, prazo_dias, data_vencimento, empresa, observacao,
+      tipo, notional_usd, taxa_ndf, prazo_dias, data_vencimento, empresa, banco, observacao,
     });
 
     sendSuccess(res, {
@@ -183,6 +184,7 @@ router.post('/api/v1/hedge/ndfs', async (req: Request, res: Response) => {
       notional_usd: Number(ndf.notionalUsd),
       custo_brl: Number(ndf.custoBrl),
       status: ndf.status,
+      banco: ndf.banco,
     }, 201);
   } catch (err) {
     if (err instanceof NdfError) {

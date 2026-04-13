@@ -17,6 +17,7 @@ interface NdfRow {
   resultado_brl: number | null;
   status: string;
   empresa: string;
+  banco: string | null;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -59,7 +60,7 @@ export function NDFListPage() {
   // Form state
   const [form, setForm] = useState({
     tipo: 'ndf', notional_usd: '', taxa_ndf: '', prazo_dias: '90',
-    data_vencimento: '', empresa: 'acxe', observacao: '',
+    data_vencimento: '', empresa: 'acxe', banco: '', observacao: '',
   });
 
   const { data: ndfs = [], isLoading } = useQuery<NdfRow[]>({
@@ -75,7 +76,7 @@ export function NDFListPage() {
     mutationFn: async () => hedgeFetch('/api/v1/hedge/ndfs', { method: 'POST', body: JSON.stringify({
       tipo: form.tipo, notional_usd: parseFloat(form.notional_usd), taxa_ndf: parseFloat(form.taxa_ndf),
       prazo_dias: parseInt(form.prazo_dias, 10), data_vencimento: form.data_vencimento,
-      empresa: form.empresa, observacao: form.observacao || undefined,
+      empresa: form.empresa, banco: form.banco || undefined, observacao: form.observacao || undefined,
     })}),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['hedge', 'ndfs'] }); setCreateOpen(false); },
     onError: (e: Error) => setError(e.message),
@@ -99,6 +100,7 @@ export function NDFListPage() {
       render: (r) => <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLORS[r.status] ?? ''}`}>{r.status}</span>,
     },
     { key: 'empresa', header: 'Empresa' },
+    { key: 'banco', header: 'Banco', render: (r) => r.banco || '—' },
   ];
 
   if (isLoading) return <div className="flex items-center justify-center min-h-[40vh]"><p className="text-atlas-muted">Carregando...</p></div>;
@@ -168,6 +170,20 @@ export function NDFListPage() {
                 <option value="acxe">ACXE</option><option value="q2p">Q2P</option>
               </select>
             </div>
+          </div>
+          <div>
+            <label htmlFor="ndf-banco" className="block text-sm font-medium text-atlas-text mb-1">Banco</label>
+            <select id="ndf-banco" value={form.banco} onChange={(e: ChangeEvent<HTMLSelectElement>) => setForm({ ...form, banco: e.target.value })}
+              className="w-full px-3 py-2 rounded-lg border border-atlas-border bg-atlas-bg text-atlas-text text-sm focus:outline-none focus:ring-2 focus:ring-acxe">
+              <option value="">Selecionar...</option>
+              <option value="Banco do Brasil">Banco do Brasil</option>
+              <option value="Bradesco">Bradesco</option>
+              <option value="Itau Unibanco">Itau Unibanco</option>
+              <option value="Santander">Santander</option>
+              <option value="Safra">Safra</option>
+              <option value="Banco Daycoval">Banco Daycoval</option>
+              <option value="BMP Money Plus">BMP Money Plus</option>
+            </select>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>

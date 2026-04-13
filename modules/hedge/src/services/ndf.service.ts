@@ -31,13 +31,40 @@ interface CriarNdfParams {
   prazo_dias: number;
   data_vencimento: string;
   empresa: 'acxe' | 'q2p';
+  banco?: string;
   observacao?: string;
 }
 
 export async function criarNdf(params: CriarNdfParams): Promise<NdfRegistro> {
   const db = getDb();
-  const ptax = await fetchPtaxAtual();
 
+  // Validation
+  if (params.notional_usd <= 0) throw new NdfError('VALIDATION_ERROR', 'notional_usd deve ser positivo');
+  if (params.taxa_ndf <= 0) throw new NdfError('VALIDATION_ERROR', 'taxa_ndf deve ser positiva');
+  const vencDate = new Date(params.data_vencimento);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  if (isNaN(vencDate.getTime()) || vencDate < today) {
+    throw new NdfError('VALIDATION_ERROR', 'data_vencimento deve ser uma data futura');
+  }
+
+  // Duplicate check (bucket_mes + vencimento + banco)
+  if (params.banco) {
+    const conditions: SQL[] = [
+      eq(ndfRegistro.dataVencimento, params.data_vencimento),
+      eq(ndfRegistro.empresa, params.empresa),
+    ];
+    // Check banco match
+    const existing = await db
+      .select({ id: ndfRegistro.id })
+      .from(ndfRegistro)
+      .where(and(...conditions, eq(ndfRegistro.banco, params.banco)))
+      .limit(1);
+    if (existing.length > 0) {
+      throw new NdfError('DUPLICATE_NDF', 'NDF duplicado — mesmo vencimento, empresa e banco');
+    }
+  }
+
+  const ptax = await fetchPtaxAtual();
   const notional = new Decimal(params.notional_usd);
   const taxaNdf = new Decimal(params.taxa_ndf);
   const ptaxSpot = new Decimal(ptax.venda);
@@ -46,7 +73,6 @@ export async function criarNdf(params: CriarNdfParams): Promise<NdfRegistro> {
   const custoBrl = notional.times(taxaNdf.minus(ptaxSpot));
 
   // Find bucket for the vencimento month
-  const vencDate = new Date(params.data_vencimento);
   const bucketMes = `${vencDate.getFullYear()}-${String(vencDate.getMonth() + 1).padStart(2, '0')}-01`;
 
   const [bucket] = await db
@@ -76,12 +102,13 @@ export async function criarNdf(params: CriarNdfParams): Promise<NdfRegistro> {
       status: 'pendente',
       bucketId: bucket?.id ?? null,
       empresa: params.empresa,
+      banco: params.banco ?? null,
       observacao: params.observacao ?? null,
     })
     .returning();
 
   logger.info(
-    { id: created!.id, notional: params.notional_usd, taxa: params.taxa_ndf },
+    { id: created!.id, notional: params.notional_usd, taxa: params.taxa_ndf, banco: params.banco },
     'NDF criado',
   );
 
