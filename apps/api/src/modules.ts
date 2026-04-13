@@ -48,7 +48,8 @@ export function getEnabledModules(): ModuleInfo[] {
  * Currently a no-op placeholder — each module spec (002-hedge, etc.)
  * will add its router here when implemented.
  */
-export function registerModuleRoutes(_app: Express): void {
+export function registerModuleRoutes(app: Express): void {
+  const config = getConfig();
   const enabled = getEnabledModules();
 
   if (enabled.length === 0) {
@@ -61,9 +62,13 @@ export function registerModuleRoutes(_app: Express): void {
     `${enabled.length} module(s) enabled`,
   );
 
-  // Future: dynamic import of module routers
-  // for (const mod of enabled) {
-  //   const router = await import(`../../modules/${mod.id}/src/routes.js`);
-  //   app.use(`/api/v1/${mod.id}`, router.default);
-  // }
+  // Register module routers
+  if (config.MODULE_HEDGE_ENABLED) {
+    import('@atlas/hedge').then(({ hedgeRouter }) => {
+      app.use(hedgeRouter);
+      logger.info('Hedge Engine routes registered');
+    }).catch((err) => {
+      logger.error({ err }, 'Failed to load Hedge Engine module');
+    });
+  }
 }

@@ -15,6 +15,13 @@ import { TwoFactorSetupPage } from './pages/TwoFactorSetupPage.js';
 import { DashboardPage } from './pages/DashboardPage.js';
 import { ModulePlaceholder } from './components/ModulePlaceholder.js';
 import { AdminUsersPage } from './pages/AdminUsersPage.js';
+import { PositionDashboard } from './pages/hedge/PositionDashboard.js';
+import { NDFListPage } from './pages/hedge/NDFListPage.js';
+import { MotorMVPage } from './pages/hedge/MotorMVPage.js';
+import { MarginSimulationPage } from './pages/hedge/MarginSimulationPage.js';
+import { InventoryPage } from './pages/hedge/InventoryPage.js';
+import { AlertsPage } from './pages/hedge/AlertsPage.js';
+import { ConfigPage } from './pages/hedge/ConfigPage.js';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage.js';
 import { ResetPasswordPage } from './pages/ResetPasswordPage.js';
 import { useAuth } from './hooks/useAuth.js';
@@ -112,7 +119,16 @@ function ProtectedShell() {
     >
       <Routes>
         <Route index element={<DashboardPage />} />
-        {ALL_MODULE_IDS.map((id) => (
+        {/* Hedge has real pages when enabled */}
+        {enabledSet.has('hedge') && <Route path="hedge" element={<PositionDashboard />} />}
+        {enabledSet.has('hedge') && <Route path="hedge/ndfs" element={<NDFListPage />} />}
+        {enabledSet.has('hedge') && <Route path="hedge/motor" element={<MotorMVPage />} />}
+        {enabledSet.has('hedge') && <Route path="hedge/simulacao" element={<MarginSimulationPage />} />}
+        {enabledSet.has('hedge') && <Route path="hedge/estoque" element={<InventoryPage />} />}
+        {enabledSet.has('hedge') && <Route path="hedge/alertas" element={<AlertsPage />} />}
+        {enabledSet.has('hedge') && <Route path="hedge/config" element={<ConfigPage />} />}
+        {!enabledSet.has('hedge') && <Route path="hedge" element={<ModuleRoute moduleId="hedge" moduleName="Hedge Engine" enabled={false} />} />}
+        {ALL_MODULE_IDS.filter((id) => id !== 'hedge').map((id) => (
           <Route
             key={id}
             path={id}
