@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, type ChangeEvent } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { DataTable, type Column } from '@atlas/ui';
 import { useAuthStore } from '../../stores/auth.store.js';
 import {
@@ -23,6 +23,9 @@ export function MotorMVPage() {
   const csrfToken = useAuthStore((s) => s.csrfToken);
   const [lambda, setLambda] = useState(0.65);
   const [pctEstoque, setPctEstoque] = useState(52);
+  // Debounced versions for query key — prevents request on every slider tick
+  const [debouncedLambda, setDebouncedLambda] = useState(0.65);
+  const [debouncedEstoque, setDebouncedEstoque] = useState(52);
   const [spotRate, setSpotRate] = useState(5.0);
   const [ndf90Rate, setNdf90Rate] = useState(5.10);
 
@@ -41,7 +44,11 @@ export function MotorMVPage() {
   useEffect(() => {
     if (!posData || posDataApplied.current) return;
     posDataApplied.current = true;
-    if (posData.pct_nao_pago != null) setPctEstoque(Number(posData.pct_nao_pago));
+    if (posData.pct_nao_pago != null) {
+      const ep = Number(posData.pct_nao_pago);
+      setPctEstoque(ep);
+      setDebouncedEstoque(ep);
+    }
     if (posData.ptax_atual?.venda != null) setSpotRate(Number(posData.ptax_atual.venda));
   }, [posData]);
 
@@ -59,20 +66,22 @@ export function MotorMVPage() {
   };
 
   const { data: result = null } = useQuery<MotorResult | null>({
-    queryKey: ['hedge', 'motor', lambda, pctEstoque],
-    queryFn: () => fetchMotor(lambda, pctEstoque),
+    queryKey: ['hedge', 'motor', debouncedLambda, debouncedEstoque],
+    queryFn: () => fetchMotor(debouncedLambda, debouncedEstoque),
     enabled: !!posData,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
   });
 
+  // Debounce slider changes — update queryKey only after user stops sliding
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
-  const doCalc = useCallback((l?: number, e?: number) => {
+  const commitSliders = useCallback((l: number, e: number) => {
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      if (l != null) setLambda(l);
-      if (e != null) setPctEstoque(e);
-    }, 300);
+      setDebouncedLambda(l);
+      setDebouncedEstoque(e);
+    }, 500);
   }, []);
 
   const lambdaDesc = lambda < 0.3 ? 'Conservador' : lambda < 0.5 ? 'Moderado' : lambda < 0.7 ? 'Moderado-alto' : 'Alto — max. protecao';
@@ -128,7 +137,7 @@ export function MotorMVPage() {
             <p className="text-[9px] text-atlas-muted">0 = minimiza custo / 1 = maximiza protecao</p>
           </div>
           <input type="range" min={0} max={1} step={0.05} value={lambda}
-            onChange={(e: ChangeEvent<HTMLInputElement>) => { const v = parseFloat(e.target.value); doCalc(v, undefined); setLambda(v); }}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => { const v = parseFloat(e.target.value); setLambda(v); commitSliders(v, pctEstoque); }}
             className="w-full accent-emerald-600" />
           <div className="text-right">
             <p className="text-3xl font-bold text-emerald-600">{lambda.toFixed(2)}</p>
@@ -182,7 +191,7 @@ export function MotorMVPage() {
               <span className="font-bold text-amber-600">{pctEstoque}%</span>
             </div>
             <input type="range" min={0} max={100} step={5} value={pctEstoque}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => { const v = parseInt(e.target.value); doCalc(undefined, v); setPctEstoque(v); }}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => { const v = parseInt(e.target.value); setPctEstoque(v); commitSliders(lambda, v); }}
               className="w-full accent-amber-600" />
           </div>
         </div>
