@@ -96,48 +96,37 @@ export async function getHistoricoPtax(dias: number = 30) {
   `, [desdeStr]);
 
   if (rows.length > 0) {
-    const last = rows[rows.length - 1]!;
-    const prev = rows.length > 1 ? rows[rows.length - 2]! : last;
-    const venda = Number(last.venda);
+    const prev = rows.length > 1 ? rows[rows.length - 2]! : rows[rows.length - 1]!;
     const vendaPrev = Number(prev.venda);
 
-    // Persist latest to hedge.ptax_historico for snapshot use
-    const db = getDb();
-    await db
-      .insert(ptaxHistorico)
-      .values({
-        dataRef: last.data_ref,
-        venda: venda.toFixed(4),
-        compra: Number(last.compra).toFixed(4),
-      })
-      .onConflictDoUpdate({
-        target: ptaxHistorico.dataRef,
-        set: { venda: venda.toFixed(4), compra: Number(last.compra).toFixed(4) },
-      });
-
-    const [persisted] = await db
-      .select()
-      .from(ptaxHistorico)
-      .where(sql`${ptaxHistorico.dataRef} = ${last.data_ref}`)
-      .limit(1);
+    // Atual: boletim intraday BCB (mais recente do dia, ~3x/dia)
+    const boletim = await fetchPtaxAtual();
+    const venda = boletim.venda > 0 ? boletim.venda : Number(rows[rows.length - 1]!.venda);
+    const dataRef = boletim.venda > 0 ? boletim.dataRef : rows[rows.length - 1]!.data_ref;
 
     return {
       atual: {
-        dataRef: last.data_ref,
+        dataRef,
         venda,
-        compra: Number(last.compra),
-        atualizada: true,
+        compra: boletim.compra > 0 ? boletim.compra : Number(rows[rows.length - 1]!.compra),
+        atualizada: boletim.atualizada,
         ptax_anterior: vendaPrev,
         variacao_pct: vendaPrev > 0 ? parseFloat(((venda - vendaPrev) / vendaPrev * 100).toFixed(4)) : 0,
-        fetchedAt: persisted?.createdAt instanceof Date
-          ? persisted.createdAt.toISOString()
-          : persisted?.createdAt ? String(persisted.createdAt) : new Date().toISOString(),
+        fetchedAt: boletim.fetchedAt ?? null,
       },
-      historico: rows.map((r) => ({
-        data_ref: r.data_ref,
-        venda: Number(r.venda),
-        compra: Number(r.compra),
-      })),
+      historico: (() => {
+        const hist = rows.map((r) => ({
+          data_ref: r.data_ref,
+          venda: Number(r.venda),
+          compra: Number(r.compra),
+        }));
+        // Adiciona ponto de hoje se o boletim BCB for mais recente que o último registro
+        const lastDate = rows[rows.length - 1]!.data_ref;
+        if (boletim.venda > 0 && boletim.dataRef > lastDate) {
+          hist.push({ data_ref: boletim.dataRef, venda: boletim.venda, compra: boletim.compra });
+        }
+        return hist;
+      })(),
     };
   }
 

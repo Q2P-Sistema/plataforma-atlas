@@ -109,8 +109,7 @@ export function PositionDashboard() {
       const body = await res.json() as any;
       return body.data;
     },
-    staleTime: 5 * 60 * 1000,
-    refetchInterval: 15 * 60 * 1000,
+    staleTime: 60 * 60 * 1000, // boletins saem ~3x/dia, 1h é suficiente
   });
 
   if (isLoading || !data) {
@@ -159,11 +158,12 @@ export function PositionDashboard() {
     return base.map((p, i) => ({ ...p, tendencia: parseFloat((intercept + slope * i).toFixed(4)) }));
   })();
 
-  function formatFetchedAt(iso?: string) {
-    if (!iso) return '—';
-    const d = new Date(iso);
-    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
-      + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  function formatBoletimBCB(raw?: string | null): string {
+    if (!raw) return '—';
+    // BCB format: "2026-04-15 11:08:28.604" — not ISO, replace space with T
+    const d = new Date(raw.replace(' ', 'T'));
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   }
 
   // Bucket table columns
@@ -274,7 +274,7 @@ export function PositionDashboard() {
               </div>
               <div className="flex items-center gap-3 mb-3">
                 <span className="text-xs text-atlas-muted">
-                  Ref. {ptaxAtual.dataRef} · Atualizado {formatFetchedAt(ptaxAtual.fetchedAt)}
+                  Boletim BCB {formatBoletimBCB(ptaxAtual.fetchedAt)} · Ref. {ptaxAtual.dataRef}
                 </span>
               </div>
               <ResponsiveContainer width="100%" height={130}>

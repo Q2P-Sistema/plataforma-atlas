@@ -31,6 +31,15 @@
 - USD equivalente: $ 11.9M (convertido pela PTAX atual via `vw_hedge_receber_usd`)
 **Correção:** trocar `kpis.recebiveis_brl` → `kpis.recebiveis_usd` no `PositionDashboard.tsx`, label "Receita USD Projetada", formato `$ 11.9M`.
 
+### T05 — PTAX boletins intraday BCB — **EM IMPLEMENTAÇÃO**
+**Problema:** Fonte atual (SGS-1) publica fechamento diário. Card exibe "Atualizado HH:MM" referente ao fetch do servidor, não ao boletim BCB. Frontend faz polling a cada 15min desnecessariamente.
+**Solução:**
+- Trocar `fetchPtaxAtual` para endpoint de boletins: `olinda.bcb.gov.br/.../CotacaoDolarDia`
+- Retornar `dataHoraCotacao` do BCB como `fetchedAt` (timestamp real do boletim)
+- Redis TTL: 1 hora (boletins saem ~3x/dia)
+- Remover `refetchInterval` do frontend (sem polling)
+- Label: "Boletim BCB HH:MM" em vez de "Atualizado HH:MM"
+
 ---
 
 ## Notas / Dúvidas Registradas

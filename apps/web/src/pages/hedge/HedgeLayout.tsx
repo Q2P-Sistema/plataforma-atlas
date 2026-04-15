@@ -28,8 +28,7 @@ export function HedgePtaxBadge() {
       const body = await res.json() as any;
       return body.data;
     },
-    staleTime: 5 * 60 * 1000,
-    refetchInterval: 15 * 60 * 1000,
+    staleTime: 60 * 60 * 1000,
   });
 
   if (!data) return null;
