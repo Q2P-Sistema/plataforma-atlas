@@ -141,10 +141,23 @@ export function PositionDashboard() {
   const ptaxArrow = ptaxNeutro ? '' : ptaxSubiu ? '▲' : '▼';
   const ptaxVarStr = ptaxAtual ? `${ptaxArrow} ${Math.abs(ptaxAtual.variacao_pct).toFixed(2)}%` : '';
 
-  const ptaxMiniData = (ptaxData?.historico ?? []).map(h => ({
-    data: h.data_ref.slice(5),
-    venda: h.venda,
-  }));
+  const MESES_PT = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  const ptaxMiniData = (() => {
+    const base = (ptaxData?.historico ?? []).map(h => {
+      const [, mm, dd] = h.data_ref.split('-');
+      const label = `${dd} ${MESES_PT[parseInt(mm!, 10) - 1]}`;
+      return { data: label, venda: h.venda };
+    });
+    if (base.length < 2) return base;
+    const n = base.length;
+    const sumX = (n * (n - 1)) / 2;
+    const sumX2 = (n * (n - 1) * (2 * n - 1)) / 6;
+    const sumY = base.reduce((acc, p) => acc + p.venda, 0);
+    const sumXY = base.reduce((acc, p, i) => acc + i * p.venda, 0);
+    const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+    const intercept = (sumY - slope * sumX) / n;
+    return base.map((p, i) => ({ ...p, tendencia: parseFloat((intercept + slope * i).toFixed(4)) }));
+  })();
 
   function formatFetchedAt(iso?: string) {
     if (!iso) return '—';
@@ -272,6 +285,7 @@ export function PositionDashboard() {
                   <Tooltip formatter={(v) => `R$ ${Number(v).toFixed(4)}`} />
                   <ReferenceLine y={ptaxAtual.ptax_anterior} stroke="rgba(107,114,128,0.4)" strokeDasharray="4 2" />
                   <Line type="monotone" dataKey="venda" stroke={ptaxColor} strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="tendencia" stroke="rgba(107,114,128,0.7)" strokeWidth={2} strokeDasharray="5 3" dot={false} />
                 </LineChart>
               </ResponsiveContainer>
             </>
