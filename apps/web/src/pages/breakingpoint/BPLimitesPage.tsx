@@ -73,7 +73,14 @@ function TotalCard({
 export function BPLimitesPage() {
   const { data: bancos = [], isLoading } = useQuery({ queryKey: ['bp', 'bancos'], queryFn: fetchBancos });
 
-  if (isLoading) return <div className="p-6 text-atlas-muted">Carregando limites…</div>;
+  if (isLoading) return (
+    <div className="p-6 space-y-5">
+      <div className="h-8 w-64 bg-atlas-border rounded animate-pulse" />
+      <div className="grid grid-cols-3 gap-4">
+        {Array.from({ length: 3 }, (_, i) => <div key={i} className="h-48 rounded-xl bg-atlas-border animate-pulse" />)}
+      </div>
+    </div>
+  );
 
   const ativos = bancos.filter((b) => b.ativo);
   const totalAntecip = {
@@ -95,7 +102,7 @@ export function BPLimitesPage() {
   return (
     <div className="p-6 max-w-[1440px] mx-auto">
       <div className="mb-5">
-        <h1 className="text-2xl font-bold">Breaking Point · Limites Consolidados</h1>
+        <h1 className="text-2xl font-heading font-bold">Breaking Point · Limites Consolidados</h1>
         <p className="text-xs text-atlas-muted mt-1">Totais agregados de crédito bancário ativo — visão de tesouraria.</p>
       </div>
 

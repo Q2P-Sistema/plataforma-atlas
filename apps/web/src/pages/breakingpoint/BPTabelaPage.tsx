@@ -80,7 +80,12 @@ export function BPTabelaPage() {
     staleTime: 60_000,
   });
 
-  if (isLoading || !proj) return <div className="p-6 text-atlas-muted">Carregando projeção…</div>;
+  if (isLoading || !proj) return (
+    <div className="p-6 space-y-5">
+      <div className="h-8 w-64 bg-atlas-border rounded animate-pulse" />
+      <div className="h-64 rounded-xl bg-atlas-border animate-pulse" />
+    </div>
+  );
 
   const semanas = showAll ? proj.semanas : proj.semanas.filter((s) => s.status_gap !== 'ok');
 
@@ -88,7 +93,7 @@ export function BPTabelaPage() {
     <div className="p-6 max-w-[1440px] mx-auto">
       <div className="flex justify-between items-start mb-5">
         <div>
-          <h1 className="text-2xl font-bold">Breaking Point · Tabela Semanal</h1>
+          <h1 className="text-2xl font-heading font-bold">Breaking Point · Tabela Semanal</h1>
           <p className="text-xs text-atlas-muted mt-1">
             Visão detalhada das 26 semanas. Filtro padrão: apenas semanas em CRISE ou ALERTA.
           </p>

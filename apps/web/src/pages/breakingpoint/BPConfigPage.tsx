@@ -141,7 +141,7 @@ export function BPConfigPage() {
   return (
     <div className="p-6 max-w-[1440px] mx-auto space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Breaking Point · Configurar</h1>
+        <h1 className="text-2xl font-heading font-bold">Breaking Point · Configurar</h1>
         <p className="text-xs text-atlas-muted mt-1">
           Parâmetros manuais não sincronizados do OMIE. Alterações recalculam a projeção em até 2 segundos.
         </p>

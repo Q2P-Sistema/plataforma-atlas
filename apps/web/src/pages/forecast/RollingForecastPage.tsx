@@ -87,12 +87,12 @@ export function RollingForecastPage() {
             <MiniCard label="Cobertura" value={selected.cobertura_dias < 999 ? `${selected.cobertura_dias}d` : '—'} color={selected.cobertura_dias <= 30 ? '#dc2626' : selected.cobertura_dias <= 60 ? '#d97706' : '#059669'} />
             <MiniCard label="Ruptura" value={selected.dia_ruptura >= 0 ? `Dia ${selected.dia_ruptura}` : 'Nenhuma'} color={selected.dia_ruptura >= 0 ? '#dc2626' : '#059669'} />
             <MiniCard label="Pedir em" value={selected.dia_pedido_ideal >= 0 ? `Dia ${selected.dia_pedido_ideal}` : selected.prazo_perdido ? 'PERDIDO' : '—'} color={selected.prazo_perdido ? '#dc2626' : '#d97706'} />
-            <MiniCard label="Sugestao" value={fmtT(selected.qtd_sugerida)} sub={fmtBrl(selected.valor_brl)} />
+            <MiniCard label="Sugestão" value={fmtT(selected.qtd_sugerida)} sub={fmtBrl(selected.valor_brl)} />
           </div>
 
           {/* Chart */}
           <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-            <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Projecao de Estoque — {selected.familia_nome}</p>
+            <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Projeção de Estoque — {selected.familia_nome}</p>
             <ResponsiveContainer width="100%" height={300}>
               <AreaChart data={chartData}>
                 <defs>
@@ -101,7 +101,7 @@ export function RollingForecastPage() {
                     <stop offset="95%" stopColor="#059669" stopOpacity={0.05} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(221,225,232,0.5)" />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" />
                 <XAxis dataKey="data" tick={{ fontSize: 9 }} interval={9} />
                 <YAxis tick={{ fontSize: 9 }} tickFormatter={(v: number) => fmtT(v)} />
                 <Tooltip formatter={(v) => fmtT(Number(v))} />
@@ -144,8 +144,8 @@ export function RollingForecastPage() {
               <table className="w-full text-xs font-mono">
                 <thead>
                   <tr className="border-b border-atlas-border">
-                    <th className="px-2 py-1.5 text-left text-xs text-atlas-muted">Codigo</th>
-                    <th className="px-2 py-1.5 text-left text-xs text-atlas-muted">Descricao</th>
+                    <th className="px-2 py-1.5 text-left text-xs text-atlas-muted">Código</th>
+                    <th className="px-2 py-1.5 text-left text-xs text-atlas-muted">Descrição</th>
                     <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Disp.</th>
                     <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Transit.</th>
                     <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Total</th>

@@ -58,11 +58,11 @@ export function ForecastConfigPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-heading font-bold text-atlas-text">Configuracao Forecast</h1>
+      <h1 className="text-2xl font-heading font-bold text-atlas-text">Configuração Forecast</h1>
 
       {/* Config params */}
       <div className="bg-atlas-card border border-atlas-border rounded-lg p-5">
-        <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-4">Parametros do Modelo</p>
+        <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-4">Parâmetros do Modelo</p>
         <div className="space-y-0">
           {configs.map((c) => (
             <div key={c.chave} className="flex items-center justify-between py-2.5 border-b border-atlas-border/50 last:border-0">
@@ -76,11 +76,11 @@ export function ForecastConfigPage() {
                     <input type="number" value={editVal} onChange={(e: ChangeEvent<HTMLInputElement>) => setEditVal(e.target.value)}
                       className="w-20 px-2 py-1 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-xs text-right font-mono" />
                     <button onClick={() => configMut.mutate({ chave: c.chave, valor: editVal })}
-                      className="text-xs px-2 py-1 rounded bg-emerald-600 text-white">OK</button>
+                      className="text-xs px-2 py-1 rounded bg-q2p text-white">OK</button>
                     <button onClick={() => setEditKey(null)} className="text-xs px-2 py-1 rounded bg-atlas-border text-atlas-text">X</button>
                   </>
                 ) : (
-                  <span className="text-xs font-mono text-atlas-text cursor-pointer hover:text-emerald-600"
+                  <span className="text-xs font-mono text-atlas-text cursor-pointer hover:text-q2p"
                     onClick={() => { setEditKey(c.chave); setEditVal(String(c.valor)); }}>
                     {String(c.valor)}
                   </span>
@@ -93,12 +93,12 @@ export function ForecastConfigPage() {
 
       {/* Sazonalidade */}
       <div className="bg-atlas-card border border-atlas-border rounded-lg p-5">
-        <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-4">Sazonalidade por Familia</p>
+        <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-4">Sazonalidade por Família</p>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-atlas-border">
-                <th className="px-2 py-2 text-left text-xs text-atlas-muted sticky left-0 bg-atlas-card">Familia</th>
+                <th className="px-2 py-2 text-left text-xs text-atlas-muted sticky left-0 bg-atlas-card">Família</th>
                 {MESES.map((m) => <th key={m} className="px-2 py-2 text-center text-xs text-atlas-muted w-14">{m}</th>)}
               </tr>
             </thead>
@@ -127,7 +127,7 @@ export function ForecastConfigPage() {
             </tbody>
           </table>
         </div>
-        <p className="text-xs text-atlas-muted mt-2">Valores com borda amarela foram editados pelo usuario. 1.00 = media, &gt;1 = pico, &lt;1 = baixa.</p>
+        <p className="text-xs text-atlas-muted mt-2">Valores com borda amarela foram editados pelo usuário. 1.00 = media, &gt;1 = pico, &lt;1 = baixa.</p>
       </div>
     </div>
   );

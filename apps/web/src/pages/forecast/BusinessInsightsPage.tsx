@@ -29,7 +29,15 @@ export function BusinessInsightsPage() {
     },
   });
 
-  if (isLoading || !data) return <div className="flex items-center justify-center min-h-[40vh]"><p className="text-atlas-muted">Carregando...</p></div>;
+  if (isLoading || !data) return (
+    <div className="space-y-5">
+      <div className="h-8 w-48 bg-atlas-border rounded animate-pulse" />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {Array.from({ length: 4 }, (_, i) => <div key={i} className="h-28 rounded-lg bg-atlas-border animate-pulse" />)}
+      </div>
+      <div className="h-64 rounded-lg bg-atlas-border animate-pulse" />
+    </div>
+  );
 
   return (
     <div className="space-y-5">
@@ -70,17 +78,17 @@ export function BusinessInsightsPage() {
 
       {/* Fornecedores */}
       <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-        <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Fornecedores — Lead Time e Historico</p>
+        <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Fornecedores — Lead Time e Histórico</p>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-atlas-bg border-b border-atlas-border">
                 <th className="px-3 py-2.5 text-left text-xs text-atlas-muted uppercase">Fornecedor</th>
-                <th className="px-3 py-2.5 text-left text-xs text-atlas-muted uppercase">Pais</th>
-                <th className="px-3 py-2.5 text-left text-xs text-atlas-muted uppercase">Familias</th>
+                <th className="px-3 py-2.5 text-left text-xs text-atlas-muted uppercase">País</th>
+                <th className="px-3 py-2.5 text-left text-xs text-atlas-muted uppercase">Famílias</th>
                 <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">LT Efetivo</th>
-                <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Importacoes</th>
-                <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Ultimo Embarque</th>
+                <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Importações</th>
+                <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Último Embarque</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-atlas-border/50">
@@ -109,17 +117,17 @@ export function BusinessInsightsPage() {
       {/* Historico importacao chart */}
       {data.historico_importacao.length > 0 && (
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-          <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Historico de Importacao — 12 Meses</p>
+          <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Histórico de Importação — 12 Meses</p>
           <ResponsiveContainer width="100%" height={280}>
             <ComposedChart data={data.historico_importacao.map((h) => ({ ...h, mes: formatMesLabel(h.mes) }))}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(221,225,232,0.5)" />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" />
               <XAxis dataKey="mes" tick={{ fontSize: 10 }} />
               <YAxis yAxisId="vol" tick={{ fontSize: 9 }} tickFormatter={(v: number) => fmtT(v)} />
               <YAxis yAxisId="preco" orientation="right" tick={{ fontSize: 9 }} tickFormatter={(v: number) => `$${v}`} />
               <Tooltip formatter={(v, name) => name === 'Volume (kg)' ? fmtT(Number(v)) : name === 'Valor USD' ? fmtK(Number(v)) : `$${Number(v).toFixed(0)}/t`} />
               <Legend />
               <Bar yAxisId="vol" dataKey="volume_kg" name="Volume (kg)" fill="#3b82f6" opacity={0.7} />
-              <Line yAxisId="preco" type="monotone" dataKey="preco_ton_usd" name="Preco/ton USD" stroke="#dc2626" strokeWidth={2} dot={{ r: 3 }} />
+              <Line yAxisId="preco" type="monotone" dataKey="preco_ton_usd" name="Preço/ton USD" stroke="#dc2626" strokeWidth={2} dot={{ r: 3 }} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
@@ -127,8 +135,8 @@ export function BusinessInsightsPage() {
 
       {data.score_comex.length === 0 && data.fornecedores.length === 0 && (
         <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg p-8 text-center">
-          <p className="text-amber-600 font-semibold">Dados de importacao nao disponiveis.</p>
-          <p className="text-xs text-atlas-muted mt-1">A tabela FUP Comex nao contem registros suficientes para gerar insights.</p>
+          <p className="text-amber-600 font-semibold">Dados de importação não disponíveis.</p>
+          <p className="text-xs text-atlas-muted mt-1">A tabela FUP Comex não contém registros suficientes para gerar insights.</p>
         </div>
       )}
     </div>

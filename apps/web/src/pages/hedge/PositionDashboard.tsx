@@ -113,7 +113,15 @@ export function PositionDashboard() {
   });
 
   if (isLoading || !data) {
-    return <div className="flex items-center justify-center min-h-[40vh]"><p className="text-atlas-muted">Carregando...</p></div>;
+    return (
+      <div className="space-y-5">
+        <div className="h-8 w-56 bg-atlas-border rounded animate-pulse" />
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+          {Array.from({ length: 5 }, (_, i) => <div key={i} className="h-20 rounded-lg bg-atlas-border animate-pulse" />)}
+        </div>
+        <div className="h-64 rounded-lg bg-atlas-border animate-pulse" />
+      </div>
+    );
   }
 
   const { kpis, buckets } = data;
@@ -171,7 +179,7 @@ export function PositionDashboard() {
     { key: 'mes_ref', header: 'Bucket', sortable: true, render: (r) => r.mes_ref.slice(0, 7) },
     { key: 'pagar_usd', header: 'A pagar USD', sortable: true, render: (r) => fmtK(r.pagar_usd) },
     { key: 'est_nao_pago_usd', header: 'Est. N/Pago', sortable: true, render: (r) => r.est_nao_pago_usd > 0 ? <span className="text-amber-600">{fmtK(r.est_nao_pago_usd)}</span> : '—' },
-    { key: 'exposicao_usd', header: 'Exposicao', sortable: true, render: (r) => <span className="font-semibold">{fmtK(r.exposicao_usd)}</span> },
+    { key: 'exposicao_usd', header: 'Exposição', sortable: true, render: (r) => <span className="font-semibold">{fmtK(r.exposicao_usd)}</span> },
     { key: 'ndf_usd', header: 'NDF Contrat.', sortable: true, render: (r) => <span className="text-purple-600">{fmtK(r.ndf_usd)}</span> },
     {
       key: 'gap' as any, header: 'Liquido',
@@ -190,7 +198,7 @@ export function PositionDashboard() {
       },
     },
     {
-      key: 'status', header: 'Acao',
+      key: 'status', header: 'Ação',
       render: (r) => {
         if (r.cobertura_pct >= 60) return <span className="text-emerald-600 text-xs font-semibold">OK</span>;
         return <span className="text-red-600 text-xs font-semibold">NDF NEEDED</span>;
@@ -202,7 +210,7 @@ export function PositionDashboard() {
     <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-heading font-bold text-atlas-text">Posicao Consolidada</h1>
+        <h1 className="text-2xl font-heading font-bold text-atlas-text">Posição Consolidada</h1>
         <select value={empresa} onChange={(e: ChangeEvent<HTMLSelectElement>) => setEmpresa(e.target.value)}
           className="px-3 py-1.5 rounded-lg border border-atlas-border bg-atlas-bg text-atlas-text text-sm focus:outline-none focus:ring-2 focus:ring-acxe">
           <option value="">Todas</option><option value="acxe">ACXE</option><option value="q2p">Q2P</option>
@@ -211,25 +219,25 @@ export function PositionDashboard() {
 
       {/* KPI Strip */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-        <KpiCard label="Exposicao USD Total" value={fmtM(kpis.exposicao_usd_total)} color="#0077cc" src="acxe" sub="Titulos a pagar em aberto" />
+        <KpiCard label="Exposição USD Total" value={fmtM(kpis.exposicao_usd_total)} color="#0077cc" src="acxe" sub="Títulos a pagar em aberto" />
         <KpiCard label="Receita USD Projetada" value={fmtM(kpis.recebiveis_usd)} color="#1a9944" src="q2p" sub="Contas a receber 90d" />
-        <KpiCard label="Estoque nao pago" value={fmtPct(kpis.pct_nao_pago)} color="#d97706" src="calc" sub={`R$ ${(kpis.est_importado_brl / 1e6).toFixed(1)}M importado`} />
-        <KpiCard label="Cobertura NDF Ativa" value={fmtM(kpis.ndf_ativo_usd)} color="#7c3aed" src="manual" sub={fmtPct(kpis.cobertura_pct) + ' da exposicao'} />
-        <KpiCard label="Exposicao Liquida" value={fmtM(kpis.gap_usd)} color="#059669" src="calc" sub="Residual descoberto" />
+        <KpiCard label="Estoque não pago" value={fmtPct(kpis.pct_nao_pago)} color="#d97706" src="calc" sub={`R$ ${(kpis.est_importado_brl / 1e6).toFixed(1)}M importado`} />
+        <KpiCard label="Cobertura NDF Ativa" value={fmtM(kpis.ndf_ativo_usd)} color="#7c3aed" src="manual" sub={fmtPct(kpis.cobertura_pct) + ' da exposição'} />
+        <KpiCard label="Exposição Líquida" value={fmtM(kpis.gap_usd)} color="#1a9944" src="calc" sub="Residual descoberto" />
       </div>
 
       {/* Main content: Bucket table + Donut */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 bg-atlas-card border border-atlas-border rounded-lg p-4">
           <div className="flex items-center gap-2 mb-3">
-            <p className="text-xs text-atlas-muted uppercase tracking-[3px]">Posicao Agregada por Bucket de Vencimento</p>
+            <p className="text-xs text-atlas-muted uppercase tracking-[3px]">Posição Agregada por Bucket de Vencimento</p>
             <SourceBadge src="acxe" />
             <SourceBadge src="calc" />
           </div>
           <DataTable columns={bucketColumns} data={buckets} rowKey={(r) => r.id} />
         </div>
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-          <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-2">Composicao da Posicao</p>
+          <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-2">Composição da Posição</p>
           <ResponsiveContainer width="100%" height={220}>
             <PieChart>
               <Pie data={donutData} cx="50%" cy="50%" innerRadius={55} outerRadius={85} dataKey="value">
@@ -245,14 +253,14 @@ export function PositionDashboard() {
       {/* Charts row */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-          <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-2">Exposicao por Bucket ($M)</p>
+          <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-2">Exposição por Bucket ($M)</p>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={barData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(221,225,232,0.5)" />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" />
               <XAxis dataKey="mes" tick={{ fontSize: 9 }} />
               <YAxis tick={{ fontSize: 9 }} tickFormatter={(v: number) => `$${v}M`} />
               <Tooltip formatter={(v) => `$${Number(v).toFixed(2)}M`} />
-              <Bar dataKey="exposicao" name="Exposicao Total" fill="rgba(220,38,38,0.45)" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="exposicao" name="Exposição Total" fill="rgba(220,38,38,0.45)" radius={[3, 3, 0, 0]} />
               <Bar dataKey="ndf" name="NDF Contratado" fill="rgba(124,58,237,0.6)" radius={[3, 3, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
@@ -279,11 +287,11 @@ export function PositionDashboard() {
               </div>
               <ResponsiveContainer width="100%" height={130}>
                 <LineChart data={ptaxMiniData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(221,225,232,0.3)" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" />
                   <XAxis dataKey="data" tick={{ fontSize: 9 }} />
                   <YAxis tick={{ fontSize: 9 }} domain={['auto', 'auto']} tickFormatter={(v: number) => v.toFixed(2)} width={38} />
                   <Tooltip formatter={(v) => `R$ ${Number(v).toFixed(4)}`} />
-                  <ReferenceLine y={ptaxAtual.ptax_anterior} stroke="rgba(107,114,128,0.4)" strokeDasharray="4 2" />
+                  <ReferenceLine y={ptaxAtual.ptax_anterior} stroke="var(--atlas-muted)" strokeDasharray="4 2" />
                   <Line type="monotone" dataKey="venda" stroke={ptaxColor} strokeWidth={2} dot={false} />
                   <Line type="monotone" dataKey="tendencia" stroke="rgba(107,114,128,0.7)" strokeWidth={2} strokeDasharray="5 3" dot={false} />
                 </LineChart>
@@ -298,7 +306,7 @@ export function PositionDashboard() {
       {/* Insights */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <InsightCard border="#0077cc" color="rgba(0,119,204,0.07)">
-          <strong className="text-atlas-text">Acxe — Titulos a pagar:</strong>{' '}
+          <strong className="text-atlas-text">Acxe — Títulos a pagar:</strong>{' '}
           <span className="text-atlas-muted">
             {fmtM(kpis.total_pagar_usd)} em {buckets.length} buckets mensais ({fmtBrlM(kpis.total_pagar_brl)})
           </span>
@@ -310,15 +318,15 @@ export function PositionDashboard() {
           </span>
         </InsightCard>
         <InsightCard border="#d97706" color="rgba(217,119,6,0.08)">
-          <strong className="text-atlas-text">Estoque nao pago estimado:</strong>{' '}
+          <strong className="text-atlas-text">Estoque não pago estimado:</strong>{' '}
           <span className="text-atlas-muted">
-            {fmtPct(kpis.pct_nao_pago)} do estoque importado — {fmtM(kpis.est_nao_pago_usd)} de exposicao adicional
+            {fmtPct(kpis.pct_nao_pago)} do estoque importado — {fmtM(kpis.est_nao_pago_usd)} de exposição adicional
           </span>
         </InsightCard>
         <InsightCard border="#059669" color="rgba(5,150,105,0.07)">
           <strong className="text-atlas-text">Estoque total:</strong>{' '}
           <span className="text-atlas-muted">
-            {fmtBrlM(kpis.total_est_brl)} — Importado {fmtBrlM(kpis.est_importado_brl)} | Transito {fmtBrlM(kpis.est_transito_brl)} | Nacional {fmtBrlM(kpis.est_nacional_brl)}
+            {fmtBrlM(kpis.total_est_brl)} — Importado {fmtBrlM(kpis.est_importado_brl)} | Trânsito {fmtBrlM(kpis.est_transito_brl)} | Nacional {fmtBrlM(kpis.est_nacional_brl)}
           </span>
         </InsightCard>
       </div>

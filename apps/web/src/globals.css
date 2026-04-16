@@ -25,15 +25,15 @@ body {
 
 @layer components {
   .input {
-    @apply px-3 py-2 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-xs focus:outline-none focus:ring-1 focus:ring-emerald-600;
+    @apply px-3 py-2 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-xs focus:outline-none focus:ring-1 focus:ring-q2p;
   }
   .btn-primary {
-    @apply px-4 py-2 rounded bg-emerald-600 text-white font-semibold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply px-4 py-2 rounded bg-q2p text-white font-semibold hover:bg-[#158a3b] disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-150;
   }
   .btn-secondary {
-    @apply px-4 py-2 rounded border border-atlas-border bg-atlas-bg text-atlas-text hover:bg-atlas-border;
+    @apply px-4 py-2 rounded border border-atlas-border bg-atlas-bg text-atlas-text hover:bg-atlas-border transition-colors duration-150;
   }
   .btn-danger {
-    @apply px-4 py-2 rounded bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply px-4 py-2 rounded bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-150;
   }
 }

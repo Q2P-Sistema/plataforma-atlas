@@ -31,8 +31,8 @@ const fmtBrl = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency'
 const fmtUsd = (v: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v);
 
 const ORIGEM_LABELS: Record<string, string> = {
-  em_transito: 'Em Transito',
-  importado_no_chao: 'Importado (deposito)',
+  em_transito: 'Em Trânsito',
+  importado_no_chao: 'Importado (depósito)',
   nacional: 'Nacional',
 };
 
@@ -120,7 +120,15 @@ export function InventoryPage() {
   };
 
   if (isLoading) {
-    return <div className="flex items-center justify-center min-h-[40vh]"><p className="text-atlas-muted">Carregando...</p></div>;
+    return (
+      <div className="space-y-5">
+        <div className="h-8 w-56 bg-atlas-border rounded animate-pulse" />
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+          {Array.from({ length: 5 }, (_, i) => <div key={i} className="h-20 rounded-lg bg-atlas-border animate-pulse" />)}
+        </div>
+        <div className="h-64 rounded-lg bg-atlas-border animate-pulse" />
+      </div>
+    );
   }
 
   // Aggregate by origem
@@ -141,9 +149,9 @@ export function InventoryPage() {
 
   // Bar chart: estados do estoque (horizontal)
   const estadosData = [
-    { name: 'Maritimo / Transito', value: transitoBrl / 1e6, fill: 'rgba(132,146,166,0.55)' },
-    { name: 'Nac. Acxe (deposito)', value: importadoBrl / 1e6, fill: 'rgba(0,119,204,0.55)' },
-    { name: 'Depositos Q2P', value: nacionalBrl / 1e6, fill: 'rgba(26,153,68,0.55)' },
+    { name: 'Marítimo / Trânsito', value: transitoBrl / 1e6, fill: 'rgba(132,146,166,0.55)' },
+    { name: 'Nac. Acxe (depósito)', value: importadoBrl / 1e6, fill: 'rgba(0,119,204,0.55)' },
+    { name: 'Depósitos Q2P', value: nacionalBrl / 1e6, fill: 'rgba(26,153,68,0.55)' },
   ];
 
   // Pie: por origem
@@ -173,9 +181,9 @@ export function InventoryPage() {
       {showLocalidades && localidadesData && (
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-xs text-atlas-muted uppercase tracking-[3px]">Localidades para calculo de exposicao</p>
+            <p className="text-xs text-atlas-muted uppercase tracking-[3px]">Localidades para cálculo de exposição</p>
             <div className="flex gap-2">
-              <button onClick={selectAll} className="text-xs px-2 py-1 rounded bg-emerald-600/10 text-emerald-600 hover:bg-emerald-600/20 transition-colors">Todas</button>
+              <button onClick={selectAll} className="text-xs px-2 py-1 rounded bg-q2p/10 text-q2p hover:bg-q2p/20 transition-colors">Todas</button>
               <button onClick={selectNone} className="text-xs px-2 py-1 rounded bg-red-600/10 text-red-600 hover:bg-red-600/20 transition-colors">Nenhuma</button>
             </div>
           </div>
@@ -184,7 +192,7 @@ export function InventoryPage() {
               <label key={`${loc.localidade}-${loc.empresa}`}
                 className={`flex items-start gap-2 p-2 rounded border cursor-pointer transition-colors ${loc.selecionada ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-atlas-border/50 bg-atlas-bg/50 opacity-60'}`}>
                 <input type="checkbox" checked={loc.selecionada} onChange={() => toggleLocalidade(loc.localidade)}
-                  className="mt-0.5 accent-emerald-600" />
+                  className="mt-0.5 accent-q2p" />
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-atlas-text truncate">{loc.localidade}</p>
                   <p className="text-xs text-atlas-muted">
@@ -204,9 +212,9 @@ export function InventoryPage() {
 
       {/* KPI Strip — 5 fases */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-        <KpiCard label="Maritimo / Transito" value={fmtBrlM(transitoBrl)} color="#8492a6" src="acxe" sub="Cambio ainda flutuante" />
+        <KpiCard label="Marítimo / Trânsito" value={fmtBrlM(transitoBrl)} color="#8492a6" src="acxe" sub="Câmbio ainda flutuante" />
         <KpiCard label="Importado no Chao" value={fmtBrlM(importadoBrl)} color="#0077cc" src="acxe" sub="NF entrada emitida" />
-        <KpiCard label="Nacional Q2P" value={fmtBrlM(nacionalBrl)} color="#1a9944" src="q2p" sub="Distribuicao ativa" />
+        <KpiCard label="Nacional Q2P" value={fmtBrlM(nacionalBrl)} color="#1a9944" src="q2p" sub="Distribuição ativa" />
         <KpiCard label="Total Consolidado" value={fmtBrlM(totalBrl)} color="#059669" src="calc" sub={`${totalItens} produtos`} />
         <KpiCard label="Localidades" value={String(estoque.length)} color="#7c3aed" src="calc" sub="Depots ativos" />
       </div>
@@ -217,7 +225,7 @@ export function InventoryPage() {
           <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Estados do Estoque — Fluxo Completo</p>
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={estadosData} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(221,225,232,0.5)" />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" />
               <XAxis type="number" tick={{ fontSize: 9 }} tickFormatter={(v: number) => `R$${v}M`} />
               <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={140} />
               <Tooltip formatter={(v) => `R$ ${Number(v).toFixed(1)}M`} />
@@ -243,7 +251,7 @@ export function InventoryPage() {
 
       {/* Depot grid cards */}
       <div>
-        <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Depositos Regionais + Transito</p>
+        <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Depósitos Regionais + Trânsito</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
           {estoque.map((d) => (
             <div key={`${d.localidade}-${d.empresa}`}
@@ -284,16 +292,16 @@ export function InventoryPage() {
       {/* Insights */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="rounded-r p-3 text-xs leading-relaxed" style={{ borderLeft: '2px solid #d97706', backgroundColor: 'rgba(217,119,6,0.08)' }}>
-          <strong className="text-atlas-text">Transito aduaneiro:</strong>{' '}
-          <span className="text-atlas-muted">{fmtBrlM(transitoBrl)} em mercadoria em transito maritimo — cambio ainda flutuante</span>
+          <strong className="text-atlas-text">Trânsito aduaneiro:</strong>{' '}
+          <span className="text-atlas-muted">{fmtBrlM(transitoBrl)} em mercadoria em trânsito marítimo — câmbio ainda flutuante</span>
         </div>
         <div className="rounded-r p-3 text-xs leading-relaxed" style={{ borderLeft: '2px solid #0077cc', backgroundColor: 'rgba(0,119,204,0.07)' }}>
           <strong className="text-atlas-text">Estoque Acxe:</strong>{' '}
-          <span className="text-atlas-muted">{fmtBrlM(importadoBrl)} nacionalizado nos depositos — custo fixo em BRL</span>
+          <span className="text-atlas-muted">{fmtBrlM(importadoBrl)} nacionalizado nos depósitos — custo fixo em BRL</span>
         </div>
         <div className="rounded-r p-3 text-xs leading-relaxed" style={{ borderLeft: '2px solid #1a9944', backgroundColor: 'rgba(26,153,68,0.07)' }}>
           <strong className="text-atlas-text">Estoque Q2P:</strong>{' '}
-          <span className="text-atlas-muted">{fmtBrlM(nacionalBrl)} em distribuicao ativa nos depositos Q2P</span>
+          <span className="text-atlas-muted">{fmtBrlM(nacionalBrl)} em distribuição ativa nos depósitos Q2P</span>
         </div>
       </div>
     </div>

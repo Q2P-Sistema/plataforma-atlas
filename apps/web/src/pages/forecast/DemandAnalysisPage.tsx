@@ -26,24 +26,29 @@ export function DemandAnalysisPage() {
     },
   });
 
-  if (isLoading) return <div className="flex items-center justify-center min-h-[40vh]"><p className="text-atlas-muted">Carregando...</p></div>;
+  if (isLoading) return (
+    <div className="space-y-5">
+      <div className="h-8 w-48 bg-atlas-border rounded animate-pulse" />
+      <div className="h-64 rounded-lg bg-atlas-border animate-pulse" />
+    </div>
+  );
 
   return (
     <div className="space-y-5">
-      <h1 className="text-2xl font-heading font-bold text-atlas-text">Analise de Demanda</h1>
+      <h1 className="text-2xl font-heading font-bold text-atlas-text">Análise de Demanda</h1>
 
       <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-        <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Vendas por Familia — Ultimos 24 Meses</p>
+        <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Vendas por Família — Últimos 24 Meses</p>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-atlas-bg border-b border-atlas-border">
-                <th className="px-3 py-2.5 text-left text-xs text-atlas-muted uppercase">Familia</th>
+                <th className="px-3 py-2.5 text-left text-xs text-atlas-muted uppercase">Família</th>
                 {familias[0]?.ultimos_3m.map((m) => (
                   <th key={m.mes} className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">{formatMesLabel(m.mes)}</th>
                 ))}
                 <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">YoY %</th>
-                <th className="px-3 py-2.5 text-center text-xs text-atlas-muted uppercase w-28">Tendencia 24m</th>
+                <th className="px-3 py-2.5 text-center text-xs text-atlas-muted uppercase w-28">Tendência 24m</th>
               </tr>
             </thead>
             <tbody>

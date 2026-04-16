@@ -103,7 +103,12 @@ export function NDFListPage() {
     { key: 'banco', header: 'Banco', render: (r) => r.banco || '—' },
   ];
 
-  if (isLoading) return <div className="flex items-center justify-center min-h-[40vh]"><p className="text-atlas-muted">Carregando...</p></div>;
+  if (isLoading) return (
+    <div className="space-y-5">
+      <div className="h-8 w-48 bg-atlas-border rounded animate-pulse" />
+      <div className="h-64 rounded-lg bg-atlas-border animate-pulse" />
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -234,11 +239,11 @@ export function NDFListPage() {
         </>}>
         <div className="space-y-3">
           <div>
-            <label htmlFor="ptax-liq" className="block text-sm font-medium text-atlas-text mb-1">PTAX de Liquidacao</label>
+            <label htmlFor="ptax-liq" className="block text-sm font-medium text-atlas-text mb-1">PTAX de Liquidação</label>
             <input id="ptax-liq" type="number" step="0.0001" value={ptaxLiq} placeholder="5.4500"
               onChange={(e: ChangeEvent<HTMLInputElement>) => setPtaxLiq(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border border-atlas-border bg-atlas-bg text-atlas-text text-sm focus:outline-none focus:ring-2 focus:ring-acxe" />
-            <p className="text-xs text-atlas-muted mt-1">Preencha para calculo automatico: resultado = notional * (taxa - ptax)</p>
+            <p className="text-xs text-atlas-muted mt-1">Preencha para cálculo automático: resultado = notional * (taxa - ptax)</p>
           </div>
           <div className="relative">
             <div className="absolute inset-x-0 top-0 flex items-center justify-center -mt-1">
@@ -250,7 +255,7 @@ export function NDFListPage() {
             <input id="resultado-liq" type="number" step="0.01" value={resultadoManual} placeholder="-50000.00"
               onChange={(e: ChangeEvent<HTMLInputElement>) => setResultadoManual(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border border-atlas-border bg-atlas-bg text-atlas-text text-sm focus:outline-none focus:ring-2 focus:ring-acxe" />
-            <p className="text-xs text-atlas-muted mt-1">Valor informado pelo banco. Sobrescreve o calculo automatico.</p>
+            <p className="text-xs text-atlas-muted mt-1">Valor informado pelo banco. Sobrescreve o cálculo automático.</p>
           </div>
         </div>
       </Modal>

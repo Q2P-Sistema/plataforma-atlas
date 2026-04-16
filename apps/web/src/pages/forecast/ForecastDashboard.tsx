@@ -73,7 +73,15 @@ export function ForecastDashboard() {
   const proxRuptura = familias.filter((f) => f.cobertura_dias < 999).sort((a, b) => a.cobertura_dias - b.cobertura_dias)[0];
   const valorTotal = urgentes.reduce((s, u) => s + u.valor_brl, 0);
 
-  if (isLoading) return <div className="flex items-center justify-center min-h-[40vh]"><p className="text-atlas-muted">Carregando...</p></div>;
+  if (isLoading) return (
+    <div className="space-y-5">
+      <div className="h-8 w-56 bg-atlas-border rounded animate-pulse" />
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+        {Array.from({ length: 5 }, (_, i) => <div key={i} className="h-20 rounded-lg bg-atlas-border animate-pulse" />)}
+      </div>
+      <div className="h-64 rounded-lg bg-atlas-border animate-pulse" />
+    </div>
+  );
 
   return (
     <div className="space-y-5">
@@ -83,7 +91,7 @@ export function ForecastDashboard() {
           <div className="flex rounded-lg border border-atlas-border overflow-hidden">
             <button onClick={() => setTab('familias')}
               className={`px-4 py-1.5 text-sm font-medium transition-colors ${tab === 'familias' ? 'bg-acxe text-white' : 'bg-atlas-bg text-atlas-muted hover:text-atlas-text'}`}>
-              Familias
+              Famílias
             </button>
             <button onClick={() => setTab('urgentes')}
               className={`px-4 py-1.5 text-sm font-medium transition-colors ${tab === 'urgentes' ? 'bg-red-600 text-white' : 'bg-atlas-bg text-atlas-muted hover:text-atlas-text'}`}>
@@ -94,8 +102,8 @@ export function ForecastDashboard() {
             <select value={statusFilter} onChange={(e: ChangeEvent<HTMLSelectElement>) => setStatusFilter(e.target.value)}
               className="px-3 py-1.5 rounded-lg border border-atlas-border bg-atlas-bg text-atlas-text text-sm">
               <option value="">Todos</option>
-              <option value="critico">Critico</option>
-              <option value="atencao">Atencao</option>
+              <option value="critico">Crítico</option>
+              <option value="atencao">Atenção</option>
               <option value="ok">OK</option>
             </select>
           )}
@@ -104,26 +112,26 @@ export function ForecastDashboard() {
 
       {/* KPI Strip */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-        <KpiCard label="Estoque Total" value={fmtT(totalEstoque)} color="#059669" sub={`${familias.length} familias`} />
-        <KpiCard label="Proxima Ruptura" value={proxRuptura ? `${proxRuptura.cobertura_dias}d` : '—'} color="#d97706"
+        <KpiCard label="Estoque Total" value={fmtT(totalEstoque)} color="#059669" sub={`${familias.length} famílias`} />
+        <KpiCard label="Próxima Ruptura" value={proxRuptura ? `${proxRuptura.cobertura_dias}d` : '—'} color="#d97706"
           sub={proxRuptura ? proxRuptura.familia_nome : 'Nenhuma ruptura'} />
         <KpiCard label="Compra Intl." value={String(intl.length)} color="#dc2626" sub="urgentes 15 dias" />
         <KpiCard label="Compra Local" value={String(local.length)} color="#7c3aed" sub="prazo perdido" />
-        <KpiCard label="Valor a Comprar" value={fmtBrl(valorTotal)} color="#0077cc" sub={`${urgentes.length} familias`} />
+        <KpiCard label="Valor a Comprar" value={fmtBrl(valorTotal)} color="#0077cc" sub={`${urgentes.length} famílias`} />
       </div>
 
       {/* TAB: Familias */}
       {tab === 'familias' && (
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-          <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Familias de Produto — Estoque e Cobertura</p>
+          <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Famílias de Produto — Estoque e Cobertura</p>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-atlas-bg border-b border-atlas-border">
-                  <th className="px-3 py-2.5 text-left text-xs text-atlas-muted uppercase">Familia</th>
-                  <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Disponivel</th>
+                  <th className="px-3 py-2.5 text-left text-xs text-atlas-muted uppercase">Família</th>
+                  <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Disponível</th>
                   <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Reservado</th>
-                  <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Transito</th>
+                  <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Trânsito</th>
                   <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Total</th>
                   <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">CMC R$/kg</th>
                   <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Venda/dia</th>
@@ -195,7 +203,7 @@ export function ForecastDashboard() {
           {/* Internacional */}
           <UrgentSection
             title="Compras Internacionais"
-            subtitle="Pedido necessario nos proximos 15 dias"
+            subtitle="Pedido necessário nos próximos 15 dias"
             color="#dc2626"
             items={intl}
             type="intl"
@@ -204,7 +212,7 @@ export function ForecastDashboard() {
           {/* Local emergencial */}
           <UrgentSection
             title="Compras Locais Emergenciais"
-            subtitle="Prazo internacional perdido — negociacao spot"
+            subtitle="Prazo internacional perdido — negociação spot"
             color="#7c3aed"
             items={local}
             type="local"
@@ -221,7 +229,7 @@ export function ForecastDashboard() {
 
           {intl.length === 0 && local.length === 0 && nacional.length === 0 && (
             <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-8 text-center">
-              <p className="text-emerald-600 font-semibold">Nenhuma compra urgente nos proximos 15 dias.</p>
+              <p className="text-emerald-600 font-semibold">Nenhuma compra urgente nos próximos 15 dias.</p>
             </div>
           )}
         </div>
@@ -238,34 +246,34 @@ function DefinitionsPanel() {
     <div className="border border-atlas-border rounded-lg overflow-hidden">
       <button onClick={() => setOpen(!open)}
         className="w-full flex items-center justify-between px-4 py-2.5 bg-atlas-bg text-xs text-atlas-muted hover:text-atlas-text transition-colors">
-        <span className="uppercase tracking-[2px] font-medium">Definicoes e Metodologia</span>
+        <span className="uppercase tracking-[2px] font-medium">Definições e Metodologia</span>
         <span className="text-sm">{open ? '\u25B2' : '\u25BC'}</span>
       </button>
       {open && (
         <div className="px-4 py-3 bg-atlas-card text-xs text-atlas-muted space-y-3 leading-relaxed">
           <div>
             <p className="font-semibold text-atlas-text mb-0.5">Pool de Estoque (3 camadas)</p>
-            <p><strong>Disponivel</strong> = saldo - reservado. <strong>Bloqueado</strong> = reservado para pedidos em carteira. <strong>Transito</strong> = pedidos de compra pendentes de recebimento. <strong>Total</strong> = disponivel + bloqueado + transito.</p>
+            <p><strong>Disponível</strong> = saldo - reservado. <strong>Bloqueado</strong> = reservado para pedidos em carteira. <strong>Trânsito</strong> = pedidos de compra pendentes de recebimento. <strong>Total</strong> = disponível + bloqueado + trânsito.</p>
           </div>
           <div>
             <p className="font-semibold text-atlas-text mb-0.5">Cobertura (dias)</p>
-            <p>Estoque total dividido pela demanda diaria sazonalizada. Indica quantos dias o estoque atual cobre sem novas chegadas.</p>
+            <p>Estoque total dividido pela demanda diária sazonalizada. Indica quantos dias o estoque atual cobre sem novas chegadas.</p>
           </div>
           <div>
             <p className="font-semibold text-atlas-text mb-0.5">Sazonalidade</p>
-            <p>Fator multiplicador mensal aplicado a demanda diaria media. Valores &gt;1.0 indicam mes de alta demanda, &lt;1.0 indica baixa. Editavel em Config &gt; Sazonalidade.</p>
+            <p>Fator multiplicador mensal aplicado à demanda diária média. Valores &gt;1.0 indicam mês de alta demanda, &lt;1.0 indica baixa. Editável em Config &gt; Sazonalidade.</p>
           </div>
           <div>
             <p className="font-semibold text-atlas-text mb-0.5">Qtd Sugerida (net-of-pipeline)</p>
-            <p>Demanda total para LT + 60 dias de cobertura, descontando pedidos em rota. Arredondada para cima ao MOQ (Internacional: 25t, Nacional: 12t). So calculada se ruptura detectada.</p>
+            <p>Demanda total para LT + 60 dias de cobertura, descontando pedidos em rota. Arredondada para cima ao MOQ (Internacional: 25t, Nacional: 12t). Só calculada se ruptura detectada.</p>
           </div>
           <div>
             <p className="font-semibold text-atlas-text mb-0.5">Compra Local Emergencial</p>
-            <p>Quando o prazo de pedido internacional esta perdido (dia ideal &lt; 0), sugere compra local com LT curto (7d) para cobrir o gap ate a chegada do pedido internacional.</p>
+            <p>Quando o prazo de pedido internacional está perdido (dia ideal &lt; 0), sugere compra local com LT curto (7d) para cobrir o gap até a chegada do pedido internacional.</p>
           </div>
           <div>
             <p className="font-semibold text-atlas-text mb-0.5">Status</p>
-            <p><strong>Critico</strong> = ruptura em ate 30 dias. <strong>Atencao</strong> = ruptura entre 31-60 dias. <strong>OK</strong> = sem ruptura nos proximos 60 dias.</p>
+            <p><strong>Crítico</strong> = ruptura em até 30 dias. <strong>Atenção</strong> = ruptura entre 31-60 dias. <strong>OK</strong> = sem ruptura nos próximos 60 dias.</p>
           </div>
         </div>
       )}
@@ -292,8 +300,8 @@ function UrgentSection({ title, subtitle, color, items, type }: {
         <table className="w-full text-sm">
           <thead>
             <tr style={{ backgroundColor: color + '08' }} className="border-b" >
-              <th className="px-3 py-2.5 text-center text-xs text-atlas-muted uppercase w-20">Urgencia</th>
-              <th className="px-3 py-2.5 text-left text-xs text-atlas-muted uppercase">Familia</th>
+              <th className="px-3 py-2.5 text-center text-xs text-atlas-muted uppercase w-20">Urgência</th>
+              <th className="px-3 py-2.5 text-left text-xs text-atlas-muted uppercase">Família</th>
               <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Estoque</th>
               <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">{type === 'local' ? 'Ruptura' : 'Cobertura'}</th>
               <th className="px-3 py-2.5 text-center text-xs text-atlas-muted uppercase">LT</th>

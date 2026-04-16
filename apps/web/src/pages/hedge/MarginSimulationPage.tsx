@@ -52,7 +52,7 @@ export function MarginSimulationPage() {
 
   return (
     <div className="space-y-5">
-      <h1 className="text-2xl font-heading font-bold text-atlas-text">Simulacao de Margem</h1>
+      <h1 className="text-2xl font-heading font-bold text-atlas-text">Simulação de Margem</h1>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
@@ -68,7 +68,7 @@ export function MarginSimulationPage() {
           <p className="text-xs text-atlas-muted mt-1">{((parseFloat(custos || '0') / parseFloat(faturamento || '1')) * 100).toFixed(0)}% do faturamento</p>
         </div>
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-          <label htmlFor="sim-vol" className="block text-xs text-atlas-muted uppercase tracking-wider mb-1">Volume USD (exposicao)</label>
+          <label htmlFor="sim-vol" className="block text-xs text-atlas-muted uppercase tracking-wider mb-1">Volume USD (exposição)</label>
           <input id="sim-vol" type="number" value={volume} onChange={(e: ChangeEvent<HTMLInputElement>) => setVolume(e.target.value)}
             className="w-full px-3 py-2 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-sm font-mono focus:outline-none focus:ring-1 focus:ring-acxe" />
           <p className="text-xs text-atlas-muted mt-1">$ {(parseFloat(volume || '0') / 1e6).toFixed(2)}M</p>
@@ -76,18 +76,18 @@ export function MarginSimulationPage() {
       </div>
 
       <button onClick={() => simMutation.mutate()} disabled={simMutation.isPending}
-        className="px-5 py-2 rounded bg-emerald-600 text-white text-xs font-mono tracking-wider hover:bg-emerald-700 disabled:opacity-50 transition-colors">
-        {simMutation.isPending ? 'Calculando...' : 'Simular 13 cenarios'}
+        className="px-5 py-2 rounded bg-q2p text-white text-xs font-mono tracking-wider hover:bg-[#158a3b] disabled:opacity-50 transition-colors">
+        {simMutation.isPending ? 'Calculando...' : 'Simular 13 cenários'}
       </button>
 
       {cenarios.length > 0 && (
         <>
           {/* Chart */}
           <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-            <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-3">Margem vs Variacao Cambial — Sem Hedge vs Com NDF</p>
+            <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-3">Margem vs Variação Cambial — Sem Hedge vs Com NDF</p>
             <ResponsiveContainer width="100%" height={260}>
               <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(221,225,232,0.5)" />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" />
                 <XAxis dataKey="cambio" tick={{ fontSize: 9 }} interval={1} />
                 <YAxis tick={{ fontSize: 9 }} tickFormatter={(v: number) => `${v}%`} />
                 <Tooltip formatter={(v) => `${Number(v).toFixed(2)}%`} />
@@ -104,7 +104,7 @@ export function MarginSimulationPage() {
             <table className="w-full text-xs font-mono">
               <thead>
                 <tr className="bg-atlas-bg border-b border-atlas-border">
-                  <th className="px-3 py-2.5 text-left text-xs font-normal text-atlas-muted uppercase tracking-wider">Cambio</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-normal text-atlas-muted uppercase tracking-wider">Câmbio</th>
                   <th className="px-3 py-2.5 text-right text-xs font-normal text-atlas-muted uppercase tracking-wider">Custo c/ Hedge</th>
                   <th className="px-3 py-2.5 text-right text-xs font-normal text-atlas-muted uppercase tracking-wider">Custo s/ Hedge</th>
                   <th className="px-3 py-2.5 text-right text-xs font-normal text-atlas-muted uppercase tracking-wider">Margem %</th>

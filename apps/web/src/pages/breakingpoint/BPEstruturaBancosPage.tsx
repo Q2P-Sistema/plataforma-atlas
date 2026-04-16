@@ -85,12 +85,19 @@ function LinhaLimite({
 export function BPEstruturaBancosPage() {
   const { data: bancos = [], isLoading } = useQuery({ queryKey: ['bp', 'bancos'], queryFn: fetchBancos });
 
-  if (isLoading) return <div className="p-6 text-atlas-muted">Carregando bancos…</div>;
+  if (isLoading) return (
+    <div className="p-6 space-y-5">
+      <div className="h-8 w-64 bg-atlas-border rounded animate-pulse" />
+      <div className="grid grid-cols-2 gap-4">
+        {Array.from({ length: 4 }, (_, i) => <div key={i} className="h-48 rounded-xl bg-atlas-border animate-pulse" />)}
+      </div>
+    </div>
+  );
 
   return (
     <div className="p-6 max-w-[1440px] mx-auto">
       <div className="mb-5">
-        <h1 className="text-2xl font-bold">Breaking Point · Estrutura Bancária</h1>
+        <h1 className="text-2xl font-heading font-bold">Breaking Point · Estrutura Bancária</h1>
         <p className="text-xs text-atlas-muted mt-1">
           Limites de crédito por banco — antecipação de recebíveis, FINIMP e cheque especial.
         </p>

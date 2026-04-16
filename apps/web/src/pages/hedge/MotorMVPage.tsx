@@ -88,7 +88,7 @@ export function MotorMVPage() {
     }, 500);
   }, []);
 
-  const lambdaDesc = lambda < 0.3 ? 'Conservador' : lambda < 0.5 ? 'Moderado' : lambda < 0.7 ? 'Moderado-alto' : 'Alto — max. protecao';
+  const lambdaDesc = lambda < 0.3 ? 'Conservador' : lambda < 0.5 ? 'Moderado' : lambda < 0.7 ? 'Moderado-alto' : 'Alto — max. proteção';
 
   // Charts: Custo vs Protecao by lambda (slider-reactive)
   const mvChartData = Array.from({ length: 11 }, (_, i) => {
@@ -140,21 +140,21 @@ export function MotorMVPage() {
 
   return (
     <div className="space-y-5">
-      <h1 className="text-2xl font-heading font-bold text-atlas-text">Motor de Minima Variancia</h1>
+      <h1 className="text-2xl font-heading font-bold text-atlas-text">Motor de Mínima Variância</h1>
 
       {/* Engine container */}
       <div className="bg-atlas-card border border-emerald-500/30 rounded-lg p-5 shadow-sm shadow-emerald-500/5">
-        <p className="text-xs uppercase tracking-[3px] text-emerald-600 mb-5">Motor de Minima Variancia — Recomendacao de Hedge Otimo</p>
+        <p className="text-xs uppercase tracking-[3px] text-emerald-600 mb-5">Motor de Mínima Variância — Recomendação de Hedge Ótimo</p>
 
         {/* Lambda control */}
         <div className="grid grid-cols-[auto_1fr_auto] gap-4 items-center bg-atlas-bg rounded-lg p-4 border border-atlas-border mb-5">
           <div>
-            <p className="text-xs tracking-[2px] text-atlas-muted uppercase mb-1">AVERSAO AO RISCO (lambda)</p>
-            <p className="text-xs text-atlas-muted">0 = minimiza custo / 1 = maximiza protecao</p>
+            <p className="text-xs tracking-[2px] text-atlas-muted uppercase mb-1">AVERSÃO AO RISCO (lambda)</p>
+            <p className="text-xs text-atlas-muted">0 = minimiza custo / 1 = maximiza proteção</p>
           </div>
           <input type="range" min={0} max={1} step={0.05} value={lambda}
             onChange={(e: ChangeEvent<HTMLInputElement>) => { const v = parseFloat(e.target.value); setLambda(v); commitSliders(v, pctEstoque); }}
-            className="w-full accent-emerald-600" />
+            className="w-full accent-q2p" />
           <div className="text-right">
             <p className="text-3xl font-bold text-emerald-600">{lambda.toFixed(2)}</p>
             <p className="text-xs text-atlas-muted mt-1">{lambdaDesc}</p>
@@ -169,17 +169,17 @@ export function MotorMVPage() {
               <p className="text-2xl font-bold" style={{ color: result.cobertura_global_pct >= 60 ? '#059669' : result.cobertura_global_pct >= 40 ? '#d97706' : '#dc2626' }}>
                 {result.cobertura_global_pct.toFixed(1)}%
               </p>
-              <p className="text-xs text-atlas-muted mt-1">% da exposicao total coberta</p>
+              <p className="text-xs text-atlas-muted mt-1">% da exposição total coberta</p>
             </div>
             <div className="bg-atlas-bg border border-atlas-border rounded-lg p-3">
               <p className="text-xs tracking-[2px] text-atlas-muted uppercase mb-1">Gap Total USD</p>
               <p className="text-2xl font-bold" style={{ color: result.gap_total_usd > 0 ? '#dc2626' : '#059669' }}>
                 {fmtM(Math.abs(result.gap_total_usd))}
               </p>
-              <p className="text-xs text-atlas-muted mt-1">Exposicao residual descoberta</p>
+              <p className="text-xs text-atlas-muted mt-1">Exposição residual descoberta</p>
             </div>
             <div className="bg-atlas-bg border border-atlas-border rounded-lg p-3">
-              <p className="text-xs tracking-[2px] text-atlas-muted uppercase mb-1">Custo da Acao</p>
+              <p className="text-xs tracking-[2px] text-atlas-muted uppercase mb-1">Custo da Ação</p>
               <p className="text-2xl font-bold text-purple-600">
                 R$ {Math.round(result.custo_acao_brl / 1000)}K
               </p>
@@ -192,7 +192,7 @@ export function MotorMVPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
           <div>
             <div className="flex justify-between text-xs text-atlas-muted mb-1">
-              <span>Cambio Spot (R$)</span>
+              <span>Câmbio Spot (R$)</span>
               <span className="font-bold text-blue-600">R$ {spotRate.toFixed(2)}</span>
             </div>
             <input type="range" min={4.5} max={7.5} step={0.05} value={spotRate}
@@ -222,21 +222,21 @@ export function MotorMVPage() {
         {/* 3 Layers */}
         {result && (
           <div className="grid grid-cols-3 gap-3 mb-5">
-            <LayerCard num="01" name="Automatico" pct={result.camadas.l1_pct} color="#059669"
+            <LayerCard num="01" name="Automático" pct={result.camadas.l1_pct} color="#059669"
               desc="Contratado automaticamente ao consolidar o bucket." />
-            <LayerCard num="02" name="Tatico" pct={result.camadas.l2_pct} color="#7c3aed"
-              desc="Decisao semanal — spot vs. media 30d e tendencia." />
+            <LayerCard num="02" name="Tático" pct={result.camadas.l2_pct} color="#7c3aed"
+              desc="Decisão semanal — spot vs. média 30d e tendência." />
             <LayerCard num="03" name="Aberto" pct={result.camadas.l3_pct} color="#d97706"
-              desc="Exposicao intencional — captura ganho se cambio cair." />
+              desc="Exposição intencional — captura ganho se câmbio cair." />
           </div>
         )}
 
         {/* Recommendation table */}
         {result && (
           <div>
-            <p className="text-xs tracking-[2px] text-atlas-muted uppercase mb-2">Recomendacao por Bucket</p>
+            <p className="text-xs tracking-[2px] text-atlas-muted uppercase mb-2">Recomendação por Bucket</p>
             <DataTable columns={columns} data={result.recomendacoes} rowKey={(r) => r.bucket_id}
-              emptyMessage="Nenhuma recomendacao — cobertura ja atinge o alvo" />
+              emptyMessage="Nenhuma recomendação — cobertura já atinge o alvo" />
           </div>
         )}
       </div>
@@ -244,24 +244,24 @@ export function MotorMVPage() {
       {/* Charts */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-          <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-2">Custo do Hedge vs Protecao — por lambda</p>
+          <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-2">Custo do Hedge vs Proteção — por lambda</p>
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={mvChartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(221,225,232,0.5)" />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" />
               <XAxis dataKey="lambda" tick={{ fontSize: 9 }} />
               <YAxis tick={{ fontSize: 9 }} />
               <Tooltip />
               <Legend />
               <Line type="monotone" dataKey="custo" name="Custo hedge (R$K)" stroke="#d97706" strokeWidth={2} dot={{ r: 3 }} />
-              <Line type="monotone" dataKey="protecao" name="Protecao (R$K)" stroke="#059669" strokeWidth={2} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="protecao" name="Proteção (R$K)" stroke="#059669" strokeWidth={2} dot={{ r: 3 }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-          <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-2">Simulacao: Impacto na Margem por Variacao Cambial</p>
+          <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-2">Simulação: Impacto na Margem por Variação Cambial</p>
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={simData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(221,225,232,0.5)" />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" />
               <XAxis dataKey="cambio" tick={{ fontSize: 9 }} interval={4} />
               <YAxis tick={{ fontSize: 9 }} tickFormatter={(v: number) => `${v}%`} />
               <Tooltip formatter={(v) => `${Number(v).toFixed(2)}%`} />

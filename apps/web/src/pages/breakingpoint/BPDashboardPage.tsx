@@ -134,7 +134,15 @@ export function BPDashboardPage() {
   });
 
   if (isLoading) {
-    return <div className="p-6 text-atlas-muted">Carregando projeção…</div>;
+    return (
+      <div className="p-6 space-y-5">
+        <div className="h-8 w-64 bg-atlas-border rounded animate-pulse" />
+        <div className="grid grid-cols-4 gap-3">
+          {Array.from({ length: 4 }, (_, i) => <div key={i} className="h-20 rounded-lg bg-atlas-border animate-pulse" />)}
+        </div>
+        <div className="h-80 rounded-xl bg-atlas-border animate-pulse" />
+      </div>
+    );
   }
   if (error || !proj) {
     return (
@@ -181,7 +189,7 @@ export function BPDashboardPage() {
         <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: alarmColor }}>
           Atlas · Tesouraria · Breaking Point
         </div>
-        <h1 className="text-2xl font-bold mt-1">Quando Fico Sem Caixa?</h1>
+        <h1 className="text-2xl font-heading font-bold mt-1">Quando Fico Sem Caixa?</h1>
         <p className="text-xs text-atlas-muted mt-1">
           180 dias · Caixa + Antecipação + Estoque D+15 · FINIMP = Financiamento OMIE
         </p>
@@ -244,7 +252,7 @@ export function BPDashboardPage() {
                 <stop offset="95%" stopColor="#0C6E8A" stopOpacity={0} />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#D4CCC2" vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" vertical={false} />
             <XAxis dataKey="label" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} interval={1} />
             <YAxis tick={{ fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={fmtAxis} width={60} />
             <Tooltip content={<CustomTooltip semanas={semanas} />} />
@@ -262,7 +270,7 @@ export function BPDashboardPage() {
         <h2 className="text-sm font-bold mb-2">FINIMP ↔ Duplicatas Bloqueadas — 26 Semanas</h2>
         <ResponsiveContainer width="100%" height={220}>
           <LineChart data={semanas} margin={{ top: 10, right: 10, left: 5, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#D4CCC2" vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" vertical={false} />
             <XAxis dataKey="label" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} interval={1} />
             <YAxis tick={{ fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={fmtAxis} width={60} />
             <Tooltip formatter={(v: unknown) => fmtMi(Number(v))} />

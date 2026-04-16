@@ -90,7 +90,12 @@ export function AlertsPage() {
     },
   ];
 
-  if (isLoading) return <div className="flex items-center justify-center min-h-[40vh]"><p className="text-atlas-muted">Carregando...</p></div>;
+  if (isLoading) return (
+    <div className="space-y-5">
+      <div className="h-8 w-48 bg-atlas-border rounded animate-pulse" />
+      <div className="h-64 rounded-lg bg-atlas-border animate-pulse" />
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -142,7 +147,7 @@ export function AlertsPage() {
 
       {/* NDF History */}
       <div>
-        <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Historico — NDFs Registrados</p>
+        <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Histórico — NDFs Registrados</p>
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
           <DataTable columns={ndfColumns} data={ndfs} rowKey={(r) => r.id}
             emptyMessage="Nenhum NDF registrado ainda" />
