@@ -14,17 +14,18 @@ interface PtaxResult {
 
 function formatFetchedAt(iso?: string): string {
   if (!iso) return '—';
-  const d = new Date(iso);
-  const date = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-  const time = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-  return `${date} ${time}`;
+  // BCB format: "2026-04-15 11:08:28.604" — replace space with T for Date parsing
+  const d = new Date(iso.replace(' ', 'T'));
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 }
 
 export function HedgePtaxBadge() {
+  // Usa o mesmo query key do PositionDashboard para compartilhar o cache
   const { data } = useQuery<PtaxResult>({
-    queryKey: ['hedge', 'ptax', 'badge'],
+    queryKey: ['hedge', 'ptax', '15d'],
     queryFn: async () => {
-      const res = await fetch('/api/v1/hedge/ptax?dias=2', { credentials: 'include' });
+      const res = await fetch('/api/v1/hedge/ptax?dias=15', { credentials: 'include' });
       const body = await res.json() as any;
       return body.data;
     },
