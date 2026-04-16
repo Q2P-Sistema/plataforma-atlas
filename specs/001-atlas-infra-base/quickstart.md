@@ -15,8 +15,8 @@
 ### 1. Clonar e instalar dependências
 
 ```bash
-git clone git@github.com:<org>/plataforma-master.git
-cd plataforma-master
+git clone git@github.com:<org>/plataforma-atlas.git
+cd plataforma-atlas
 pnpm install
 ```
 

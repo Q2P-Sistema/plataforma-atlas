@@ -115,7 +115,7 @@ Decisões maiores detalhadas em **Architecture Decision Records** em [docs/adr/]
 ## Quickstart
 
 ```bash
-git clone git@github.com:<org>/plataforma-master.git && cd plataforma-master
+git clone git@github.com:<org>/plataforma-atlas.git && cd plataforma-atlas
 cp .env.example .env        # editar DATABASE_URL, REDIS_URL, SESSION_SECRET, SEED_ADMIN_*
 docker compose -f deploy/docker-compose.yml up -d   # Postgres + Redis
 pnpm install
