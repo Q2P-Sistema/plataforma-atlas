@@ -89,4 +89,13 @@ export function registerModuleRoutes(app: Express): void {
       logger.error({ err }, 'Failed to load Breaking Point module');
     });
   }
+
+  if (config.MODULE_STOCKBRIDGE_ENABLED) {
+    import('@atlas/stockbridge').then(({ stockbridgeRouter }) => {
+      app.use(stockbridgeRouter);
+      logger.info('StockBridge routes registered');
+    }).catch((err) => {
+      logger.error({ err }, 'Failed to load StockBridge module');
+    });
+  }
 }

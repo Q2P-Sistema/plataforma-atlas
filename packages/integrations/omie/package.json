@@ -3,5 +3,17 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Cliente OMIE \u00fanico — polling, sync incremental por dDtAlt, rate limit"
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "description": "Cliente OMIE — consulta NF, ajuste de estoque, alteracao de pedido (dual-CNPJ ACXE+Q2P)",
+  "dependencies": {
+    "@atlas/core": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.0"
+  }
 }

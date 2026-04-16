@@ -16,6 +16,7 @@
     "@atlas/db": "workspace:*",
     "@atlas/forecast": "workspace:*",
     "@atlas/hedge": "workspace:*",
+    "@atlas/stockbridge": "workspace:*",
     "@sendgrid/mail": "^8.1.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",

@@ -3,5 +3,30 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Controle f\u00edsico de estoque — lotes, dual-CNPJ, fase pescado, recebimento. Porte do sistema legado PHP."
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "migrate-from-mysql": "tsx src/scripts/migrate-from-mysql.ts"
+  },
+  "description": "Controle físico de estoque — lotes, dual-CNPJ, recebimento OMIE, aprovações hierárquicas. Porte do sistema legado PHP.",
+  "dependencies": {
+    "drizzle-orm": "^0.38.0",
+    "decimal.js": "^10.4.0",
+    "zod": "^3.24.0",
+    "express": "^4.21.0",
+    "@atlas/core": "workspace:*",
+    "@atlas/db": "workspace:*",
+    "@atlas/auth": "workspace:*",
+    "@atlas/integration-omie": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "supertest": "^7.0.0",
+    "@types/supertest": "^6.0.0",
+    "tsx": "^4.19.0",
+    "vitest": "^2.1.0"
+  }
 }

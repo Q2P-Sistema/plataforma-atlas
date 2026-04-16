@@ -44,6 +44,8 @@ import { BPConfigPage } from './pages/breakingpoint/BPConfigPage.js';
 import { BPTabelaPage } from './pages/breakingpoint/BPTabelaPage.js';
 import { BPEstruturaBancosPage } from './pages/breakingpoint/BPEstruturaBancosPage.js';
 import { BPLimitesPage } from './pages/breakingpoint/BPLimitesPage.js';
+import { SBLayout } from './pages/stockbridge/SBLayout.js';
+import { SBPlaceholderPage } from './pages/stockbridge/SBPlaceholderPage.js';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage.js';
 import { ResetPasswordPage } from './pages/ResetPasswordPage.js';
 import { useAuth } from './hooks/useAuth.js';
@@ -223,7 +225,15 @@ function ProtectedShell() {
         )}
         {!enabledSet.has('breakingpoint') && <Route path="breakingpoint" element={<ModuleRoute moduleId="breakingpoint" moduleName="Breaking Point" enabled={false} />} />}
 
-        {ALL_MODULE_IDS.filter((id) => id !== 'hedge' && id !== 'forecast' && id !== 'breakingpoint').map((id) => (
+        {/* StockBridge — Phase 2 foundational placeholder, substituido pelas US em fases futuras */}
+        {enabledSet.has('stockbridge') && (
+          <Route path="stockbridge" element={<SBLayout />}>
+            <Route index element={<SBPlaceholderPage />} />
+          </Route>
+        )}
+        {!enabledSet.has('stockbridge') && <Route path="stockbridge" element={<ModuleRoute moduleId="stockbridge" moduleName="StockBridge" enabled={false} />} />}
+
+        {ALL_MODULE_IDS.filter((id) => id !== 'hedge' && id !== 'forecast' && id !== 'breakingpoint' && id !== 'stockbridge').map((id) => (
           <Route
             key={id}
             path={id}
