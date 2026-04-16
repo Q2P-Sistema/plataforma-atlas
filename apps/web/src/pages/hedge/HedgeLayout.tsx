@@ -29,7 +29,7 @@ export function HedgePtaxBadge() {
       const body = await res.json() as any;
       return body.data;
     },
-    staleTime: 60 * 60 * 1000,
+    staleTime: 0,
   });
 
   if (!data) return null;

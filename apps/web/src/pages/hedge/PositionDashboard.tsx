@@ -109,7 +109,7 @@ export function PositionDashboard() {
       const body = await res.json() as any;
       return body.data;
     },
-    staleTime: 60 * 60 * 1000, // boletins saem ~3x/dia, 1h é suficiente
+    staleTime: 0, // sempre refetch ao navegar/refresh — BCB publica ~1x/dia
   });
 
   if (isLoading || !data) {
