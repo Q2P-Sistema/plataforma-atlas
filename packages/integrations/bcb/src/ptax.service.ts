@@ -57,8 +57,9 @@ async function fetchBoletimDia(date: Date): Promise<PtaxQuote | null> {
 
   if (!body.value || body.value.length === 0) return null;
 
-  // Último boletim do dia = mais recente
-  const last = body.value[body.value.length - 1]!;
+  // Ordena por dataHoraCotacao ASC — BCB não garante ordem na resposta
+  const sorted = [...body.value].sort((a, b) => a.dataHoraCotacao.localeCompare(b.dataHoraCotacao));
+  const last = sorted[sorted.length - 1]!;
   const { cotacaoVenda: venda, cotacaoCompra: compra, dataHoraCotacao } = last;
 
   if (venda < SANITY_MIN || venda > SANITY_MAX) return null;
