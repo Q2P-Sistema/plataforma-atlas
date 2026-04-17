@@ -6,6 +6,7 @@ COPY packages/core/package.json packages/core/
 COPY packages/auth/package.json packages/auth/
 COPY packages/db/package.json packages/db/
 COPY packages/integrations/bcb/package.json packages/integrations/bcb/
+COPY packages/integrations/omie/package.json packages/integrations/omie/
 COPY modules/hedge/package.json modules/hedge/
 COPY modules/forecast/package.json modules/forecast/
 COPY modules/breakingpoint/package.json modules/breakingpoint/
@@ -16,6 +17,7 @@ COPY packages/core/ packages/core/
 COPY packages/auth/ packages/auth/
 COPY packages/db/ packages/db/
 COPY packages/integrations/bcb/ packages/integrations/bcb/
+COPY packages/integrations/omie/ packages/integrations/omie/
 COPY modules/hedge/ modules/hedge/
 COPY modules/forecast/ modules/forecast/
 COPY modules/breakingpoint/ modules/breakingpoint/
@@ -25,13 +27,14 @@ RUN pnpm --filter @atlas/core build && \
     pnpm --filter @atlas/db build && \
     pnpm --filter @atlas/auth build && \
     pnpm --filter @atlas/integration-bcb build && \
+    pnpm --filter @atlas/integration-omie build && \
     pnpm --filter @atlas/hedge build && \
     pnpm --filter @atlas/forecast build && \
     pnpm --filter @atlas/breakingpoint build && \
     pnpm --filter @atlas/stockbridge build && \
     pnpm --filter @atlas/api build
 # Rewrite main fields to point to compiled dist for production
-RUN for pkg in packages/core packages/auth packages/db packages/integrations/bcb modules/hedge modules/forecast modules/breakingpoint modules/stockbridge; do \
+RUN for pkg in packages/core packages/auth packages/db packages/integrations/bcb packages/integrations/omie modules/hedge modules/forecast modules/breakingpoint modules/stockbridge; do \
       sed -i 's|"main": "./src/index.ts"|"main": "./dist/index.js"|' $pkg/package.json; \
     done
 
@@ -43,6 +46,7 @@ COPY --from=builder /app/packages/core/package.json packages/core/
 COPY --from=builder /app/packages/auth/package.json packages/auth/
 COPY --from=builder /app/packages/db/package.json packages/db/
 COPY --from=builder /app/packages/integrations/bcb/package.json packages/integrations/bcb/
+COPY --from=builder /app/packages/integrations/omie/package.json packages/integrations/omie/
 COPY --from=builder /app/modules/hedge/package.json modules/hedge/
 COPY --from=builder /app/modules/forecast/package.json modules/forecast/
 COPY --from=builder /app/modules/breakingpoint/package.json modules/breakingpoint/
@@ -53,6 +57,7 @@ COPY --from=builder /app/packages/core/dist packages/core/dist
 COPY --from=builder /app/packages/auth/dist packages/auth/dist
 COPY --from=builder /app/packages/db/dist packages/db/dist
 COPY --from=builder /app/packages/integrations/bcb/dist packages/integrations/bcb/dist
+COPY --from=builder /app/packages/integrations/omie/dist packages/integrations/omie/dist
 COPY --from=builder /app/modules/hedge/dist modules/hedge/dist
 COPY --from=builder /app/modules/forecast/dist modules/forecast/dist
 COPY --from=builder /app/modules/breakingpoint/dist modules/breakingpoint/dist
