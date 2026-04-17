@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { converterParaToneladas, fmtQtdUnidade } from '../services/motor.service.js';
+import {
+  converterParaToneladas,
+  fmtQtdUnidade,
+  calcularCobertura,
+  classificarCriticidade,
+} from '../services/motor.service.js';
 
 describe('motor.service#converterParaToneladas', () => {
   it('tonelada mantem o valor', () => {
@@ -43,5 +48,60 @@ describe('motor.service#fmtQtdUnidade', () => {
     expect(fmtQtdUnidade(1000, 'kg')).toMatch(/1[.,]?000\s+kg/);
     expect(fmtQtdUnidade(40, 'saco')).toMatch(/40\s+saco/);
     expect(fmtQtdUnidade(35, 'bigbag')).toMatch(/35\s+big\s?bag/);
+  });
+});
+
+describe('motor.service#calcularCobertura', () => {
+  it('divide saldo fisico pelo consumo medio diario', () => {
+    expect(calcularCobertura(60, 2)).toBe(30);
+    expect(calcularCobertura(100, 5)).toBe(20);
+  });
+
+  it('retorna null quando consumo medio e zero/nulo (evita divisao por zero)', () => {
+    expect(calcularCobertura(60, 0)).toBeNull();
+    expect(calcularCobertura(60, null)).toBeNull();
+  });
+
+  it('retorna 0 quando saldo e zero', () => {
+    expect(calcularCobertura(0, 2)).toBe(0);
+  });
+
+  it('arredonda para inteiro (dias)', () => {
+    expect(calcularCobertura(10, 3)).toBe(3); // 3.33...
+    expect(calcularCobertura(11, 3)).toBe(4); // 3.66...
+  });
+});
+
+describe('motor.service#classificarCriticidade', () => {
+  const leadTime = 60;
+  const consumo = 1;
+
+  it('cobertura < 50% do lead time => critico', () => {
+    // 29 dias < 30 (50% de 60)
+    expect(classificarCriticidade(29, leadTime, 29, consumo)).toBe('critico');
+  });
+
+  it('cobertura entre 50% e 120% do lead time => alerta', () => {
+    expect(classificarCriticidade(31, leadTime, 31, consumo)).toBe('alerta'); // 50.1%
+    expect(classificarCriticidade(71, leadTime, 71, consumo)).toBe('alerta'); // 118%
+  });
+
+  it('cobertura entre 120% e 400% => ok', () => {
+    expect(classificarCriticidade(72, leadTime, 72, consumo)).toBe('ok'); // 120%
+    expect(classificarCriticidade(240, leadTime, 240, consumo)).toBe('ok'); // 400%
+  });
+
+  it('saldo > consumo*leadTime*4 => excesso', () => {
+    expect(classificarCriticidade(300, leadTime, 300, consumo)).toBe('excesso'); // 500%
+  });
+
+  it('sem consumo medio retorna "ok" (nao classificavel)', () => {
+    expect(classificarCriticidade(null, leadTime, 50, 0)).toBe('ok');
+    expect(classificarCriticidade(null, leadTime, 50, null)).toBe('ok');
+  });
+
+  it('sem lead time assume default 60 dias', () => {
+    expect(classificarCriticidade(29, null, 29, 1)).toBe('critico');
+    expect(classificarCriticidade(100, null, 100, 1)).toBe('ok');
   });
 });

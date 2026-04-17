@@ -48,6 +48,7 @@ import { SBLayout } from './pages/stockbridge/SBLayout.js';
 import { SBPlaceholderPage } from './pages/stockbridge/SBPlaceholderPage.js';
 import { FilaOmiePage } from './pages/stockbridge/operador/FilaOmiePage.js';
 import { MeuEstoquePage } from './pages/stockbridge/operador/MeuEstoquePage.js';
+import { CockpitPage } from './pages/stockbridge/gestor/CockpitPage.js';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage.js';
 import { ResetPasswordPage } from './pages/ResetPasswordPage.js';
 import { useAuth } from './hooks/useAuth.js';
@@ -74,6 +75,7 @@ const FORECAST_SUB_ITEMS: SidebarSubItem[] = [
 
 const STOCKBRIDGE_SUB_ITEMS: SidebarSubItem[] = [
   { id: 'sb-fila', name: 'Fila OMIE', path: '/stockbridge/fila', icon: FileText },
+  { id: 'sb-cockpit', name: 'Cockpit', path: '/stockbridge/cockpit', icon: LayoutDashboard },
   { id: 'sb-estoque', name: 'Meu Estoque', path: '/stockbridge/estoque', icon: Package },
 ];
 
@@ -237,8 +239,9 @@ function ProtectedShell() {
         {/* StockBridge — Phase 3 (US1 Recebimento) ativa; US2-US8 em fases futuras */}
         {enabledSet.has('stockbridge') && (
           <Route path="stockbridge" element={<SBLayout />}>
-            <Route index element={<FilaOmiePage />} />
+            <Route index element={<CockpitPage />} />
             <Route path="fila" element={<FilaOmiePage />} />
+            <Route path="cockpit" element={<CockpitPage />} />
             <Route path="estoque" element={<MeuEstoquePage />} />
             <Route path="placeholder" element={<SBPlaceholderPage />} />
           </Route>

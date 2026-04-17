@@ -132,18 +132,18 @@ Monorepo pnpm + Turborepo:
 
 ### Tests for User Story 2
 
-- [ ] T043 [P] [US2] Unit test `motor.service.ts#calcularCobertura(saldo, consumoMedio)` em `modules/stockbridge/src/__tests__/motor.test.ts`
-- [ ] T044 [P] [US2] Unit test `motor.service.ts#classificarCriticidade(cobertura, leadTime, saldo, consumoMedio)` com 4 cenarios (critico, alerta, ok, excesso)
-- [ ] T045 [P] [US2] Integration test `GET /cockpit` em `modules/stockbridge/src/__tests__/cockpit.test.ts` — valida totalizadores, filtros por familia/CNPJ
+- [X] T043 [P] [US2] Unit test `motor.service.ts#calcularCobertura(saldo, consumoMedio)` em `modules/stockbridge/src/__tests__/motor.test.ts`
+- [X] T044 [P] [US2] Unit test `motor.service.ts#classificarCriticidade(cobertura, leadTime, saldo, consumoMedio)` com 4 cenarios (critico, alerta, ok, excesso)
+- [X] T045 [P] [US2] Integration test `GET /cockpit` em `modules/stockbridge/src/__tests__/cockpit.test.ts` — valida totalizadores, filtros por familia/CNPJ
 
 ### Implementation for User Story 2
 
-- [ ] T046 [P] [US2] Implementar `motor.service.ts#calcularCobertura()` e `motor.service.ts#classificarCriticidade()` puros
-- [ ] T047 [US2] Criar `modules/stockbridge/src/services/cockpit.service.ts#getCockpit(filtros)` que junta `shared.vw_sb_saldo_por_produto` + `public.tb_produtos_ACXE` + `stockbridge.config_produto` para produzir lista de SKUs com cobertura/criticidade
-- [ ] T048 [US2] Adicionar ao mesmo service `getResumo(filtros)` para totalizadores do topo (fisico, fiscal, transito, provisorio, divergencias, aprovacoes pendentes, criticos/alertas)
-- [ ] T049 [US2] Criar `modules/stockbridge/src/routes/cockpit.routes.ts` com `GET /cockpit` (requireGestor) aceitando query `familia`, `cnpj`, `criticidade`
-- [ ] T050 [P] [US2] Criar `apps/web/src/pages/stockbridge/gestor/CockpitPage.tsx` — cards SKU com barras de cobertura, badges criticidade, resumo topo
-- [ ] T051 [P] [US2] Criar `apps/web/src/pages/stockbridge/gestor/ModalDivergencias.tsx` — drill-down de divergencias agrupavel por familia/NCM/status
+- [X] T046 [P] [US2] Implementar `motor.service.ts#calcularCobertura()` e `motor.service.ts#classificarCriticidade()` puros
+- [X] T047 [US2] Criar `modules/stockbridge/src/services/cockpit.service.ts#getCockpit(filtros)` que junta `shared.vw_sb_saldo_por_produto` + `public.tb_produtos_ACXE` + `stockbridge.config_produto` para produzir lista de SKUs com cobertura/criticidade
+- [X] T048 [US2] Adicionar ao mesmo service `getResumo(filtros)` para totalizadores do topo (fisico, fiscal, transito, provisorio, divergencias, aprovacoes pendentes, criticos/alertas)
+- [X] T049 [US2] Criar `modules/stockbridge/src/routes/cockpit.routes.ts` com `GET /cockpit` (requireGestor) aceitando query `familia`, `cnpj`, `criticidade`
+- [X] T050 [P] [US2] Criar `apps/web/src/pages/stockbridge/gestor/CockpitPage.tsx` — cards SKU com barras de cobertura, badges criticidade, resumo topo
+- [X] T051 [P] [US2] Criar `apps/web/src/pages/stockbridge/gestor/ModalDivergencias.tsx` — drill-down de divergencias agrupavel por familia/NCM/status
 
 **Checkpoint**: MVP completo (US1 + US2). Recebimento + visibilidade. Pode ir pra validacao paralela em staging.
 
