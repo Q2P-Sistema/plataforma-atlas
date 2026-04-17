@@ -2,7 +2,7 @@
 
 Monólito modular que consolida 7 módulos internos de operação sobre um único banco Postgres compartilhado. Escrito em TypeScript, organizado como monorepo pnpm + Turborepo, deployado via Docker Swarm + Traefik.
 
-> **Status:** Infraestrutura base completa (spec 001). Auth, 2FA, admin CRUD, audit log, feature flags, CI/CD, deploy. Pronto para migrar modulos de dominio.
+> **Status:** Infraestrutura base completa (spec 001). 4 modulos de dominio implementados: Hedge (002/004), Forecast (003/005), BreakingPoint (006), StockBridge (007 — em validacao paralela com legado PHP). Demais modulos como placeholders.
 
 ## Stack
 
@@ -129,3 +129,9 @@ Detalhes completos em [specs/001-atlas-infra-base/quickstart.md](specs/001-atlas
 | Spec | Status | Descricao |
 |------|--------|-----------|
 | [001-atlas-infra-base](specs/001-atlas-infra-base/) | Completa | Auth, 2FA, admin CRUD, audit log, feature flags, CI/CD, deploy, staging |
+| [002-hedge-engine](specs/002-hedge-engine/) | Completa | Motor de hedge USD/BRL, buckets, NDFs, PTAX, mark-to-market |
+| [003-forecast-planner](specs/003-forecast-planner/) | Completa | Rolling forecast 120d, demanda, sazonalidade, shopping list |
+| [004-hedge-gaps-closure](specs/004-hedge-gaps-closure/) | Completa | Gaps/ajustes do Hedge apos validacao operacional |
+| [005-forecast-advanced-features](specs/005-forecast-advanced-features/) | Completa | Analise de demanda, insights de comex, IA |
+| [006-breaking-point-module](specs/006-breaking-point-module/) | Completa | Projecao 26 semanas, FINIMP, antecipacao de recebiveis |
+| [007-stockbridge-module](specs/007-stockbridge-module/) | **Em validacao paralela** | Porte do sistema PHP legado para TS. 8 US + movimentacoes (115/133 tasks). Aguarda 2 semanas de paridade com legado em staging (Principio V) |

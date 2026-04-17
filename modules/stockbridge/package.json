@@ -13,19 +13,20 @@
   },
   "description": "Controle físico de estoque — lotes, dual-CNPJ, recebimento OMIE, aprovações hierárquicas. Porte do sistema legado PHP.",
   "dependencies": {
-    "drizzle-orm": "^0.38.0",
-    "decimal.js": "^10.4.0",
-    "zod": "^3.24.0",
-    "express": "^4.21.0",
+    "@atlas/auth": "workspace:*",
     "@atlas/core": "workspace:*",
     "@atlas/db": "workspace:*",
-    "@atlas/auth": "workspace:*",
-    "@atlas/integration-omie": "workspace:*"
+    "@atlas/integration-omie": "workspace:*",
+    "decimal.js": "^10.4.0",
+    "drizzle-orm": "^0.38.0",
+    "express": "^4.21.0",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
-    "supertest": "^7.0.0",
     "@types/supertest": "^6.0.0",
+    "@vitest/coverage-v8": "^2.1.9",
+    "supertest": "^7.0.0",
     "tsx": "^4.19.0",
     "vitest": "^2.1.0"
   }

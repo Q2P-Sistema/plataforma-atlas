@@ -353,9 +353,9 @@ Monorepo pnpm + Turborepo:
 - [ ] T123 [P] Dashboard Grafana `stockbridge-diretoria` — valor estoque, exposicao cambial, evolucao 6m
 - [ ] T124 [P] Alertas Grafana: OMIE p95 >10s por 5min; recebimento falho ao escrever no OMIE; divergencia nao tratada em 7 dias
 - [ ] T125 [P] Adicionar feature flag reconhecimento em `apps/web/src/hooks/useFeatureFlags.ts` para ocultar menu StockBridge quando desabilitado
-- [ ] T126 Atualizar `CLAUDE.md` e `README.md` com status do modulo (de placeholder para produtivo)
-- [ ] T127 Executar `pnpm test --filter @atlas/stockbridge` e garantir 90%+ cobertura em services financeiros
-- [ ] T128 [P] Code review contra as 5 principios da constituicao — conferir cada gate
+- [X] T126 Atualizar `CLAUDE.md` e `README.md` com status do modulo (de placeholder para produtivo)
+- [X] T127 Executar `pnpm test --filter @atlas/stockbridge` e garantir 90%+ cobertura em services financeiros
+- [X] T128 [P] Code review contra as 5 principios da constituicao — conferir cada gate
 - [ ] T129 [P] Performance smoke: validar SC-001 (<2min recebimento), SC-002 (<3s cockpit), SC-005 (<30s aprovacao) com dados de staging
 - [ ] T130 Rodar checklist completo do `quickstart.md` em staging antes do cutover
 
