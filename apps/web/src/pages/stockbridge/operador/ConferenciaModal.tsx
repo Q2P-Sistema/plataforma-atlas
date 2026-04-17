@@ -52,12 +52,10 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
   const [sucesso, setSucesso] = useState<{ tipo: 'ok' | 'divergencia'; mensagem: string } | null>(null);
 
   const { data: localidades = [] } = useQuery<Localidade[]>({
-    queryKey: ['stockbridge', 'localidades'],
+    queryKey: ['stockbridge', 'localidades', 'ativas'],
     queryFn: async () => {
-      // Fase 2: sem endpoint dedicado ainda — usamos dados vindos da fila (codigo) ate US8.
-      // Por enquanto retornamos array vazio; o operador nao consegue submeter sem localidade_id,
-      // e a selecao sera wireada quando o endpoint /localidades for implementado em US8.
-      return [];
+      const body = await apiFetch('/api/v1/stockbridge/localidades?ativo=true');
+      return body.data as Localidade[];
     },
   });
 
@@ -176,9 +174,8 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
             ))}
           </select>
           {localidades.length === 0 && (
-            <div className="text-xs text-amber-700 mt-1">
-              Endpoint de localidades ainda nao implementado (US8). Em dev, consulte via banco:
-              <code className="block mt-1 text-[10px] font-mono">SELECT id, codigo, nome FROM stockbridge.localidade WHERE ativo = true;</code>
+            <div className="text-xs text-atlas-muted mt-1">
+              Nenhuma localidade ativa cadastrada. Peca ao gestor para cadastrar em /stockbridge/localidades.
             </div>
           )}
         </div>

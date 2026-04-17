@@ -51,6 +51,11 @@ import { MeuEstoquePage } from './pages/stockbridge/operador/MeuEstoquePage.js';
 import { CockpitPage } from './pages/stockbridge/gestor/CockpitPage.js';
 import { AprovacoesPage } from './pages/stockbridge/gestor/AprovacoesPage.js';
 import { TransitoPage } from './pages/stockbridge/gestor/TransitoPage.js';
+import { SaidaManualPage } from './pages/stockbridge/operador/SaidaManualPage.js';
+import { MetricasPage } from './pages/stockbridge/diretor/MetricasPage.js';
+import { FornecedoresPage } from './pages/stockbridge/diretor/FornecedoresPage.js';
+import { ConfigProdutosPage } from './pages/stockbridge/diretor/ConfigProdutosPage.js';
+import { LocalidadesPage } from './pages/stockbridge/gestor/LocalidadesPage.js';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage.js';
 import { ResetPasswordPage } from './pages/ResetPasswordPage.js';
 import { useAuth } from './hooks/useAuth.js';
@@ -80,6 +85,11 @@ const STOCKBRIDGE_SUB_ITEMS: SidebarSubItem[] = [
   { id: 'sb-fila', name: 'Fila OMIE', path: '/stockbridge/fila', icon: FileText },
   { id: 'sb-aprovacoes', name: 'Aprovacoes', path: '/stockbridge/aprovacoes', icon: Bell },
   { id: 'sb-transito', name: 'Transito', path: '/stockbridge/transito', icon: Activity },
+  { id: 'sb-saida-manual', name: 'Saida Manual', path: '/stockbridge/saida-manual', icon: ShoppingCart },
+  { id: 'sb-metricas', name: 'Metricas', path: '/stockbridge/metricas', icon: BarChart3 },
+  { id: 'sb-fornecedores', name: 'Fornecedores', path: '/stockbridge/fornecedores', icon: Building2 },
+  { id: 'sb-localidades', name: 'Localidades', path: '/stockbridge/localidades', icon: Landmark },
+  { id: 'sb-config', name: 'Config Produtos', path: '/stockbridge/config-produtos', icon: Settings },
   { id: 'sb-estoque', name: 'Meu Estoque', path: '/stockbridge/estoque', icon: Package },
 ];
 
@@ -248,6 +258,11 @@ function ProtectedShell() {
             <Route path="cockpit" element={<CockpitPage />} />
             <Route path="aprovacoes" element={<AprovacoesPage />} />
             <Route path="transito" element={<TransitoPage />} />
+            <Route path="saida-manual" element={<SaidaManualPage />} />
+            <Route path="metricas" element={<MetricasPage />} />
+            <Route path="fornecedores" element={<FornecedoresPage />} />
+            <Route path="localidades" element={<LocalidadesPage />} />
+            <Route path="config-produtos" element={<ConfigProdutosPage />} />
             <Route path="estoque" element={<MeuEstoquePage />} />
             <Route path="placeholder" element={<SBPlaceholderPage />} />
           </Route>

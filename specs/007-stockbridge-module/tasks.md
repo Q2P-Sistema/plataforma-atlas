@@ -236,21 +236,21 @@ Monorepo pnpm + Turborepo:
 
 ### Tests for User Story 6
 
-- [ ] T082 [P] [US6] Unit test regras de nivel de aprovacao por subtipo em `modules/stockbridge/src/__tests__/saida-manual.test.ts`
-- [ ] T083 [P] [US6] Integration test ciclo completo comodato: registro → aprovacao → retorno
+- [X] T082 [P] [US6] Unit test regras de nivel de aprovacao por subtipo em `modules/stockbridge/src/__tests__/saida-manual.test.ts`
+- [X] T083 [P] [US6] Integration test ciclo completo comodato: registro → aprovacao → retorno
 
 ### Implementation for User Story 6
 
-- [ ] T084 [P] [US6] Criar `modules/stockbridge/src/services/saida-manual.service.ts#registrar(input, usuarioId)` com mapa subtipo → nivel aprovacao
-- [ ] T085 [US6] Implementar `saida-manual.service.ts#registrarRetornoComodato(movimentacaoId)` — reverte debito fisico, marca movimentacao original com referencia ao retorno
-- [ ] T086 [US6] Implementar regras de impacto fisico/fiscal por subtipo conforme documentado em `research.md`:
+- [X] T084 [P] [US6] Criar `modules/stockbridge/src/services/saida-manual.service.ts#registrar(input, usuarioId)` com mapa subtipo → nivel aprovacao
+- [X] T085 [US6] Implementar `saida-manual.service.ts#registrarRetornoComodato(movimentacaoId)` — reverte debito fisico, marca movimentacao original com referencia ao retorno
+- [X] T086 [US6] Implementar regras de impacto fisico/fiscal por subtipo conforme documentado em `research.md`:
   - transf_intra_cnpj: -origem +destino, sem impacto fiscal
   - comodato: -fisico temporario, fiscal inalterado
   - amostra/brinde: -fisico definitivo, divergencia fiscal
   - descarte/perda/quebra: -fisico definitivo, divergencia fiscal
   - inventario_menos: -saldo, divergencia fiscal
-- [ ] T087 [US6] Criar `modules/stockbridge/src/routes/saida-manual.routes.ts` com `POST /saida-manual`, `POST /comodato/:movimentacao_id/retorno`
-- [ ] T088 [P] [US6] Criar `apps/web/src/pages/stockbridge/operador/SaidaManualPage.tsx` — formulario com select de subtipo, campos dinamicos, avisos de nivel de aprovacao
+- [X] T087 [US6] Criar `modules/stockbridge/src/routes/saida-manual.routes.ts` com `POST /saida-manual`, `POST /comodato/:movimentacao_id/retorno`
+- [X] T088 [P] [US6] Criar `apps/web/src/pages/stockbridge/operador/SaidaManualPage.tsx` — formulario com select de subtipo, campos dinamicos, avisos de nivel de aprovacao
 
 **Checkpoint**: Todos os 19 tipos de movimentacao suportados (FR-010).
 
@@ -264,21 +264,21 @@ Monorepo pnpm + Turborepo:
 
 ### Tests for User Story 7
 
-- [ ] T089 [P] [US7] Unit test `motor.service.ts#calcularCMP()` (custo medio ponderado por lote)
-- [ ] T090 [P] [US7] Unit test calculo de exposicao cambial (so lotes `transito_intl` x custo_usd)
-- [ ] T091 [P] [US7] Integration test `GET /metricas` com PTAX mock
+- [X] T089 [P] [US7] Unit test `motor.service.ts#calcularCMP()` (custo medio ponderado por lote)
+- [X] T090 [P] [US7] Unit test calculo de exposicao cambial (so lotes `transito_intl` x custo_usd)
+- [X] T091 [P] [US7] Integration test `GET /metricas` com PTAX mock
 
 ### Implementation for User Story 7
 
-- [ ] T092 [P] [US7] Implementar `motor.service.ts#calcularCMP(lotes)` — media ponderada USD/t
-- [ ] T093 [US7] Criar `modules/stockbridge/src/services/metricas.service.ts#getKPIs()` integrando com `@atlas/hedge/ptax` (reuso do cache Redis existente) para converter USD → BRL
-- [ ] T094 [US7] Implementar `metricas.service.ts#getEvolucao(meses)` — agregar movimentacoes historicas por mes/familia
-- [ ] T095 [US7] Implementar `metricas.service.ts#getTabelaAnalitica()` — SKU x (qtd, CMP, cobertura, valor BRL, divergencias)
-- [ ] T096 [US7] Criar `modules/stockbridge/src/routes/metricas.routes.ts` com `GET /metricas`, `GET /metricas/evolucao`, `GET /metricas/tabela-analitica` (todos requireDiretor)
-- [ ] T097 [P] [US7] Criar `modules/stockbridge/src/services/fornecedor.service.ts#excluir(cnpj, motivo, usuarioId)` e `reincluir(cnpj)` gravando em `stockbridge.fornecedor_exclusao`
-- [ ] T098 [P] [US7] Criar `modules/stockbridge/src/routes/fornecedor.routes.ts` com `GET /fornecedores`, `POST /fornecedores/:cnpj/excluir`, `POST /fornecedores/:cnpj/reincluir`
-- [ ] T099 [P] [US7] Criar `apps/web/src/pages/stockbridge/diretor/MetricasPage.tsx` — KPIs topo, grafico evolucao, tabela analitica
-- [ ] T100 [P] [US7] Criar `apps/web/src/pages/stockbridge/diretor/FornecedoresPage.tsx` — tabela com toggle excluir/reincluir
+- [X] T092 [P] [US7] Implementar `motor.service.ts#calcularCMP(lotes)` — media ponderada USD/t
+- [X] T093 [US7] Criar `modules/stockbridge/src/services/metricas.service.ts#getKPIs()` integrando com `@atlas/hedge/ptax` (reuso do cache Redis existente) para converter USD → BRL
+- [X] T094 [US7] Implementar `metricas.service.ts#getEvolucao(meses)` — agregar movimentacoes historicas por mes/familia
+- [X] T095 [US7] Implementar `metricas.service.ts#getTabelaAnalitica()` — SKU x (qtd, CMP, cobertura, valor BRL, divergencias)
+- [X] T096 [US7] Criar `modules/stockbridge/src/routes/metricas.routes.ts` com `GET /metricas`, `GET /metricas/evolucao`, `GET /metricas/tabela-analitica` (todos requireDiretor)
+- [X] T097 [P] [US7] Criar `modules/stockbridge/src/services/fornecedor.service.ts#excluir(cnpj, motivo, usuarioId)` e `reincluir(cnpj)` gravando em `stockbridge.fornecedor_exclusao`
+- [X] T098 [P] [US7] Criar `modules/stockbridge/src/routes/fornecedor.routes.ts` com `GET /fornecedores`, `POST /fornecedores/:cnpj/excluir`, `POST /fornecedores/:cnpj/reincluir`
+- [X] T099 [P] [US7] Criar `apps/web/src/pages/stockbridge/diretor/MetricasPage.tsx` — KPIs topo, grafico evolucao, tabela analitica
+- [X] T100 [P] [US7] Criar `apps/web/src/pages/stockbridge/diretor/FornecedoresPage.tsx` — tabela com toggle excluir/reincluir
 
 **Checkpoint**: Visao estrategica completa.
 
@@ -292,17 +292,17 @@ Monorepo pnpm + Turborepo:
 
 ### Tests for User Story 8
 
-- [ ] T101 [P] [US8] Unit test validacoes de criacao de localidade (tipo virtual sem CNPJ, codigo unico)
-- [ ] T102 [P] [US8] Contract test CRUD `localidades` e `config/produtos`
+- [X] T101 [P] [US8] Unit test validacoes de criacao de localidade (tipo virtual sem CNPJ, codigo unico)
+- [X] T102 [P] [US8] Contract test CRUD `localidades` e `config/produtos`
 
 ### Implementation for User Story 8
 
-- [ ] T103 [P] [US8] Criar `modules/stockbridge/src/services/localidade.service.ts` (CRUD + validacoes)
-- [ ] T104 [P] [US8] Criar `modules/stockbridge/src/services/config-produto.service.ts` (upsert por `produto_codigo_acxe`)
-- [ ] T105 [US8] Criar `modules/stockbridge/src/routes/localidade.routes.ts` com CRUD (requireGestor)
-- [ ] T106 [US8] Criar `modules/stockbridge/src/routes/config.routes.ts` com `GET /config/produtos`, `PATCH /config/produtos/:codigo_acxe` (requireDiretor)
-- [ ] T107 [P] [US8] Criar `apps/web/src/pages/stockbridge/gestor/LocalidadesPage.tsx` — tabela CRUD com formulario inline
-- [ ] T108 [P] [US8] Criar `apps/web/src/pages/stockbridge/diretor/ConfigProdutosPage.tsx` — tabela editavel de consumo/lead time/familia por SKU
+- [X] T103 [P] [US8] Criar `modules/stockbridge/src/services/localidade.service.ts` (CRUD + validacoes)
+- [X] T104 [P] [US8] Criar `modules/stockbridge/src/services/config-produto.service.ts` (upsert por `produto_codigo_acxe`)
+- [X] T105 [US8] Criar `modules/stockbridge/src/routes/localidade.routes.ts` com CRUD (requireGestor)
+- [X] T106 [US8] Criar `modules/stockbridge/src/routes/config.routes.ts` com `GET /config/produtos`, `PATCH /config/produtos/:codigo_acxe` (requireDiretor)
+- [X] T107 [P] [US8] Criar `apps/web/src/pages/stockbridge/gestor/LocalidadesPage.tsx` — tabela CRUD com formulario inline
+- [X] T108 [P] [US8] Criar `apps/web/src/pages/stockbridge/diretor/ConfigProdutosPage.tsx` — tabela editavel de consumo/lead time/familia por SKU
 
 **Checkpoint**: Todas as 8 user stories implementadas.
 

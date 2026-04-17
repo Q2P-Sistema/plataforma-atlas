@@ -7,6 +7,11 @@ import cockpitRouter from './cockpit.routes.js';
 import aprovacaoRouter from './aprovacao.routes.js';
 import transitoRouter from './transito.routes.js';
 import saidaAutomaticaRouter from './saida-automatica.routes.js';
+import saidaManualRouter from './saida-manual.routes.js';
+import metricasRouter from './metricas.routes.js';
+import fornecedorRouter from './fornecedor.routes.js';
+import localidadeRouter from './localidade.routes.js';
+import configRouter from './config.routes.js';
 
 const logger = createLogger('stockbridge:routes');
 const router: Router = Router();
@@ -30,7 +35,15 @@ router.use(aprovacaoRouter);
 router.use(transitoRouter);
 // US5 — Saidas automaticas via OMIE (polling n8n)
 router.use(saidaAutomaticaRouter);
+// US6 — Saidas manuais com aprovacao
+router.use(saidaManualRouter);
+// US7 — Metricas (diretor) + fornecedores
+router.use(metricasRouter);
+router.use(fornecedorRouter);
+// US8 — Gestao de localidades + config de produtos
+router.use(localidadeRouter);
+router.use(configRouter);
 
-logger.info('StockBridge router inicializado (US1 + US2 + US3 + US4 + US5 montadas)');
+logger.info('StockBridge router inicializado (US1..US8 montadas)');
 
 export default router;
