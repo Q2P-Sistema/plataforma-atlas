@@ -157,20 +157,20 @@ Monorepo pnpm + Turborepo:
 
 ### Tests for User Story 3
 
-- [ ] T052 [P] [US3] Integration test ciclo aprovar/rejeitar/re-submeter em `modules/stockbridge/src/__tests__/aprovacao.test.ts`
-- [ ] T053 [P] [US3] Contract test `POST /aprovacoes/:id/(aprovar|rejeitar|resubmeter)` em `modules/stockbridge/src/__tests__/contracts/aprovacao.contract.test.ts`
+- [X] T052 [P] [US3] Integration test ciclo aprovar/rejeitar/re-submeter em `modules/stockbridge/src/__tests__/aprovacao.test.ts`
+- [X] T053 [P] [US3] Contract test `POST /aprovacoes/:id/(aprovar|rejeitar|resubmeter)` em `modules/stockbridge/src/__tests__/contracts/aprovacao.contract.test.ts`
 
 ### Implementation for User Story 3
 
-- [ ] T054 [P] [US3] Criar `modules/stockbridge/src/services/aprovacao.service.ts#listarPendencias(perfilNivel)` com filtro por nivel
-- [ ] T055 [US3] Implementar `aprovacao.service.ts#aprovar(id, usuarioId)` transacional: update `stockbridge.aprovacao.status=aprovada`, update `stockbridge.lote.status` (provisorio ou reconciliado), cria movimentacao se for entrada manual
-- [ ] T056 [US3] Implementar `aprovacao.service.ts#rejeitar(id, usuarioId, motivo)` — update aprovacao + lote para `rejeitado`
-- [ ] T057 [US3] Implementar `aprovacao.service.ts#resubmeter(id, novosDados, usuarioId)` — qualquer operador vinculado ao armazem do lote rejeitado pode re-submeter; lote volta para `aguardando_aprovacao` com dados atualizados; gera entrada de audit com novo `lancado_por`
-- [ ] T058 [US3] Validar autoridade no service: Gestor nao pode aprovar tipos que exigem Diretor (comodato, saidas especiais) — retorna erro `APROVACAO_NIVEL_INSUFICIENTE`
-- [ ] T059 [US3] Criar `modules/stockbridge/src/routes/aprovacao.routes.ts` com endpoints `GET /aprovacoes`, `POST /aprovacoes/:id/aprovar`, `POST /aprovacoes/:id/rejeitar`, `POST /aprovacoes/:id/resubmeter`
-- [ ] T060 [P] [US3] Criar `apps/web/src/pages/stockbridge/gestor/AprovacoesPage.tsx` — cards de pendencias com contexto (qtd prevista vs recebida, motivo, quem lancou), botoes Aprovar/Rejeitar
-- [ ] T061 [P] [US3] Criar `apps/web/src/pages/stockbridge/operador/ReSubmeterModal.tsx` — UI de re-submissao apos rejeicao
-- [ ] T062 [US3] Adicionar notificacao email ao gestor/diretor quando nova pendencia criada (usar `@atlas/integrations/email`)
+- [X] T054 [P] [US3] Criar `modules/stockbridge/src/services/aprovacao.service.ts#listarPendencias(perfilNivel)` com filtro por nivel
+- [X] T055 [US3] Implementar `aprovacao.service.ts#aprovar(id, usuarioId)` transacional: update `stockbridge.aprovacao.status=aprovada`, update `stockbridge.lote.status` (provisorio ou reconciliado), cria movimentacao se for entrada manual
+- [X] T056 [US3] Implementar `aprovacao.service.ts#rejeitar(id, usuarioId, motivo)` — update aprovacao + lote para `rejeitado`
+- [X] T057 [US3] Implementar `aprovacao.service.ts#resubmeter(id, novosDados, usuarioId)` — qualquer operador vinculado ao armazem do lote rejeitado pode re-submeter; lote volta para `aguardando_aprovacao` com dados atualizados; gera entrada de audit com novo `lancado_por`
+- [X] T058 [US3] Validar autoridade no service: Gestor nao pode aprovar tipos que exigem Diretor (comodato, saidas especiais) — retorna erro `APROVACAO_NIVEL_INSUFICIENTE`
+- [X] T059 [US3] Criar `modules/stockbridge/src/routes/aprovacao.routes.ts` com endpoints `GET /aprovacoes`, `POST /aprovacoes/:id/aprovar`, `POST /aprovacoes/:id/rejeitar`, `POST /aprovacoes/:id/resubmeter`
+- [X] T060 [P] [US3] Criar `apps/web/src/pages/stockbridge/gestor/AprovacoesPage.tsx` — cards de pendencias com contexto (qtd prevista vs recebida, motivo, quem lancou), botoes Aprovar/Rejeitar
+- [X] T061 [P] [US3] Criar `apps/web/src/pages/stockbridge/operador/ReSubmeterModal.tsx` — UI de re-submissao apos rejeicao
+- [X] T062 [US3] Adicionar notificacao email ao gestor/diretor quando nova pendencia criada (usar `@atlas/integrations/email`)
 
 **Checkpoint**: Ciclo de aprovacoes completo. Sistema ja pode processar divergencias sem intervencao manual no BD.
 

@@ -4,6 +4,7 @@ import { createLogger } from '@atlas/core';
 import filaRouter from './fila.routes.js';
 import recebimentoRouter from './recebimento.routes.js';
 import cockpitRouter from './cockpit.routes.js';
+import aprovacaoRouter from './aprovacao.routes.js';
 
 const logger = createLogger('stockbridge:routes');
 const router: Router = Router();
@@ -21,7 +22,9 @@ router.use(filaRouter);
 router.use(recebimentoRouter);
 // US2 — Cockpit de estoque por produto (gestor/diretor)
 router.use(cockpitRouter);
+// US3 — Aprovacoes hierarquicas
+router.use(aprovacaoRouter);
 
-logger.info('StockBridge router inicializado (US1 + US2 montadas)');
+logger.info('StockBridge router inicializado (US1 + US2 + US3 montadas)');
 
 export default router;

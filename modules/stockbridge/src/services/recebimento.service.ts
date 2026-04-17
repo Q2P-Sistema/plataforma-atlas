@@ -10,7 +10,10 @@ import {
 } from '@atlas/integration-omie';
 import { getCorrelacao, CorrelacaoNaoEncontradaError } from './correlacao.service.js';
 import { converterParaToneladas } from './motor.service.js';
-import { enviarAlertaProdutoSemCorrelato } from './notificacao.service.js';
+import {
+  enviarAlertaProdutoSemCorrelato,
+  enviarAlertaAprovacaoPendente,
+} from './notificacao.service.js';
 import type { SubtipoMovimento, UnidadeMedida } from '../types.js';
 
 const logger = createLogger('stockbridge:recebimento');
@@ -397,6 +400,17 @@ async function processarRecebimentoComDivergencia(args: {
       .returning();
 
     return { loteId: loteCriado!.id, loteCodigo: loteCriado!.codigo, aprovacaoId: aprovCriada!.id };
+  });
+
+  // T062: notificar gestor sobre nova pendencia (fora da transacao — email nao bloqueia)
+  await enviarAlertaAprovacaoPendente({
+    aprovacaoId: resultado.aprovacaoId,
+    tipoAprovacao: 'recebimento_divergencia',
+    nivel: 'gestor',
+    loteCodigo: resultado.loteCodigo,
+    produto: correlacao.descricao,
+    quantidadeT: qtdFisicaT,
+    detalhes: `Divergencia ${tipoDivergencia} de ${Math.abs(deltaT).toFixed(3)} t — ${input.observacoes ?? ''}`,
   });
 
   return {
