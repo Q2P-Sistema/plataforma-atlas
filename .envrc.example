@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# =============================================================================
+# Atlas — .envrc de dev local (direnv + Bitwarden CLI)
+# =============================================================================
+# Copie este arquivo para `.envrc` e rode `direnv allow`.
+#
+# Requer:
+#   - direnv           (sudo apt install direnv + hook no ~/.zshrc)
+#   - @bitwarden/cli   (sudo snap install bw  OU  npm i -g @bitwarden/cli)
+#   - jq               (sudo apt install jq)
+#
+# Fluxo:
+#   bw login                              # so na primeira vez
+#   export BW_SESSION=$(bw unlock --raw)  # no inicio de cada sessao de terminal
+#
+# Dica: adicione no ~/.zshrc os aliases:
+#   alias bw-unlock='export BW_SESSION=$(bw unlock --raw)'
+#   alias bw-lock='bw lock && unset BW_SESSION'
+#
+# Estrutura esperada no Bitwarden: um "Secure Note" chamado "Atlas Dev Secrets"
+# com os seguintes custom fields (tipo Hidden para secrets):
+#
+#   DATABASE_URL_PASSWORD     - senha do postgres pg-atlas-dev
+#   SESSION_SECRET            - string aleatoria (>=16 chars). Gerar: openssl rand -base64 24
+#   ATLAS_INTEGRATION_KEY     - shared secret n8n <-> atlas API
+#   OMIE_ACXE_KEY             - app key OMIE ACXE
+#   OMIE_ACXE_SECRET          - app secret OMIE ACXE
+#   OMIE_Q2P_KEY              - app key OMIE Q2P
+#   OMIE_Q2P_SECRET           - app secret OMIE Q2P
+#   SENDGRID_API_KEY          - api key Sendgrid (SG.xxx)
+# =============================================================================
+
+if [ -z "${BW_SESSION:-}" ]; then
+  echo "⚠ Bitwarden travado. Rode antes: export BW_SESSION=\$(bw unlock --raw)"
+  return
+fi
+
+ITEM="Atlas Dev Secrets"
+
+# Helper: extrai um custom field do item por nome
+_bw_field() {
+  bw get item "$ITEM" --session "$BW_SESSION" 2>/dev/null \
+    | jq -r --arg name "$1" '.fields[] | select(.name == $name) | .value'
+}
+
+# ── Banco de dados ─────────────────────────────────────────────────────
+# Em localhost, o pg-atlas-dev e acessado pelo IP publico (159.203.89.175).
+# Swarm usa hostname interno diferente — isso fica no .env do host de deploy.
+DB_PASSWORD="$(_bw_field DATABASE_URL_PASSWORD)"
+export DATABASE_URL="postgresql://postgres:${DB_PASSWORD}@159.203.89.175:5436/acxe_q2p"
+
+# Redis local (container atlas-redis via docker compose)
+export REDIS_URL="redis://localhost:6379"
+
+# ── Sessao e integracao ────────────────────────────────────────────────
+export SESSION_SECRET="$(_bw_field SESSION_SECRET)"
+export ATLAS_INTEGRATION_KEY="$(_bw_field ATLAS_INTEGRATION_KEY)"
+
+# ── Seed admin inicial ─────────────────────────────────────────────────
+export SEED_ADMIN_EMAIL="flavio.endo@acxe-polimeros.com.br"
+export SEED_ADMIN_PASSWORD="TroqueEstaSenha123!"
+
+# ── n8n ────────────────────────────────────────────────────────────────
+# Opcional em dev local — se nao tiver n8n rodando, o health check fica
+# 'down' mas nao quebra a API. Descomente se tiver n8n local.
+# export N8N_HEALTH_URL=http://localhost:5678/healthz
+
+# ── Sendgrid (email transacional) ──────────────────────────────────────
+export SENDGRID_API_KEY="$(_bw_field SENDGRID_API_KEY)"
+export SENDGRID_FROM_EMAIL="sistema@q2p.com.br"
+
+# ── Feature Flags ──────────────────────────────────────────────────────
+export MODULE_HEDGE_ENABLED=true
+export MODULE_STOCKBRIDGE_ENABLED=true
+export MODULE_BREAKINGPOINT_ENABLED=true
+export MODULE_CLEVEL_ENABLED=false
+export MODULE_COMEXINSIGHT_ENABLED=false
+export MODULE_COMEXFLOW_ENABLED=false
+export MODULE_FORECAST_ENABLED=false
+
+# ── StockBridge — OMIE ─────────────────────────────────────────────────
+# OMIE_MODE: "mock" retorna fixtures sinteticas (nao bate na API real).
+# "real" exige OMIE_*_KEY/SECRET preenchidos no Bitwarden.
+export OMIE_MODE=real
+export OMIE_API_URL=https://app.omie.com.br/api/v1/
+export OMIE_ACXE_KEY="$(_bw_field OMIE_ACXE_KEY)"
+export OMIE_ACXE_SECRET="$(_bw_field OMIE_ACXE_SECRET)"
+export OMIE_Q2P_KEY="$(_bw_field OMIE_Q2P_KEY)"
+export OMIE_Q2P_SECRET="$(_bw_field OMIE_Q2P_SECRET)"
+
+# ── Server ─────────────────────────────────────────────────────────────
+export API_PORT=3005
+export WEB_PORT=5173
+export NODE_ENV=development

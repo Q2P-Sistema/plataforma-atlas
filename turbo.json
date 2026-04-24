@@ -1,6 +1,21 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "ui": "tui",
+  "globalPassThroughEnv": [
+    "DATABASE_URL",
+    "REDIS_URL",
+    "SESSION_SECRET",
+    "SEED_ADMIN_*",
+    "N8N_*",
+    "SENDGRID_*",
+    "ATLAS_INTEGRATION_KEY",
+    "OMIE_*",
+    "MODULE_*",
+    "API_PORT",
+    "WEB_PORT",
+    "NODE_ENV",
+    "MYSQL_Q2P_*"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
