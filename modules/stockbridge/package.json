@@ -9,7 +9,8 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "migrate-from-mysql": "tsx src/scripts/migrate-from-mysql.ts"
+    "migrate-from-mysql": "tsx src/scripts/migrate-from-mysql.ts",
+    "validar-paridade": "tsx src/scripts/validar-paridade.ts"
   },
   "description": "Controle físico de estoque — lotes, dual-CNPJ, recebimento OMIE, aprovações hierárquicas. Porte do sistema legado PHP.",
   "dependencies": {

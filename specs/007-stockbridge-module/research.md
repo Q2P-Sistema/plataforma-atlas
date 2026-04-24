@@ -14,7 +14,7 @@ Rodar StockBridge Atlas em paralelo ao sistema PHP legado por **2 semanas sem di
 - Cada recebimento durante o periodo paralelo e processado **manualmente** em ambos os sistemas (operador faz 2x) — ou via sombra automatica se implementarmos um shadow adapter.
 
 ### Criterios de paridade
-1. Mesma NF processada em ambos os sistemas gera o mesmo `id_movest` e `id_ajuste` retornado pela OMIE.
+1. Mesma NF processada em ambos os sistemas gera registros de sucesso no OMIE (ACXE e Q2P). IDs serão diferentes, mas devem existir em ambos os lados.
 2. Mesmo tratamento de divergencia (tipo, quantidade, destino).
 3. Emails de notificacao enviados nos mesmos eventos (conteudo pode variar — so o gatilho importa).
 4. Log de movimentacao com mesmas datas/usuarios/CNPJs.

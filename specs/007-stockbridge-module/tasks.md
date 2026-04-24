@@ -338,8 +338,8 @@ Monorepo pnpm + Turborepo:
 
 > Transversal — executar durante 2 semanas em staging antes do cutover.
 
-- [ ] T116 Documentar criterios de paridade em `specs/007-stockbridge-module/paridade-criterios.md`: (1) mesma NF gera `id_movest_acxe` e `id_movest_q2p` em ambos sistemas, (2) tratamento de divergencia identico, (3) emails disparados nos mesmos eventos
-- [ ] T117 Criar script `modules/stockbridge/src/scripts/validar-paridade.ts` que compara movimentacoes recentes entre MySQL e PG e lista divergencias
+- [X] T116 Documentar criterios de paridade em `specs/007-stockbridge-module/paridade-criterios.md`: (1) mesma NF gera sucesso de registro no OMIE (ACXE e Q2P) em ambos os sistemas, (2) tratamento de divergencia identico, (3) emails disparados nos mesmos eventos
+- [X] T117 Criar script `modules/stockbridge/src/scripts/validar-paridade.ts` que compara movimentacoes recentes entre MySQL e PG e lista divergencias
 - [ ] T118 Executar validacao paralela em staging durante 2 semanas — recebimentos processados em ambos os sistemas manualmente
 - [ ] T119 Reunir relatorio diario de divergencias; investigar cada uma; aceitar via ADR se for bug do legado ou corrigir no Atlas
 - [ ] T120 Decisao explicita de cutover apos 2 semanas sem divergencia nova — registro em ADR ou PR de decisao
