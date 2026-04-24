@@ -1,4 +1,6 @@
-import { sendEmail, createLogger, getConfig } from '@atlas/core';
+import { sendEmail, createLogger, getConfig, getDb } from '@atlas/core';
+import { users } from '@atlas/db';
+import { eq } from 'drizzle-orm';
 
 const logger = createLogger('stockbridge:notificacao');
 
@@ -104,5 +106,90 @@ export async function enviarAlertaAprovacaoPendente(args: {
     await sendEmail({ to, subject, html });
   } catch (err) {
     logger.error({ err, args }, 'Falha ao enviar email de aprovacao pendente');
+  }
+}
+
+/**
+ * Resolve o email do usuario operador pelo id. Retorna null se nao encontrado
+ * ou sem email — caller deve tratar fallback.
+ */
+async function resolverEmailOperador(userId: string): Promise<string | null> {
+  try {
+    const db = getDb();
+    const [row] = await db.select({ email: users.email }).from(users).where(eq(users.id, userId)).limit(1);
+    return row?.email ?? null;
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, userId }, 'Falha ao resolver email do operador');
+    return null;
+  }
+}
+
+/**
+ * Notifica o operador que lancou a pendencia quando o gestor/diretor rejeita.
+ * Inclui o motivo textual para o operador corrigir antes de re-submeter.
+ */
+export async function enviarNotificacaoRejeicaoOperador(args: {
+  operadorUserId: string;
+  aprovacaoId: string;
+  loteId: string;
+  motivo: string;
+}): Promise<void> {
+  const to = await resolverEmailOperador(args.operadorUserId);
+  if (!to) {
+    logger.warn({ args }, 'Operador sem email cadastrado — notificacao de rejeicao nao enviada');
+    return;
+  }
+  const subject = `StockBridge — Seu lancamento foi rejeitado`;
+  const html = `
+    <h2 style="color: #dc3545;">Lancamento Rejeitado</h2>
+    <p>O gestor/diretor rejeitou um lancamento que voce fez no StockBridge.</p>
+    <p><strong>Motivo informado:</strong></p>
+    <blockquote style="border-left:3px solid #dc3545;padding-left:12px;color:#555;margin:8px 0;">
+      "${args.motivo}"
+    </blockquote>
+    <p>Voce pode corrigir os dados e re-submeter atraves do painel "Aprovacoes" no StockBridge (modal "Re-submeter").</p>
+    <p style="color:#888;font-size:11px;">Aprovacao id: ${args.aprovacaoId} · Lote: ${args.loteId}</p>
+    <p style="color:#888;font-size:11px;">Sistema Atlas — StockBridge</p>
+  `;
+  try {
+    await sendEmail({ to, subject, html });
+  } catch (err) {
+    logger.error({ err, args }, 'Falha ao enviar email de rejeicao ao operador');
+  }
+}
+
+/**
+ * Notifica o operador que lancou a pendencia quando o gestor/diretor aprova.
+ * Principalmente util para recebimento com divergencia — confirma que o ajuste
+ * no OMIE foi feito e o saldo ja esta refletido.
+ */
+export async function enviarNotificacaoAprovacaoOperador(args: {
+  operadorUserId: string;
+  aprovacaoId: string;
+  tipoAprovacao: string;
+  loteId: string;
+}): Promise<void> {
+  const to = await resolverEmailOperador(args.operadorUserId);
+  if (!to) {
+    logger.warn({ args }, 'Operador sem email cadastrado — notificacao de aprovacao nao enviada');
+    return;
+  }
+  const subject = `StockBridge — Seu lancamento foi aprovado`;
+  const extraDivergencia =
+    args.tipoAprovacao === 'recebimento_divergencia'
+      ? '<p>O ajuste foi registrado automaticamente na OMIE (ACXE + Q2P) com a quantidade aprovada.</p>'
+      : '';
+  const html = `
+    <h2 style="color: #198754;">Lancamento Aprovado</h2>
+    <p>Um lancamento que voce fez no StockBridge foi aprovado pelo gestor/diretor.</p>
+    <p><strong>Tipo:</strong> ${args.tipoAprovacao}</p>
+    ${extraDivergencia}
+    <p style="color:#888;font-size:11px;">Aprovacao id: ${args.aprovacaoId} · Lote: ${args.loteId}</p>
+    <p style="color:#888;font-size:11px;">Sistema Atlas — StockBridge</p>
+  `;
+  try {
+    await sendEmail({ to, subject, html });
+  } catch (err) {
+    logger.error({ err, args }, 'Falha ao enviar email de aprovacao ao operador');
   }
 }

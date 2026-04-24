@@ -7,7 +7,8 @@ const mockTx = {
   from: vi.fn().mockReturnThis(),
   where: vi.fn().mockReturnThis(),
   limit: vi.fn().mockResolvedValue([
-    { id: 'apr-1', loteId: 'lote-1', status: 'pendente', precisaNivel: 'gestor', tipoAprovacao: 'recebimento_divergencia' },
+    // tipoAprovacao = entrada_manual nao dispara fluxo OMIE — mantem contract simples
+    { id: 'apr-1', loteId: 'lote-1', status: 'pendente', precisaNivel: 'gestor', tipoAprovacao: 'entrada_manual', lancadoPor: 'u-op' },
   ]),
   update: vi.fn().mockReturnThis(),
   set: vi.fn().mockReturnThis(),
@@ -55,6 +56,9 @@ vi.mock('@atlas/auth', () => ({
 vi.mock('@atlas/db', () => ({
   aprovacao: {},
   lote: {},
+  movimentacao: {},
+  localidadeCorrelacao: {},
+  users: {},
 }));
 
 describe('Aprovacoes — contratos', () => {

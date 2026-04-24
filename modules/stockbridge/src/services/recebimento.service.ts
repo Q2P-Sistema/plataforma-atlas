@@ -253,48 +253,16 @@ export async function processarRecebimento(
   }
 
   // 6. Sem divergencia: chama OMIE dos dois lados antes de persistir
-  // Principio: se ACXE sucesso + Q2P falha, dispara alerta (ajuste ACXE ficou "no ar"
-  // na OMIE — intervencao manual). Log claro, nenhuma persistencia parcial no PG.
-  let idACXE: { idMovest: string; idAjuste: string };
-  let idQ2P: { idMovest: string; idAjuste: string };
-  try {
-    const acxeRes = await incluirAjusteEstoque('acxe', {
-      codigoLocalEstoque: String(corr.codigoLocalEstoqueAcxe),
-      idProduto: correlacao.codigoProdutoAcxe,
-      dataAtual: formatarDataBR(new Date()),
-      quantidade: qtdFisicaKg,
-      observacao: `Recebimento NF ${input.nf} sem divergencias`,
-      origem: 'AJU',
-      tipo: 'TRF',
-      motivo: 'TRF',
-      valor: omieData.vUnCom,
-      codigoLocalEstoqueDestino: String(corr.codigoLocalEstoqueAcxe),
-    });
-    idACXE = { idMovest: acxeRes.idMovest, idAjuste: acxeRes.idAjuste };
-  } catch (err) {
-    throw new OmieAjusteError('acxe', err);
-  }
-
-  try {
-    const q2pRes = await incluirAjusteEstoque('q2p', {
-      codigoLocalEstoque: String(corr.codigoLocalEstoqueQ2p),
-      idProduto: correlacao.codigoProdutoQ2p,
-      dataAtual: formatarDataBR(new Date()),
-      quantidade: qtdFisicaKg,
-      observacao: `Recebimento NF ${input.nf} sem divergencias`,
-      origem: 'AJU',
-      tipo: 'ENT',
-      motivo: 'INI',
-      valor: omieData.vUnCom,
-    });
-    idQ2P = { idMovest: q2pRes.idMovest, idAjuste: q2pRes.idAjuste };
-  } catch (err) {
-    logger.error(
-      { nf: input.nf, idACXE, err },
-      'ALERTA: ajuste ACXE sucesso mas Q2P falhou. Intervencao manual necessaria.',
-    );
-    throw new OmieAjusteError('q2p', err);
-  }
+  const { idACXE, idQ2P } = await executarAjusteOmieDual({
+    codigoLocalEstoqueAcxe: corr.codigoLocalEstoqueAcxe,
+    codigoLocalEstoqueQ2p: corr.codigoLocalEstoqueQ2p,
+    codigoProdutoAcxe: correlacao.codigoProdutoAcxe,
+    codigoProdutoQ2p: correlacao.codigoProdutoQ2p,
+    quantidadeKg: qtdFisicaKg,
+    valorUnitario: omieData.vUnCom,
+    notaFiscal: input.nf,
+    observacaoSufixo: 'sem divergencias',
+  });
 
   // Persistir lote + movimentacao em uma transacao
   const resultado = await db.transaction(async (tx) => {
@@ -426,6 +394,63 @@ async function processarRecebimentoComDivergencia(args: {
 }
 
 // ── Helpers ────────────────────────────────────────────────
+
+/**
+ * Executa o par de ajustes OMIE (ACXE transferencia + Q2P entrada) usado tanto em
+ * recebimento sem divergencia quanto em aprovacao de divergencia. Se ACXE sucesso
+ * mas Q2P falhar, dispara ALERTA no log (ajuste ACXE ficou "no ar" no ERP — requer
+ * intervencao manual). Nao toca no BD — o caller decide como persistir.
+ */
+export async function executarAjusteOmieDual(args: {
+  codigoLocalEstoqueAcxe: number;
+  codigoLocalEstoqueQ2p: number;
+  codigoProdutoAcxe: number;
+  codigoProdutoQ2p: number;
+  quantidadeKg: number;
+  valorUnitario: number; // USD por unidade OMIE (vUnCom)
+  notaFiscal: string;
+  observacaoSufixo: string;
+}): Promise<{ idACXE: { idMovest: string; idAjuste: string }; idQ2P: { idMovest: string; idAjuste: string } }> {
+  let idACXE: { idMovest: string; idAjuste: string };
+  try {
+    const acxeRes = await incluirAjusteEstoque('acxe', {
+      codigoLocalEstoque: String(args.codigoLocalEstoqueAcxe),
+      idProduto: args.codigoProdutoAcxe,
+      dataAtual: formatarDataBR(new Date()),
+      quantidade: args.quantidadeKg,
+      observacao: `Recebimento NF ${args.notaFiscal} ${args.observacaoSufixo}`,
+      origem: 'AJU',
+      tipo: 'TRF',
+      motivo: 'TRF',
+      valor: args.valorUnitario,
+      codigoLocalEstoqueDestino: String(args.codigoLocalEstoqueAcxe),
+    });
+    idACXE = { idMovest: acxeRes.idMovest, idAjuste: acxeRes.idAjuste };
+  } catch (err) {
+    throw new OmieAjusteError('acxe', err);
+  }
+
+  try {
+    const q2pRes = await incluirAjusteEstoque('q2p', {
+      codigoLocalEstoque: String(args.codigoLocalEstoqueQ2p),
+      idProduto: args.codigoProdutoQ2p,
+      dataAtual: formatarDataBR(new Date()),
+      quantidade: args.quantidadeKg,
+      observacao: `Recebimento NF ${args.notaFiscal} ${args.observacaoSufixo}`,
+      origem: 'AJU',
+      tipo: 'ENT',
+      motivo: 'INI',
+      valor: args.valorUnitario,
+    });
+    return { idACXE, idQ2P: { idMovest: q2pRes.idMovest, idAjuste: q2pRes.idAjuste } };
+  } catch (err) {
+    logger.error(
+      { nf: args.notaFiscal, idACXE, err },
+      'ALERTA: ajuste ACXE sucesso mas Q2P falhou. Intervencao manual necessaria.',
+    );
+    throw new OmieAjusteError('q2p', err);
+  }
+}
 
 function formatarDataBR(d: Date): string {
   const dd = String(d.getDate()).padStart(2, '0');
