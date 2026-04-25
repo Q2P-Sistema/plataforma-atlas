@@ -42,7 +42,7 @@ export interface FilaItemOmie {
   qtdKg: number;
   localidadeCodigo: string;
   dtEmissao: string;
-  custoUsd: number;
+  custoBrl: number;
 }
 
 /**
@@ -98,7 +98,7 @@ export async function getFilaOmie(params: {
         qtdKg,
         localidadeCodigo: omieData.codigoLocalEstoque,
         dtEmissao: omieData.dEmi,
-        custoUsd: omieData.vUnCom,
+        custoBrl: omieData.vUnCom,
       },
     ];
   }
@@ -115,7 +115,7 @@ export async function getFilaOmie(params: {
         unidade: 'saco',
         localidadeCodigo: '4498926337',
         dtEmissao: '10/03/2026',
-        custoUsd: 1175,
+        custoBrl: 1175,
       },
       {
         nf: 'IMP-2026-0302',
@@ -126,7 +126,7 @@ export async function getFilaOmie(params: {
         unidade: 'kg',
         localidadeCodigo: '8115873874',
         dtEmissao: '12/03/2026',
-        custoUsd: 1490,
+        custoBrl: 1490,
       },
     ];
     return mocks.map((m) => ({ ...m, qtdKg: converterParaKg(m.qtdOriginal, m.unidade) }));
@@ -280,8 +280,8 @@ export async function processarRecebimento(
         fornecedorNome: omieData.cRazao,
         quantidadeFisicaKg: String(qtdFisicaKg),
         quantidadeFiscalKg: String(qtdNfKg),
-        custoUsdTon: omieData.vUnCom > 0 ? String(omieData.vUnCom) : null,
-        valorTotalNfUsd: omieData.vNF > 0 ? String(omieData.vNF) : null,
+        custoBrlKg: omieData.vUnCom > 0 ? String(omieData.vUnCom) : null,
+        valorTotalNfBrl: omieData.vNF > 0 ? String(omieData.vNF) : null,
         codigoLocalEstoqueOrigemAcxe: omieData.codigoLocalEstoque,
         status: 'provisorio',
         estagioTransito: null,
@@ -351,8 +351,8 @@ async function processarRecebimentoComDivergencia(args: {
         fornecedorNome: omieData.cRazao,
         quantidadeFisicaKg: String(qtdFisicaKg),
         quantidadeFiscalKg: String(qtdNfKg),
-        custoUsdTon: omieData.vUnCom > 0 ? String(omieData.vUnCom) : null,
-        valorTotalNfUsd: omieData.vNF > 0 ? String(omieData.vNF) : null,
+        custoBrlKg: omieData.vUnCom > 0 ? String(omieData.vUnCom) : null,
+        valorTotalNfBrl: omieData.vNF > 0 ? String(omieData.vNF) : null,
         codigoLocalEstoqueOrigemAcxe: omieData.codigoLocalEstoque,
         status: 'aguardando_aprovacao',
         localidadeId: input.localidadeId,

@@ -168,15 +168,15 @@ export async function aprovar(input: AprovarInput): Promise<{ id: string; loteSt
     if (!loteRow.notaFiscal) {
       throw new Error(`Lote ${loteRow.codigo} sem notaFiscal — nao e possivel ajustar OMIE`);
     }
-    if (!loteRow.codigoLocalEstoqueOrigemAcxe || !loteRow.valorTotalNfUsd || !loteRow.custoUsdTon) {
+    if (!loteRow.codigoLocalEstoqueOrigemAcxe || !loteRow.valorTotalNfBrl || !loteRow.custoBrlKg) {
       throw new Error(
         `Lote ${loteRow.codigo} sem dados da NF persistidos (origem ACXE / vNF / vUnCom). ` +
           'Lote criado em versao anterior — re-consulte OMIE manualmente ou re-submeta o recebimento.',
       );
     }
     const qtdNfKg = Number(loteRow.quantidadeFiscalKg);
-    const vNF = Number(loteRow.valorTotalNfUsd);
-    const vUnCom = Number(loteRow.custoUsdTon);
+    const vNF = Number(loteRow.valorTotalNfBrl);
+    const vUnCom = Number(loteRow.custoBrlKg);
 
     omieIds = await executarAjusteOmieDual({
       codigoLocalEstoqueAcxeOrigem: loteRow.codigoLocalEstoqueOrigemAcxe,

@@ -15,7 +15,7 @@ interface FilaItem {
   unidade: Unidade;
   qtdKg: number;
   localidadeCodigo: string;
-  custoUsd: number;
+  custoBrl: number;
 }
 
 interface Props {

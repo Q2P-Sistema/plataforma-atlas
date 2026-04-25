@@ -13,7 +13,7 @@ interface FilaItem {
   qtdKg: number;
   localidadeCodigo: string;
   dtEmissao: string;
-  custoUsd: number;
+  custoBrl: number;
 }
 
 const TIPO_LABEL: Record<string, { label: string; color: string }> = {

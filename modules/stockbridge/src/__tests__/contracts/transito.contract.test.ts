@@ -13,7 +13,7 @@ const loteMock = {
   paisOrigem: 'China',
   quantidadeFisicaKg: '0',
   quantidadeFiscalKg: '25',
-  custoUsdTon: '1200',
+  custoBrlKg: '1200',
   cnpj: 'Acxe Matriz',
   di: null,
   dta: null,
@@ -56,7 +56,7 @@ vi.mock('@atlas/auth', () => ({
 }));
 
 vi.mock('@atlas/db', () => ({
-  lote: { id: {}, codigo: {}, produtoCodigoAcxe: {}, fornecedorNome: {}, paisOrigem: {}, quantidadeFisicaKg: {}, quantidadeFiscalKg: {}, custoUsdTon: {}, cnpj: {}, estagioTransito: {}, di: {}, dta: {}, notaFiscal: {}, dtPrevChegada: {}, ativo: {}, localidadeId: {}, status: {}, updatedAt: {} },
+  lote: { id: {}, codigo: {}, produtoCodigoAcxe: {}, fornecedorNome: {}, paisOrigem: {}, quantidadeFisicaKg: {}, quantidadeFiscalKg: {}, custoBrlKg: {}, cnpj: {}, estagioTransito: {}, di: {}, dta: {}, notaFiscal: {}, dtPrevChegada: {}, ativo: {}, localidadeId: {}, status: {}, updatedAt: {} },
   localidade: { id: {}, codigo: {} },
   movimentacao: {},
   aprovacao: {},

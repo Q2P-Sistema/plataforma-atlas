@@ -13,7 +13,7 @@ interface LoteTransito {
   paisOrigem: string | null;
   quantidadeFisicaKg: number;
   quantidadeFiscalKg: number;
-  custoUsdTon: number | null;
+  custoBrlKg: number | null;
   cnpj: string;
   estagioTransito: EstagioTransito;
   localidadeCodigo: string | null;
@@ -103,7 +103,7 @@ export function TransitoPage() {
                       <div className="text-[10px] text-atlas-muted">
                         {l.paisOrigem && `${l.paisOrigem} · `}
                         {l.quantidadeFiscalKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg
-                        {l.custoUsdTon != null && ` · USD ${l.custoUsdTon.toFixed(0)}/t`}
+                        {l.custoBrlKg != null && ` · R$ ${l.custoBrlKg.toFixed(2)}/kg`}
                       </div>
                       {col.key === 'porto_dta' && (
                         <div className="text-[10px] text-orange-700 dark:text-orange-300">

@@ -19,7 +19,7 @@ vi.mock('@atlas/core', () => ({
 
 vi.mock('@atlas/db', () => ({
   aprovacao: { id: {}, status: {}, loteId: {}, precisaNivel: {}, tipoAprovacao: {}, quantidadePrevistaKg: {}, quantidadeRecebidaKg: {}, tipoDivergencia: {}, observacoes: {}, lancadoPor: {}, lancadoEm: {} },
-  lote: { id: {}, status: {}, quantidadeFisicaKg: {}, produtoCodigoAcxe: {}, produtoCodigoQ2p: {}, localidadeId: {}, notaFiscal: {}, custoUsdTon: {}, updatedAt: {} },
+  lote: { id: {}, status: {}, quantidadeFisicaKg: {}, produtoCodigoAcxe: {}, produtoCodigoQ2p: {}, localidadeId: {}, notaFiscal: {}, custoBrlKg: {}, updatedAt: {} },
   movimentacao: { id: {} },
   localidadeCorrelacao: { localidadeId: {}, codigoLocalEstoqueAcxe: {}, codigoLocalEstoqueQ2p: {} },
   users: { id: {}, email: {} },
@@ -147,8 +147,8 @@ describe('aprovacao.service#aprovar', () => {
       id: 'lote-1', codigo: 'L001', notaFiscal: '123', cnpj: 'Acxe Matriz',
       produtoCodigoAcxe: 1001, produtoCodigoQ2p: 2001,
       localidadeId: 'loc-1', quantidadeFisicaKg: '24500',
-      quantidadeFiscalKg: '25000', custoUsdTon: '1.20',
-      valorTotalNfUsd: '30000.00', codigoLocalEstoqueOrigemAcxe: '999',
+      quantidadeFiscalKg: '25000', custoBrlKg: '1.20',
+      valorTotalNfBrl: '30000.00', codigoLocalEstoqueOrigemAcxe: '999',
     };
     vi.mocked(getDb).mockReturnValue(criarDbComTabelas(await tabelas(aprRow, loteRow)) as never);
 

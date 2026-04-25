@@ -36,13 +36,13 @@ export interface TabelaAnaliticaSku {
  * Pura — testavel sem DB.
  * Quantidade em kg e custo em USD/tonelada sao convertidos para ton antes da media.
  */
-export function calcularCMP(lotes: Array<{ quantidadeFisicaKg: number; custoUsdTon: number | null }>): number {
+export function calcularCMP(lotes: Array<{ quantidadeFisicaKg: number; custoBrlKg: number | null }>): number {
   let totalUsd = 0;
   let totalTon = 0;
   for (const l of lotes) {
-    if (l.custoUsdTon != null && l.custoUsdTon > 0 && l.quantidadeFisicaKg > 0) {
+    if (l.custoBrlKg != null && l.custoBrlKg > 0 && l.quantidadeFisicaKg > 0) {
       const qtyTon = l.quantidadeFisicaKg / 1000;
-      totalUsd += qtyTon * l.custoUsdTon;
+      totalUsd += qtyTon * l.custoBrlKg;
       totalTon += qtyTon;
     }
   }
@@ -54,12 +54,12 @@ export function calcularCMP(lotes: Array<{ quantidadeFisicaKg: number; custoUsdT
  * (unico estagio com preco USD nao liquidado em BRL).
  */
 export function calcularExposicaoCambial(
-  lotes: Array<{ estagioTransito: string | null; quantidadeFisicaKg: number; custoUsdTon: number | null; ativo: boolean }>,
+  lotes: Array<{ estagioTransito: string | null; quantidadeFisicaKg: number; custoBrlKg: number | null; ativo: boolean }>,
 ): number {
   let exposicao = 0;
   for (const l of lotes) {
-    if (l.ativo && l.estagioTransito === 'transito_intl' && l.custoUsdTon != null && l.custoUsdTon > 0) {
-      exposicao += (l.quantidadeFisicaKg / 1000) * l.custoUsdTon;
+    if (l.ativo && l.estagioTransito === 'transito_intl' && l.custoBrlKg != null && l.custoBrlKg > 0) {
+      exposicao += (l.quantidadeFisicaKg / 1000) * l.custoBrlKg;
     }
   }
   return exposicao;
@@ -95,7 +95,7 @@ export async function getKPIs(): Promise<MetricasKPIs> {
   const saldoRes = await pool.query(`
     SELECT
       quantidade_fisica_kg::numeric AS qtd,
-      custo_usd_ton::numeric AS custo_usd_ton,
+      custo_brl_kg::numeric AS custo_brl_kg,
       estagio_transito,
       ativo
     FROM stockbridge.lote
@@ -105,9 +105,9 @@ export async function getKPIs(): Promise<MetricasKPIs> {
     return { rows: [] };
   });
 
-  const lotes = (saldoRes.rows as Array<{ qtd: string; custo_usd_ton: string | null; estagio_transito: string | null; ativo: boolean }>).map((r) => ({
+  const lotes = (saldoRes.rows as Array<{ qtd: string; custo_brl_kg: string | null; estagio_transito: string | null; ativo: boolean }>).map((r) => ({
     quantidadeFisicaKg: Number(r.qtd),
-    custoUsdTon: r.custo_usd_ton != null ? Number(r.custo_usd_ton) : null,
+    custoBrlKg: r.custo_brl_kg != null ? Number(r.custo_brl_kg) : null,
     estagioTransito: r.estagio_transito,
     ativo: r.ativo,
   }));
@@ -175,7 +175,7 @@ export async function getEvolucao(meses: number = 6): Promise<EvolucaoMensal[]> 
       to_char(date_trunc('month', m.created_at), 'YYYY-MM') AS mes,
       c.familia_categoria AS familia,
       SUM(ABS(m.quantidade_kg))::numeric AS qtd,
-      SUM(ABS(m.quantidade_kg) / 1000.0 * COALESCE(l.custo_usd_ton, 0) * 5.0)::numeric AS valor_brl
+      SUM(ABS(m.quantidade_kg) / 1000.0 * COALESCE(l.custo_brl_kg, 0) * 5.0)::numeric AS valor_brl
     FROM stockbridge.movimentacao m
     LEFT JOIN stockbridge.lote l ON l.id = m.lote_id
     LEFT JOIN stockbridge.config_produto c ON c.produto_codigo_acxe = l.produto_codigo_acxe
@@ -206,7 +206,7 @@ export async function getTabelaAnalitica(): Promise<TabelaAnaliticaSku[]> {
         l.produto_codigo_acxe,
         SUM(l.quantidade_fisica_kg)::numeric AS qtd_kg,
         CASE WHEN SUM(l.quantidade_fisica_kg) > 0
-             THEN SUM(l.quantidade_fisica_kg * COALESCE(l.custo_usd_ton, 0)) / SUM(l.quantidade_fisica_kg)
+             THEN SUM(l.quantidade_fisica_kg * COALESCE(l.custo_brl_kg, 0)) / SUM(l.quantidade_fisica_kg)
              ELSE 0 END::numeric AS cmp_usd_ton
       FROM stockbridge.lote l
       WHERE l.ativo = true AND l.estagio_transito IS NULL

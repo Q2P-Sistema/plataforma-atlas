@@ -59,8 +59,8 @@ export const lote = stockbridgeSchema.table(
     paisOrigem: varchar('pais_origem', { length: 100 }),
     quantidadeFisicaKg: numeric('quantidade_fisica_kg', { precision: 12, scale: 3 }).notNull().default('0'),
     quantidadeFiscalKg: numeric('quantidade_fiscal_kg', { precision: 12, scale: 3 }).notNull().default('0'),
-    custoUsdTon: numeric('custo_usd_ton', { precision: 12, scale: 2 }),
-    valorTotalNfUsd: numeric('valor_total_nf_usd', { precision: 14, scale: 2 }),
+    custoBrlKg: numeric('custo_brl_kg', { precision: 12, scale: 2 }),
+    valorTotalNfBrl: numeric('valor_total_nf_brl', { precision: 14, scale: 2 }),
     codigoLocalEstoqueOrigemAcxe: varchar('codigo_local_estoque_origem_acxe', { length: 50 }),
     status: varchar('status', { length: 30 })
       .notNull()

@@ -37,7 +37,7 @@ export interface LoteTransitoItem {
   paisOrigem: string | null;
   quantidadeFisicaKg: number;
   quantidadeFiscalKg: number;
-  custoUsdTon: number | null;
+  custoBrlKg: number | null;
   cnpj: string;
   estagioTransito: EstagioTransito;
   localidadeCodigo: string | null;
@@ -68,7 +68,7 @@ export async function listarPorEstagio(perfil: Perfil): Promise<Record<EstagioTr
       paisOrigem: lote.paisOrigem,
       quantidadeFisicaKg: lote.quantidadeFisicaKg,
       quantidadeFiscalKg: lote.quantidadeFiscalKg,
-      custoUsdTon: lote.custoUsdTon,
+      custoBrlKg: lote.custoBrlKg,
       cnpj: lote.cnpj,
       estagioTransito: lote.estagioTransito,
       di: lote.di,
@@ -102,7 +102,7 @@ export async function listarPorEstagio(perfil: Perfil): Promise<Record<EstagioTr
       paisOrigem: r.paisOrigem,
       quantidadeFisicaKg: Number(r.quantidadeFisicaKg),
       quantidadeFiscalKg: Number(r.quantidadeFiscalKg),
-      custoUsdTon: r.custoUsdTon != null ? Number(r.custoUsdTon) : null,
+      custoBrlKg: r.custoBrlKg != null ? Number(r.custoBrlKg) : null,
       cnpj: r.cnpj,
       estagioTransito: estagio,
       localidadeCodigo: r.localidadeCodigo ?? null,
