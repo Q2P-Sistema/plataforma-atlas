@@ -156,7 +156,8 @@ describe('aprovacao.service#aprovar', () => {
     const res = await aprovar({ id: 'apr-1', usuarioId: 'u1', perfilUsuario: 'gestor' });
     expect(res).toEqual({ id: 'apr-1', loteStatus: 'provisorio' });
     expect(omieMod.consultarNF).not.toHaveBeenCalled(); // usa lote persistido
-    expect(omieMod.incluirAjusteEstoque).toHaveBeenCalledTimes(2);
+    // 3 chamadas: ACXE primaria (recebido), Q2P (recebido), ACXE diferenca (faltando)
+    expect(omieMod.incluirAjusteEstoque).toHaveBeenCalledTimes(3);
     expect(omieMod.incluirAjusteEstoque).toHaveBeenNthCalledWith(1, 'acxe', expect.objectContaining({
       quantidade: 24500,
       tipo: 'TRF',
@@ -170,6 +171,43 @@ describe('aprovacao.service#aprovar', () => {
       tipo: 'ENT',
       motivo: 'INI',
       valor: 1.44, // ceil(1.25 * 1.145 * 100)/100 = ceil(143.125)/100
+    }));
+    // 3a chamada: ACXE transferindo diferenca (500kg) para ACXE-COMEX-FALTANDO
+    // (tipoDivergencia=faltando → 4506855468)
+    expect(omieMod.incluirAjusteEstoque).toHaveBeenNthCalledWith(3, 'acxe', expect.objectContaining({
+      quantidade: 500, // 25000 NF - 24500 recebido
+      tipo: 'TRF',
+      motivo: 'TRF',
+      codigoLocalEstoque: '999',
+      codigoLocalEstoqueDestino: '4506855468', // ACXE-COMEX-FALTANDO
+      valor: 1.25,
+    }));
+  });
+
+  it('aprovar recebimento_divergencia varredura → diferenca vai pra estoque varredura nao-extrema', async () => {
+    const { getDb } = await import('@atlas/core');
+    const omieMod = await import('@atlas/integration-omie');
+    const aprRow = {
+      id: 'apr-2', loteId: 'lote-2', status: 'pendente',
+      precisaNivel: 'gestor', tipoAprovacao: 'recebimento_divergencia',
+      quantidadeRecebidaKg: '24500', tipoDivergencia: 'varredura', lancadoPor: 'op-1',
+    };
+    const loteRow = {
+      id: 'lote-2', codigo: 'L002', notaFiscal: '124', cnpj: 'Acxe Matriz',
+      produtoCodigoAcxe: 1001, produtoCodigoQ2p: 2001,
+      localidadeId: 'loc-1', quantidadeFisicaKg: '24500',
+      quantidadeFiscalKg: '25000', custoBrlKg: '1.20',
+      valorTotalNfBrl: '31250.00', codigoLocalEstoqueOrigemAcxe: '999',
+    };
+    vi.mocked(getDb).mockReturnValue(criarDbComTabelas(await tabelas(aprRow, loteRow)) as never);
+
+    await aprovar({ id: 'apr-2', usuarioId: 'u1', perfilUsuario: 'gestor' });
+
+    // Destino do recebimento (corr.codigoLocalEstoqueAcxe = 111) NAO e Extrema (4004166399),
+    // entao a diferenca vai pra ACXE_VARREDURA_NAO_EXTREMA = 4506526722
+    expect(omieMod.incluirAjusteEstoque).toHaveBeenNthCalledWith(3, 'acxe', expect.objectContaining({
+      quantidade: 500,
+      codigoLocalEstoqueDestino: '4506526722',
     }));
   });
 });

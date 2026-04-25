@@ -49,6 +49,7 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
   const [unidadeInput, setUnidadeInput] = useState<Unidade>(item.unidade);
   const [localidadeId, setLocalidadeId] = useState('');
   const [obs, setObs] = useState('');
+  const [tipoDivergencia, setTipoDivergencia] = useState<'faltando' | 'varredura'>('faltando');
   const [sucesso, setSucesso] = useState<{ tipo: 'ok' | 'divergencia'; mensagem: string } | null>(null);
 
   const { data: localidades = [] } = useQuery<Localidade[]>({
@@ -66,7 +67,11 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
   const deltaKg = qtdFisicaKg - item.qtdKg;
   const temDivergencia = Math.abs(deltaKg) > 1; // tolerancia 1 kg
   const motivoObrigatorio = temDivergencia && qtdFisicaKg > 0;
-  const podeConfirmar = qtdFisicaKg > 0 && localidadeId && (!motivoObrigatorio || obs.trim().length > 0);
+  // Legado so aceita "recebido < NF" (delta negativo) — excedente nao e tratado
+  const excedente = deltaKg > 1 && qtdFisicaKg > 0;
+  const podeConfirmar = qtdFisicaKg > 0 && localidadeId
+    && (!motivoObrigatorio || obs.trim().length > 0)
+    && !excedente;
 
   const recebimentoMut = useMutation({
     mutationFn: async () =>
@@ -79,6 +84,7 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
           unidade_input: unidadeInput,
           localidade_id: localidadeId,
           observacoes: obs || undefined,
+          tipo_divergencia: temDivergencia ? tipoDivergencia : undefined,
         }),
       }),
     onSuccess: (res) => {
@@ -180,6 +186,29 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
             </div>
           )}
         </div>
+
+        {motivoObrigatorio && (
+          <div>
+            <label className="block text-xs font-semibold text-atlas-muted mb-1">Tipo de divergencia *</label>
+            <select
+              value={tipoDivergencia}
+              onChange={(e) => setTipoDivergencia(e.target.value as 'faltando' | 'varredura')}
+              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+            >
+              <option value="faltando">Faltando — material nao chegou (vai para ACXE-COMEX-FALTANDO)</option>
+              <option value="varredura">Varredura — material para inspecao (vai para ACXE-VARREDURA)</option>
+            </select>
+            <div className="text-[11px] text-atlas-muted mt-1">
+              Os {Math.abs(deltaKg).toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg divergentes serao transferidos do Extrema para o estoque especial conforme o tipo escolhido.
+            </div>
+          </div>
+        )}
+
+        {excedente && (
+          <div className="p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 rounded text-sm text-red-800 dark:text-red-300">
+            Quantidade recebida nao pode ser maior que a NF. Se houve excedente, registre o recebimento normal e depois lance uma <strong>entrada manual</strong> para a diferenca.
+          </div>
+        )}
 
         <div>
           <label className="block text-xs font-semibold text-atlas-muted mb-1">

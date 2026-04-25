@@ -7,11 +7,13 @@ import {
   executarAjusteOmieDual,
   calcularValorUnitarioQ2p,
   calcularValorUnitarioAcxe,
+  transferirDiferencaAcxe,
 } from './recebimento.service.js';
 import {
   enviarNotificacaoRejeicaoOperador,
   enviarNotificacaoAprovacaoOperador,
 } from './notificacao.service.js';
+import { resolverEstoqueDiferencaAcxe } from './estoques-especiais-acxe.js';
 
 const logger = createLogger('stockbridge:aprovacao');
 
@@ -179,6 +181,8 @@ export async function aprovar(input: AprovarInput): Promise<{ id: string; loteSt
     const qtdNfKg = Number(loteRow.quantidadeFiscalKg);
     const vNF = Number(loteRow.valorTotalNfBrl);
 
+    const valorUnitAcxe = calcularValorUnitarioAcxe(vNF, qtdNfKg);
+
     omieIds = await executarAjusteOmieDual({
       codigoLocalEstoqueAcxeOrigem: loteRow.codigoLocalEstoqueOrigemAcxe,
       codigoLocalEstoqueAcxeDestino: corr.codigoLocalEstoqueAcxe,
@@ -186,11 +190,44 @@ export async function aprovar(input: AprovarInput): Promise<{ id: string; loteSt
       codigoProdutoAcxe: Number(loteRow.produtoCodigoAcxe),
       codigoProdutoQ2p: Number(loteRow.produtoCodigoQ2p),
       quantidadeKg: qtdAprovadaKg,
-      valorUnitarioAcxe: calcularValorUnitarioAcxe(vNF, qtdNfKg),
+      valorUnitarioAcxe: valorUnitAcxe,
       valorUnitarioQ2p: calcularValorUnitarioQ2p(vNF, qtdNfKg),
       notaFiscal: loteRow.notaFiscal,
       observacaoSufixo: `com divergencia aprovada por gestor (${apPre.tipoDivergencia ?? 'n/a'})`,
     });
+
+    // 2a chamada ACXE: transfere a DIFERENCA (qtdNF - qtdRecebida) para estoque
+    // especial (Faltando ou Varredura) — fiel ao legado (NotaFiscalService linhas
+    // 198-272 e 383-460). Se a 1a chamada (acima) ja sucedeu mas esta falhar, a
+    // movimentacao ACXE fica desbalanceada na OMIE — alerta e log.
+    const qtdDiferencaKg = Number((qtdNfKg - qtdAprovadaKg).toFixed(3));
+    if (qtdDiferencaKg > 0 && (apPre.tipoDivergencia === 'faltando' || apPre.tipoDivergencia === 'varredura')) {
+      const codigoLocalEstoqueDiferenca = resolverEstoqueDiferencaAcxe({
+        tipoDivergencia: apPre.tipoDivergencia,
+        codigoLocalEstoqueDestinoAcxe: corr.codigoLocalEstoqueAcxe,
+      });
+      try {
+        const idDiferenca = await transferirDiferencaAcxe({
+          codigoLocalEstoqueOrigem: loteRow.codigoLocalEstoqueOrigemAcxe,
+          codigoLocalEstoqueDiferenca,
+          codigoProdutoAcxe: Number(loteRow.produtoCodigoAcxe),
+          quantidadeKg: qtdDiferencaKg,
+          valorUnitarioAcxe: valorUnitAcxe,
+          notaFiscal: loteRow.notaFiscal,
+          observacaoSufixo: `divergencia ${apPre.tipoDivergencia} de ${qtdDiferencaKg} kg (NF ${loteRow.notaFiscal})`,
+        });
+        logger.info(
+          { idDiferenca, qtdDiferencaKg, tipo: apPre.tipoDivergencia, dest: codigoLocalEstoqueDiferenca },
+          'Diferenca transferida para estoque especial',
+        );
+      } catch (err) {
+        logger.error(
+          { err, idACXE: omieIds.idACXE, idQ2P: omieIds.idQ2P, qtdDiferencaKg },
+          'ALERTA: ajuste principal sucesso mas transferencia da diferenca falhou. Intervencao manual necessaria.',
+        );
+        throw err;
+      }
+    }
   }
 
   // Transacao: update aprovacao + lote (+ grava movimentacao se OMIE foi chamado)

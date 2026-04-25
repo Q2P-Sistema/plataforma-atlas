@@ -147,6 +147,8 @@ export interface ProcessarRecebimentoInput {
   unidadeInput: UnidadeMedida;
   localidadeId: string;
   observacoes?: string;
+  /** Operador escolhe (Faltando|Varredura) quando ha divergencia. Obrigatorio se houver delta. */
+  tipoDivergencia?: 'faltando' | 'varredura';
   userId: string;
 }
 
@@ -250,12 +252,22 @@ export async function processarRecebimento(
     if (!input.observacoes || input.observacoes.trim().length === 0) {
       throw new Error('Motivo da divergencia e obrigatorio');
     }
+    if (!input.tipoDivergencia) {
+      throw new Error('Tipo de divergencia (faltando/varredura) e obrigatorio quando ha delta');
+    }
+    // Fiel ao legado (NotaFiscalController.php:307): so aceita "recebido < NF".
+    // Excedente nao e tratado — operador deveria registrar a entrada normal e
+    // depois lancar uma entrada manual da diferenca.
+    if (deltaKg > 0) {
+      throw new Error('Quantidade recebida nao pode ser maior que a quantidade da NF');
+    }
     return processarRecebimentoComDivergencia({
       input,
       omieData,
       qtdNfKg,
       qtdFisicaKg,
       deltaKg,
+      tipoDivergencia: input.tipoDivergencia,
       localidadeCodigoQ2p: corr.codigoLocalEstoqueQ2p,
       correlacao,
     });
@@ -342,12 +354,12 @@ async function processarRecebimentoComDivergencia(args: {
   qtdNfKg: number;
   qtdFisicaKg: number;
   deltaKg: number;
+  tipoDivergencia: 'faltando' | 'varredura';
   localidadeCodigoQ2p: number;
   correlacao: Awaited<ReturnType<typeof getCorrelacao>>;
 }): Promise<ProcessarRecebimentoResult> {
   const db = getDb();
-  const { input, omieData, qtdNfKg, qtdFisicaKg, deltaKg, correlacao } = args;
-  const tipoDivergencia: 'faltando' | 'varredura' = deltaKg < 0 ? 'faltando' : 'varredura';
+  const { input, omieData, qtdNfKg, qtdFisicaKg, deltaKg, tipoDivergencia, correlacao } = args;
 
   const resultado = await db.transaction(async (tx) => {
     const codigo = await proximoCodigoLote(tx, 'L');
@@ -475,6 +487,44 @@ export async function executarAjusteOmieDual(args: {
       'ALERTA: ajuste ACXE sucesso mas Q2P falhou. Intervencao manual necessaria.',
     );
     throw new OmieAjusteError('q2p', err);
+  }
+}
+
+/**
+ * Transfere a quantidade DIVERGENTE (qtd_NF - qtd_recebida) do estoque de origem
+ * (Extrema, normalmente) para um estoque especial ACXE de retencao — Faltando
+ * (material sumiu) ou Varredura (material para inspecao).
+ *
+ * Fiel ao legado (NotaFiscalService linhas 198-272 e 383-460): segunda chamada ACXE
+ * apos a transferencia principal para o galpao destino. Usa o mesmo valor unitario
+ * com tributos embutidos (vNF/qtdNfKg). OMIE em TRF/TRF descarta o valor e usa
+ * custo medio do origem — campo e informativo no log.
+ */
+export async function transferirDiferencaAcxe(args: {
+  codigoLocalEstoqueOrigem: string;
+  codigoLocalEstoqueDiferenca: string; // resolvido por resolverEstoqueDiferencaAcxe()
+  codigoProdutoAcxe: number;
+  quantidadeKg: number; // diferenca positiva (qtd faltante)
+  valorUnitarioAcxe: number;
+  notaFiscal: string;
+  observacaoSufixo: string;
+}): Promise<{ idMovest: string; idAjuste: string }> {
+  try {
+    const res = await incluirAjusteEstoque('acxe', {
+      codigoLocalEstoque: args.codigoLocalEstoqueOrigem,
+      codigoLocalEstoqueDestino: args.codigoLocalEstoqueDiferenca,
+      idProduto: args.codigoProdutoAcxe,
+      dataAtual: formatarDataBR(new Date()),
+      quantidade: args.quantidadeKg,
+      observacao: `Recebimento NF ${args.notaFiscal} ${args.observacaoSufixo}`,
+      origem: 'AJU',
+      tipo: 'TRF',
+      motivo: 'TRF',
+      valor: args.valorUnitarioAcxe,
+    });
+    return { idMovest: res.idMovest, idAjuste: res.idAjuste };
+  } catch (err) {
+    throw new OmieAjusteError('acxe', err);
   }
 }
 

@@ -20,6 +20,7 @@ const BodySchema = z.object({
   unidade_input: z.enum(['t', 'kg', 'saco', 'bigbag']),
   localidade_id: z.string().uuid(),
   observacoes: z.string().optional(),
+  tipo_divergencia: z.enum(['faltando', 'varredura']).optional(),
 });
 
 router.post('/api/v1/stockbridge/recebimento', requireOperador, requireArmazemVinculado, async (req: Request, res: Response) => {
@@ -46,6 +47,7 @@ router.post('/api/v1/stockbridge/recebimento', requireOperador, requireArmazemVi
       unidadeInput: parsed.data.unidade_input,
       localidadeId: parsed.data.localidade_id,
       observacoes: parsed.data.observacoes,
+      tipoDivergencia: parsed.data.tipo_divergencia,
       userId,
     });
     res.status(201).json({ data: result, error: null });
