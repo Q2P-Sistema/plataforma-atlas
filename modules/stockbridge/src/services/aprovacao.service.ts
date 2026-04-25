@@ -6,6 +6,7 @@ import { NIVEL_APROVACAO_POR_SUBTIPO } from '../types.js';
 import {
   executarAjusteOmieDual,
   calcularValorUnitarioQ2p,
+  calcularValorUnitarioAcxe,
 } from './recebimento.service.js';
 import {
   enviarNotificacaoRejeicaoOperador,
@@ -168,15 +169,14 @@ export async function aprovar(input: AprovarInput): Promise<{ id: string; loteSt
     if (!loteRow.notaFiscal) {
       throw new Error(`Lote ${loteRow.codigo} sem notaFiscal — nao e possivel ajustar OMIE`);
     }
-    if (!loteRow.codigoLocalEstoqueOrigemAcxe || !loteRow.valorTotalNfBrl || !loteRow.custoBrlKg) {
+    if (!loteRow.codigoLocalEstoqueOrigemAcxe || !loteRow.valorTotalNfBrl) {
       throw new Error(
-        `Lote ${loteRow.codigo} sem dados da NF persistidos (origem ACXE / vNF / vUnCom). ` +
+        `Lote ${loteRow.codigo} sem dados da NF persistidos (origem ACXE / vNF). ` +
           'Lote criado em versao anterior — re-consulte OMIE manualmente ou re-submeta o recebimento.',
       );
     }
     const qtdNfKg = Number(loteRow.quantidadeFiscalKg);
     const vNF = Number(loteRow.valorTotalNfBrl);
-    const vUnCom = Number(loteRow.custoBrlKg);
 
     omieIds = await executarAjusteOmieDual({
       codigoLocalEstoqueAcxeOrigem: loteRow.codigoLocalEstoqueOrigemAcxe,
@@ -185,7 +185,7 @@ export async function aprovar(input: AprovarInput): Promise<{ id: string; loteSt
       codigoProdutoAcxe: Number(loteRow.produtoCodigoAcxe),
       codigoProdutoQ2p: Number(loteRow.produtoCodigoQ2p),
       quantidadeKg: qtdAprovadaKg,
-      valorUnitarioAcxe: vUnCom,
+      valorUnitarioAcxe: calcularValorUnitarioAcxe(vNF, qtdNfKg),
       valorUnitarioQ2p: calcularValorUnitarioQ2p(vNF, qtdNfKg),
       notaFiscal: loteRow.notaFiscal,
       observacaoSufixo: `com divergencia aprovada por gestor (${apPre.tipoDivergencia ?? 'n/a'})`,

@@ -262,7 +262,7 @@ export async function processarRecebimento(
     codigoProdutoAcxe: correlacao.codigoProdutoAcxe,
     codigoProdutoQ2p: correlacao.codigoProdutoQ2p,
     quantidadeKg: qtdFisicaKg,
-    valorUnitarioAcxe: omieData.vUnCom,
+    valorUnitarioAcxe: calcularValorUnitarioAcxe(omieData.vNF, qtdNfKg),
     valorUnitarioQ2p: calcularValorUnitarioQ2p(omieData.vNF, qtdNfKg),
     notaFiscal: input.nf,
     observacaoSufixo: 'sem divergencias',
@@ -472,12 +472,23 @@ export async function executarAjusteOmieDual(args: {
 /**
  * Calcula o valor unitario "total" usado nos ajustes Q2P (legado:
  * `$vUnCom_Total = ceil(($vNF / $qtd_recebida_api * 1.145) * 100) / 100`).
- * Equivale ao unitario USD/kg da NF acrescido de markup interno de 14,5%
+ * Equivale ao unitario BRL/kg da NF acrescido de markup interno de 14,5%
  * (impostos/serviços) arredondado para cima a 2 casas.
  */
 export function calcularValorUnitarioQ2p(vNF: number, qtdNfKg: number): number {
   if (!Number.isFinite(vNF) || !Number.isFinite(qtdNfKg) || qtdNfKg <= 0) return 0;
   return Math.ceil((vNF / qtdNfKg) * 1.145 * 100) / 100;
+}
+
+/**
+ * Calcula o valor unitario com tributos embutidos (vNF/qCom) usado no ajuste ACXE.
+ * Correção sobre o legado: legado enviava `vUnCom` (valor base, sem tributos).
+ * Agora enviamos `vNF/qtdNfKg` arredondado a 2 casas — auditoria mais fiel,
+ * mesmo que OMIE em TRF/TRF acabe usando custo médio do estoque de origem.
+ */
+export function calcularValorUnitarioAcxe(vNF: number, qtdNfKg: number): number {
+  if (!Number.isFinite(vNF) || !Number.isFinite(qtdNfKg) || qtdNfKg <= 0) return 0;
+  return Math.round((vNF / qtdNfKg) * 100) / 100;
 }
 
 function formatarDataBR(d: Date): string {

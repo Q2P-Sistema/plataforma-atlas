@@ -142,13 +142,14 @@ describe('aprovacao.service#aprovar', () => {
       quantidadeRecebidaKg: '24500', tipoDivergencia: 'faltando', lancadoPor: 'op-1',
     };
     // Lote com dados da NF persistidos no momento do recebimento
-    // (vNF=30000, qtdNf=25000kg, vUnCom=1.2 → valor unit Q2P = ceil(30000/25000*1.145*100)/100 = 1.38)
+    // vNF=31250, qtdNf=25000kg → ACXE = round(31250/25000 * 100)/100 = 1.25
+    //                            Q2P  = ceil(31250/25000 * 1.145 * 100)/100 = ceil(143.125)/100 = 1.44
     const loteRow = {
       id: 'lote-1', codigo: 'L001', notaFiscal: '123', cnpj: 'Acxe Matriz',
       produtoCodigoAcxe: 1001, produtoCodigoQ2p: 2001,
       localidadeId: 'loc-1', quantidadeFisicaKg: '24500',
       quantidadeFiscalKg: '25000', custoBrlKg: '1.20',
-      valorTotalNfBrl: '30000.00', codigoLocalEstoqueOrigemAcxe: '999',
+      valorTotalNfBrl: '31250.00', codigoLocalEstoqueOrigemAcxe: '999',
     };
     vi.mocked(getDb).mockReturnValue(criarDbComTabelas(await tabelas(aprRow, loteRow)) as never);
 
@@ -162,13 +163,13 @@ describe('aprovacao.service#aprovar', () => {
       motivo: 'TRF',
       codigoLocalEstoque: '999',
       codigoLocalEstoqueDestino: '111',
-      valor: 1.2,
+      valor: 1.25, // vNF/qCom = 31250/25000 = 1.25 (com tributos embutidos, NAO o vUnCom=1.20)
     }));
     expect(omieMod.incluirAjusteEstoque).toHaveBeenNthCalledWith(2, 'q2p', expect.objectContaining({
       quantidade: 24500,
       tipo: 'ENT',
       motivo: 'INI',
-      valor: 1.38,
+      valor: 1.44, // ceil(1.25 * 1.145 * 100)/100 = ceil(143.125)/100
     }));
   });
 });
