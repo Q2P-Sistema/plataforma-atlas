@@ -531,14 +531,13 @@ async function proximoCodigoLote(
   tx: Parameters<Parameters<ReturnType<typeof getDb>['transaction']>[0]>[0],
   prefixo: 'L' | 'T',
 ): Promise<string> {
-  // Simples: pega o maior sufixo numerico atual + 1. Bom o suficiente para 1 operador
-  // por armazem; em alta concorrencia um sequence dedicado seria mais robusto.
-  const [row] = await tx
-    .select({
-      max: sql<number>`COALESCE(MAX(CAST(SUBSTRING(codigo FROM ${prefixo.length + 1}) AS INTEGER)), 0)`,
-    })
-    .from(lote)
-    .where(sql`${lote.codigo} LIKE ${prefixo + '%'}`);
-  const proximo = (row?.max ?? 0) + 1;
+  // Usa sequence Postgres dedicada (migration 0015). nextval() e atomico, sem race,
+  // sem depender de MAX+1 — o anterior tinha bug (row.max retornando 0 mesmo com L001
+  // existente) e ainda era vulneravel a colisao em concorrencia.
+  // Numeros "pulam" em caso de rollback de tx — aceitavel para codigo de auditoria.
+  const result = await tx.execute<{ next_val: string }>(
+    sql`SELECT nextval('stockbridge.lote_codigo_seq')::text AS next_val`,
+  );
+  const proximo = Number(result.rows[0]?.next_val ?? '1');
   return `${prefixo}${String(proximo).padStart(3, '0')}`;
 }
