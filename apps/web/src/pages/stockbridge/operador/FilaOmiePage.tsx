@@ -43,7 +43,7 @@ export function FilaOmiePage() {
   const [queryKey, setQueryKey] = useState<{ nf?: string; cnpj?: string }>({});
   const [selecionado, setSelecionado] = useState<FilaItem | null>(null);
 
-  const { data: itens = [], isLoading, error, refetch } = useQuery<FilaItem[]>({
+  const { data: itens = [], isLoading, error } = useQuery<FilaItem[]>({
     queryKey: ['stockbridge', 'fila', queryKey],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -53,6 +53,11 @@ export function FilaOmiePage() {
       return body.data as FilaItem[];
     },
     enabled: queryKey.nf != null && queryKey.nf.length > 0,
+    // Evita refetch automatico no foco da janela / re-mount — OMIE bloqueia
+    // consulta repetida da mesma NF em <40s (REDUNDANT).
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
+    staleTime: Infinity,
   });
 
   function handleBuscar(e: FormEvent) {
@@ -151,8 +156,11 @@ export function FilaOmiePage() {
           item={selecionado}
           onClose={() => setSelecionado(null)}
           onSucesso={() => {
+            // Limpa a busca: a NF ja foi processada, nao faz sentido manter o
+            // card na tela nem refazer o refetch (OMIE bloqueia repeticao em <40s).
             setSelecionado(null);
-            refetch();
+            setBuscaNf('');
+            setQueryKey({});
           }}
         />
       )}
