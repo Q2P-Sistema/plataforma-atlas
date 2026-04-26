@@ -155,8 +155,9 @@ export async function listarMinhasRejeicoes(userId: string): Promise<MinhaRejeic
     tipo_aprovacao: string;
     quantidade_recebida_kg: string | null;
     rejeicao_motivo: string | null;
-    lancado_em: Date;
-    aprovado_em: Date | null;
+    // db.execute (raw sql) retorna timestamps como string ISO, nao Date.
+    lancado_em: string;
+    aprovado_em: string | null;
     codigo: string;
     produto_codigo_acxe: number;
     fornecedor_nome: string;
@@ -186,8 +187,8 @@ export async function listarMinhasRejeicoes(userId: string): Promise<MinhaRejeic
     quantidadeRecebidaKg: r.quantidade_recebida_kg != null ? Number(r.quantidade_recebida_kg) : 0,
     produtoCodigoAcxe: r.produto_codigo_acxe,
     fornecedor: r.fornecedor_nome,
-    lancadoEm: r.lancado_em.toISOString(),
-    rejeitadoEm: r.aprovado_em?.toISOString() ?? r.lancado_em.toISOString(),
+    lancadoEm: new Date(r.lancado_em).toISOString(),
+    rejeitadoEm: new Date(r.aprovado_em ?? r.lancado_em).toISOString(),
   }));
 }
 
