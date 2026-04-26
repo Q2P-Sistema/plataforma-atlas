@@ -26,7 +26,7 @@ export function ResetPasswordPage() {
     }
 
     if (password !== confirmPassword) {
-      setError('As senhas nao coincidem');
+      setError('As senhas não coincidem');
       return;
     }
 
@@ -48,7 +48,7 @@ export function ResetPasswordPage() {
 
       setSuccess(true);
     } catch {
-      setError('Erro de conexao com o servidor');
+      setError('Erro de conexão com o servidor');
     } finally {
       setLoading(false);
     }
@@ -97,7 +97,7 @@ export function ResetPasswordPage() {
                 value={password}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
                 className="w-full px-3 py-2 rounded-lg border border-atlas-border bg-atlas-bg text-atlas-text placeholder:text-atlas-muted focus:outline-none focus:ring-2 focus:ring-acxe"
-                placeholder="Minimo 8 caracteres"
+                placeholder="Mínimo 8 caracteres"
               />
             </div>
 

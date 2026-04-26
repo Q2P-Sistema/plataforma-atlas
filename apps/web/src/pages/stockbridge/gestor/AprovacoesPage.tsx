@@ -20,14 +20,14 @@ interface Pendencia {
 }
 
 const TIPO_LABEL: Record<string, string> = {
-  recebimento_divergencia: 'Recebimento com divergencia',
+  recebimento_divergencia: 'Recebimento com divergência',
   entrada_manual: 'Entrada manual',
-  saida_transf_intra: 'Transferencia intra-CNPJ',
+  saida_transf_intra: 'Transferência intra-CNPJ',
   saida_comodato: 'Comodato',
   saida_amostra: 'Amostra/Brinde',
   saida_descarte: 'Descarte/Perda',
-  saida_quebra: 'Quebra tecnica',
-  ajuste_inventario: 'Ajuste de inventario',
+  saida_quebra: 'Quebra técnica',
+  ajuste_inventario: 'Ajuste de inventário',
 };
 
 function useApiFetch() {
@@ -79,9 +79,9 @@ export function AprovacoesPage() {
   return (
     <div className="p-6 max-w-6xl">
       <div className="mb-5">
-        <h1 className="text-2xl font-serif text-atlas-ink mb-1">Aprovacoes Pendentes</h1>
+        <h1 className="text-2xl font-serif text-atlas-ink mb-1">Aprovações Pendentes</h1>
         <p className="text-sm text-atlas-muted">
-          Divergencias de recebimento, entradas manuais e saidas que exigem sua autorizacao.
+          Divergências de recebimento, entradas manuais e saídas que exigem sua autorização.
         </p>
       </div>
 
@@ -95,7 +95,7 @@ export function AprovacoesPage() {
 
       {!isLoading && pendencias.length === 0 && (
         <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
-          ✓ Nenhuma pendencia de aprovacao
+          ✓ Nenhuma pendência de aprovação
         </div>
       )}
 
@@ -128,7 +128,7 @@ export function AprovacoesPage() {
                     Lote {p.loteCodigo} — {p.produto.fornecedor}
                   </div>
                   <div className="text-xs text-atlas-muted mt-0.5">
-                    Lancado por <strong>{p.lancadoPor.nome}</strong> em {new Date(p.lancadoEm).toLocaleString('pt-BR')}
+                    Lançado por <strong>{p.lancadoPor.nome}</strong> em {new Date(p.lancadoEm).toLocaleString('pt-BR')}
                   </div>
                 </div>
               </div>
@@ -175,19 +175,19 @@ export function AprovacoesPage() {
       )}
 
       {rejeitando && (
-        <Modal open title="Rejeitar pendencia" onClose={() => setRejeitando(null)}>
+        <Modal open title="Rejeitar pendência" onClose={() => setRejeitando(null)}>
           <div className="space-y-3">
             <p className="text-sm text-atlas-muted">
               Lote <strong>{rejeitando.loteCodigo}</strong> — {rejeitando.produto.fornecedor}
             </p>
             <div>
-              <label className="block text-xs font-semibold text-atlas-muted mb-1">Motivo da rejeicao *</label>
+              <label className="block text-xs font-semibold text-atlas-muted mb-1">Motivo da rejeição *</label>
               <textarea
                 value={motivoRejeicao}
                 onChange={(e) => setMotivoRejeicao(e.target.value)}
                 rows={3}
                 autoFocus
-                placeholder="Ex: Quantidade incorreta, solicitar reconferencia"
+                placeholder="Ex: Quantidade incorreta, solicitar reconferência"
                 className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
               />
             </div>
@@ -203,7 +203,7 @@ export function AprovacoesPage() {
                 disabled={!motivoRejeicao.trim() || rejeitarMut.isPending}
                 className={`px-5 py-2 rounded text-sm font-medium ${motivoRejeicao.trim() ? 'bg-red-700 text-white hover:opacity-90' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
               >
-                {rejeitarMut.isPending ? 'Enviando...' : 'Confirmar rejeicao'}
+                {rejeitarMut.isPending ? 'Enviando...' : 'Confirmar rejeição'}
               </button>
             </div>
           </div>

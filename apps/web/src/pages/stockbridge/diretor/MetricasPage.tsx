@@ -61,18 +61,18 @@ export function MetricasPage() {
   return (
     <div className="p-6 max-w-7xl">
       <div className="mb-5">
-        <h1 className="text-2xl font-serif text-atlas-ink mb-1">Metricas</h1>
-        <p className="text-sm text-atlas-muted">Valor do estoque, exposicao cambial, giro, taxa de divergencia.</p>
+        <h1 className="text-2xl font-serif text-atlas-ink mb-1">Métricas</h1>
+        <p className="text-sm text-atlas-muted">Valor do estoque, exposição cambial, giro, taxa de divergência.</p>
       </div>
 
       {kpis && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-6">
           <Card label="Valor Estoque" value={fmtBRL(kpis.valorEstoqueBrl)} sub={fmtUSD(kpis.valorEstoqueUsd)} />
-          <Card label="Exposicao Cambial" value={fmtUSD(kpis.exposicaoCambialUsd)} sub={fmtBRL(kpis.exposicaoCambialBrl)} accent="text-violet-700" />
+          <Card label="Exposição Cambial" value={fmtUSD(kpis.exposicaoCambialUsd)} sub={fmtBRL(kpis.exposicaoCambialBrl)} accent="text-violet-700" />
           <Card label="PTAX" value={`R$ ${kpis.ptaxBrl.toFixed(4)}`} sub="BCB" />
-          <Card label="Taxa Divergencia" value={`${kpis.taxaDivergenciaPct}%`} accent={kpis.taxaDivergenciaPct > 5 ? 'text-red-700' : 'text-amber-700'} />
+          <Card label="Taxa Divergência" value={`${kpis.taxaDivergenciaPct}%`} accent={kpis.taxaDivergenciaPct > 5 ? 'text-red-700' : 'text-amber-700'} />
           <Card
-            label="Giro Medio"
+            label="Giro Médio"
             value={Object.entries(kpis.giroMedioDias).map(([f, d]) => `${f}: ${d}d`).join(' · ') || '—'}
             accent="text-blue-700"
           />
@@ -81,7 +81,7 @@ export function MetricasPage() {
 
       {evolucaoAgrupada.length > 0 && (
         <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-5 mb-6">
-          <h2 className="font-serif text-sm text-atlas-ink mb-3">Evolucao — ultimos 6 meses</h2>
+          <h2 className="font-serif text-sm text-atlas-ink mb-3">Evolução — últimos 6 meses</h2>
           <div className="flex items-end gap-2 h-32">
             {evolucaoAgrupada.map((e) => {
               const h = (e.quantidadeKg / maxEvol) * 100;
@@ -100,12 +100,12 @@ export function MetricasPage() {
       {analitica.length > 0 && (
         <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
           <div className="p-3 border-b border-slate-200 dark:border-slate-700 font-serif text-sm text-atlas-ink">
-            Tabela Analitica por SKU
+            Tabela Analítica por SKU
           </div>
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-900/40 border-b border-slate-200 dark:border-slate-700">
-                {['SKU', 'Familia', 'NCM', 'Qtd (kg)', 'CMP USD/t', 'Valor BRL', 'Cobertura', 'Div.'].map((h) => (
+                {['SKU', 'Família', 'NCM', 'Qtd (kg)', 'CMP USD/t', 'Valor BRL', 'Cobertura', 'Div.'].map((h) => (
                   <th key={h} className="text-left px-3 py-2 font-semibold text-atlas-muted">{h}</th>
                 ))}
               </tr>

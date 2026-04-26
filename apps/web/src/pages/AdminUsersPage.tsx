@@ -184,11 +184,11 @@ export function AdminUsersPage() {
     {
       key: 'totp_enabled',
       header: '2FA',
-      render: (row) => (row.totp_enabled ? 'Sim' : 'Nao'),
+      render: (row) => (row.totp_enabled ? 'Sim' : 'Não'),
     },
     {
       key: 'last_login_at',
-      header: 'Ultimo acesso',
+      header: 'Último acesso',
       sortable: true,
       render: (row) =>
         row.last_login_at
@@ -213,7 +213,7 @@ export function AdminUsersPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-heading font-bold text-atlas-text">Usuarios</h1>
+        <h1 className="text-2xl font-heading font-bold text-atlas-text">Usuários</h1>
         <button
           onClick={() => {
             resetForm();
@@ -222,7 +222,7 @@ export function AdminUsersPage() {
           className="flex items-center gap-2 px-4 py-2 rounded-lg bg-acxe text-white text-sm font-medium hover:bg-acxe/90 transition-colors"
         >
           <UserPlus size={16} />
-          Novo usuario
+          Novo usuário
         </button>
       </div>
 
@@ -285,7 +285,7 @@ export function AdminUsersPage() {
       <Modal
         open={createOpen}
         onClose={() => setCreateOpen(false)}
-        title="Novo usuario"
+        title="Novo usuário"
         footer={
           <>
             <button
@@ -354,7 +354,7 @@ export function AdminUsersPage() {
       <Modal
         open={!!editUser}
         onClose={() => setEditUser(null)}
-        title="Editar usuario"
+        title="Editar usuário"
         footer={
           <>
             <button
@@ -422,9 +422,9 @@ export function AdminUsersPage() {
         onClose={() => setConfirmAction(null)}
         title={
           confirmAction?.type === 'deactivate'
-            ? 'Desativar usuario'
+            ? 'Desativar usuário'
             : confirmAction?.type === 'reactivate'
-              ? 'Reativar usuario'
+              ? 'Reativar usuário'
               : confirmAction?.type === 'reset-2fa'
                 ? 'Resetar 2FA'
                 : 'Resetar senha'
@@ -460,8 +460,8 @@ export function AdminUsersPage() {
         <p className="text-sm text-atlas-text">
           {confirmAction?.type === 'deactivate' && (
             <>
-              Desativar <strong>{confirmAction.user.name}</strong>? Todas as sessoes
-              ativas serao encerradas.
+              Desativar <strong>{confirmAction.user.name}</strong>? Todas as sessões
+              ativas serão encerradas.
             </>
           )}
           {confirmAction?.type === 'reactivate' && (
@@ -472,13 +472,13 @@ export function AdminUsersPage() {
           {confirmAction?.type === 'reset-password' && (
             <>
               Resetar a senha de <strong>{confirmAction?.user.name}</strong>? Uma senha
-              temporaria sera gerada.
+              temporária será gerada.
             </>
           )}
           {confirmAction?.type === 'reset-2fa' && (
             <>
-              Resetar o 2FA de <strong>{confirmAction?.user.name}</strong>? O usuario
-              tera que reconfigurar o autenticador no proximo login.
+              Resetar o 2FA de <strong>{confirmAction?.user.name}</strong>? O usuário
+              terá que reconfigurar o autenticador no próximo login.
             </>
           )}
         </p>
@@ -488,7 +488,7 @@ export function AdminUsersPage() {
       <Modal
         open={!!tempPassword}
         onClose={() => setTempPassword(null)}
-        title="Senha temporaria"
+        title="Senha temporária"
         footer={
           <button
             onClick={() => setTempPassword(null)}
@@ -500,7 +500,7 @@ export function AdminUsersPage() {
       >
         <div className="space-y-3">
           <p className="text-sm text-atlas-text">
-            Anote a senha temporaria. Ela nao sera exibida novamente.
+            Anote a senha temporária. Ela não será exibida novamente.
           </p>
           <div className="bg-atlas-bg rounded-lg p-3 border border-atlas-border">
             <code className="text-lg font-mono text-atlas-text select-all">

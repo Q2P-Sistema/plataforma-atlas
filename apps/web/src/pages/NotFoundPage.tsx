@@ -11,10 +11,10 @@ export function NotFoundPage() {
       <div className="text-center">
         <p className="text-6xl font-heading font-bold text-atlas-muted mb-4">404</p>
         <h1 className="text-xl font-heading font-semibold text-atlas-text mb-2">
-          Pagina nao encontrada
+          Página não encontrada
         </h1>
         <p className="text-atlas-muted text-sm mb-6">
-          A pagina que voce procura nao existe ou foi movida.
+          A página que você procura não existe ou foi movida.
         </p>
         <Link
           to="/"

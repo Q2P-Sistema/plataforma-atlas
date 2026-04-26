@@ -43,7 +43,7 @@ interface CockpitData {
 }
 
 const CRIT_CFG: Record<Criticidade, { label: string; bg: string; text: string; bar: string }> = {
-  critico: { label: 'Critico',  bg: 'bg-red-50 dark:bg-red-900/20',    text: 'text-red-700 dark:text-red-300',    bar: 'bg-red-500' },
+  critico: { label: 'Crítico',  bg: 'bg-red-50 dark:bg-red-900/20',    text: 'text-red-700 dark:text-red-300',    bar: 'bg-red-500' },
   alerta:  { label: 'Alerta',   bg: 'bg-amber-50 dark:bg-amber-900/20', text: 'text-amber-700 dark:text-amber-300', bar: 'bg-amber-500' },
   ok:      { label: 'OK',       bg: 'bg-green-50 dark:bg-green-900/20', text: 'text-green-700 dark:text-green-300', bar: 'bg-green-500' },
   excesso: { label: 'Excesso',  bg: 'bg-blue-50 dark:bg-blue-900/20',   text: 'text-blue-700 dark:text-blue-300',   bar: 'bg-blue-500' },
@@ -86,15 +86,15 @@ export function CockpitPage() {
     const r = data?.resumo;
     if (!r) return [];
     return [
-      { label: 'Fisico Disponivel',  value: `${fmtKg(r.totalFisicoKg)} kg`, color: 'text-atlas-ink' },
-      { label: 'Posicao Fiscal',     value: `${fmtKg(r.totalFiscalKg)} kg`, color: 'text-atlas-ink' },
-      { label: 'Transito Intl',      value: `${fmtKg(r.transitoIntlKg)} kg`, color: 'text-violet-700' },
+      { label: 'Físico Disponível',  value: `${fmtKg(r.totalFisicoKg)} kg`, color: 'text-atlas-ink' },
+      { label: 'Posição Fiscal',     value: `${fmtKg(r.totalFiscalKg)} kg`, color: 'text-atlas-ink' },
+      { label: 'Trânsito Intl',      value: `${fmtKg(r.transitoIntlKg)} kg`, color: 'text-violet-700' },
       { label: 'Porto / DTA',        value: `${fmtKg(r.portoDtaKg)} kg`, color: 'text-orange-700' },
-      { label: 'Transito Interno',   value: `${fmtKg(r.transitoInternoKg)} kg`, color: 'text-teal-700' },
-      { label: 'Provisorio',         value: `${fmtKg(r.provisorioKg)} kg`, color: 'text-amber-700' },
-      { label: 'Divergencias',       value: String(r.divergenciasCount), color: 'text-red-700', onClick: () => setShowDivs(true) },
-      { label: 'Aprovacoes',         value: String(r.aprovacoesPendentes), color: 'text-amber-700' },
-      { label: 'SKUs Criticos',      value: String(r.skusCriticos), color: 'text-red-700' },
+      { label: 'Trânsito Interno',   value: `${fmtKg(r.transitoInternoKg)} kg`, color: 'text-teal-700' },
+      { label: 'Provisório',         value: `${fmtKg(r.provisorioKg)} kg`, color: 'text-amber-700' },
+      { label: 'Divergências',       value: String(r.divergenciasCount), color: 'text-red-700', onClick: () => setShowDivs(true) },
+      { label: 'Aprovações',         value: String(r.aprovacoesPendentes), color: 'text-amber-700' },
+      { label: 'SKUs Críticos',      value: String(r.skusCriticos), color: 'text-red-700' },
       { label: 'SKUs Alerta',        value: String(r.skusAlerta), color: 'text-amber-700' },
     ];
   }, [data]);
@@ -104,7 +104,7 @@ export function CockpitPage() {
       <div className="mb-5">
         <h1 className="text-2xl font-serif text-atlas-ink mb-1">Cockpit de Estoque</h1>
         <p className="text-sm text-atlas-muted">
-          Saldo consolidado por SKU com cobertura em dias e criticidade segundo lead time e consumo medio.
+          Saldo consolidado por SKU com cobertura em dias e criticidade segundo lead time e consumo médio.
         </p>
       </div>
 
@@ -182,17 +182,17 @@ export function CockpitPage() {
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 mb-3">
-                  <Cell label="Fisico" value={`${fmtKg(sku.fisicaKg)} kg`} />
+                  <Cell label="Físico" value={`${fmtKg(sku.fisicaKg)} kg`} />
                   <Cell label="Fiscal" value={`${fmtKg(sku.fiscalKg)} kg`} accent={Math.abs(sku.fisicaKg - sku.fiscalKg) > 1 ? 'text-red-700' : undefined} />
-                  <Cell label="Transito intl" value={`${fmtKg(sku.transitoIntlKg)} kg`} accent="text-violet-700" />
-                  <Cell label="Transito int." value={`${fmtKg(sku.transitoInternoKg)} kg`} accent="text-teal-700" />
+                  <Cell label="Trânsito intl" value={`${fmtKg(sku.transitoIntlKg)} kg`} accent="text-violet-700" />
+                  <Cell label="Trânsito int." value={`${fmtKg(sku.transitoInternoKg)} kg`} accent="text-teal-700" />
                 </div>
 
                 <div className="mb-2">
                   <div className="flex justify-between text-xs mb-1">
                     <span className="text-atlas-muted">Cobertura</span>
                     <span className={`font-medium ${crit.text}`}>
-                      {sku.coberturaDias != null ? `${sku.coberturaDias}d` : 'sem consumo medio'}
+                      {sku.coberturaDias != null ? `${sku.coberturaDias}d` : 'sem consumo médio'}
                     </span>
                   </div>
                   <div className="h-1.5 bg-slate-200 dark:bg-slate-700 rounded overflow-hidden">

@@ -32,6 +32,9 @@ const envSchema = z.object({
   N8N_HEALTH_URL: z.string().url().optional(),
   SENDGRID_API_KEY: z.string().optional(),
   SENDGRID_FROM_EMAIL: z.string().email().optional(),
+  // CC opcional em todos os emails operacionais do StockBridge (rejeicao,
+  // aprovacao, alertas). Usar para que o admin/responsavel monitore por copia.
+  STOCKBRIDGE_ADMIN_CC_EMAIL: z.string().email().optional(),
   API_PORT: z.coerce.number().default(3005),
   WEB_PORT: z.coerce.number().default(5173),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),

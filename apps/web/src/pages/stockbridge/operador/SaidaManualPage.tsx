@@ -6,12 +6,12 @@ type Subtipo = 'transf_intra_cnpj' | 'comodato' | 'amostra' | 'descarte' | 'queb
 type Unidade = 't' | 'kg' | 'saco' | 'bigbag';
 
 const SUBTIPO_CFG: Record<Subtipo, { label: string; nivel: 'gestor' | 'diretor'; help: string }> = {
-  transf_intra_cnpj: { label: 'Transferencia intra-CNPJ',  nivel: 'gestor',  help: 'Mesmo CNPJ, outro armazem — sem impacto fiscal' },
-  comodato:          { label: 'Comodato / emprestimo',     nivel: 'diretor', help: 'Saida temporaria — fiscal permanece; requer diretor' },
-  amostra:           { label: 'Amostra / brinde',          nivel: 'gestor',  help: 'Saida definitiva sem venda — gera divergencia fiscal' },
-  descarte:          { label: 'Descarte / perda',          nivel: 'gestor',  help: 'Material inutilizavel — gera divergencia fiscal' },
-  quebra:            { label: 'Quebra tecnica',            nivel: 'gestor',  help: 'Perda no manuseio — gera divergencia fiscal' },
-  inventario_menos:  { label: 'Ajuste inventario (-)',     nivel: 'gestor',  help: 'Contagem apurou saldo menor — gera divergencia' },
+  transf_intra_cnpj: { label: 'Transferência intra-CNPJ',  nivel: 'gestor',  help: 'Mesmo CNPJ, outro armazém — sem impacto fiscal' },
+  comodato:          { label: 'Comodato / empréstimo',     nivel: 'diretor', help: 'Saída temporária — fiscal permanece; requer diretor' },
+  amostra:           { label: 'Amostra / brinde',          nivel: 'gestor',  help: 'Saída definitiva sem venda — gera divergência fiscal' },
+  descarte:          { label: 'Descarte / perda',          nivel: 'gestor',  help: 'Material inutilizável — gera divergência fiscal' },
+  quebra:            { label: 'Quebra técnica',            nivel: 'gestor',  help: 'Perda no manuseio — gera divergência fiscal' },
+  inventario_menos:  { label: 'Ajuste inventário (-)',     nivel: 'gestor',  help: 'Contagem apurou saldo menor — gera divergência' },
 };
 
 function useApiFetch() {
@@ -64,22 +64,22 @@ export function SaidaManualPage() {
   return (
     <div className="p-6 max-w-2xl">
       <div className="mb-5">
-        <h1 className="text-2xl font-serif text-atlas-ink mb-1">Saida Manual</h1>
+        <h1 className="text-2xl font-serif text-atlas-ink mb-1">Saída Manual</h1>
         <p className="text-sm text-atlas-muted">
-          Registre saidas sem NF no OMIE (comodato, descarte, amostra, etc). Toda saida manual
-          passa por aprovacao de gestor ou diretor — o saldo so e debitado apos aprovacao.
+          Registre saídas sem NF no OMIE (comodato, descarte, amostra, etc). Toda saída manual
+          passa por aprovação de gestor ou diretor — o saldo só é debitado após aprovação.
         </p>
       </div>
 
       {mut.isSuccess && (
         <div className="mb-4 p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 rounded text-sm text-green-800 dark:text-green-300">
-          ✓ Saida registrada. Aguardando aprovacao de <strong>{cfg.nivel}</strong>.
+          ✓ Saída registrada. Aguardando aprovação de <strong>{cfg.nivel}</strong>.
         </div>
       )}
 
       <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-5 space-y-4">
         <div>
-          <label className="block text-xs font-semibold text-atlas-muted mb-1">Tipo de saida *</label>
+          <label className="block text-xs font-semibold text-atlas-muted mb-1">Tipo de saída *</label>
           <select
             value={subtipo}
             onChange={(e) => setSubtipo(e.target.value as Subtipo)}
@@ -91,7 +91,7 @@ export function SaidaManualPage() {
           </select>
           <div className="mt-1 text-xs text-atlas-muted">{cfg.help}</div>
           <div className={`mt-1 text-xs font-semibold ${cfg.nivel === 'diretor' ? 'text-purple-700' : 'text-amber-700'}`}>
-            ⚠ Requer aprovacao de <strong>{cfg.nivel.toUpperCase()}</strong>
+            ⚠ Requer aprovação de <strong>{cfg.nivel.toUpperCase()}</strong>
           </div>
         </div>
 
@@ -131,7 +131,7 @@ export function SaidaManualPage() {
         </div>
 
         <div>
-          <label className="block text-xs font-semibold text-atlas-muted mb-1">Referencia (opcional)</label>
+          <label className="block text-xs font-semibold text-atlas-muted mb-1">Referência (opcional)</label>
           <input
             value={referencia}
             onChange={(e) => setReferencia(e.target.value)}
@@ -141,12 +141,12 @@ export function SaidaManualPage() {
         </div>
 
         <div>
-          <label className="block text-xs font-semibold text-atlas-muted mb-1">Motivo / observacoes *</label>
+          <label className="block text-xs font-semibold text-atlas-muted mb-1">Motivo / observações *</label>
           <textarea
             value={observacoes}
             onChange={(e) => setObservacoes(e.target.value)}
             rows={3}
-            placeholder="Explique o motivo da saida (obrigatorio)"
+            placeholder="Explique o motivo da saída (obrigatório)"
             className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
           />
         </div>
@@ -163,7 +163,7 @@ export function SaidaManualPage() {
             disabled={!podeEnviar || mut.isPending}
             className={`px-5 py-2 rounded text-sm font-medium ${podeEnviar ? 'bg-atlas-btn-bg text-atlas-btn-text hover:opacity-90' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
           >
-            {mut.isPending ? 'Enviando...' : 'Registrar saida (aguarda aprovacao)'}
+            {mut.isPending ? 'Enviando...' : 'Registrar saída (aguarda aprovação)'}
           </button>
         </div>
       </div>

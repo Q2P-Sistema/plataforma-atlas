@@ -9,12 +9,12 @@ export function DashboardPage() {
         Bem-vindo{user ? `, ${user.name}` : ''}
       </h1>
       <p className="text-atlas-muted text-sm mb-8">
-        Selecione um modulo no menu lateral para comecar.
+        Selecione um módulo no menu lateral para começar.
       </p>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <StatCard label="Modulos ativos" value="-" />
-        <StatCard label="Ultimo acesso" value={formatDate(user?.last_login_at)} />
+        <StatCard label="Módulos ativos" value="-" />
+        <StatCard label="Último acesso" value={formatDate(user?.last_login_at)} />
         <StatCard label="Perfil" value={capitalize(user?.role)} />
       </div>
     </div>

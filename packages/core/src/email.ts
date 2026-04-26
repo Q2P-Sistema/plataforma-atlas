@@ -5,6 +5,7 @@ const logger = createLogger('email');
 
 interface EmailOptions {
   to: string;
+  cc?: string | string[];
   subject: string;
   html: string;
   text?: string;
@@ -16,7 +17,7 @@ export async function sendEmail(options: EmailOptions): Promise<void> {
   if (!config.SENDGRID_API_KEY || !config.SENDGRID_FROM_EMAIL) {
     // Dev fallback: log instead of sending
     logger.info(
-      { to: options.to, subject: options.subject },
+      { to: options.to, cc: options.cc, subject: options.subject },
       `[DEV EMAIL] Would send email to ${options.to}`,
     );
     logger.info({ html: options.html }, '[DEV EMAIL] Content');
@@ -28,13 +29,14 @@ export async function sendEmail(options: EmailOptions): Promise<void> {
 
   await sgMail.default.send({
     to: options.to,
+    cc: options.cc,
     from: config.SENDGRID_FROM_EMAIL,
     subject: options.subject,
     html: options.html,
     text: options.text,
   });
 
-  logger.info({ to: options.to, subject: options.subject }, 'Email sent');
+  logger.info({ to: options.to, cc: options.cc, subject: options.subject }, 'Email sent');
 }
 
 export function buildPasswordResetEmail(resetUrl: string): {

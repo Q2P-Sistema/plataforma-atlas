@@ -8,6 +8,7 @@
     "SEED_ADMIN_*",
     "N8N_*",
     "SENDGRID_*",
+    "STOCKBRIDGE_*",
     "ATLAS_INTEGRATION_KEY",
     "OMIE_*",
     "MODULE_*",

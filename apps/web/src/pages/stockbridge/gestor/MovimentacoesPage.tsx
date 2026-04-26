@@ -85,9 +85,9 @@ export function MovimentacoesPage() {
   return (
     <div className="p-6 max-w-7xl">
       <div className="mb-5">
-        <h1 className="text-2xl font-serif text-atlas-ink mb-1">Movimentacoes</h1>
+        <h1 className="text-2xl font-serif text-atlas-ink mb-1">Movimentações</h1>
         <p className="text-sm text-atlas-muted">
-          Log consolidado dual-CNPJ (ACXE + Q2P). Exclusao e soft — historico preservado em audit log.
+          Log consolidado dual-CNPJ (ACXE + Q2P). Exclusão é soft — histórico preservado em audit log.
         </p>
       </div>
 
@@ -106,10 +106,10 @@ export function MovimentacoesPage() {
           <option value="">Todos os tipos</option>
           <option value="entrada_nf">Entrada NF</option>
           <option value="entrada_manual">Entrada manual</option>
-          <option value="saida_automatica">Saida automatica</option>
-          <option value="saida_manual">Saida manual</option>
-          <option value="debito_cruzado">Debito cruzado</option>
-          <option value="regularizacao_fiscal">Regularizacao fiscal</option>
+          <option value="saida_automatica">Saída automática</option>
+          <option value="saida_manual">Saída manual</option>
+          <option value="debito_cruzado">Débito cruzado</option>
+          <option value="regularizacao_fiscal">Regularização fiscal</option>
           <option value="ajuste">Ajuste</option>
         </select>
         <select
@@ -118,8 +118,8 @@ export function MovimentacoesPage() {
           className="px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
         >
           <option value="">Todos CNPJs</option>
-          <option value="acxe">So ACXE</option>
-          <option value="q2p">So Q2P</option>
+          <option value="acxe">Só ACXE</option>
+          <option value="q2p">Só Q2P</option>
           <option value="ambos">Ambos (dual)</option>
         </select>
       </div>
@@ -134,7 +134,7 @@ export function MovimentacoesPage() {
 
       {data && data.items.length === 0 && !isLoading && (
         <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
-          Nenhuma movimentacao para os filtros aplicados.
+          Nenhuma movimentação para os filtros aplicados.
         </div>
       )}
 
@@ -151,7 +151,7 @@ export function MovimentacoesPage() {
                   <th className="text-left px-3 py-2">Lote</th>
                   <th className="text-left px-3 py-2">ACXE</th>
                   <th className="text-left px-3 py-2">Q2P</th>
-                  <th className="text-right px-3 py-2">Acao</th>
+                  <th className="text-right px-3 py-2">Ação</th>
                 </tr>
               </thead>
               <tbody>
@@ -204,7 +204,7 @@ export function MovimentacoesPage() {
 
           <div className="flex items-center justify-between text-sm">
             <div className="text-atlas-muted">
-              {data.total} movimentacoes · Pagina {page} de {totalPages}
+              {data.total} movimentações · Página {page} de {totalPages}
             </div>
             <div className="flex gap-2">
               <button
@@ -219,7 +219,7 @@ export function MovimentacoesPage() {
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 className="px-3 py-1 border border-slate-300 rounded disabled:opacity-50"
               >
-                Proxima →
+                Próxima →
               </button>
             </div>
           </div>
@@ -230,8 +230,8 @@ export function MovimentacoesPage() {
         <Modal open title={`Soft delete — NF ${apagando.notaFiscal}`} onClose={() => setApagando(null)}>
           <div className="space-y-3">
             <p className="text-sm text-atlas-muted">
-              Esta acao <strong>nao apaga o registro</strong> — apenas marca como inativo.
-              Todo o historico continua no audit log e pode ser recuperado com intervencao do admin.
+              Esta ação <strong>não apaga o registro</strong> — apenas marca como inativo.
+              Todo o histórico continua no audit log e pode ser recuperado com intervenção do admin.
             </p>
             <div>
               <label className="block text-xs font-semibold text-atlas-muted mb-1">Motivo (opcional)</label>
@@ -239,7 +239,7 @@ export function MovimentacoesPage() {
                 value={motivo}
                 onChange={(e) => setMotivo(e.target.value)}
                 rows={2}
-                placeholder="Ex: lancamento duplicado"
+                placeholder="Ex: lançamento duplicado"
                 className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
               />
             </div>

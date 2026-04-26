@@ -152,7 +152,8 @@ export async function enviarNotificacaoRejeicaoOperador(args: {
     <p style="color:#888;font-size:11px;">Sistema Atlas — StockBridge</p>
   `;
   try {
-    await sendEmail({ to, subject, html });
+    const cc = getConfig().STOCKBRIDGE_ADMIN_CC_EMAIL;
+    await sendEmail({ to, cc: cc || undefined, subject, html });
   } catch (err) {
     logger.error({ err, args }, 'Falha ao enviar email de rejeicao ao operador');
   }
@@ -188,7 +189,8 @@ export async function enviarNotificacaoAprovacaoOperador(args: {
     <p style="color:#888;font-size:11px;">Sistema Atlas — StockBridge</p>
   `;
   try {
-    await sendEmail({ to, subject, html });
+    const cc = getConfig().STOCKBRIDGE_ADMIN_CC_EMAIL;
+    await sendEmail({ to, cc: cc || undefined, subject, html });
   } catch (err) {
     logger.error({ err, args }, 'Falha ao enviar email de aprovacao ao operador');
   }

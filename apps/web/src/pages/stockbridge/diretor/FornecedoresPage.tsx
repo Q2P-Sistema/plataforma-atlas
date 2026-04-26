@@ -69,14 +69,14 @@ export function FornecedoresPage() {
       <div className="mb-5">
         <h1 className="text-2xl font-serif text-atlas-ink mb-1">Fornecedores</h1>
         <p className="text-sm text-atlas-muted">
-          Excluir/reincluir fornecedores da fila de compra nacional. Importacao e devolucao nao sao afetadas.
+          Excluir/reincluir fornecedores da fila de compra nacional. Importação e devolução não são afetadas.
         </p>
       </div>
 
       <input
         value={busca}
         onChange={(e) => setBusca(e.target.value)}
-        placeholder="Buscar por nome, CNPJ ou pais..."
+        placeholder="Buscar por nome, CNPJ ou país..."
         className="w-full mb-4 px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
       />
 
@@ -89,8 +89,8 @@ export function FornecedoresPage() {
                 <tr>
                   <th className="text-left px-3 py-2">Fornecedor</th>
                   <th className="text-left px-3 py-2">CNPJ</th>
-                  <th className="text-left px-3 py-2">Pais</th>
-                  <th className="text-right px-3 py-2">Acao</th>
+                  <th className="text-left px-3 py-2">País</th>
+                  <th className="text-right px-3 py-2">Ação</th>
                 </tr>
               </thead>
               <tbody>
@@ -117,14 +117,14 @@ export function FornecedoresPage() {
 
       {excluidos.length > 0 && (
         <div>
-          <div className="text-xs font-semibold text-atlas-muted uppercase mb-2">Excluidos ({excluidos.length})</div>
+          <div className="text-xs font-semibold text-atlas-muted uppercase mb-2">Excluídos ({excluidos.length})</div>
           <div className="bg-red-50/50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 rounded-lg overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-red-100/50 dark:bg-red-900/20 text-xs text-red-800 dark:text-red-300">
                 <tr>
                   <th className="text-left px-3 py-2">Fornecedor</th>
                   <th className="text-left px-3 py-2">Motivo</th>
-                  <th className="text-right px-3 py-2">Acao</th>
+                  <th className="text-right px-3 py-2">Ação</th>
                 </tr>
               </thead>
               <tbody>
@@ -177,7 +177,7 @@ export function FornecedoresPage() {
                 disabled={!motivo.trim() || excluirMut.isPending}
                 className={`px-5 py-2 rounded text-sm font-medium ${motivo.trim() ? 'bg-red-700 text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
               >
-                Confirmar exclusao
+                Confirmar exclusão
               </button>
             </div>
           </div>

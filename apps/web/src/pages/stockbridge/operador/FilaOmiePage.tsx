@@ -17,8 +17,8 @@ interface FilaItem {
 }
 
 const TIPO_LABEL: Record<string, { label: string; color: string }> = {
-  importacao: { label: 'Importacao', color: 'bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-400' },
-  devolucao_cliente: { label: 'Devolucao', color: 'bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-400' },
+  importacao: { label: 'Importação', color: 'bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-400' },
+  devolucao_cliente: { label: 'Devolução', color: 'bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-400' },
   compra_nacional: { label: 'Compra Nacional', color: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400' },
   retorno_remessa: { label: 'Retorno Remessa', color: 'bg-slate-100 text-slate-800' },
   retorno_comodato: { label: 'Retorno Comodato', color: 'bg-slate-100 text-slate-800' },
@@ -71,13 +71,13 @@ export function FilaOmiePage() {
       <div className="mb-6">
         <h1 className="text-2xl font-serif text-atlas-ink mb-1">Recebimento</h1>
         <p className="text-sm text-atlas-muted">
-          Busque uma NF de entrada (importacao, devolucao, compra nacional) para confirmar o recebimento fisico.
+          Busque uma NF de entrada (importação, devolução, compra nacional) para confirmar o recebimento físico.
         </p>
       </div>
 
       <form onSubmit={handleBuscar} className="flex items-end gap-3 mb-6 p-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg">
         <div className="flex-1">
-          <label className="block text-xs font-medium text-atlas-muted mb-1">Numero da NF</label>
+          <label className="block text-xs font-medium text-atlas-muted mb-1">Número da NF</label>
           <input
             value={buscaNf}
             onChange={(e) => setBuscaNf(e.target.value)}
@@ -109,7 +109,7 @@ export function FilaOmiePage() {
 
       {!queryKey.nf && (
         <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
-          Informe um numero de NF para buscar.
+          Informe um número de NF para buscar.
         </div>
       )}
 
@@ -117,7 +117,7 @@ export function FilaOmiePage() {
 
       {queryKey.nf && !isLoading && itens.length === 0 && !error && (
         <div className="p-6 text-sm text-atlas-muted border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
-          Nenhuma NF encontrada ou ja processada. Verifique o numero.
+          Nenhuma NF encontrada ou já processada. Verifique o número.
         </div>
       )}
 

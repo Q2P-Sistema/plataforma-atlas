@@ -11,16 +11,16 @@ interface Props {
  */
 export function ModalDivergencias({ onClose }: Props) {
   return (
-    <Modal open title="Divergencias" onClose={onClose}>
+    <Modal open title="Divergências" onClose={onClose}>
       <div className="space-y-3 py-2">
         <p className="text-sm text-atlas-muted">
-          A lista detalhada de divergencias sera exposta quando o endpoint
+          A lista detalhada de divergências será exposta quando o endpoint
           <code className="mx-1 px-1 bg-slate-100 dark:bg-slate-800 rounded">GET /divergencias</code>
-          for implementado em US3 (Aprovacoes Hierarquicas).
+          for implementado em US3 (Aprovações Hierárquicas).
         </p>
         <p className="text-sm text-atlas-muted">
           Por enquanto, use o badge "N div" em cada card de SKU para identificar
-          produtos com divergencia aberta.
+          produtos com divergência aberta.
         </p>
         <div className="flex justify-end">
           <button

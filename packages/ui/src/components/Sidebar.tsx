@@ -171,7 +171,7 @@ export function Sidebar({
           <div className="px-2 pb-1">
             <button
               onClick={() => { onNavigate('/admin/users'); setMobileOpen(false); }}
-              title={collapsed ? 'Usuarios' : undefined}
+              title={collapsed ? 'Usuários' : undefined}
               className={`
                 w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium
                 transition-colors focus:outline-none focus:ring-2 focus:ring-acxe
@@ -179,7 +179,7 @@ export function Sidebar({
               `}
             >
               <Users size={18} className="shrink-0" />
-              {!collapsed && <span>Usuarios</span>}
+              {!collapsed && <span>Usuários</span>}
             </button>
           </div>
         )}

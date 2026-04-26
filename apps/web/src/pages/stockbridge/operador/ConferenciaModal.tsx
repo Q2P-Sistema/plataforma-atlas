@@ -91,7 +91,7 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
       const data = res.data as { status: string; deltaKg?: number };
       if (data.status === 'aguardando_aprovacao') {
         const deltaAbs = Math.abs(data.deltaKg ?? 0);
-        setSucesso({ tipo: 'divergencia', mensagem: `Recebido com divergencia de ${deltaAbs.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg — encaminhado para aprovacao do Gestor.` });
+        setSucesso({ tipo: 'divergencia', mensagem: `Recebido com divergência de ${deltaAbs.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg — encaminhado para aprovação do Gestor.` });
       } else {
         setSucesso({ tipo: 'ok', mensagem: 'Recebimento registrado com sucesso em ACXE + Q2P.' });
       }
@@ -116,7 +116,7 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
   }
 
   return (
-    <Modal open title={`Conferencia — ${item.produto.nome}`} onClose={onClose}>
+    <Modal open title={`Conferência — ${item.produto.nome}`} onClose={onClose}>
       <div className="space-y-4">
         <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded text-sm">
           <div className="flex justify-between mb-1"><span className="text-atlas-muted">NF:</span><span className="font-mono">{item.nf}</span></div>
@@ -125,7 +125,7 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
         </div>
 
         <div>
-          <label className="block text-xs font-semibold text-atlas-muted mb-1">Quantidade fisica recebida</label>
+          <label className="block text-xs font-semibold text-atlas-muted mb-1">Quantidade física recebida</label>
           <div className="grid grid-cols-[2fr_1fr] gap-2">
             <input
               value={qtdInput}
@@ -182,43 +182,43 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
           </select>
           {localidades.length === 0 && (
             <div className="text-xs text-atlas-muted mt-1">
-              Nenhuma localidade ativa cadastrada. Peca ao gestor para cadastrar em /stockbridge/localidades.
+              Nenhuma localidade ativa cadastrada. Peça ao gestor para cadastrar em /stockbridge/localidades.
             </div>
           )}
         </div>
 
         {motivoObrigatorio && (
           <div>
-            <label className="block text-xs font-semibold text-atlas-muted mb-1">Tipo de divergencia *</label>
+            <label className="block text-xs font-semibold text-atlas-muted mb-1">Tipo de divergência *</label>
             <select
               value={tipoDivergencia}
               onChange={(e) => setTipoDivergencia(e.target.value as 'faltando' | 'varredura')}
               className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
             >
-              <option value="faltando">Faltando — material nao chegou (vai para ACXE-COMEX-FALTANDO)</option>
-              <option value="varredura">Varredura — material para inspecao (vai para ACXE-VARREDURA)</option>
+              <option value="faltando">Faltando — material não chegou (vai para ACXE-COMEX-FALTANDO)</option>
+              <option value="varredura">Varredura — material para inspeção (vai para ACXE-VARREDURA)</option>
             </select>
             <div className="text-[11px] text-atlas-muted mt-1">
-              Os {Math.abs(deltaKg).toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg divergentes serao transferidos do Extrema para o estoque especial conforme o tipo escolhido.
+              Os {Math.abs(deltaKg).toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg divergentes serão transferidos do Extrema para o estoque especial conforme o tipo escolhido.
             </div>
           </div>
         )}
 
         {excedente && (
           <div className="p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 rounded text-sm text-red-800 dark:text-red-300">
-            Quantidade recebida nao pode ser maior que a NF. Se houve excedente, registre o recebimento normal e depois lance uma <strong>entrada manual</strong> para a diferenca.
+            Quantidade recebida não pode ser maior que a NF. Se houve excedente, registre o recebimento normal e depois lance uma <strong>entrada manual</strong> para a diferença.
           </div>
         )}
 
         <div>
           <label className="block text-xs font-semibold text-atlas-muted mb-1">
-            {motivoObrigatorio ? 'Motivo da divergencia (obrigatorio)' : 'Observacao (opcional)'}
+            {motivoObrigatorio ? 'Motivo da divergência (obrigatório)' : 'Observação (opcional)'}
           </label>
           <textarea
             value={obs}
             onChange={(e) => setObs(e.target.value)}
             rows={3}
-            placeholder={motivoObrigatorio ? 'Ex: 2 big bags avariados na conferencia fisica' : 'Material conferido, embalagens integras'}
+            placeholder={motivoObrigatorio ? 'Ex: 2 big bags avariados na conferência física' : 'Material conferido, embalagens íntegras'}
             className={`w-full px-3 py-2 border rounded text-sm outline-none ${motivoObrigatorio && !obs.trim() ? 'border-red-300' : 'border-slate-300 dark:border-slate-600'}`}
           />
         </div>
@@ -236,7 +236,7 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
             disabled={!podeConfirmar || recebimentoMut.isPending}
             className={`px-5 py-2 rounded text-sm font-medium ${podeConfirmar && !recebimentoMut.isPending ? 'bg-atlas-btn-bg text-atlas-btn-text hover:opacity-90' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
           >
-            {recebimentoMut.isPending ? 'Enviando...' : temDivergencia ? 'Registrar com divergencia' : 'Confirmar recebimento'}
+            {recebimentoMut.isPending ? 'Enviando...' : temDivergencia ? 'Registrar com divergência' : 'Confirmar recebimento'}
           </button>
         </div>
       </div>

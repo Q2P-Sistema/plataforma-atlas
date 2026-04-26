@@ -68,6 +68,9 @@ export SEED_ADMIN_PASSWORD="TroqueEstaSenha123!"
 # ── Sendgrid (email transacional) ──────────────────────────────────────
 export SENDGRID_API_KEY="$(_bw_field SENDGRID_API_KEY)"
 export SENDGRID_FROM_EMAIL="sistema@q2p.com.br"
+# Email opcional em CC nos avisos do StockBridge (rejeicao / aprovacao /
+# alerta de produto sem correlato). Util para admin acompanhar tudo por copia.
+export STOCKBRIDGE_ADMIN_CC_EMAIL="flavio.endo@acxe-polimeros.com.br"
 
 # ── Feature Flags ──────────────────────────────────────────────────────
 export MODULE_HEDGE_ENABLED=true

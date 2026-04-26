@@ -16,10 +16,10 @@ interface Localidade {
 }
 
 const TIPO_LABEL: Record<Tipo, string> = {
-  proprio: 'Proprio',
+  proprio: 'Próprio',
   tpl: '3PL',
   porto_seco: 'Porto Seco',
-  virtual_transito: 'Virtual (Transito)',
+  virtual_transito: 'Virtual (Trânsito)',
   virtual_ajuste: 'Virtual (Ajuste)',
 };
 
@@ -102,7 +102,7 @@ export function LocalidadesPage() {
         <div>
           <h1 className="text-2xl font-serif text-atlas-ink mb-1">Localidades</h1>
           <p className="text-sm text-atlas-muted">
-            Armazens proprios, 3PLs, portos secos e virtuais (transito/ajuste).
+            Armazéns próprios, 3PLs, portos secos e virtuais (trânsito/ajuste).
           </p>
         </div>
         <button onClick={abrirNova} className="px-4 py-2 bg-atlas-btn-bg text-atlas-btn-text rounded text-sm font-medium">
@@ -114,13 +114,13 @@ export function LocalidadesPage() {
         <table className="w-full text-sm">
           <thead className="bg-slate-50 dark:bg-slate-900/40 text-xs text-atlas-muted">
             <tr>
-              <th className="text-left px-3 py-2">Codigo</th>
+              <th className="text-left px-3 py-2">Código</th>
               <th className="text-left px-3 py-2">Nome</th>
               <th className="text-left px-3 py-2">Tipo</th>
               <th className="text-left px-3 py-2">CNPJ</th>
               <th className="text-left px-3 py-2">Cidade</th>
               <th className="text-center px-3 py-2">Status</th>
-              <th className="text-right px-3 py-2">Acoes</th>
+              <th className="text-right px-3 py-2">Ações</th>
             </tr>
           </thead>
           <tbody>
@@ -158,7 +158,7 @@ export function LocalidadesPage() {
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="block text-xs font-semibold text-atlas-muted mb-1">Codigo *</label>
+                <label className="block text-xs font-semibold text-atlas-muted mb-1">Código *</label>
                 <input
                   value={form.codigo}
                   onChange={(e) => setForm((f) => ({ ...f, codigo: e.target.value }))}
@@ -191,7 +191,7 @@ export function LocalidadesPage() {
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="block text-xs font-semibold text-atlas-muted mb-1">
-                  CNPJ {ehVirtual && <span className="text-xs text-amber-700">(nao permitido em virtual)</span>}
+                  CNPJ {ehVirtual && <span className="text-xs text-amber-700">(não permitido em virtual)</span>}
                 </label>
                 <input
                   value={form.cnpj}
