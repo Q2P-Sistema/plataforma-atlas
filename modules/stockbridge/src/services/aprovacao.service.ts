@@ -1,4 +1,4 @@
-import { eq, and, desc, inArray } from 'drizzle-orm';
+import { eq, and, desc, inArray, sql } from 'drizzle-orm';
 import { getDb, createLogger } from '@atlas/core';
 import { aprovacao, lote, movimentacao, localidadeCorrelacao, users } from '@atlas/db';
 import type { Perfil, TipoAprovacao } from '../types.js';
@@ -138,47 +138,56 @@ export interface MinhaRejeicaoItem {
 
 /**
  * Lista as aprovacoes rejeitadas que o operador (`userId`) lancou e que ele
- * tem direito de re-submeter. Apenas com lote ativo (nao re-submetido com sucesso).
- * Ordenado por mais recente primeiro.
+ * tem direito de re-submeter.
+ *
+ * Filtra rejeicoes "superadas": se ja existe uma aprovacao mais recente para o
+ * mesmo lote (criada pelo proprio resubmeter), a rejeicao antiga e omitida
+ * — ela continua na tabela para auditoria, so nao aparece pro operador como
+ * pendencia de acao.
+ *
+ * Ordena por mais recente primeiro.
  */
 export async function listarMinhasRejeicoes(userId: string): Promise<MinhaRejeicaoItem[]> {
   const db = getDb();
-  const rows = await db
-    .select({
-      id: aprovacao.id,
-      loteId: aprovacao.loteId,
-      tipoAprovacao: aprovacao.tipoAprovacao,
-      quantidadeRecebidaKg: aprovacao.quantidadeRecebidaKg,
-      rejeicaoMotivo: aprovacao.rejeicaoMotivo,
-      lancadoEm: aprovacao.lancadoEm,
-      aprovadoEm: aprovacao.aprovadoEm,
-      loteCodigo: lote.codigo,
-      produtoCodigoAcxe: lote.produtoCodigoAcxe,
-      fornecedor: lote.fornecedorNome,
-      loteAtivo: lote.ativo,
-    })
-    .from(aprovacao)
-    .innerJoin(lote, eq(lote.id, aprovacao.loteId))
-    .where(
-      and(
-        eq(aprovacao.status, 'rejeitada'),
-        eq(aprovacao.lancadoPor, userId),
-        eq(lote.ativo, true),
-      ),
-    )
-    .orderBy(desc(aprovacao.aprovadoEm));
+  const rows = await db.execute<{
+    id: string;
+    lote_id: string;
+    tipo_aprovacao: string;
+    quantidade_recebida_kg: string | null;
+    rejeicao_motivo: string | null;
+    lancado_em: Date;
+    aprovado_em: Date | null;
+    codigo: string;
+    produto_codigo_acxe: number;
+    fornecedor_nome: string;
+  }>(sql`
+    SELECT a.id, a.lote_id, a.tipo_aprovacao, a.quantidade_recebida_kg,
+           a.rejeicao_motivo, a.lancado_em, a.aprovado_em,
+           l.codigo, l.produto_codigo_acxe, l.fornecedor_nome
+    FROM stockbridge.aprovacao a
+    INNER JOIN stockbridge.lote l ON l.id = a.lote_id
+    WHERE a.status = 'rejeitada'
+      AND a.lancado_por = ${userId}
+      AND l.ativo = true
+      AND NOT EXISTS (
+        SELECT 1 FROM stockbridge.aprovacao a2
+        WHERE a2.lote_id = a.lote_id
+          AND a2.lancado_em > a.lancado_em
+      )
+    ORDER BY a.aprovado_em DESC NULLS LAST
+  `);
 
-  return rows.map((r) => ({
+  return rows.rows.map((r) => ({
     id: r.id,
-    loteId: r.loteId,
-    loteCodigo: r.loteCodigo,
-    tipoAprovacao: r.tipoAprovacao,
-    motivoRejeicao: r.rejeicaoMotivo ?? '',
-    quantidadeRecebidaKg: r.quantidadeRecebidaKg != null ? Number(r.quantidadeRecebidaKg) : 0,
-    produtoCodigoAcxe: r.produtoCodigoAcxe,
-    fornecedor: r.fornecedor,
-    lancadoEm: r.lancadoEm.toISOString(),
-    rejeitadoEm: r.aprovadoEm?.toISOString() ?? r.lancadoEm.toISOString(),
+    loteId: r.lote_id,
+    loteCodigo: r.codigo,
+    tipoAprovacao: r.tipo_aprovacao as TipoAprovacao,
+    motivoRejeicao: r.rejeicao_motivo ?? '',
+    quantidadeRecebidaKg: r.quantidade_recebida_kg != null ? Number(r.quantidade_recebida_kg) : 0,
+    produtoCodigoAcxe: r.produto_codigo_acxe,
+    fornecedor: r.fornecedor_nome,
+    lancadoEm: r.lancado_em.toISOString(),
+    rejeitadoEm: r.aprovado_em?.toISOString() ?? r.lancado_em.toISOString(),
   }));
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '../../../stores/auth.store.js';
 import { ConferenciaModal } from './ConferenciaModal.js';
@@ -66,19 +66,25 @@ export function FilaOmiePage() {
   });
 
   // Auto-abrir modal de re-submeter quando o email manda o usuario para
-  // /stockbridge/recebimento#rejeicao=<id>. Roda quando rejeicoes carregam.
+  // /stockbridge/recebimento#rejeicao=<id>. Tentativa em todo render — guard
+  // por ref garante que so abrimos uma vez e nao reabrimos se o usuario fechar.
+  const hashHandledRef = useRef(false);
   useEffect(() => {
+    if (hashHandledRef.current || rejeicoes.length === 0) return;
     const hash = window.location.hash;
     const match = hash.match(/^#rejeicao=([0-9a-f-]{36})$/i);
-    if (match && rejeicoes.length > 0 && !resubmitendo) {
-      const target = rejeicoes.find((r) => r.id === match[1]);
-      if (target) {
-        setResubmitendo(target);
-        // Limpa o hash para nao reabrir em re-renders
-        history.replaceState(null, '', window.location.pathname);
-      }
+    if (!match) {
+      hashHandledRef.current = true; // sem hash, marca como tratado
+      return;
     }
-  }, [rejeicoes, resubmitendo]);
+    const targetId = match[1]!.toLowerCase();
+    const target = rejeicoes.find((r) => r.id.toLowerCase() === targetId);
+    if (target) {
+      hashHandledRef.current = true;
+      setResubmitendo(target);
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }, [rejeicoes]);
 
   const { data: itens = [], isLoading, error } = useQuery<FilaItem[]>({
     queryKey: ['stockbridge', 'fila', queryKey],
