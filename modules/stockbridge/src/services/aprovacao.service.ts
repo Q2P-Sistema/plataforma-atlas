@@ -167,7 +167,7 @@ export async function listarMinhasRejeicoes(userId: string): Promise<MinhaRejeic
     FROM stockbridge.aprovacao a
     INNER JOIN stockbridge.lote l ON l.id = a.lote_id
     WHERE a.status = 'rejeitada'
-      AND a.lancado_por = ${userId}
+      AND a.lancado_por = ${userId}::uuid
       AND l.ativo = true
       AND NOT EXISTS (
         SELECT 1 FROM stockbridge.aprovacao a2
