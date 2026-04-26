@@ -12,6 +12,7 @@ import {
 import {
   enviarNotificacaoRejeicaoOperador,
   enviarNotificacaoAprovacaoOperador,
+  enviarAlertaAprovacaoPendente,
 } from './notificacao.service.js';
 import { resolverEstoqueDiferencaAcxe } from './estoques-especiais-acxe.js';
 
@@ -434,7 +435,7 @@ export async function resubmeter(input: ResubmeterInput): Promise<{ id: string; 
     throw new Error('Motivo obrigatorio ao re-submeter aprovacao rejeitada');
   }
   const db = getDb();
-  return db.transaction(async (tx) => {
+  const resultado = await db.transaction(async (tx) => {
     const [ap] = await tx.select().from(aprovacao).where(eq(aprovacao.id, input.id)).limit(1);
     if (!ap) throw new AprovacaoNaoEncontradaError(input.id);
     if (ap.status !== 'rejeitada') {
@@ -455,21 +456,39 @@ export async function resubmeter(input: ResubmeterInput): Promise<{ id: string; 
       })
       .returning();
 
-    await tx
+    const [loteRow] = await tx
       .update(lote)
       .set({
         status: 'aguardando_aprovacao',
         quantidadeFisicaKg: String(input.quantidadeRecebidaKg),
         updatedAt: new Date(),
       })
-      .where(eq(lote.id, ap.loteId));
+      .where(eq(lote.id, ap.loteId))
+      .returning();
 
     logger.info(
       { aprovacaoRejeitadaId: input.id, novaAprovacaoId: nova!.id, usuarioId: input.usuarioId },
       'Aprovacao re-submetida',
     );
-    return { id: input.id, novaAprovacaoId: nova!.id };
+    return {
+      id: input.id,
+      novaAprovacao: nova!,
+      lote: loteRow!,
+    };
   });
+
+  // Notifica gestor/diretor da nova pendencia (fora da transacao — email nao bloqueia commit)
+  await enviarAlertaAprovacaoPendente({
+    aprovacaoId: resultado.novaAprovacao.id,
+    tipoAprovacao: resultado.novaAprovacao.tipoAprovacao,
+    nivel: resultado.novaAprovacao.precisaNivel,
+    loteCodigo: resultado.lote.codigo,
+    produto: resultado.lote.fornecedorNome,
+    quantidadeKg: input.quantidadeRecebidaKg,
+    detalhes: `Re-submetida pelo operador apos rejeicao. Motivo: ${input.observacoes}`,
+  });
+
+  return { id: resultado.id, novaAprovacaoId: resultado.novaAprovacao.id };
 }
 
 function checarNivel(perfil: Perfil, nivelRequerido: 'gestor' | 'diretor'): void {
