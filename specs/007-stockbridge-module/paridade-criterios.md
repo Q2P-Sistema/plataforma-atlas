@@ -31,6 +31,20 @@ Durante o período de validação, cada recebimento de NF é processado **manual
 
 **Por que importa**: Como os sistemas rodam em paralelo, o OMIE identificará cada chamada como um movimento diferente (2 chamadas do Legado e 2 chamadas do Atlas para a mesma NF). O importante não é a identidade do ID, mas a garantia de que ambos os sistemas conseguiram completar o ciclo de integração com o ERP para os mesmos parâmetros de entrada.
 
+### 1.1 — Comportamento esperado em instabilidade OMIE (esperado divergir favoravelmente)
+
+A partir da migration `0016_stockbridge_idempotencia_omie`, o Atlas tem proteção que o legado **não tem**:
+
+- Toda chamada `IncluirAjusteEstoque` carrega `cod_int_ajuste = ${op_id}:${sufixo}` (sufixos `acxe-trf`, `q2p-ent`, `acxe-faltando`)
+- Quando ACXE sucede mas Q2P falha, Atlas grava `movimentacao` com `status_omie='pendente_q2p'` e expõe via `GET /api/v1/stockbridge/operacoes-pendentes`
+- Retry idempotente via `ListarAjusteEstoque` antes de chamar `IncluirAjusteEstoque` novamente
+
+**Implicação para o período de validação paralela**:
+- Se OMIE ficar instável durante a janela de 2 semanas, é **esperado** que o legado registre erro/duplicação e o Atlas registre `pendente_q2p` recuperável
+- Essa divergência é **a favor do Atlas** e não invalida o cutover — pelo contrário, é uma das motivações para migrar
+- Documentar tais ocorrências em `paridade-diario.md` como "divergência favorável ao Atlas (idempotência)" e seguir
+- Se Atlas registrar `pendente_q2p` ou `pendente_acxe_faltando` durante a janela, validar manualmente que o retry via endpoint resolve corretamente
+
 ---
 
 ## Critério 2 — Tratamento de divergência idêntico

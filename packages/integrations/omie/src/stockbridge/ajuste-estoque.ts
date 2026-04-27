@@ -16,6 +16,13 @@ export interface IncluirAjusteEstoqueInput {
   motivo: AjusteMotivo;
   valor: number;
   codigoLocalEstoqueDestino?: string;
+  /**
+   * Codigo de integracao com sistemas legados (cod_int_ajuste, ate 60 chars).
+   * Usado pelo StockBridge como chave de idempotencia: derivado de op_id da
+   * movimentacao + sufixo (acxe-trf, q2p-ent, acxe-faltando). Permite que
+   * retentativas sejam detectadas via ListarAjusteEstoque sem duplicar.
+   */
+  codIntAjuste?: string;
 }
 
 export interface IncluirAjusteEstoqueResponse {
@@ -50,6 +57,9 @@ export async function incluirAjusteEstoque(
   };
   if (input.codigoLocalEstoqueDestino) {
     params.codigo_local_estoque_destino = input.codigoLocalEstoqueDestino;
+  }
+  if (input.codIntAjuste) {
+    params.cod_int_ajuste = input.codIntAjuste;
   }
 
   const raw = await callOmie<{ id_movest: string; id_ajuste: string; descricao_status: string }>(cnpj, {

@@ -10,6 +10,7 @@ import {
   date,
   text,
   smallint,
+  jsonb,
   index,
 } from 'drizzle-orm/pg-core';
 import { users } from './atlas.js';
@@ -119,6 +120,14 @@ export const movimentacao = stockbridgeSchema.table(
     idAjusteQ2p: varchar('id_ajuste_q2p', { length: 100 }),
     idUserQ2p: uuid('id_user_q2p').references(() => users.id),
     observacoes: text('observacoes'),
+    opId: uuid('op_id').notNull().defaultRandom(),
+    statusOmie: text('status_omie')
+      .notNull()
+      .default('concluida')
+      .$type<'concluida' | 'pendente_q2p' | 'pendente_acxe_faltando' | 'falha'>(),
+    tentativasQ2p: smallint('tentativas_q2p').notNull().default(0),
+    tentativasAcxeFaltando: smallint('tentativas_acxe_faltando').notNull().default(0),
+    ultimoErroOmie: jsonb('ultimo_erro_omie'),
     ativo: boolean('ativo').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

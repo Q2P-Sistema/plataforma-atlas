@@ -12,6 +12,8 @@ import {
   AprovacaoNivelInsuficienteError,
   AprovacaoStatusInvalidoError,
 } from '../services/aprovacao.service.js';
+import { OmieAjusteError } from '../services/recebimento.service.js';
+import { mapearErroOmieParaResposta } from '../services/erros-omie.js';
 import type { Perfil } from '../types.js';
 
 const logger = createLogger('stockbridge:aprovacao');
@@ -59,7 +61,7 @@ router.post('/api/v1/stockbridge/aprovacoes/:id/aprovar', requireGestor, async (
     const result = await aprovar({ id, usuarioId: userId, perfilUsuario: perfil });
     res.json({ data: result, error: null });
   } catch (err) {
-    tratarErro(res, err);
+    tratarErro(res, err, { role: (req.user?.role ?? 'gestor') as Perfil });
   }
 });
 
@@ -82,7 +84,7 @@ router.post('/api/v1/stockbridge/aprovacoes/:id/rejeitar', requireGestor, async 
     const result = await rejeitar({ id, usuarioId: userId, perfilUsuario: perfil, motivo: parsed.data.motivo });
     res.json({ data: result, error: null });
   } catch (err) {
-    tratarErro(res, err);
+    tratarErro(res, err, { role: (req.user?.role ?? 'gestor') as Perfil });
   }
 });
 
@@ -115,11 +117,11 @@ router.post('/api/v1/stockbridge/aprovacoes/:id/resubmeter', requireOperador, as
     });
     res.json({ data: result, error: null });
   } catch (err) {
-    tratarErro(res, err);
+    tratarErro(res, err, { role: (req.user?.role ?? 'gestor') as Perfil });
   }
 });
 
-function tratarErro(res: Response, err: unknown) {
+function tratarErro(res: Response, err: unknown, ator?: { role: Perfil }) {
   if (err instanceof AprovacaoNaoEncontradaError) {
     res.status(404).json({ data: null, error: { code: 'APROVACAO_NAO_ENCONTRADA', message: err.message } });
     return;
@@ -130,6 +132,12 @@ function tratarErro(res: Response, err: unknown) {
   }
   if (err instanceof AprovacaoStatusInvalidoError) {
     res.status(409).json({ data: null, error: { code: 'APROVACAO_STATUS_INVALIDO', message: err.message } });
+    return;
+  }
+  if (err instanceof OmieAjusteError) {
+    // ACXE-fail durante aprovar() (Q2P-fail e capturado pelo service e nao chega aqui).
+    const { httpStatus, body } = mapearErroOmieParaResposta(err, ator);
+    res.status(httpStatus).json({ data: null, error: body });
     return;
   }
   logger.error({ err }, 'Erro inesperado em aprovacao');

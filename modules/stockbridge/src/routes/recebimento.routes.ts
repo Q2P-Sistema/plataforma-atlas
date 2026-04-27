@@ -9,6 +9,8 @@ import {
   OmieAjusteError,
 } from '../services/recebimento.service.js';
 import { CorrelacaoNaoEncontradaError } from '../services/correlacao.service.js';
+import { mapearErroOmieParaResposta } from '../services/erros-omie.js';
+import type { Perfil } from '../types.js';
 
 const logger = createLogger('stockbridge:recebimento');
 const router: Router = Router();
@@ -61,8 +63,9 @@ router.post('/api/v1/stockbridge/recebimento', requireOperador, requireArmazemVi
       return;
     }
     if (err instanceof OmieAjusteError) {
-      const code = err.lado === 'acxe' ? 'OMIE_ACXE_FAIL' : 'OMIE_Q2P_FAIL';
-      res.status(502).json({ data: null, error: { code, message: err.message } });
+      const role = (req.user?.role ?? 'operador') as Perfil;
+      const { httpStatus, body } = mapearErroOmieParaResposta(err, { role });
+      res.status(httpStatus).json({ data: null, error: body });
       return;
     }
     logger.error({ err, nf: parsed.data.nf }, 'Erro inesperado em recebimento');

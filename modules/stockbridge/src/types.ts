@@ -67,6 +67,35 @@ export type StatusAprovacao = 'pendente' | 'aprovada' | 'rejeitada';
 
 export type StatusDivergencia = 'aberta' | 'regularizada' | 'descartada';
 
+/**
+ * Estado de sincronizacao com OMIE de uma movimentacao.
+ * - concluida: ambos lados (ACXE + Q2P) confirmados (default).
+ * - pendente_q2p: ACXE escreveu mas Q2P falhou — aguarda retry.
+ * - pendente_acxe_faltando: segunda chamada ACXE (transferirDiferenca) falhou.
+ * - falha: marcada manualmente por admin como nao-recuperavel.
+ */
+export type StatusOmie = 'concluida' | 'pendente_q2p' | 'pendente_acxe_faltando' | 'falha';
+
+export function isStatusOmiePendente(status: StatusOmie): boolean {
+  return status === 'pendente_q2p' || status === 'pendente_acxe_faltando';
+}
+
+/**
+ * Sufixos do cod_int_ajuste enviado ao OMIE. Combinados com o op_id da
+ * movimentacao para identificar de forma unica cada chamada IncluirAjusteEstoque.
+ */
+export const COD_INT_AJUSTE_SUFIXO = {
+  acxeTrf: 'acxe-trf',
+  q2pEnt: 'q2p-ent',
+  acxeFaltando: 'acxe-faltando',
+} as const;
+
+export type CodIntAjusteSufixo = (typeof COD_INT_AJUSTE_SUFIXO)[keyof typeof COD_INT_AJUSTE_SUFIXO];
+
+export function buildCodIntAjuste(opId: string, sufixo: CodIntAjusteSufixo): string {
+  return `${opId}:${sufixo}`;
+}
+
 export type TipoLocalidade = 'proprio' | 'tpl' | 'porto_seco' | 'virtual_transito' | 'virtual_ajuste';
 
 export type UnidadeMedida = 't' | 'kg' | 'saco' | 'bigbag';

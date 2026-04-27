@@ -13,6 +13,7 @@ import fornecedorRouter from './fornecedor.routes.js';
 import localidadeRouter from './localidade.routes.js';
 import configRouter from './config.routes.js';
 import movimentacaoRouter from './movimentacao.routes.js';
+import operacoesPendentesRouter from './operacoes-pendentes.routes.js';
 
 const logger = createLogger('stockbridge:routes');
 const router: Router = Router();
@@ -46,7 +47,9 @@ router.use(localidadeRouter);
 router.use(configRouter);
 // Phase 11 — Movimentacoes (listagem + soft delete)
 router.use(movimentacaoRouter);
+// Idempotencia OMIE — retry de operacoes pendentes (US2/US3/US4)
+router.use(operacoesPendentesRouter);
 
-logger.info('StockBridge router inicializado (US1..US8 + Movimentacoes montadas)');
+logger.info('StockBridge router inicializado (US1..US8 + Movimentacoes + OperacoesPendentes)');
 
 export default router;

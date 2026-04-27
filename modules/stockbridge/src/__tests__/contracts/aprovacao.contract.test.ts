@@ -112,3 +112,65 @@ describe('Aprovacoes — contratos', () => {
     expect([200, 409]).toContain(res.status);
   });
 });
+
+describe('POST /aprovacoes/:id/aprovar — pendenciaOmie residual (US4)', () => {
+  let app: express.Express;
+
+  beforeAll(async () => {
+    vi.resetModules();
+    vi.doMock('../../services/aprovacao.service.js', async () => {
+      const real = await vi.importActual<typeof import('../../services/aprovacao.service.js')>(
+        '../../services/aprovacao.service.js',
+      );
+      return {
+        ...real,
+        aprovar: vi.fn(),
+      };
+    });
+    const { default: stockbridgeRouter } = await import('../../routes/stockbridge.routes.js');
+    app = express();
+    app.use(express.json());
+    app.use(stockbridgeRouter);
+  });
+
+  it('200 com pendenciaOmie quando OMIE deixa Q2P pendente apos aprovacao', async () => {
+    currentUser = { id: 'u-gestor', role: 'gestor' };
+    const svc = await import('../../services/aprovacao.service.js');
+    vi.mocked(svc.aprovar).mockResolvedValueOnce({
+      id: 'apr-1',
+      loteStatus: 'provisorio',
+      pendenciaOmie: {
+        lado: 'q2p',
+        opId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        movimentacaoId: 'mov-pendente',
+        mensagem: 'OMIE Q2P 503',
+      },
+    });
+
+    const res = await request(app).post('/api/v1/stockbridge/aprovacoes/apr-1/aprovar');
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({
+      id: 'apr-1',
+      loteStatus: 'provisorio',
+      pendenciaOmie: {
+        lado: 'q2p',
+        opId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        movimentacaoId: 'mov-pendente',
+      },
+    });
+  });
+
+  it('200 sem pendenciaOmie quando aprovacao concluiu OMIE inteiramente', async () => {
+    currentUser = { id: 'u-gestor', role: 'gestor' };
+    const svc = await import('../../services/aprovacao.service.js');
+    vi.mocked(svc.aprovar).mockResolvedValueOnce({
+      id: 'apr-2',
+      loteStatus: 'provisorio',
+    });
+
+    const res = await request(app).post('/api/v1/stockbridge/aprovacoes/apr-2/aprovar');
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({ id: 'apr-2', loteStatus: 'provisorio' });
+    expect(res.body.data.pendenciaOmie).toBeUndefined();
+  });
+});

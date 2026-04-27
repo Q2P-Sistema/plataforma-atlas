@@ -1,10 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import { eq, and, sql } from 'drizzle-orm';
 import Decimal from 'decimal.js';
 import { getDb, createLogger } from '@atlas/core';
 import { lote, movimentacao, aprovacao, localidade, localidadeCorrelacao } from '@atlas/db';
 import {
   consultarNF,
-  incluirAjusteEstoque,
   isMockMode,
   type ConsultarNFResponse,
 } from '@atlas/integration-omie';
@@ -13,7 +13,10 @@ import { converterParaKg, normalizarNumeroNf } from './motor.service.js';
 import {
   enviarAlertaProdutoSemCorrelato,
   enviarAlertaAprovacaoPendente,
+  enviarAlertaPendenciaOmie,
 } from './notificacao.service.js';
+import { incluirAjusteIdempotente } from './omie-idempotente.js';
+import { COD_INT_AJUSTE_SUFIXO, buildCodIntAjuste } from '../types.js';
 import type { SubtipoMovimento, UnidadeMedida } from '../types.js';
 
 const logger = createLogger('stockbridge:recebimento');
@@ -25,10 +28,41 @@ export class NotaFiscalJaProcessadaError extends Error {
   }
 }
 
+export interface OmieAjusteErrorContext {
+  /** IDs OMIE do ajuste ACXE quando ACXE sucedeu mas Q2P falhou. */
+  idACXE?: { idMovest: string; idAjuste: string };
+  /** UUID da operacao (movimentacao.opId) — derivado em cod_int_ajuste. */
+  opId?: string;
+  /** ID da movimentacao parcial gravada (apenas em pendente_q2p / pendente_acxe_faltando). */
+  movimentacaoId?: string;
+  /** True quando o estado e recuperavel via retry (Q2P falhou apos ACXE ok). */
+  recoverable?: boolean;
+  /**
+   * Quantas retentativas o ATOR atual ainda pode fazer (operador maximo 1 alem da
+   * inicial; admin sem limite). Calculado pelo caller que conhece o role.
+   */
+  tentativasRestantes?: number;
+}
+
 export class OmieAjusteError extends Error {
-  constructor(public readonly lado: 'acxe' | 'q2p', public readonly originalError: unknown) {
+  public readonly idACXE?: { idMovest: string; idAjuste: string };
+  public readonly opId?: string;
+  public readonly movimentacaoId?: string;
+  public readonly recoverable?: boolean;
+  public readonly tentativasRestantes?: number;
+
+  constructor(
+    public readonly lado: 'acxe' | 'q2p',
+    public readonly originalError: unknown,
+    context?: OmieAjusteErrorContext,
+  ) {
     super(`Falha ao incluir ajuste de estoque no OMIE ${lado.toUpperCase()}: ${(originalError as Error).message ?? 'erro desconhecido'}`);
     this.name = 'OmieAjusteError';
+    this.idACXE = context?.idACXE;
+    this.opId = context?.opId;
+    this.movimentacaoId = context?.movimentacaoId;
+    this.recoverable = context?.recoverable;
+    this.tentativasRestantes = context?.tentativasRestantes;
   }
 }
 
@@ -276,20 +310,43 @@ export async function processarRecebimento(
   // 6. Sem divergencia: chama OMIE dos dois lados antes de persistir
   // Fiel ao legado: ACXE = transferencia (origem trânsito da NF → destino escolhido),
   // Q2P = entrada inicial. Valor unitario diferente em cada lado.
-  const { idACXE, idQ2P } = await executarAjusteOmieDual({
-    codigoLocalEstoqueAcxeOrigem: omieData.codigoLocalEstoque,
-    codigoLocalEstoqueAcxeDestino: corr.codigoLocalEstoqueAcxe,
-    codigoLocalEstoqueQ2p: corr.codigoLocalEstoqueQ2p,
-    codigoProdutoAcxe: correlacao.codigoProdutoAcxe,
-    codigoProdutoQ2p: correlacao.codigoProdutoQ2p,
-    quantidadeKg: qtdFisicaKg,
-    valorUnitarioAcxe: calcularValorUnitarioAcxe(omieData.vNF, qtdNfKg),
-    valorUnitarioQ2p: calcularValorUnitarioQ2p(omieData.vNF, qtdNfKg),
-    notaFiscal: input.nf,
-    observacaoSufixo: 'sem divergencias',
-  });
+  // opId identifica esta operacao em ambos os lados via cod_int_ajuste — habilita
+  // retry idempotente em caso de falha na 2a chamada (vide US2).
+  const opId = randomUUID();
+  let idACXE: { idMovest: string; idAjuste: string };
+  let idQ2P: { idMovest: string; idAjuste: string } | null = null;
+  let pendenciaQ2P: { erro: OmieAjusteError } | null = null;
+  try {
+    const dualRes = await executarAjusteOmieDual({
+      opId,
+      codigoLocalEstoqueAcxeOrigem: omieData.codigoLocalEstoque,
+      codigoLocalEstoqueAcxeDestino: corr.codigoLocalEstoqueAcxe,
+      codigoLocalEstoqueQ2p: corr.codigoLocalEstoqueQ2p,
+      codigoProdutoAcxe: correlacao.codigoProdutoAcxe,
+      codigoProdutoQ2p: correlacao.codigoProdutoQ2p,
+      quantidadeKg: qtdFisicaKg,
+      valorUnitarioAcxe: calcularValorUnitarioAcxe(omieData.vNF, qtdNfKg),
+      valorUnitarioQ2p: calcularValorUnitarioQ2p(omieData.vNF, qtdNfKg),
+      notaFiscal: input.nf,
+      observacaoSufixo: 'sem divergencias',
+    });
+    idACXE = dualRes.idACXE;
+    idQ2P = dualRes.idQ2P;
+  } catch (err) {
+    // ACXE falha: nada foi escrito em lugar nenhum, propaga e operador retenta limpo.
+    if (err instanceof OmieAjusteError && err.lado === 'acxe') {
+      throw err;
+    }
+    // Q2P falha apos ACXE ok: temos idACXE no erro, persistiremos movimentacao parcial.
+    if (err instanceof OmieAjusteError && err.lado === 'q2p' && err.idACXE) {
+      idACXE = err.idACXE;
+      pendenciaQ2P = { erro: err };
+    } else {
+      throw err;
+    }
+  }
 
-  // Persistir lote + movimentacao em uma transacao
+  // Persistir lote + movimentacao em uma transacao (pode ser completa ou parcial)
   const resultado = await db.transaction(async (tx) => {
     const codigo = await proximoCodigoLote(tx, 'L');
     const [loteCriado] = await tx
@@ -327,24 +384,55 @@ export async function processarRecebimento(
         idMovestAcxe: idACXE.idMovest,
         idAjusteAcxe: idACXE.idAjuste,
         idUserAcxe: input.userId,
-        mvQ2p: 1,
-        dtQ2p: new Date(),
-        idMovestQ2p: idQ2P.idMovest,
-        idAjusteQ2p: idQ2P.idAjuste,
-        idUserQ2p: input.userId,
+        mvQ2p: pendenciaQ2P ? null : 1,
+        dtQ2p: pendenciaQ2P ? null : new Date(),
+        idMovestQ2p: idQ2P?.idMovest ?? null,
+        idAjusteQ2p: idQ2P?.idAjuste ?? null,
+        idUserQ2p: pendenciaQ2P ? null : input.userId,
         observacoes: input.observacoes ?? null,
+        opId,
+        statusOmie: pendenciaQ2P ? 'pendente_q2p' : 'concluida',
+        tentativasQ2p: pendenciaQ2P ? 1 : 0,
+        ultimoErroOmie: pendenciaQ2P
+          ? {
+              lado: 'q2p',
+              mensagem: (pendenciaQ2P.erro.originalError as Error)?.message ?? 'erro desconhecido',
+              timestamp: new Date().toISOString(),
+            }
+          : null,
       })
       .returning();
 
     return { loteId: loteCriado!.id, loteCodigo: loteCriado!.codigo, movimentacaoId: movCriada!.id };
   });
 
+  // Se pendente, lanca erro enriquecido para a rota retornar 502 estruturado.
+  // O operador tem 1 retentativa via endpoint /operacoes-pendentes/:id/retentar.
+  if (pendenciaQ2P) {
+    // Notifica admin/gestor fora do caminho critico (fire-and-forget)
+    void enviarAlertaPendenciaOmie({
+      movimentacaoId: resultado.movimentacaoId,
+      opId,
+      notaFiscal: input.nf,
+      ladoPendente: 'q2p',
+      mensagemErro: (pendenciaQ2P.erro.originalError as Error)?.message ?? 'erro desconhecido',
+      tentativas: 1,
+    });
+    throw new OmieAjusteError('q2p', pendenciaQ2P.erro.originalError, {
+      idACXE,
+      opId,
+      movimentacaoId: resultado.movimentacaoId,
+      recoverable: true,
+      tentativasRestantes: 1,
+    });
+  }
+
   return {
     loteId: resultado.loteId,
     loteCodigo: resultado.loteCodigo,
     status: 'provisorio',
     movimentacaoId: resultado.movimentacaoId,
-    omie: { acxe: idACXE, q2p: idQ2P },
+    omie: { acxe: idACXE, q2p: idQ2P! },
   };
 }
 
@@ -438,6 +526,7 @@ async function processarRecebimentoComDivergencia(args: {
  *    = ceil((vNF / qtdNfKg) * 1.145 * 100) / 100 (markup interno de 14.5%).
  */
 export async function executarAjusteOmieDual(args: {
+  opId: string;
   codigoLocalEstoqueAcxeOrigem: string;
   codigoLocalEstoqueAcxeDestino: number;
   codigoLocalEstoqueQ2p: number;
@@ -448,45 +537,62 @@ export async function executarAjusteOmieDual(args: {
   valorUnitarioQ2p: number;
   notaFiscal: string;
   observacaoSufixo: string;
+  /** Em retry de operacao pendente, true para evitar duplicacao via ListarAjusteEstoque. */
+  verificarAntes?: boolean;
 }): Promise<{ idACXE: { idMovest: string; idAjuste: string }; idQ2P: { idMovest: string; idAjuste: string } }> {
+  const verificarAntes = args.verificarAntes ?? false;
   let idACXE: { idMovest: string; idAjuste: string };
   try {
-    const acxeRes = await incluirAjusteEstoque('acxe', {
-      codigoLocalEstoque: args.codigoLocalEstoqueAcxeOrigem,
-      codigoLocalEstoqueDestino: String(args.codigoLocalEstoqueAcxeDestino),
-      idProduto: args.codigoProdutoAcxe,
-      dataAtual: formatarDataBR(new Date()),
-      quantidade: args.quantidadeKg,
-      observacao: `Recebimento NF ${args.notaFiscal} ${args.observacaoSufixo}`,
-      origem: 'AJU',
-      tipo: 'TRF',
-      motivo: 'TRF',
-      valor: args.valorUnitarioAcxe,
-    });
+    const acxeRes = await incluirAjusteIdempotente(
+      'acxe',
+      buildCodIntAjuste(args.opId, COD_INT_AJUSTE_SUFIXO.acxeTrf),
+      {
+        codigoLocalEstoque: args.codigoLocalEstoqueAcxeOrigem,
+        codigoLocalEstoqueDestino: String(args.codigoLocalEstoqueAcxeDestino),
+        idProduto: args.codigoProdutoAcxe,
+        dataAtual: formatarDataBR(new Date()),
+        quantidade: args.quantidadeKg,
+        observacao: `Recebimento NF ${args.notaFiscal} ${args.observacaoSufixo}`,
+        origem: 'AJU',
+        tipo: 'TRF',
+        motivo: 'TRF',
+        valor: args.valorUnitarioAcxe,
+      },
+      { verificarAntes },
+    );
     idACXE = { idMovest: acxeRes.idMovest, idAjuste: acxeRes.idAjuste };
   } catch (err) {
     throw new OmieAjusteError('acxe', err);
   }
 
   try {
-    const q2pRes = await incluirAjusteEstoque('q2p', {
-      codigoLocalEstoque: String(args.codigoLocalEstoqueQ2p),
-      idProduto: args.codigoProdutoQ2p,
-      dataAtual: formatarDataBR(new Date()),
-      quantidade: args.quantidadeKg,
-      observacao: `Recebimento NF ${args.notaFiscal} ${args.observacaoSufixo}`,
-      origem: 'AJU',
-      tipo: 'ENT',
-      motivo: 'INI',
-      valor: args.valorUnitarioQ2p,
-    });
+    const q2pRes = await incluirAjusteIdempotente(
+      'q2p',
+      buildCodIntAjuste(args.opId, COD_INT_AJUSTE_SUFIXO.q2pEnt),
+      {
+        codigoLocalEstoque: String(args.codigoLocalEstoqueQ2p),
+        idProduto: args.codigoProdutoQ2p,
+        dataAtual: formatarDataBR(new Date()),
+        quantidade: args.quantidadeKg,
+        observacao: `Recebimento NF ${args.notaFiscal} ${args.observacaoSufixo}`,
+        origem: 'AJU',
+        tipo: 'ENT',
+        motivo: 'INI',
+        valor: args.valorUnitarioQ2p,
+      },
+      { verificarAntes },
+    );
     return { idACXE, idQ2P: { idMovest: q2pRes.idMovest, idAjuste: q2pRes.idAjuste } };
   } catch (err) {
     logger.error(
-      { nf: args.notaFiscal, idACXE, err },
-      'ALERTA: ajuste ACXE sucesso mas Q2P falhou. Intervencao manual necessaria.',
+      { nf: args.notaFiscal, opId: args.opId, idACXE, err },
+      'ALERTA: ajuste ACXE sucesso mas Q2P falhou. Persistira movimentacao parcial.',
     );
-    throw new OmieAjusteError('q2p', err);
+    throw new OmieAjusteError('q2p', err, {
+      idACXE,
+      opId: args.opId,
+      recoverable: true,
+    });
   }
 }
 
@@ -501,6 +607,7 @@ export async function executarAjusteOmieDual(args: {
  * custo medio do origem — campo e informativo no log.
  */
 export async function transferirDiferencaAcxe(args: {
+  opId: string;
   codigoLocalEstoqueOrigem: string;
   codigoLocalEstoqueDiferenca: string; // resolvido por resolverEstoqueDiferencaAcxe()
   codigoProdutoAcxe: number;
@@ -508,20 +615,26 @@ export async function transferirDiferencaAcxe(args: {
   valorUnitarioAcxe: number;
   notaFiscal: string;
   observacaoSufixo: string;
+  verificarAntes?: boolean;
 }): Promise<{ idMovest: string; idAjuste: string }> {
   try {
-    const res = await incluirAjusteEstoque('acxe', {
-      codigoLocalEstoque: args.codigoLocalEstoqueOrigem,
-      codigoLocalEstoqueDestino: args.codigoLocalEstoqueDiferenca,
-      idProduto: args.codigoProdutoAcxe,
-      dataAtual: formatarDataBR(new Date()),
-      quantidade: args.quantidadeKg,
-      observacao: `Recebimento NF ${args.notaFiscal} ${args.observacaoSufixo}`,
-      origem: 'AJU',
-      tipo: 'TRF',
-      motivo: 'TRF',
-      valor: args.valorUnitarioAcxe,
-    });
+    const res = await incluirAjusteIdempotente(
+      'acxe',
+      buildCodIntAjuste(args.opId, COD_INT_AJUSTE_SUFIXO.acxeFaltando),
+      {
+        codigoLocalEstoque: args.codigoLocalEstoqueOrigem,
+        codigoLocalEstoqueDestino: args.codigoLocalEstoqueDiferenca,
+        idProduto: args.codigoProdutoAcxe,
+        dataAtual: formatarDataBR(new Date()),
+        quantidade: args.quantidadeKg,
+        observacao: `Recebimento NF ${args.notaFiscal} ${args.observacaoSufixo}`,
+        origem: 'AJU',
+        tipo: 'TRF',
+        motivo: 'TRF',
+        valor: args.valorUnitarioAcxe,
+      },
+      { verificarAntes: args.verificarAntes ?? false },
+    );
     return { idMovest: res.idMovest, idAjuste: res.idAjuste };
   } catch (err) {
     throw new OmieAjusteError('acxe', err);

@@ -210,6 +210,163 @@ describe('aprovacao.service#aprovar', () => {
       codigoLocalEstoqueDestino: '4506526722',
     }));
   });
+
+  // US4: Q2P falha durante aprovacao → grava pendente_q2p e nao bloqueia aprovacao
+  it('Q2P falha durante aprovar(): movimentacao parcial pendente_q2p + aprovacao continua aprovada', async () => {
+    const { getDb } = await import('@atlas/core');
+    const omieMod = await import('@atlas/integration-omie');
+
+    // 1a chamada ACXE ok, 2a Q2P falha
+    vi.mocked(omieMod.incluirAjusteEstoque)
+      .mockResolvedValueOnce({ idMovest: 'M-ACXE', idAjuste: 'A-ACXE', descricaoStatus: 'ok' })
+      .mockRejectedValueOnce(new Error('OMIE Q2P 503'));
+
+    const aprRow = {
+      id: 'apr-q2pfail', loteId: 'lote-q2pfail', status: 'pendente',
+      precisaNivel: 'gestor', tipoAprovacao: 'recebimento_divergencia',
+      quantidadeRecebidaKg: '24500', tipoDivergencia: 'faltando', lancadoPor: 'op-1',
+    };
+    const loteRow = {
+      id: 'lote-q2pfail', codigo: 'L-Q', notaFiscal: '500', cnpj: 'Acxe Matriz',
+      produtoCodigoAcxe: 1001, produtoCodigoQ2p: 2001,
+      localidadeId: 'loc-1', quantidadeFisicaKg: '24500',
+      quantidadeFiscalKg: '25000', custoBrlKg: '1.20',
+      valorTotalNfBrl: '31250.00', codigoLocalEstoqueOrigemAcxe: '999',
+    };
+    const dbMock = criarDbComTabelas(await tabelas(aprRow, loteRow));
+    vi.mocked(getDb).mockReturnValue(dbMock as never);
+
+    const res = await aprovar({ id: 'apr-q2pfail', usuarioId: 'u1', perfilUsuario: 'gestor' });
+
+    // 1) Aprovacao retorna com pendenciaOmie
+    expect(res.id).toBe('apr-q2pfail');
+    expect(res.loteStatus).toBe('provisorio');
+    expect(res.pendenciaOmie).toBeDefined();
+    expect(res.pendenciaOmie!.lado).toBe('q2p');
+    expect(res.pendenciaOmie!.movimentacaoId).toBe('nova-id');
+    expect(res.pendenciaOmie!.opId).toMatch(/^[0-9a-f-]{36}$/);
+
+    // 2) Movimentacao gravada com statusOmie=pendente_q2p
+    const valuesCalls = dbMock.values.mock.calls as Array<[Record<string, unknown>]>;
+    const movInsert = valuesCalls.find((c) => c[0] && 'idMovestAcxe' in c[0]);
+    expect(movInsert).toBeDefined();
+    expect(movInsert![0]).toMatchObject({
+      idMovestAcxe: 'M-ACXE',
+      idAjusteAcxe: 'A-ACXE',
+      idMovestQ2p: null,
+      idAjusteQ2p: null,
+      mvQ2p: null,
+      idUserQ2p: null,
+      statusOmie: 'pendente_q2p',
+      tentativasQ2p: 1,
+      tentativasAcxeFaltando: 0,
+    });
+    expect(movInsert![0].ultimoErroOmie).toMatchObject({
+      lado: 'q2p',
+      mensagem: expect.stringContaining('OMIE Q2P 503'),
+    });
+
+    // 3) Apenas 2 chamadas OMIE (transferirDiferencaAcxe nao roda quando ja ha pendente_q2p)
+    expect(omieMod.incluirAjusteEstoque).toHaveBeenCalledTimes(2);
+  });
+
+  // US4: transferirDiferencaAcxe falha → pendente_acxe_faltando
+  it('transferirDiferencaAcxe falha: movimentacao com pendente_acxe_faltando, dual call salvo', async () => {
+    const { getDb } = await import('@atlas/core');
+    const omieMod = await import('@atlas/integration-omie');
+
+    // ACXE primary ok, Q2P ok, ACXE diferenca falha
+    vi.mocked(omieMod.incluirAjusteEstoque)
+      .mockResolvedValueOnce({ idMovest: 'M-ACXE', idAjuste: 'A-ACXE', descricaoStatus: 'ok' })
+      .mockResolvedValueOnce({ idMovest: 'M-Q2P', idAjuste: 'A-Q2P', descricaoStatus: 'ok' })
+      .mockRejectedValueOnce(new Error('OMIE ACXE timeout na transferencia diferenca'));
+
+    const aprRow = {
+      id: 'apr-difffail', loteId: 'lote-diff', status: 'pendente',
+      precisaNivel: 'gestor', tipoAprovacao: 'recebimento_divergencia',
+      quantidadeRecebidaKg: '24500', tipoDivergencia: 'faltando', lancadoPor: 'op-1',
+    };
+    const loteRow = {
+      id: 'lote-diff', codigo: 'L-D', notaFiscal: '501', cnpj: 'Acxe Matriz',
+      produtoCodigoAcxe: 1001, produtoCodigoQ2p: 2001,
+      localidadeId: 'loc-1', quantidadeFisicaKg: '24500',
+      quantidadeFiscalKg: '25000', custoBrlKg: '1.20',
+      valorTotalNfBrl: '31250.00', codigoLocalEstoqueOrigemAcxe: '999',
+    };
+    const dbMock = criarDbComTabelas(await tabelas(aprRow, loteRow));
+    vi.mocked(getDb).mockReturnValue(dbMock as never);
+
+    const res = await aprovar({ id: 'apr-difffail', usuarioId: 'u1', perfilUsuario: 'gestor' });
+
+    expect(res.pendenciaOmie).toBeDefined();
+    expect(res.pendenciaOmie!.lado).toBe('acxe-faltando');
+
+    const valuesCalls = dbMock.values.mock.calls as Array<[Record<string, unknown>]>;
+    const movInsert = valuesCalls.find((c) => c[0] && 'idMovestAcxe' in c[0]);
+    expect(movInsert).toBeDefined();
+    expect(movInsert![0]).toMatchObject({
+      // Dual call sucedeu — ambos lados gravados
+      idMovestAcxe: 'M-ACXE',
+      idMovestQ2p: 'M-Q2P',
+      mvAcxe: 1,
+      mvQ2p: 1,
+      // ... mas a transferencia da diferenca falhou
+      statusOmie: 'pendente_acxe_faltando',
+      tentativasQ2p: 0,
+      tentativasAcxeFaltando: 1,
+    });
+    expect(movInsert![0].ultimoErroOmie).toMatchObject({
+      lado: 'acxe-faltando',
+      mensagem: expect.stringContaining('timeout'),
+    });
+
+    // 3 chamadas OMIE (todas tentadas)
+    expect(omieMod.incluirAjusteEstoque).toHaveBeenCalledTimes(3);
+  });
+
+  // US1: idempotencia OMIE — opId compartilhado em todas as chamadas + persistido na movimentacao
+  it('aprovar divergencia: codIntAjuste compartilha opId e movimentacao grava com statusOmie=concluida', async () => {
+    const { getDb } = await import('@atlas/core');
+    const omieMod = await import('@atlas/integration-omie');
+    const aprRow = {
+      id: 'apr-3', loteId: 'lote-3', status: 'pendente',
+      precisaNivel: 'gestor', tipoAprovacao: 'recebimento_divergencia',
+      quantidadeRecebidaKg: '24500', tipoDivergencia: 'faltando', lancadoPor: 'op-1',
+    };
+    const loteRow = {
+      id: 'lote-3', codigo: 'L003', notaFiscal: '125', cnpj: 'Acxe Matriz',
+      produtoCodigoAcxe: 1001, produtoCodigoQ2p: 2001,
+      localidadeId: 'loc-1', quantidadeFisicaKg: '24500',
+      quantidadeFiscalKg: '25000', custoBrlKg: '1.20',
+      valorTotalNfBrl: '31250.00', codigoLocalEstoqueOrigemAcxe: '999',
+    };
+    const dbMock = criarDbComTabelas(await tabelas(aprRow, loteRow));
+    vi.mocked(getDb).mockReturnValue(dbMock as never);
+
+    await aprovar({ id: 'apr-3', usuarioId: 'u1', perfilUsuario: 'gestor' });
+
+    // 1) Todas as 3 chamadas OMIE compartilham o mesmo opId no cod_int_ajuste
+    const calls = vi.mocked(omieMod.incluirAjusteEstoque).mock.calls;
+    const codIntAjustes = calls.map((c) => (c[1] as { codIntAjuste?: string }).codIntAjuste ?? '');
+    const opIds = codIntAjustes.map((c) => c.split(':')[0]);
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+    expect(opIds[0]).toMatch(uuidRegex);
+    expect(new Set(opIds).size).toBe(1); // mesmo opId nas 3 chamadas
+    expect(codIntAjustes[0]).toMatch(/:acxe-trf$/);
+    expect(codIntAjustes[1]).toMatch(/:q2p-ent$/);
+    expect(codIntAjustes[2]).toMatch(/:acxe-faltando$/);
+
+    // 2) Movimentacao foi inserida com opId UUID + statusOmie=concluida
+    const valuesCalls = dbMock.values.mock.calls as Array<[Record<string, unknown>]>;
+    const movInsert = valuesCalls.find((c) => c[0] && typeof c[0] === 'object' && 'idMovestAcxe' in c[0]);
+    expect(movInsert).toBeDefined();
+    expect(movInsert![0]).toMatchObject({
+      opId: expect.stringMatching(uuidRegex),
+      statusOmie: 'concluida',
+    });
+    // E o opId persistido bate com o opId dos cod_int_ajuste
+    expect(movInsert![0].opId).toBe(opIds[0]);
+  });
 });
 
 describe('aprovacao.service#rejeitar', () => {

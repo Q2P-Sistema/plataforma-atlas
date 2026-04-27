@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { eq, and, desc, inArray, sql } from 'drizzle-orm';
 import { getDb, createLogger } from '@atlas/core';
 import { aprovacao, lote, movimentacao, localidadeCorrelacao, users } from '@atlas/db';
@@ -8,11 +9,13 @@ import {
   calcularValorUnitarioQ2p,
   calcularValorUnitarioAcxe,
   transferirDiferencaAcxe,
+  OmieAjusteError,
 } from './recebimento.service.js';
 import {
   enviarNotificacaoRejeicaoOperador,
   enviarNotificacaoAprovacaoOperador,
   enviarAlertaAprovacaoPendente,
+  enviarAlertaPendenciaOmie,
 } from './notificacao.service.js';
 import { resolverEstoqueDiferencaAcxe } from './estoques-especiais-acxe.js';
 
@@ -209,7 +212,24 @@ export interface AprovarInput {
  *  - Bloqueia se ja foi aprovada/rejeitada
  *  - Notifica operador que lancou via email (fora da transacao)
  */
-export async function aprovar(input: AprovarInput): Promise<{ id: string; loteStatus: string }> {
+export interface AprovarResult {
+  id: string;
+  loteStatus: string;
+  /**
+   * Presente quando a aprovacao foi commitada mas OMIE deixou um lado pendente.
+   * A aprovacao em si fica 'aprovada' (decisao do gestor nao retrocede), mas a
+   * movimentacao gravada tem status_omie != 'concluida' e precisa de retry
+   * via /operacoes-pendentes/:id/retentar.
+   */
+  pendenciaOmie?: {
+    lado: 'q2p' | 'acxe-faltando';
+    opId: string;
+    movimentacaoId: string;
+    mensagem: string;
+  };
+}
+
+export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
   const db = getDb();
 
   // Pre-check fora da transacao (evita abrir tx so pra abortar)
@@ -219,9 +239,17 @@ export async function aprovar(input: AprovarInput): Promise<{ id: string; loteSt
   checarNivel(input.perfilUsuario, apPre.precisaNivel);
 
   // Para recebimento_divergencia precisamos chamar OMIE ANTES de commitar o update.
-  // Se OMIE falhar, nada no PG muda.
+  // Se OMIE falhar, nada no PG muda — exceto quando recoverable (Q2P pos-ACXE ok ou
+  // transferencia da diferenca pos-dual ok), caso em que persistimos movimentacao
+  // parcial e seguimos com a aprovacao (decisao do gestor nao retrocede).
+  // opId identifica esta aprovacao nas chamadas OMIE via cod_int_ajuste — habilita
+  // retry idempotente sem duplicar ajustes (vide US2/US4).
   let omieIds: Awaited<ReturnType<typeof executarAjusteOmieDual>> | null = null;
+  let opId: string | null = null;
+  let pendencia: { tipo: 'pendente_q2p' | 'pendente_acxe_faltando'; mensagemErro: string } | null = null;
+  let notaFiscalParaEmail = apPre.id;
   if (apPre.tipoAprovacao === 'recebimento_divergencia') {
+    opId = randomUUID();
     const [loteRow] = await db.select().from(lote).where(eq(lote.id, apPre.loteId)).limit(1);
     if (!loteRow) throw new Error(`Lote ${apPre.loteId} nao encontrado ao aprovar divergencia`);
     if (!loteRow.produtoCodigoQ2p) {
@@ -248,6 +276,7 @@ export async function aprovar(input: AprovarInput): Promise<{ id: string; loteSt
           'Lote criado em versao anterior — re-consulte OMIE manualmente ou re-submeta o recebimento.',
       );
     }
+    notaFiscalParaEmail = loteRow.notaFiscal;
     const qtdNfKg = Number(loteRow.quantidadeFiscalKg);
     const vNF = Number(loteRow.valorTotalNfBrl);
 
@@ -256,31 +285,54 @@ export async function aprovar(input: AprovarInput): Promise<{ id: string; loteSt
       ? `\nMotivo da divergencia: ${apPre.observacoes.trim()}`
       : '';
 
-    omieIds = await executarAjusteOmieDual({
-      codigoLocalEstoqueAcxeOrigem: loteRow.codigoLocalEstoqueOrigemAcxe,
-      codigoLocalEstoqueAcxeDestino: corr.codigoLocalEstoqueAcxe,
-      codigoLocalEstoqueQ2p: corr.codigoLocalEstoqueQ2p,
-      codigoProdutoAcxe: Number(loteRow.produtoCodigoAcxe),
-      codigoProdutoQ2p: Number(loteRow.produtoCodigoQ2p),
-      quantidadeKg: qtdAprovadaKg,
-      valorUnitarioAcxe: valorUnitAcxe,
-      valorUnitarioQ2p: calcularValorUnitarioQ2p(vNF, qtdNfKg),
-      notaFiscal: loteRow.notaFiscal,
-      observacaoSufixo: `com divergencia aprovada por gestor (${apPre.tipoDivergencia ?? 'n/a'})${motivoOperador}`,
-    });
+    try {
+      omieIds = await executarAjusteOmieDual({
+        opId,
+        codigoLocalEstoqueAcxeOrigem: loteRow.codigoLocalEstoqueOrigemAcxe,
+        codigoLocalEstoqueAcxeDestino: corr.codigoLocalEstoqueAcxe,
+        codigoLocalEstoqueQ2p: corr.codigoLocalEstoqueQ2p,
+        codigoProdutoAcxe: Number(loteRow.produtoCodigoAcxe),
+        codigoProdutoQ2p: Number(loteRow.produtoCodigoQ2p),
+        quantidadeKg: qtdAprovadaKg,
+        valorUnitarioAcxe: valorUnitAcxe,
+        valorUnitarioQ2p: calcularValorUnitarioQ2p(vNF, qtdNfKg),
+        notaFiscal: loteRow.notaFiscal,
+        observacaoSufixo: `com divergencia aprovada por gestor (${apPre.tipoDivergencia ?? 'n/a'})${motivoOperador}`,
+      });
+    } catch (err) {
+      // Q2P falhou apos ACXE ok: persistiremos movimentacao parcial mas seguiremos
+      // com a aprovacao (decisao do gestor nao retrocede por instabilidade OMIE).
+      if (err instanceof OmieAjusteError && err.lado === 'q2p' && err.recoverable && err.idACXE) {
+        omieIds = {
+          idACXE: err.idACXE,
+          idQ2P: { idMovest: '', idAjuste: '' }, // placeholder; nao sera persistido
+        };
+        pendencia = {
+          tipo: 'pendente_q2p',
+          mensagemErro: (err.originalError as Error)?.message ?? err.message,
+        };
+      } else {
+        // ACXE falhou: estado limpo, propaga sem aprovar
+        throw err;
+      }
+    }
 
     // 2a chamada ACXE: transfere a DIFERENCA (qtdNF - qtdRecebida) para estoque
     // especial (Faltando ou Varredura) — fiel ao legado (NotaFiscalService linhas
-    // 198-272 e 383-460). Se a 1a chamada (acima) ja sucedeu mas esta falhar, a
-    // movimentacao ACXE fica desbalanceada na OMIE — alerta e log.
+    // 198-272 e 383-460). Pulamos se ja temos pendencia Q2P (estado parcial pre-existente).
     const qtdDiferencaKg = Number((qtdNfKg - qtdAprovadaKg).toFixed(3));
-    if (qtdDiferencaKg > 0 && (apPre.tipoDivergencia === 'faltando' || apPre.tipoDivergencia === 'varredura')) {
+    if (
+      !pendencia &&
+      qtdDiferencaKg > 0 &&
+      (apPre.tipoDivergencia === 'faltando' || apPre.tipoDivergencia === 'varredura')
+    ) {
       const codigoLocalEstoqueDiferenca = resolverEstoqueDiferencaAcxe({
         tipoDivergencia: apPre.tipoDivergencia,
         codigoLocalEstoqueDestinoAcxe: corr.codigoLocalEstoqueAcxe,
       });
       try {
         const idDiferenca = await transferirDiferencaAcxe({
+          opId,
           codigoLocalEstoqueOrigem: loteRow.codigoLocalEstoqueOrigemAcxe,
           codigoLocalEstoqueDiferenca,
           codigoProdutoAcxe: Number(loteRow.produtoCodigoAcxe),
@@ -294,11 +346,15 @@ export async function aprovar(input: AprovarInput): Promise<{ id: string; loteSt
           'Diferenca transferida para estoque especial',
         );
       } catch (err) {
+        // Dual call ja sucedeu (ACXE+Q2P principais); marca pendencia da 2a chamada ACXE.
         logger.error(
-          { err, idACXE: omieIds.idACXE, idQ2P: omieIds.idQ2P, qtdDiferencaKg },
-          'ALERTA: ajuste principal sucesso mas transferencia da diferenca falhou. Intervencao manual necessaria.',
+          { err, idACXE: omieIds!.idACXE, idQ2P: omieIds!.idQ2P, qtdDiferencaKg, opId },
+          'ALERTA: ajuste principal ok mas transferencia da diferenca falhou. Persistira movimentacao com pendente_acxe_faltando.',
         );
-        throw err;
+        pendencia = {
+          tipo: 'pendente_acxe_faltando',
+          mensagemErro: (err as Error)?.message ?? 'erro desconhecido',
+        };
       }
     }
   }
@@ -326,35 +382,74 @@ export async function aprovar(input: AprovarInput): Promise<{ id: string; loteSt
 
     await tx.update(lote).set({ status: statusLote, updatedAt: new Date() }).where(eq(lote.id, ap.loteId));
 
+    let movimentacaoId: string | null = null;
     if (omieIds && ap.tipoAprovacao === 'recebimento_divergencia') {
       const [loteRow] = await tx.select().from(lote).where(eq(lote.id, ap.loteId)).limit(1);
-      await tx.insert(movimentacao).values({
-        notaFiscal: loteRow!.notaFiscal ?? `APR-${ap.id}`,
-        tipoMovimento: 'entrada_nf',
-        subtipo: 'importacao',
-        loteId: ap.loteId,
-        quantidadeKg: String(Number(ap.quantidadeRecebidaKg ?? loteRow!.quantidadeFisicaKg)),
-        mvAcxe: 1,
-        dtAcxe: new Date(),
-        idMovestAcxe: omieIds.idACXE.idMovest,
-        idAjusteAcxe: omieIds.idACXE.idAjuste,
-        idUserAcxe: input.usuarioId,
-        mvQ2p: 1,
-        dtQ2p: new Date(),
-        idMovestQ2p: omieIds.idQ2P.idMovest,
-        idAjusteQ2p: omieIds.idQ2P.idAjuste,
-        idUserQ2p: input.usuarioId,
-        observacoes: `Aprovada divergencia ${ap.tipoDivergencia ?? ''} — qtd final ${ap.quantidadeRecebidaKg ?? loteRow!.quantidadeFisicaKg} kg`,
-      });
+      const isPendenteQ2p = pendencia?.tipo === 'pendente_q2p';
+      const isPendenteAcxeFaltando = pendencia?.tipo === 'pendente_acxe_faltando';
+      const statusOmieMov: 'concluida' | 'pendente_q2p' | 'pendente_acxe_faltando' = pendencia
+        ? pendencia.tipo
+        : 'concluida';
+      const [movCriada] = await tx
+        .insert(movimentacao)
+        .values({
+          notaFiscal: loteRow!.notaFiscal ?? `APR-${ap.id}`,
+          tipoMovimento: 'entrada_nf',
+          subtipo: 'importacao',
+          loteId: ap.loteId,
+          quantidadeKg: String(Number(ap.quantidadeRecebidaKg ?? loteRow!.quantidadeFisicaKg)),
+          mvAcxe: 1,
+          dtAcxe: new Date(),
+          idMovestAcxe: omieIds.idACXE.idMovest,
+          idAjusteAcxe: omieIds.idACXE.idAjuste,
+          idUserAcxe: input.usuarioId,
+          mvQ2p: isPendenteQ2p ? null : 1,
+          dtQ2p: isPendenteQ2p ? null : new Date(),
+          idMovestQ2p: isPendenteQ2p ? null : omieIds.idQ2P.idMovest,
+          idAjusteQ2p: isPendenteQ2p ? null : omieIds.idQ2P.idAjuste,
+          idUserQ2p: isPendenteQ2p ? null : input.usuarioId,
+          observacoes: `Aprovada divergencia ${ap.tipoDivergencia ?? ''} — qtd final ${ap.quantidadeRecebidaKg ?? loteRow!.quantidadeFisicaKg} kg`,
+          opId: opId!,
+          statusOmie: statusOmieMov,
+          tentativasQ2p: isPendenteQ2p ? 1 : 0,
+          tentativasAcxeFaltando: isPendenteAcxeFaltando ? 1 : 0,
+          ultimoErroOmie: pendencia
+            ? {
+                lado: pendencia.tipo === 'pendente_q2p' ? 'q2p' : 'acxe-faltando',
+                mensagem: pendencia.mensagemErro,
+                timestamp: new Date().toISOString(),
+              }
+            : null,
+        })
+        .returning();
+      movimentacaoId = movCriada!.id;
     }
 
-    return { statusLote, loteId: ap.loteId, operadorId: ap.lancadoPor, tipoAprovacao: ap.tipoAprovacao };
+    return {
+      statusLote,
+      loteId: ap.loteId,
+      operadorId: ap.lancadoPor,
+      tipoAprovacao: ap.tipoAprovacao,
+      movimentacaoId,
+    };
   });
 
   logger.info(
-    { aprovacaoId: input.id, perfilUsuario: input.perfilUsuario, loteStatus: resultado.statusLote, omieIds },
+    { aprovacaoId: input.id, perfilUsuario: input.perfilUsuario, loteStatus: resultado.statusLote, omieIds, pendencia },
     'Aprovacao confirmada',
   );
+
+  // Se ha pendencia OMIE residual, notifica admin/gestor (fire-and-forget)
+  if (pendencia && resultado.movimentacaoId && opId) {
+    void enviarAlertaPendenciaOmie({
+      movimentacaoId: resultado.movimentacaoId,
+      opId,
+      notaFiscal: notaFiscalParaEmail,
+      ladoPendente: pendencia.tipo === 'pendente_q2p' ? 'q2p' : 'acxe-faltando',
+      mensagemErro: pendencia.mensagemErro,
+      tentativas: 1,
+    });
+  }
 
   // Notifica operador fora da transacao (email nao bloqueia)
   await enviarNotificacaoAprovacaoOperador({
@@ -364,7 +459,19 @@ export async function aprovar(input: AprovarInput): Promise<{ id: string; loteSt
     loteId: resultado.loteId,
   });
 
-  return { id: input.id, loteStatus: resultado.statusLote };
+  return {
+    id: input.id,
+    loteStatus: resultado.statusLote,
+    pendenciaOmie:
+      pendencia && resultado.movimentacaoId && opId
+        ? {
+            lado: pendencia.tipo === 'pendente_q2p' ? 'q2p' : 'acxe-faltando',
+            opId,
+            movimentacaoId: resultado.movimentacaoId,
+            mensagem: pendencia.mensagemErro,
+          }
+        : undefined,
+  };
 }
 
 export interface RejeitarInput {

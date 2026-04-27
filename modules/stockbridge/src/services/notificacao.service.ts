@@ -110,6 +110,49 @@ export async function enviarAlertaAprovacaoPendente(args: {
 }
 
 /**
+ * Notifica admin/gestor quando OMIE deixa uma movimentacao em estado parcial
+ * (status_omie='pendente_q2p' ou 'pendente_acxe_faltando'). Acao esperada:
+ * acessar painel de operacoes pendentes e retentar.
+ */
+export async function enviarAlertaPendenciaOmie(args: {
+  movimentacaoId: string;
+  opId: string;
+  notaFiscal: string;
+  ladoPendente: 'q2p' | 'acxe-faltando';
+  mensagemErro: string;
+  tentativas: number;
+}): Promise<void> {
+  const to = getAdminEmail();
+  const config = getConfig();
+  const linkPainel = `${config.APP_URL}/stockbridge/operacoes-pendentes`;
+  const ladoLabel = args.ladoPendente === 'q2p' ? 'OMIE Q2P' : 'OMIE ACXE (transferencia diferenca)';
+  const subject = `StockBridge — ⚠ Pendencia OMIE (NF ${args.notaFiscal})`;
+  const html = `
+    <h2 style="color: #D97706;">Operacao OMIE pendente</h2>
+    <p>O recebimento abaixo ficou em estado parcial — a chamada inicial sucedeu mas a continuacao falhou. Nada foi perdido; basta retentar.</p>
+    <ul>
+      <li><strong>NF:</strong> ${args.notaFiscal}</li>
+      <li><strong>Lado pendente:</strong> ${ladoLabel}</li>
+      <li><strong>Tentativas ja feitas:</strong> ${args.tentativas}</li>
+      <li><strong>Erro reportado:</strong> ${args.mensagemErro}</li>
+    </ul>
+    <p style="margin:16px 0;">
+      <a href="${linkPainel}"
+         style="display:inline-block;padding:10px 20px;background:#0077cc;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;">
+        Abrir painel de operacoes pendentes →
+      </a>
+    </p>
+    <p style="color:#888;font-size:11px;">Movimentacao: ${args.movimentacaoId} · op_id: ${args.opId}</p>
+    <p style="color:#888;font-size:11px;">Sistema Atlas — StockBridge</p>
+  `;
+  try {
+    await sendEmail({ to, subject, html });
+  } catch (err) {
+    logger.error({ err, args }, 'Falha ao enviar email de pendencia OMIE');
+  }
+}
+
+/**
  * Resolve o email do usuario operador pelo id. Retorna null se nao encontrado
  * ou sem email — caller deve tratar fallback.
  */
