@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { createLogger } from '@atlas/core';
 import { requireGestor } from '../middleware/role.js';
-import { listar, softDelete, MovimentacaoNaoEncontradaError } from '../services/movimentacao.service.js';
+import { listar } from '../services/movimentacao.service.js';
 
 const logger = createLogger('stockbridge:movimentacao');
 const router: Router = Router();
@@ -32,33 +32,6 @@ router.get('/api/v1/stockbridge/movimentacoes', requireGestor, async (req: Reque
     });
   } catch (err) {
     logger.error({ err }, 'Erro ao listar movimentacoes');
-    res.status(500).json({ data: null, error: { code: 'MOVIMENTACAO_FAIL', message: (err as Error).message } });
-  }
-});
-
-const DeleteSchema = z.object({ motivo: z.string().max(500).optional() });
-
-router.delete('/api/v1/stockbridge/movimentacoes/:id', requireGestor, async (req: Request, res: Response) => {
-  const id = req.params.id as string | undefined;
-  const userId = req.user?.id;
-  if (!id || !userId) {
-    res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', message: 'id/usuario obrigatorios' } });
-    return;
-  }
-  const parsed = DeleteSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', message: parsed.error.issues.map((i) => i.message).join('; ') } });
-    return;
-  }
-  try {
-    await softDelete(id, userId, parsed.data.motivo);
-    res.json({ data: { id, soft_deleted: true }, error: null });
-  } catch (err) {
-    if (err instanceof MovimentacaoNaoEncontradaError) {
-      res.status(404).json({ data: null, error: { code: 'MOVIMENTACAO_NAO_ENCONTRADA', message: err.message } });
-      return;
-    }
-    logger.error({ err }, 'Erro ao soft-deletar movimentacao');
     res.status(500).json({ data: null, error: { code: 'MOVIMENTACAO_FAIL', message: (err as Error).message } });
   }
 });

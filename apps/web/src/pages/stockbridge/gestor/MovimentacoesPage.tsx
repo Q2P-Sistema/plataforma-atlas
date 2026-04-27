@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Modal } from '@atlas/ui';
+import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '../../../stores/auth.store.js';
 
 interface LadoCnpj {
@@ -47,13 +46,10 @@ function useApiFetch() {
 
 export function MovimentacoesPage() {
   const apiFetch = useApiFetch();
-  const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [filtroTipo, setFiltroTipo] = useState('');
   const [filtroNf, setFiltroNf] = useState('');
   const [filtroCnpj, setFiltroCnpj] = useState<'' | 'acxe' | 'q2p' | 'ambos'>('');
-  const [apagando, setApagando] = useState<Movimentacao | null>(null);
-  const [motivo, setMotivo] = useState('');
 
   const { data, isLoading, error } = useQuery<{ items: Movimentacao[]; total: number }>({
     queryKey: ['sb', 'movimentacoes', page, filtroTipo, filtroNf, filtroCnpj],
@@ -67,19 +63,6 @@ export function MovimentacoesPage() {
     },
   });
 
-  const deleteMut = useMutation({
-    mutationFn: async (args: { id: string; motivo: string }) =>
-      apiFetch(`/api/v1/stockbridge/movimentacoes/${args.id}`, {
-        method: 'DELETE',
-        body: JSON.stringify({ motivo: args.motivo }),
-      }),
-    onSuccess: () => {
-      setApagando(null);
-      setMotivo('');
-      queryClient.invalidateQueries({ queryKey: ['sb', 'movimentacoes'] });
-    },
-  });
-
   const totalPages = data ? Math.max(1, Math.ceil(data.total / 50)) : 1;
 
   return (
@@ -87,7 +70,7 @@ export function MovimentacoesPage() {
       <div className="mb-5">
         <h1 className="text-2xl font-serif text-atlas-ink mb-1">Movimentações</h1>
         <p className="text-sm text-atlas-muted">
-          Log consolidado dual-CNPJ (ACXE + Q2P). Exclusão é soft — histórico preservado em audit log.
+          Log consolidado dual-CNPJ (ACXE + Q2P). Para reverter um lançamento, registre uma movimentação compensatória — soft delete daria divergência silenciosa com OMIE.
         </p>
       </div>
 
@@ -151,7 +134,6 @@ export function MovimentacoesPage() {
                   <th className="text-left px-3 py-2">Lote</th>
                   <th className="text-left px-3 py-2">ACXE</th>
                   <th className="text-left px-3 py-2">Q2P</th>
-                  <th className="text-right px-3 py-2">Ação</th>
                 </tr>
               </thead>
               <tbody>
@@ -188,14 +170,6 @@ export function MovimentacoesPage() {
                         <span className="text-atlas-muted">—</span>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-right">
-                      <button
-                        onClick={() => setApagando(m)}
-                        className="px-2 py-1 text-[11px] border border-red-300 text-red-700 rounded hover:bg-red-50"
-                      >
-                        Soft delete
-                      </button>
-                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -224,42 +198,6 @@ export function MovimentacoesPage() {
             </div>
           </div>
         </>
-      )}
-
-      {apagando && (
-        <Modal open title={`Soft delete — NF ${apagando.notaFiscal}`} onClose={() => setApagando(null)}>
-          <div className="space-y-3">
-            <p className="text-sm text-atlas-muted">
-              Esta ação <strong>não apaga o registro</strong> — apenas marca como inativo.
-              Todo o histórico continua no audit log e pode ser recuperado com intervenção do admin.
-            </p>
-            <div>
-              <label className="block text-xs font-semibold text-atlas-muted mb-1">Motivo (opcional)</label>
-              <textarea
-                value={motivo}
-                onChange={(e) => setMotivo(e.target.value)}
-                rows={2}
-                placeholder="Ex: lançamento duplicado"
-                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
-              />
-            </div>
-            {deleteMut.isError && (
-              <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-800">
-                {(deleteMut.error as Error).message}
-              </div>
-            )}
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => setApagando(null)} className="px-4 py-2 border border-slate-300 rounded text-sm">Cancelar</button>
-              <button
-                onClick={() => deleteMut.mutate({ id: apagando.id, motivo })}
-                disabled={deleteMut.isPending}
-                className="px-5 py-2 bg-red-700 text-white rounded text-sm font-medium disabled:opacity-50"
-              >
-                Confirmar soft delete
-              </button>
-            </div>
-          </div>
-        </Modal>
       )}
     </div>
   );
