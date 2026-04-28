@@ -1,14 +1,14 @@
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '../../../stores/auth.store.js';
 
 interface ConfigProduto {
   produtoCodigoAcxe: number;
   nomeProduto: string;
   familiaOmie: string | null;
+  familiaAtlas: string | null;
   consumoMedioDiarioKg: number | null;
   leadTimeDias: number | null;
-  familiaCategoria: string | null;
   incluirEmMetricas: boolean;
 }
 
@@ -26,43 +26,19 @@ function useApiFetch() {
 
 export function ConfigProdutosPage() {
   const apiFetch = useApiFetch();
-  const queryClient = useQueryClient();
-  const [editando, setEditando] = useState<number | null>(null);
   const [busca, setBusca] = useState('');
-  const [edits, setEdits] = useState<Record<number, Partial<ConfigProduto>>>({});
 
   const { data = [] } = useQuery<ConfigProduto[]>({
     queryKey: ['sb', 'config-produtos'],
     queryFn: async () => (await apiFetch('/api/v1/stockbridge/config/produtos')).data as ConfigProduto[],
   });
 
-  const salvarMut = useMutation({
-    mutationFn: async (codigo: number) => {
-      const patch = edits[codigo] ?? {};
-      const payload: Record<string, unknown> = {};
-      if (patch.consumoMedioDiarioKg !== undefined) payload.consumo_medio_diario_kg = patch.consumoMedioDiarioKg;
-      if (patch.leadTimeDias !== undefined) payload.lead_time_dias = patch.leadTimeDias;
-      if (patch.familiaCategoria !== undefined) payload.familia_categoria = patch.familiaCategoria;
-      if (patch.incluirEmMetricas !== undefined) payload.incluir_em_metricas = patch.incluirEmMetricas;
-      return apiFetch(`/api/v1/stockbridge/config/produtos/${codigo}`, { method: 'PATCH', body: JSON.stringify(payload) });
-    },
-    onSuccess: (_, codigo) => {
-      setEditando(null);
-      setEdits((prev) => {
-        const next = { ...prev };
-        delete next[codigo];
-        return next;
-      });
-      queryClient.invalidateQueries({ queryKey: ['sb', 'config-produtos'] });
-      queryClient.invalidateQueries({ queryKey: ['stockbridge', 'cockpit'] });
-    },
-  });
-
   const filtrado = data.filter((p) =>
     !busca ||
     p.nomeProduto.toLowerCase().includes(busca.toLowerCase()) ||
     String(p.produtoCodigoAcxe).includes(busca) ||
-    (p.familiaOmie?.toLowerCase().includes(busca.toLowerCase()) ?? false),
+    (p.familiaOmie?.toLowerCase().includes(busca.toLowerCase()) ?? false) ||
+    (p.familiaAtlas?.toLowerCase().includes(busca.toLowerCase()) ?? false),
   );
 
   return (
@@ -70,7 +46,8 @@ export function ConfigProdutosPage() {
       <div className="mb-5">
         <h1 className="text-2xl font-serif text-atlas-ink mb-1">Configuração de Produtos</h1>
         <p className="text-sm text-atlas-muted">
-          Consumo médio diário, lead time e família para cálculo de cobertura e criticidade.
+          Consumo médio diário (calculado das vendas Q2P+ACXE), lead time e família.
+          Dados sincronizados do banco — sem edição manual.
         </p>
       </div>
 
@@ -83,100 +60,36 @@ export function ConfigProdutosPage() {
 
       <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
         <table className="w-full text-xs">
-          <thead className="bg-slate-50 dark:bg-slate-900/40 text-atlas-muted">
+          <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-900/95 text-atlas-muted shadow-sm">
             <tr>
               <th className="text-left px-3 py-2">SKU</th>
               <th className="text-left px-3 py-2">Família OMIE</th>
+              <th className="text-left px-3 py-2">Família Atlas</th>
               <th className="text-right px-3 py-2">Consumo (kg/dia)</th>
               <th className="text-right px-3 py-2">Lead Time (dias)</th>
-              <th className="text-left px-3 py-2">Família Atlas</th>
               <th className="text-center px-3 py-2">Em métricas</th>
-              <th className="text-right px-3 py-2">Ação</th>
             </tr>
           </thead>
           <tbody>
-            {filtrado.map((p) => {
-              const editavel = editando === p.produtoCodigoAcxe;
-              const current = { ...p, ...edits[p.produtoCodigoAcxe] };
-              return (
-                <tr key={p.produtoCodigoAcxe} className="border-t border-slate-200 dark:border-slate-700">
-                  <td className="px-3 py-2">
-                    <div className="font-medium">{p.nomeProduto}</div>
-                    <div className="text-[10px] font-mono text-atlas-muted">{p.produtoCodigoAcxe}</div>
-                  </td>
-                  <td className="px-3 py-2 text-atlas-muted">{p.familiaOmie ?? '—'}</td>
-                  <td className="px-3 py-2 text-right">
-                    {editavel ? (
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={current.consumoMedioDiarioKg ?? ''}
-                        onChange={(e) => setEdits((prev) => ({ ...prev, [p.produtoCodigoAcxe]: { ...prev[p.produtoCodigoAcxe], consumoMedioDiarioKg: e.target.value ? Number(e.target.value) : null } }))}
-                        className="w-20 px-2 py-1 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-xs text-right"
-                      />
-                    ) : (
-                      p.consumoMedioDiarioKg != null ? p.consumoMedioDiarioKg.toFixed(2) : '—'
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    {editavel ? (
-                      <input
-                        type="number"
-                        value={current.leadTimeDias ?? ''}
-                        onChange={(e) => setEdits((prev) => ({ ...prev, [p.produtoCodigoAcxe]: { ...prev[p.produtoCodigoAcxe], leadTimeDias: e.target.value ? Number(e.target.value) : null } }))}
-                        className="w-16 px-2 py-1 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-xs text-right"
-                      />
-                    ) : (
-                      p.leadTimeDias ?? '—'
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    {editavel ? (
-                      <input
-                        value={current.familiaCategoria ?? ''}
-                        onChange={(e) => setEdits((prev) => ({ ...prev, [p.produtoCodigoAcxe]: { ...prev[p.produtoCodigoAcxe], familiaCategoria: e.target.value || null } }))}
-                        placeholder="PP / PE / PS"
-                        className="w-24 px-2 py-1 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-xs"
-                      />
-                    ) : (
-                      p.familiaCategoria ?? '—'
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-center">
-                    <input
-                      type="checkbox"
-                      checked={current.incluirEmMetricas ?? true}
-                      onChange={(e) => {
-                        setEdits((prev) => ({ ...prev, [p.produtoCodigoAcxe]: { ...prev[p.produtoCodigoAcxe], incluirEmMetricas: e.target.checked } }));
-                        setEditando(p.produtoCodigoAcxe);
-                      }}
-                    />
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    {editavel ? (
-                      <>
-                        <button
-                          onClick={() => salvarMut.mutate(p.produtoCodigoAcxe)}
-                          className="px-2 py-1 bg-atlas-btn-bg text-atlas-btn-text rounded text-xs"
-                        >
-                          Salvar
-                        </button>
-                        <button
-                          onClick={() => { setEditando(null); setEdits((prev) => { const next = { ...prev }; delete next[p.produtoCodigoAcxe]; return next; }); }}
-                          className="ml-1 px-2 py-1 border border-slate-300 rounded text-xs"
-                        >
-                          x
-                        </button>
-                      </>
-                    ) : (
-                      <button onClick={() => setEditando(p.produtoCodigoAcxe)} className="px-2 py-1 border border-slate-300 rounded text-xs">
-                        Editar
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
+            {filtrado.map((p) => (
+              <tr key={p.produtoCodigoAcxe} className="border-t border-slate-200 dark:border-slate-700">
+                <td className="px-3 py-2">
+                  <div className="font-medium">{p.nomeProduto}</div>
+                  <div className="text-[10px] font-mono text-atlas-muted">{p.produtoCodigoAcxe}</div>
+                </td>
+                <td className="px-3 py-2 text-atlas-muted">{p.familiaOmie ?? '—'}</td>
+                <td className="px-3 py-2 text-atlas-muted">{p.familiaAtlas ?? '—'}</td>
+                <td className="px-3 py-2 text-right">
+                  {p.consumoMedioDiarioKg != null ? p.consumoMedioDiarioKg.toFixed(2) : '—'}
+                </td>
+                <td className="px-3 py-2 text-right">{p.leadTimeDias ?? '—'}</td>
+                <td className="px-3 py-2 text-center">
+                  <span className={`text-xs px-2 py-0.5 rounded ${p.incluirEmMetricas ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                    {p.incluirEmMetricas ? 'sim' : 'não'}
+                  </span>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

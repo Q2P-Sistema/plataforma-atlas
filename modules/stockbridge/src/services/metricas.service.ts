@@ -122,10 +122,10 @@ export async function getKPIs(): Promise<MetricasKPIs> {
   const exposicaoUsd = calcularExposicaoCambial(lotes);
   const exposicaoBrl = exposicaoUsd * ptax;
 
-  // Giro medio por familia (consumo_medio_diario_kg da config_produto)
+  // Giro medio por familia (consumo_medio_diario_kg da config_produto, familia via JOIN)
   const giroRes = await pool.query(`
     SELECT
-      c.familia_categoria AS fam,
+      f.familia_atlas AS fam,
       AVG(CASE
         WHEN c.consumo_medio_diario_kg > 0
         THEN (SELECT COALESCE(SUM(quantidade_fisica_kg), 0)
@@ -134,8 +134,11 @@ export async function getKPIs(): Promise<MetricasKPIs> {
               AND l.ativo = true AND l.estagio_transito IS NULL) / c.consumo_medio_diario_kg
         ELSE NULL END)::numeric AS dias_medio
     FROM stockbridge.config_produto c
-    WHERE c.incluir_em_metricas = true AND c.familia_categoria IS NOT NULL
-    GROUP BY c.familia_categoria
+    INNER JOIN public."tbl_produtos_ACXE" p ON p.codigo_produto = c.produto_codigo_acxe
+    INNER JOIN stockbridge.familia_omie_atlas f ON f.familia_omie = p.descricao_familia
+    WHERE c.incluir_em_metricas = true
+      AND f.incluir_em_metricas = true
+    GROUP BY f.familia_atlas
   `).catch(() => ({ rows: [] }));
 
   const giro: Record<string, number> = {};
@@ -173,15 +176,16 @@ export async function getEvolucao(meses: number = 6): Promise<EvolucaoMensal[]> 
   const res = await pool.query(`
     SELECT
       to_char(date_trunc('month', m.created_at), 'YYYY-MM') AS mes,
-      c.familia_categoria AS familia,
+      f.familia_atlas AS familia,
       SUM(ABS(m.quantidade_kg))::numeric AS qtd,
       SUM(ABS(m.quantidade_kg) / 1000.0 * COALESCE(l.custo_brl_kg, 0) * 5.0)::numeric AS valor_brl
     FROM stockbridge.movimentacao m
     LEFT JOIN stockbridge.lote l ON l.id = m.lote_id
-    LEFT JOIN stockbridge.config_produto c ON c.produto_codigo_acxe = l.produto_codigo_acxe
+    LEFT JOIN public."tbl_produtos_ACXE" p ON p.codigo_produto = l.produto_codigo_acxe
+    LEFT JOIN stockbridge.familia_omie_atlas f ON f.familia_omie = p.descricao_familia
     WHERE m.ativo = true
       AND m.created_at >= NOW() - ($1 || ' months')::interval
-    GROUP BY mes, c.familia_categoria
+    GROUP BY mes, f.familia_atlas
     ORDER BY mes ASC
   `, [meses]).catch((err) => {
     logger.warn({ err: err.message }, 'Query de evolucao falhou');
@@ -222,7 +226,7 @@ export async function getTabelaAnalitica(): Promise<TabelaAnaliticaSku[]> {
     SELECT
       s.produto_codigo_acxe,
       COALESCE(p.descricao, 'Produto ' || s.produto_codigo_acxe::text) AS nome,
-      COALESCE(c.familia_categoria, p.descricao_familia) AS familia,
+      COALESCE(f.familia_atlas, p.descricao_familia) AS familia,
       p.ncm,
       s.qtd_kg,
       s.cmp_usd_ton,
@@ -230,9 +234,11 @@ export async function getTabelaAnalitica(): Promise<TabelaAnaliticaSku[]> {
       COALESCE(d.c, 0) AS divs
     FROM saldo s
     LEFT JOIN public."tbl_produtos_ACXE" p ON p.codigo_produto = s.produto_codigo_acxe
+    LEFT JOIN stockbridge.familia_omie_atlas f ON f.familia_omie = p.descricao_familia
     LEFT JOIN stockbridge.config_produto c ON c.produto_codigo_acxe = s.produto_codigo_acxe
     LEFT JOIN divs d ON d.produto_codigo_acxe = s.produto_codigo_acxe
-    WHERE COALESCE(c.incluir_em_metricas, true) = true
+    WHERE COALESCE(f.incluir_em_metricas, true) = true
+      AND COALESCE(c.incluir_em_metricas, true) = true
     ORDER BY (s.qtd_kg * s.cmp_usd_ton) DESC
   `).catch((err) => {
     logger.warn({ err: err.message }, 'Query tabela analitica falhou');

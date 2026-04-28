@@ -20,7 +20,7 @@ vi.mock('@atlas/core', () => ({
           provisorio_kg: 0,
           consumo_medio_diario_kg: 1200,
           lead_time_dias: 60,
-          familia_categoria: 'PP',
+          familia_atlas: 'PP',
           incluir: true,
           divs: 0,
           aprs: 0,

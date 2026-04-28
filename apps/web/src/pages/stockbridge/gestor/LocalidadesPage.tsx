@@ -52,7 +52,7 @@ export function LocalidadesPage() {
 
       <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
         <table className="w-full text-sm">
-          <thead className="bg-slate-50 dark:bg-slate-900/40 text-xs text-atlas-muted">
+          <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-900/95 text-xs text-atlas-muted shadow-sm">
             <tr>
               <th className="text-left px-3 py-2">Código</th>
               <th className="text-left px-3 py-2">Nome</th>

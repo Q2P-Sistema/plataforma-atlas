@@ -27,9 +27,9 @@ Camada 5  →  Incidentes (Operações pendentes — só com cenário forçado)
 
 Sem cadastros sãos, todos os fluxos abaixo falham. **Validar primeiro.**
 
-### 1. Localidades + correlação ACXE↔Q2P
+### 1. Localidades + correlação ACXE↔Q2P ✅
 
-- [ ] Toda localidade ativa tem correlação completa (ACXE **e** Q2P preenchidos)
+- [x] Toda localidade ativa **física** tem correlação completa (ACXE **e** Q2P preenchidos)
 
 ```sql
 SELECT l.codigo, l.nome, l.tipo, l.cnpj,
@@ -40,16 +40,22 @@ WHERE l.ativo = true
 ORDER BY l.codigo;
 ```
 
-**Critério**: nenhuma linha com `codigo_local_estoque_acxe` ou `codigo_local_estoque_q2p` NULL. Se aparecer NULL → recebimento naquela localidade vai falhar.
+**Critério (refinado)**: nenhuma localidade `proprio`, `tpl`, `porto_seco` com NULL em ACXE/Q2P. NULL em Q2P é aceitável para `virtual_ajuste` (estoque ACXE-only de retenção como VARREDURA), porém esse caso foi removido da base — estoques especiais ACXE vivem hardcoded em [estoques-especiais-acxe.ts](modules/stockbridge/src/services/estoques-especiais-acxe.ts).
 
-- [ ] CRUD de localidade via UI funciona (operador vê leitura, gestor edita)
-- [ ] Tipos válidos: `proprio`, `tpl`, `porto_seco`, `virtual_transito`, `virtual_ajuste`
+_Resultado: 4 físicas (11.1, 12.1, 21.1, 31.1) com correlação completa. Linhas virtuais 10.0.3 VARREDURA e 90.0.2 TRANSITO removidas — não eram referenciadas pelo código (usado direto via constantes TS)._
+
+- [x] Listagem da UI funciona (operador vê, gestor vê — sem edição)
+- [x] Tipos válidos: `proprio`, `tpl`, `porto_seco`, `virtual_transito`, `virtual_ajuste`
+
+_Notas: `tpl` = 3PL (Third-Party Logistics, ex: ATN). UI mostra "3PL" como label. Sem CHECK constraint no DB — sincronização entre [types.ts:99](modules/stockbridge/src/types.ts#L99), [schemas/stockbridge.ts:29](packages/db/src/schemas/stockbridge.ts#L29) e [LocalidadesPage.tsx:4](apps/web/src/pages/stockbridge/gestor/LocalidadesPage.tsx#L4) é manual._
+
+_UI vira read-only no commit `b8bb589` — botões "+ Nova / Editar / Desativar" removidos. Edição via API direta ainda permitida para gestor+ (uso administrativo)._
 
 ---
 
-### 2. Correlação de produtos ACXE↔Q2P (match por descrição)
+### 2. Correlação de produtos ACXE↔Q2P (match por descrição) ✅
 
-- [ ] Listar produtos sem correlato Q2P
+- [x] Listar produtos sem correlato Q2P
 
 ```sql
 SELECT a.codigo_produto AS cod_acxe, a.descricao,
@@ -60,9 +66,18 @@ WHERE (a.inativo IS NULL OR a.inativo <> 'S')
 ORDER BY q.codigo_produto IS NULL DESC, a.descricao;
 ```
 
-**Critério**: produtos com `cod_q2p` NULL bloqueiam recebimento. Decidir: cadastrar correlato na Q2P ou aceitar exceção.
+**Critério (refinado)**: produtos com `cod_q2p` NULL **e** com movimentação ACXE recente bloqueiam recebimento. NULL em legacy/stale ou ACXE-only (`CPT *`) é aceitável.
 
-- [ ] Tentar receber NF de produto sem correlato → resposta 409 `PRODUTO_SEM_CORRELATO` + email admin disparado
+_Auditoria 2026-04-28:_
+- _499 ACXE ativos · 308 sem correlato Q2P (62%) · só **19** com mov ACXE últimos 90 dias_
+- _17 dos 19 são `CPT *` (ACXE-only, esperado)_
+- _**Follow-ups (não bloqueiam validação)**:_
+  - _`SUCATA DE PE` (4505583526) — existe Q2P como `SUCATA DE PE REC` (3033097699). Renomear ACXE OU criar Q2P "SUCATA DE PE"_
+  - _`RECICLADO DE PEAD` (4464829204) — sem candidato óbvio. Decidir: criar Q2P ou aceitar como ACXE-only_
+
+- [x] Tentar receber NF de produto sem correlato → resposta 409 `PRODUTO_SEM_CORRELATO` + email admin disparado
+
+_Validado via teste de unidade ([recebimento.service.ts:235-249](modules/stockbridge/src/services/recebimento.service.ts#L235-L249)). Smoke E2E real fica como item de T056._
 
 ---
 

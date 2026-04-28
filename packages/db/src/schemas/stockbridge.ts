@@ -227,9 +227,24 @@ export const configProduto = stockbridgeSchema.table(
     produtoCodigoAcxe: bigint('produto_codigo_acxe', { mode: 'number' }).notNull().unique(),
     consumoMedioDiarioKg: numeric('consumo_medio_diario_kg', { precision: 10, scale: 3 }),
     leadTimeDias: integer('lead_time_dias'),
-    familiaCategoria: varchar('familia_categoria', { length: 50 }),
     incluirEmMetricas: boolean('incluir_em_metricas').notNull().default(true),
     updatedBy: uuid('updated_by').references(() => users.id),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+);
+
+// ── Familia OMIE Atlas (mapping macro) ─────────────────────
+// Lookup que mapeia descricao_familia do OMIE -> categoria Atlas (PE/PP/PS/etc).
+// Migration 0017. Substitui o campo config_produto.familia_categoria — agora a
+// categoria e derivada via JOIN, evitando duplicacao por SKU.
+export const familiaOmieAtlas = stockbridgeSchema.table(
+  'familia_omie_atlas',
+  {
+    familiaOmie: text('familia_omie').primaryKey(),
+    familiaAtlas: text('familia_atlas').notNull(),
+    incluirEmMetricas: boolean('incluir_em_metricas').notNull().default(true),
+    observacao: text('observacao'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
 );
@@ -251,3 +266,5 @@ export type FornecedorExclusao = typeof fornecedorExclusao.$inferSelect;
 export type NewFornecedorExclusao = typeof fornecedorExclusao.$inferInsert;
 export type ConfigProduto = typeof configProduto.$inferSelect;
 export type NewConfigProduto = typeof configProduto.$inferInsert;
+export type FamiliaOmieAtlas = typeof familiaOmieAtlas.$inferSelect;
+export type NewFamiliaOmieAtlas = typeof familiaOmieAtlas.$inferInsert;

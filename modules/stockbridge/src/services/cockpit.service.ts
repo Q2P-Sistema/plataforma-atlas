@@ -108,6 +108,7 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
       s.produto_codigo_acxe,
       COALESCE(p.descricao, 'Produto ' || s.produto_codigo_acxe::text) AS nome,
       p.descricao_familia AS familia,
+      f.familia_atlas     AS familia_atlas,
       p.ncm,
       COALESCE(s.fisica_kg, 0)          AS fisica_kg,
       COALESCE(s.fiscal_kg, 0)          AS fiscal_kg,
@@ -117,17 +118,20 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
       COALESCE(s.provisorio_kg, 0)      AS provisorio_kg,
       c.consumo_medio_diario_kg,
       c.lead_time_dias,
-      c.familia_categoria,
-      COALESCE(c.incluir_em_metricas, true) AS incluir,
       COALESCE(d.c, 0) AS divs,
       COALESCE(a.c, 0) AS aprs
     FROM saldo s
-    LEFT JOIN public."tbl_produtos_ACXE" p ON p.codigo_produto = s.produto_codigo_acxe
-    LEFT JOIN stockbridge.config_produto c ON c.produto_codigo_acxe = s.produto_codigo_acxe
+    LEFT JOIN public."tbl_produtos_ACXE" p
+      ON p.codigo_produto = s.produto_codigo_acxe
+    LEFT JOIN stockbridge.familia_omie_atlas f
+      ON f.familia_omie = p.descricao_familia
+    LEFT JOIN stockbridge.config_produto c
+      ON c.produto_codigo_acxe = s.produto_codigo_acxe
     LEFT JOIN divs d ON d.produto_codigo_acxe = s.produto_codigo_acxe
     LEFT JOIN apr  a ON a.produto_codigo_acxe = s.produto_codigo_acxe
-    WHERE COALESCE(c.incluir_em_metricas, true) = true
-      AND ($2::text IS NULL OR c.familia_categoria = $2 OR p.descricao_familia ILIKE $2 || '%')
+    WHERE COALESCE(f.incluir_em_metricas, true) = true
+      AND COALESCE(c.incluir_em_metricas, true) = true
+      AND ($2::text IS NULL OR f.familia_atlas = $2 OR p.descricao_familia ILIKE $2 || '%')
     ORDER BY COALESCE(p.descricao, s.produto_codigo_acxe::text)
   `;
 
@@ -154,7 +158,7 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
     return {
       codigoAcxe: Number(r.produto_codigo_acxe),
       nome: String(r.nome),
-      familia: (r.familia as string | null) ?? (r.familia_categoria as string | null) ?? null,
+      familia: (r.familia_atlas as string | null) ?? (r.familia as string | null) ?? null,
       ncm: (r.ncm as string | null) ?? null,
       fisicaKg,
       fiscalKg: Number(r.fiscal_kg),
