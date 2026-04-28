@@ -1,0 +1,396 @@
+# Checklist de Validação — Módulo StockBridge
+
+Roteiro de validação manual em camadas. Cada camada depende da anterior — não vale pular para testar saídas se os cadastros base não estão sãos.
+
+**Como usar**: marque `- [x]` quando confirmar. Anote observações ou divergências em itálico abaixo do item.
+
+**DB de teste**: `localhost:5436` (PG do dev).
+
+**OMIE**: em dev rode com `OMIE_MODE=mock` para evitar bater na API real (exceto se quiser testar T051/T052 sandbox).
+
+---
+
+## Ordem de execução
+
+```
+Camada 0  →  Cadastros base (sem isso nada funciona)
+Camada 1  →  Pipeline de entrada (Trânsito → Recebimento → Aprovação)
+Camada 2  →  Visibilidade (Movimentações, Cockpit)
+Camada 3  →  Saídas (Automática + Manual)
+Camada 4  →  Visão executiva (Métricas + Fornecedores)
+Camada 5  →  Incidentes (Operações pendentes — só com cenário forçado)
+```
+
+---
+
+## Camada 0 — Cadastros base
+
+Sem cadastros sãos, todos os fluxos abaixo falham. **Validar primeiro.**
+
+### 1. Localidades + correlação ACXE↔Q2P
+
+- [ ] Toda localidade ativa tem correlação completa (ACXE **e** Q2P preenchidos)
+
+```sql
+SELECT l.codigo, l.nome, l.tipo, l.cnpj,
+       lc.codigo_local_estoque_acxe, lc.codigo_local_estoque_q2p
+FROM stockbridge.localidade l
+LEFT JOIN stockbridge.localidade_correlacao lc ON lc.localidade_id = l.id
+WHERE l.ativo = true
+ORDER BY l.codigo;
+```
+
+**Critério**: nenhuma linha com `codigo_local_estoque_acxe` ou `codigo_local_estoque_q2p` NULL. Se aparecer NULL → recebimento naquela localidade vai falhar.
+
+- [ ] CRUD de localidade via UI funciona (operador vê leitura, gestor edita)
+- [ ] Tipos válidos: `proprio`, `tpl`, `porto_seco`, `virtual_transito`, `virtual_ajuste`
+
+---
+
+### 2. Correlação de produtos ACXE↔Q2P (match por descrição)
+
+- [ ] Listar produtos sem correlato Q2P
+
+```sql
+SELECT a.codigo_produto AS cod_acxe, a.descricao,
+       q.codigo_produto AS cod_q2p
+FROM public."tbl_produtos_ACXE" a
+LEFT JOIN public."tbl_produtos_Q2P" q ON a.descricao = q.descricao
+WHERE (a.inativo IS NULL OR a.inativo <> 'S')
+ORDER BY q.codigo_produto IS NULL DESC, a.descricao;
+```
+
+**Critério**: produtos com `cod_q2p` NULL bloqueiam recebimento. Decidir: cadastrar correlato na Q2P ou aceitar exceção.
+
+- [ ] Tentar receber NF de produto sem correlato → resposta 409 `PRODUTO_SEM_CORRELATO` + email admin disparado
+
+---
+
+### 3. Config de produto
+
+- [ ] Cada produto ativo tem linha em `stockbridge.config_produto`
+
+```sql
+SELECT p.codigo_produto, p.descricao,
+       c.consumo_medio_diario_kg, c.lead_time_dias, c.familia_categoria,
+       c.incluir_em_metricas
+FROM public."tbl_produtos_ACXE" p
+LEFT JOIN stockbridge.config_produto c ON c.produto_codigo_acxe = p.codigo_produto
+WHERE (p.inativo IS NULL OR p.inativo <> 'S')
+ORDER BY c.consumo_medio_diario_kg IS NULL DESC, p.descricao;
+```
+
+**Critério**: campos `consumo_medio_diario_kg`, `lead_time_dias` preenchidos para produtos que aparecem em métricas. NULL é OK só para produtos com `incluir_em_metricas=false`.
+
+- [ ] Editar config de produto via UI (gestor) funciona
+- [ ] Audit log registra a edição (`shared.audit_log`)
+
+---
+
+## Camada 1 — Pipeline de entrada
+
+### 4. Trânsito marítimo
+
+- [ ] `GET /api/v1/stockbridge/transito` retorna lotes em status=`transito`
+- [ ] Operador só vê estágios `transito_interno` e `reservado`
+- [ ] Gestor/diretor vê os 4 estágios (`transito_intl`, `porto_dta`, `transito_interno`, `reservado`)
+
+```sql
+SELECT codigo, status, estagio_transito, fornecedor_nome,
+       quantidade_fisica_kg, dt_prev_chegada, localidade_id
+FROM stockbridge.lote
+WHERE status = 'transito' AND ativo = true
+ORDER BY dt_prev_chegada;
+```
+
+- [ ] Promover lote entre estágios (UI ou API) atualiza `estagio_transito` e `updated_at`
+- [ ] Histórico de promoções registrado em audit log
+
+---
+
+### 5. Recebimento de NF
+
+#### Cenários funcionais
+- [ ] **Sem divergência**: qtd recebida = qtd NF (tolerância ±1 kg) → lote vira `provisorio`, movimentação gravada com ambos lados OMIE
+- [ ] **Com divergência `faltando`**: qtd recebida < qtd NF → cria aprovação pendente nível gestor
+- [ ] **Com divergência `varredura`**: idem mas tipo diferente
+- [ ] **Tentar receber qtd > NF**: rejeitado com erro (legado também rejeita)
+- [ ] **Re-tentar mesma NF**: 409 `NF_JA_PROCESSADA`
+- [ ] **Operador sem armazém vinculado**: 403 (middleware `requireArmazemVinculado`)
+- [ ] **Produto sem correlato**: 409 + email admin
+
+#### Cenários de erro OMIE
+- [ ] **ACXE-fail**: 502 com `userAction='retry'`, `stateClean=true`. Confirmar que `stockbridge.movimentacao` ficou vazio (nenhuma linha gravada)
+- [ ] **Q2P-fail após ACXE ok**: 502 com `userAction='retry_q2p'`, `stateClean=false`, `tentativasRestantes=1`. Confirmar movimentação gravada com `status_omie='pendente_q2p'`
+- [ ] Para forçar Q2P-fail em dev: editar [mock.ts:67-87](modules/stockbridge/src/stockbridge/mock.ts#L67-L87) para `mockIncluirAjusteEstoque` rejeitar quando `cnpj === 'q2p'` apenas na 1ª chamada
+
+#### Verificação pós-recebimento
+```sql
+SELECT m.created_at, m.nota_fiscal, m.tipo_movimento, m.subtipo,
+       m.quantidade_kg, m.status_omie, m.op_id,
+       m.id_movest_acxe, m.id_movest_q2p,
+       l.codigo AS lote, l.status AS lote_status
+FROM stockbridge.movimentacao m
+LEFT JOIN stockbridge.lote l ON l.id = m.lote_id
+WHERE m.created_at > now() - interval '1 day'
+ORDER BY m.created_at DESC;
+```
+
+**Critério**: caminho feliz tem ambos `id_movest_acxe` e `id_movest_q2p` preenchidos + `status_omie='concluida'`. Caso parcial: apenas ACXE preenchido + `status_omie='pendente_q2p'`.
+
+---
+
+### 6. Aprovações hierárquicas
+
+#### Cenários
+- [ ] Gestor lista pendências em `GET /aprovacoes` (vê só nível gestor)
+- [ ] Diretor lista em `GET /aprovacoes` (vê gestor + diretor)
+- [ ] Operador chama `GET /aprovacoes` → 403
+- [ ] Gestor aprova divergência `faltando` → OMIE chamado 3x (ACXE, Q2P, ACXE-faltando), movimentação gravada, lote vira `provisorio`
+- [ ] Gestor aprova divergência `varredura` → 3a chamada vai pra estoque ACXE_VARREDURA correto (Extrema vs não-Extrema)
+- [ ] Gestor rejeita com motivo → operador recebe email + lote vira `rejeitado`
+- [ ] Operador re-submete em `GET /aprovacoes/minhas-rejeicoes` → cria nova aprovação pendente, lote volta a `aguardando_aprovacao`
+- [ ] Gestor tenta aprovar pendência nível diretor (ex: comodato) → 403 `APROVACAO_NIVEL_INSUFICIENTE`
+- [ ] Diretor aprova pendência nível gestor (hierarquia funciona)
+- [ ] Aprovar pendência já aprovada/rejeitada → 409 `APROVACAO_STATUS_INVALIDO`
+
+#### Cenários OMIE durante aprovação (US4 idempotência)
+- [ ] Q2P falha durante aprovar() → aprovação fica `aprovada` mesmo assim, response 200 com `pendenciaOmie={lado:'q2p',opId,movimentacaoId}`
+- [ ] `transferirDiferencaAcxe` falha → response 200 com `pendenciaOmie={lado:'acxe-faltando'}`
+
+#### Verificação
+```sql
+SELECT a.id, a.tipo_aprovacao, a.precisa_nivel, a.status,
+       a.quantidade_prevista_kg, a.quantidade_recebida_kg,
+       a.tipo_divergencia, a.lancado_em, a.aprovado_em,
+       l.codigo AS lote, l.status AS lote_status
+FROM stockbridge.aprovacao a
+JOIN stockbridge.lote l ON l.id = a.lote_id
+ORDER BY a.lancado_em DESC LIMIT 30;
+```
+
+---
+
+## Camada 2 — Visibilidade consolidada
+
+### 7. Movimentações
+
+- [ ] `GET /api/v1/stockbridge/movimentacoes` lista com filtros (NF, tipo, data, lote)
+- [ ] Soft delete (`ativo=false`) some da listagem default mas continua em `?incluir_inativas=true`
+- [ ] Toda operação das camadas 1+3+4 tem rastro aqui
+- [ ] Filtrar por `status_omie != 'concluida'` mostra pendências (mesmo conteúdo de operações pendentes)
+
+```sql
+-- Sanidade: nenhuma movimentação ativa sem id_movest_acxe (todas devem ter pelo menos ACXE)
+SELECT count(*) FILTER (WHERE id_movest_acxe IS NULL) AS sem_acxe,
+       count(*) FILTER (WHERE id_movest_q2p IS NULL AND status_omie = 'concluida') AS q2p_null_mas_concluida_BUG,
+       count(*) AS total
+FROM stockbridge.movimentacao
+WHERE ativo = true;
+```
+
+**Critério**: `q2p_null_mas_concluida_BUG = 0`. Se >0, é inconsistência grave (status diz concluída mas Q2P ID está vazio).
+
+---
+
+### 8. Cockpit de estoque
+
+- [ ] `GET /api/v1/stockbridge/cockpit` retorna posição consolidada por produto (gestor+)
+- [ ] Operador → 403
+- [ ] Soma do cockpit bate com SQL direto:
+
+```sql
+SELECT produto_codigo_acxe,
+       SUM(quantidade_fisica_kg) FILTER (WHERE status = 'provisorio')   AS provisorio_kg,
+       SUM(quantidade_fisica_kg) FILTER (WHERE status = 'reconciliado') AS reconciliado_kg,
+       SUM(quantidade_fisica_kg) FILTER (WHERE status = 'transito')     AS transito_kg
+FROM stockbridge.lote
+WHERE ativo = true
+GROUP BY produto_codigo_acxe
+ORDER BY produto_codigo_acxe;
+```
+
+- [ ] Filtros por localidade, CNPJ funcionam
+- [ ] Sparklines/histórico (se houver) batem com `created_at` das movimentações
+
+---
+
+## Camada 3 — Saídas
+
+### 9. Saída automática (webhook n8n)
+
+- [ ] Workflow `stockbridge-saida-automatica.json` importado no n8n
+- [ ] `ATLAS_INTEGRATION_KEY` configurada (server + n8n)
+- [ ] `curl POST` direto ao endpoint com header `X-Atlas-Integration-Key` simula n8n:
+
+```bash
+curl -X POST http://localhost:3000/api/v1/stockbridge/saida-automatica \
+  -H "Content-Type: application/json" \
+  -H "X-Atlas-Integration-Key: $ATLAS_INTEGRATION_KEY" \
+  -d '{"nf":"99999","cnpj":"q2p"}'
+```
+
+- [ ] NF nova → `idempotente=false`, baixa estoque ACXE+Q2P
+- [ ] Mesma NF de novo → `idempotente=true`, sem nova chamada OMIE
+- [ ] Sem header de integração → 401
+- [ ] CNPJ inválido → 400
+
+```sql
+SELECT nota_fiscal, tipo_movimento, quantidade_kg,
+       id_movest_acxe, id_movest_q2p, created_at
+FROM stockbridge.movimentacao
+WHERE tipo_movimento = 'saida_automatica' AND ativo = true
+ORDER BY created_at DESC;
+```
+
+---
+
+### 10. Saída manual
+
+- [ ] Cada subtipo gera aprovação no nível correto:
+
+| Subtipo | Nível esperado |
+|---|---|
+| `transf_intra_cnpj` | gestor |
+| `comodato` | **diretor** |
+| `amostra` | gestor |
+| `descarte` | gestor |
+| `quebra` | gestor |
+| `inventario_menos` | gestor |
+| `inventario_mais` | gestor |
+| `entrada_manual` | gestor |
+
+- [ ] Operador lança saída → cria pendência → gestor/diretor aprova → OMIE chamado
+- [ ] Tentar lançar saída de produto inexistente → erro
+- [ ] Tentar saída com qtd > saldo disponível → bloqueado (ou aprovação especial?)
+- [ ] Verificar audit log da saída em `shared.audit_log`
+
+---
+
+## Camada 4 — Visão executiva
+
+### 11. Métricas (diretor)
+
+- [ ] `GET /api/v1/stockbridge/metricas` retorna KPIs (diretor only)
+- [ ] Gestor → 403
+- [ ] Métricas batem com agregação manual:
+  - Consumo médio diário = saídas dos últimos N dias / N
+  - Lead time real vs configurado em `config_produto`
+  - Giro = saídas / estoque médio
+  - Breakdown por `familia_categoria`
+- [ ] Produtos com `incluir_em_metricas=false` excluídos
+- [ ] Filtros por período funcionam
+
+---
+
+### 12. Fornecedores
+
+- [ ] `GET /api/v1/stockbridge/fornecedores/exclusoes` lista exclusões ativas
+- [ ] Excluir fornecedor → marca em `stockbridge.fornecedor_exclusao`, audit log gravado
+- [ ] Reincluir fornecedor → atualiza `reincluido_em` + `reincluido_por`
+- [ ] Fornecedor excluído some das listagens de NF/lote (UI)
+- [ ] Histórico de exclusões/reinclusões preservado:
+
+```sql
+SELECT fornecedor_cnpj, fornecedor_nome, motivo,
+       excluido_em, excluido_por, reincluido_em, reincluido_por
+FROM stockbridge.fornecedor_exclusao
+ORDER BY excluido_em DESC;
+```
+
+---
+
+## Camada 5 — Incidentes (caso especial)
+
+### 13. Operações pendentes (idempotência OMIE)
+
+Só aparecem em **incidente real** ou **forçado em dev**.
+
+#### Como forçar em dev
+1. [ ] Editar [mock.ts](packages/integrations/omie/src/stockbridge/mock.ts) para `mockIncluirAjusteEstoque` jogar erro quando `cnpj === 'q2p'`
+2. [ ] Fazer `POST /recebimento` → response 502 com `tentativasRestantes=1`, `movimentacaoId` no body
+3. [ ] Email de pendência disparado pra admin (verificar inbox/log)
+4. [ ] Como operador, `POST /operacoes-pendentes/:id/retentar` (mock ainda quebrado) → 502, `tentativasRestantes` decremena (na próxima vez vira 0 → 403 `OPERADOR_SEM_RETENTATIVAS`)
+5. [ ] Restaurar mock para Q2P sucesso
+6. [ ] Como operador, retentar de novo → 200, movimentação vira `status_omie='concluida'`
+
+#### Cenários adicionais
+- [ ] Como gestor, `GET /operacoes-pendentes` lista pendentes
+- [ ] Operador chama `GET /operacoes-pendentes` → 403
+- [ ] Gestor retenta sem limite (mesmo com `tentativas_q2p` alto)
+- [ ] Gestor `POST /:id/marcar-falha` com motivo → status vira `falha`, sai do painel
+
+#### Verificação
+```sql
+SELECT id, op_id, status_omie, tentativas_q2p, tentativas_acxe_faltando,
+       ultimo_erro_omie, nota_fiscal,
+       id_movest_acxe IS NOT NULL AS acxe_ok,
+       id_movest_q2p IS NOT NULL  AS q2p_ok
+FROM stockbridge.movimentacao
+WHERE status_omie <> 'concluida' AND ativo = true
+ORDER BY created_at DESC;
+```
+
+**Critério**: para `pendente_q2p` deve ter `acxe_ok=true, q2p_ok=false`. Para `pendente_acxe_faltando` ambos devem ser `true` (a falha foi na 3ª chamada ACXE-faltando, não no dual principal).
+
+---
+
+## Validação cruzada (após todas as camadas)
+
+- [ ] **Audit log completo**: toda operação das camadas 1, 3, 4 tem entrada em `shared.audit_log`
+
+```sql
+SELECT operation, table_name, count(*)
+FROM shared.audit_log
+WHERE schema_name = 'stockbridge'
+  AND created_at > now() - interval '1 day'
+GROUP BY operation, table_name
+ORDER BY count(*) DESC;
+```
+
+- [ ] **Sem órfãos**: nenhum lote sem movimentação correspondente (exceto trânsito ainda não recebido)
+
+```sql
+SELECT l.codigo, l.status, l.dt_entrada
+FROM stockbridge.lote l
+LEFT JOIN stockbridge.movimentacao m ON m.lote_id = l.id AND m.ativo = true
+WHERE l.ativo = true AND l.status NOT IN ('transito', 'rejeitado')
+  AND m.id IS NULL;
+```
+
+**Critério**: lista vazia. Se aparecer algo, é lote criado sem movimentação (bug ou estado intermediário).
+
+- [ ] **Soma kg física vs fiscal**: divergências documentadas em `stockbridge.divergencia`
+
+```sql
+SELECT l.codigo, l.quantidade_fisica_kg, l.quantidade_fiscal_kg,
+       l.quantidade_fisica_kg - l.quantidade_fiscal_kg AS delta,
+       d.tipo AS divergencia_tipo, d.status AS divergencia_status
+FROM stockbridge.lote l
+LEFT JOIN stockbridge.divergencia d ON d.lote_id = l.id
+WHERE l.ativo = true
+  AND ABS(l.quantidade_fisica_kg - l.quantidade_fiscal_kg) > 1
+ORDER BY ABS(l.quantidade_fisica_kg - l.quantidade_fiscal_kg) DESC;
+```
+
+**Critério**: para todo lote com delta > 1 kg, deve haver linha em `divergencia`.
+
+---
+
+## Sinal de pronto para produção
+
+Quando **todas** estas condições baterem:
+
+- [ ] Camadas 0-4 com checks verdes em ambiente UAT
+- [ ] Camada 5 testada com cenário forçado (T056 do tasks-idempotencia-omie.md)
+- [ ] T051 + T052 (sandbox OMIE real) executados e documentados em `research.md`
+- [ ] 2 semanas de validação paralela com legado sem divergência nova (`paridade-criterios.md`)
+- [ ] `MODULE_STOCKBRIDGE_ENABLED=true` em prod com flag staged
+
+---
+
+## Observações livres
+
+_Use esta seção para anotar bugs encontrados, decisões tomadas durante a validação, ou itens que precisam de follow-up:_
+
+- _(adicione conforme for testando)_
