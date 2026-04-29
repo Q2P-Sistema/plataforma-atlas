@@ -81,24 +81,50 @@ _Validado via teste de unidade ([recebimento.service.ts:235-249](modules/stockbr
 
 ---
 
-### 3. Config de produto
+### 3. Config de produto ✅
 
-- [ ] Cada produto ativo tem linha em `stockbridge.config_produto`
+Migration 0017 + commit `e139775` resolveram este item via auto-população + lookup de família.
+
+- [x] Cada produto ACXE ativo de família relevante tem linha em `stockbridge.config_produto`
 
 ```sql
-SELECT p.codigo_produto, p.descricao,
-       c.consumo_medio_diario_kg, c.lead_time_dias, c.familia_categoria,
-       c.incluir_em_metricas
-FROM public."tbl_produtos_ACXE" p
-LEFT JOIN stockbridge.config_produto c ON c.produto_codigo_acxe = p.codigo_produto
-WHERE (p.inativo IS NULL OR p.inativo <> 'S')
-ORDER BY c.consumo_medio_diario_kg IS NULL DESC, p.descricao;
+-- Verificacao pos-migration 0017
+SELECT
+  count(*)                                                      AS total_config,
+  count(*) FILTER (WHERE consumo_medio_diario_kg = 100)         AS sem_historico_default,
+  count(*) FILTER (WHERE consumo_medio_diario_kg <> 100)        AS com_historico_calculado,
+  round(avg(consumo_medio_diario_kg)::numeric, 2)               AS consumo_avg
+FROM stockbridge.config_produto;
+
+-- Mapping de familia (lookup table criada na 0017)
+SELECT familia_atlas, count(*) AS familias, bool_and(incluir_em_metricas) AS todas_ativas
+FROM stockbridge.familia_omie_atlas
+GROUP BY familia_atlas
+ORDER BY familias DESC;
 ```
 
-**Critério**: campos `consumo_medio_diario_kg`, `lead_time_dias` preenchidos para produtos que aparecem em métricas. NULL é OK só para produtos com `incluir_em_metricas=false`.
+**Critério (refinado)**: `config_produto` populada via trigger AFTER INSERT em `tbl_produtos_ACXE` e backfill da migration 0017 — apenas produtos cuja família OMIE está ativa em `stockbridge.familia_omie_atlas` (PE/PP/PS/PET/ABS/ADITIVO/PIGMENTO). Famílias `USO E CONSUMO`, `ATIVO IMOBILIZADO`, `STRETCH`, `INDUSTRIALIZADO`, `UNIFORMES`, `LOCAÇÃO` ficam **fora** por design.
 
-- [ ] Editar config de produto via UI (gestor) funciona
-- [ ] Audit log registra a edição (`shared.audit_log`)
+_Resultado:_
+- _Esperado: ~196 linhas em `config_produto` (de 499 ACXE ativos)_
+- _Defaults: `consumo_medio_diario_kg=100`, `lead_time_dias=90`, `incluir_em_metricas=true`_
+- _Quando há histórico de vendas (Q2P + ACXE excluindo intercompany ACXE→Q2P): `consumo` é calculado via composição 70% últimos 90 dias + 30% mesmo mês ano anterior_
+- _`familia_categoria` foi removida da tabela; categoria vem do JOIN com `familia_omie_atlas`_
+
+- [x] Trigger AFTER INSERT em `tbl_produtos_ACXE` cria linha em `config_produto` automaticamente para produtos novos com família ativa
+
+```sql
+-- Conferir o trigger
+SELECT trigger_name, event_object_table, action_timing, event_manipulation
+FROM information_schema.triggers
+WHERE trigger_name = 'trg_auto_popular_config_produto';
+```
+
+- [x] UI agora é **read-only** (sem botão Editar). Diretor não muda mais via tela — toda fonte vem do BD via JOIN
+
+_Decisão de design (commits `e139775` e `2c2adc5`): tabela `config_produto` removeu campo `familia_categoria` (substituído por JOIN com `familia_omie_atlas`); endpoint PATCH foi removido; UI vira listagem pura com sticky header._
+
+- [x] Audit log registra mudanças (`shared.audit_log`) — triggers herdados da migration 0008 continuam ativos para INSERT/UPDATE/DELETE em `config_produto`
 
 ---
 
