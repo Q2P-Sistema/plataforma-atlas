@@ -91,7 +91,7 @@ const STOCKBRIDGE_SUB_ITEMS: SidebarSubItem[] = [
   { id: 'sb-metricas', name: 'Métricas', path: '/stockbridge/metricas', icon: BarChart3 },
   { id: 'sb-fornecedores', name: 'Fornecedores', path: '/stockbridge/fornecedores', icon: Building2 },
   { id: 'sb-localidades', name: 'Localidades', path: '/stockbridge/localidades', icon: Landmark },
-  { id: 'sb-config', name: 'Config Produtos', path: '/stockbridge/config-produtos', icon: Settings },
+  { id: 'sb-config', name: 'Indicadores por Produto', path: '/stockbridge/config-produtos', icon: Settings },
   { id: 'sb-estoque', name: 'Meu Estoque', path: '/stockbridge/estoque', icon: Package },
 ];
 

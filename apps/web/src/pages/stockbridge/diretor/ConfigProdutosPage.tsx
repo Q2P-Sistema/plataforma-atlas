@@ -7,6 +7,7 @@ interface ConfigProduto {
   nomeProduto: string;
   familiaOmie: string | null;
   familiaAtlas: string | null;
+  familiaAtlasNomeCompleto: string | null;
   consumoMedioDiarioKg: number | null;
   leadTimeDias: number | null;
   incluirEmMetricas: boolean;
@@ -46,11 +47,37 @@ export function ConfigProdutosPage() {
   return (
     <div className="p-6 max-w-6xl">
       <div className="mb-5">
-        <h1 className="text-2xl font-serif text-atlas-ink mb-1">Configuração de Produtos</h1>
-        <p className="text-sm text-atlas-muted">
-          Consumo médio diário (calculado das vendas Q2P+ACXE), lead time e família.
-          Dados sincronizados do banco — sem edição manual.
+        <h1 className="text-2xl font-serif text-atlas-ink mb-1">Indicadores por Produto</h1>
+        <p className="text-sm text-atlas-muted mb-2">
+          Consumo médio diário (kg/dia), lead time e família por SKU. Dados sincronizados do banco — sem edição manual.
         </p>
+        <details className="text-xs text-atlas-muted">
+          <summary className="cursor-pointer hover:text-atlas-ink select-none">
+            Como o consumo médio diário é calculado?
+          </summary>
+          <div className="mt-2 pl-4 border-l-2 border-slate-200 dark:border-slate-700 space-y-1">
+            <p>
+              Soma das vendas Q2P + ACXE (excluindo transferências intercompany ACXE→Q2P), apurada via fallback em 3 camadas:
+            </p>
+            <ol className="list-decimal list-inside space-y-0.5 ml-1">
+              <li>
+                <strong>70/30 (preferida):</strong> 70% × média dos últimos 90 dias + 30% × média do mesmo mês do ano anterior — captura sazonalidade quando há histórico anual.
+              </li>
+              <li>
+                <strong>90 dias puro:</strong> usado quando o mesmo mês do ano anterior está vazio (ex.: produto novo, ou histórico OMIE recente).
+              </li>
+              <li>
+                <strong>365 dias puro:</strong> fallback final para produtos com vendas antigas mas zero nos últimos 90 dias.
+              </li>
+            </ol>
+            <p>
+              Match Q2P↔ACXE por descrição textual (códigos OMIE são aleatórios por empresa). Produtos sem venda em 365d em ambas as empresas aparecem como <em>Sem dados</em>.
+            </p>
+            <p className="text-[10px] mt-1">
+              Atualização automática a cada 60 minutos no primeiro acesso da janela.
+            </p>
+          </div>
+        </details>
       </div>
 
       <input
@@ -84,9 +111,24 @@ export function ConfigProdutosPage() {
                 <div className="text-[10px] font-mono text-atlas-muted">{p.produtoCodigoAcxe}</div>
               </div>
               <div className="text-atlas-muted">{p.familiaOmie ?? '—'}</div>
-              <div className="text-atlas-muted">{p.familiaAtlas ?? '—'}</div>
+              <div className="text-atlas-muted">
+                {p.familiaAtlas ? (
+                  <>
+                    {p.familiaAtlas}
+                    {p.familiaAtlasNomeCompleto && (
+                      <span className="text-[10px] ml-1">({p.familiaAtlasNomeCompleto})</span>
+                    )}
+                  </>
+                ) : (
+                  '—'
+                )}
+              </div>
               <div className="text-right">
-                {p.consumoMedioDiarioKg != null ? p.consumoMedioDiarioKg.toFixed(2) : '—'}
+                {p.consumoMedioDiarioKg != null ? (
+                  p.consumoMedioDiarioKg.toFixed(2)
+                ) : (
+                  <span className="text-atlas-muted italic">Sem dados</span>
+                )}
               </div>
               <div className="text-right">{p.leadTimeDias ?? '—'}</div>
               <div className="text-center">
