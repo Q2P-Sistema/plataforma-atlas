@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # =============================================================================
 # sync-vendas-prod-to-dev.sh
-# Copia as 6 tabelas de vendas (ACXE + Q2P matriz + Q2P filial, com itens) do
-# Postgres de producao para o pg-atlas-dev. Dump COMPLETO (schema + dados):
-# as tabelas no destino sao DROP + recriadas a partir do prod.
+# Copia tabelas de vendas (ACXE + Q2P matriz + Q2P filial, com itens) +
+# cadastro de produtos da Filial do Postgres de producao para o pg-atlas-dev.
+# Dump COMPLETO (schema + dados): as tabelas no destino sao DROP + recriadas a
+# partir do prod.
 #
 # Tabelas:
 #   - public."tbl_pedidosVendas_ACXE"            + _itens_ACXE
 #   - public."tbl_pedidosVendas_Q2P"             + _itens_Q2P
 #   - public."tbl_pedidosVendas_Q2P_Filial"      + _itens_Q2P_Filial
+#   - public."tbl_produtos_Q2P_Filial"           (cadastro de produtos da Filial,
+#       necessario pra match por descricao na funcao StockBridge — produtos da
+#       ACXE/Q2P matriz vem por outros syncs e ja estao em dev)
 #
 # Tratamento de views dependentes:
 #   pg_restore --clean nao suporta CASCADE. Se houver views (ou matviews) no
@@ -56,6 +60,7 @@ TABLES=(
   'tbl_pedidosVendas_itens_Q2P'
   'tbl_pedidosVendas_Q2P_Filial'
   'tbl_pedidosVendas_itens_Q2P_Filial'
+  'tbl_produtos_Q2P_Filial'
 )
 
 # ── Pre-checks ───────────────────────────────────────────────────────────────
@@ -102,7 +107,7 @@ cat <<EOF
 │ Origem : $PROD_USER@$PROD_HOST:$PROD_PORT/$PROD_DB
 │ Destino: $DEV_USER@$DEV_HOST:$DEV_PORT/$DEV_DB
 │ Dump   : $DUMP_DIR (-j $PARALLEL_JOBS)
-│ Modo   : COMPLETO — DROP + recriar as 6 tabelas no dev (CASCADE)
+│ Modo   : COMPLETO — DROP + recriar ${#TABLES[@]} tabelas no dev (CASCADE)
 │         + views dependentes serao salvas e recriadas
 └─────────────────────────────────────────────────────────────────────────┘
 
