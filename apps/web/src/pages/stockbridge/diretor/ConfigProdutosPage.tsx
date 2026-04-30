@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '../../../stores/auth.store.js';
 
+type CamadaConsumo = '70/30' | '90d' | '365d' | null;
+
 interface ConfigProduto {
   produtoCodigoAcxe: number;
   nomeProduto: string;
@@ -9,9 +11,28 @@ interface ConfigProduto {
   familiaAtlas: string | null;
   familiaAtlasNomeCompleto: string | null;
   consumoMedioDiarioKg: number | null;
+  camadaConsumo: CamadaConsumo;
   leadTimeDias: number | null;
   incluirEmMetricas: boolean;
 }
+
+const CAMADA_LABEL: Record<NonNullable<CamadaConsumo>, { label: string; cls: string; tooltip: string }> = {
+  '70/30': {
+    label: '70/30',
+    cls: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+    tooltip: 'Composição preferida: 70% × média 90d + 30% × mesmo mês ano anterior. Captura sazonalidade.',
+  },
+  '90d': {
+    label: '90d',
+    cls: 'bg-sky-50 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300',
+    tooltip: 'Média dos últimos 90 dias. Usado quando o mesmo mês do ano anterior não tem vendas.',
+  },
+  '365d': {
+    label: '365d',
+    cls: 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+    tooltip: 'Média dos últimos 365 dias. Fallback para produtos com vendas antigas mas zero nos últimos 90 dias.',
+  },
+};
 
 function useApiFetch() {
   const csrfToken = useAuthStore((s) => s.csrfToken);
@@ -25,7 +46,7 @@ function useApiFetch() {
   };
 }
 
-const GRID_COLS = 'grid-cols-[3fr_2fr_1fr_1.3fr_1fr_1fr]';
+const GRID_COLS = 'grid-cols-[3fr_2fr_1.5fr_1fr_0.7fr_1fr_1fr]';
 
 export function ConfigProdutosPage() {
   const apiFetch = useApiFetch();
@@ -96,6 +117,7 @@ export function ConfigProdutosPage() {
           <div>Família OMIE</div>
           <div>Família Atlas</div>
           <div className="text-right">Consumo (kg/dia)</div>
+          <div className="text-center">Regra</div>
           <div className="text-right">Lead Time (dias)</div>
           <div className="text-center">Em métricas</div>
         </div>
@@ -128,6 +150,18 @@ export function ConfigProdutosPage() {
                   p.consumoMedioDiarioKg.toFixed(2)
                 ) : (
                   <span className="text-atlas-muted italic">Sem dados</span>
+                )}
+              </div>
+              <div className="text-center">
+                {p.camadaConsumo ? (
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${CAMADA_LABEL[p.camadaConsumo].cls}`}
+                    title={CAMADA_LABEL[p.camadaConsumo].tooltip}
+                  >
+                    {CAMADA_LABEL[p.camadaConsumo].label}
+                  </span>
+                ) : (
+                  <span className="text-atlas-muted">—</span>
                 )}
               </div>
               <div className="text-right">{p.leadTimeDias ?? '—'}</div>

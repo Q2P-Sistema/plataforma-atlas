@@ -9,6 +9,7 @@ export interface ConfigProdutoItem {
   familiaAtlas: string | null;
   familiaAtlasNomeCompleto: string | null;
   consumoMedioDiarioKg: number | null;
+  camadaConsumo: '70/30' | '90d' | '365d' | null;
   leadTimeDias: number | null;
   incluirEmMetricas: boolean;
 }
@@ -56,6 +57,7 @@ export async function listarConfigProdutos(): Promise<ConfigProdutoItem[]> {
       f.familia_atlas                               AS familia_atlas,
       f.nome_completo                               AS familia_atlas_nome_completo,
       c.consumo_medio_diario_kg,
+      c.camada_consumo,
       c.lead_time_dias,
       COALESCE(c.incluir_em_metricas, true)         AS incluir
     FROM public."tbl_produtos_ACXE" p
@@ -85,6 +87,7 @@ export async function listarConfigProdutos(): Promise<ConfigProdutoItem[]> {
       familia_atlas: string | null;
       familia_atlas_nome_completo: string | null;
       consumo_medio_diario_kg: string | null;
+      camada_consumo: '70/30' | '90d' | '365d' | null;
       lead_time_dias: number | null;
       incluir: boolean;
     }>
@@ -95,6 +98,7 @@ export async function listarConfigProdutos(): Promise<ConfigProdutoItem[]> {
     familiaAtlas: r.familia_atlas,
     familiaAtlasNomeCompleto: r.familia_atlas_nome_completo,
     consumoMedioDiarioKg: r.consumo_medio_diario_kg != null ? Number(r.consumo_medio_diario_kg) : null,
+    camadaConsumo: r.camada_consumo,
     leadTimeDias: r.lead_time_dias,
     incluirEmMetricas: r.incluir,
   }));
