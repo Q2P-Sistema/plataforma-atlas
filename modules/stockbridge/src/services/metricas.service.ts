@@ -104,14 +104,48 @@ async function getPtaxCorrente(): Promise<number> {
 }
 
 /**
- * KPIs consolidados do StockBridge para o Diretor.
- * Le saldo por lote, calcula CMP + exposicao cambial, aplica PTAX.
+ * KPIs consolidados do StockBridge para o Diretor (arquitetura hibrida).
+ *
+ * Valor de estoque vem de OMIE (vw_posicaoEstoqueUnificadaFamilia) — fonte de
+ * verdade do saldo fisico + custo unitario por SKU. Exposicao cambial vem de
+ * stockbridge.lote em transito_intl (Atlas-only — FUP de Comex; OMIE nao tem).
+ *
+ * Filtros aplicados pra evitar dupla contagem (espelhado .1 ACXE↔Q2P → Q2P) e
+ * pra excluir familias desativadas (familia_omie_atlas.incluir_em_metricas=false).
  */
 export async function getKPIs(): Promise<MetricasKPIs> {
   const pool = getPool();
   const ptax = await getPtaxCorrente();
 
-  const saldoRes = await pool.query(`
+  // Valor de estoque a partir do OMIE
+  const valorEstoqueRes = await pool.query(`
+    SELECT
+      SUM(o.saldo * COALESCE(o.valor_unitario, 0))::numeric AS valor_brl,
+      SUM(o.saldo)::numeric                                AS total_kg
+    FROM public."vw_posicaoEstoqueUnificadaFamilia" o
+    INNER JOIN public."tbl_produtos_ACXE" pa ON pa.descricao = o.descricao_produto
+    LEFT JOIN stockbridge.familia_omie_atlas f ON f.familia_omie = pa.descricao_familia
+    LEFT JOIN stockbridge.config_produto c ON c.produto_codigo_acxe = pa.codigo_produto
+    WHERE o.saldo > 0
+      AND (
+        (o.codigo_estoque LIKE '%.1' AND o.empresa = 'Q2P')
+        OR
+        (o.codigo_estoque LIKE '%.2' AND o.empresa = 'Q2P')
+      )
+      AND COALESCE(f.incluir_em_metricas, true) = true
+      AND COALESCE(c.incluir_em_metricas, true) = true
+  `).catch((err) => {
+    logger.warn({ err: err.message }, 'Query de valor de estoque OMIE falhou');
+    return { rows: [{ valor_brl: '0', total_kg: '0' }] };
+  });
+
+  const { valor_brl, total_kg } = valorEstoqueRes.rows[0] as { valor_brl: string | null; total_kg: string | null };
+  const valorEstoqueBrl = Number(valor_brl ?? 0);
+  const totalKgEstoque = Number(total_kg ?? 0);
+  const valorEstoqueUsd = ptax > 0 ? valorEstoqueBrl / ptax : 0;
+
+  // Exposicao cambial: lotes em transito_intl × custo_brl_kg (Atlas-only — vem do FUP)
+  const lotesRes = await pool.query(`
     SELECT
       quantidade_fisica_kg::numeric AS qtd,
       custo_brl_kg::numeric AS custo_brl_kg,
@@ -119,28 +153,18 @@ export async function getKPIs(): Promise<MetricasKPIs> {
       ativo
     FROM stockbridge.lote
     WHERE ativo = true
-  `).catch((err) => {
-    logger.warn({ err: err.message }, 'Query de lotes falhou');
-    return { rows: [] };
-  });
+  `).catch(() => ({ rows: [] }));
 
-  const lotes = (saldoRes.rows as Array<{ qtd: string; custo_brl_kg: string | null; estagio_transito: string | null; ativo: boolean }>).map((r) => ({
+  const lotes = (lotesRes.rows as Array<{ qtd: string; custo_brl_kg: string | null; estagio_transito: string | null; ativo: boolean }>).map((r) => ({
     quantidadeFisicaKg: Number(r.qtd),
     custoBrlKg: r.custo_brl_kg != null ? Number(r.custo_brl_kg) : null,
     estagioTransito: r.estagio_transito,
     ativo: r.ativo,
   }));
 
-  // Valor de estoque = saldo reconciliado/provisorio (excluido transito).
-  // calcularCMP agora retorna BRL/kg honestamente.
-  const estoqueFisico = lotes.filter((l) => l.estagioTransito == null);
-  const cmpBrlKg = calcularCMP(estoqueFisico);
-  const totalKg = estoqueFisico.reduce((acc, l) => acc + l.quantidadeFisicaKg, 0);
-  const valorEstoqueBrl = totalKg * cmpBrlKg;
-  const valorEstoqueUsd = ptax > 0 ? valorEstoqueBrl / ptax : 0;
+  void calcularCMP; // exportado pra testes; uso direto via SQL acima
+  void totalKgEstoque; // disponivel se UI quiser exibir kg total separado
 
-  // calcularExposicaoCambial agora retorna BRL direto (custoBrlKg é BRL/kg).
-  // Reverte pra USD via PTAX pra coerencia com o KPI exibido.
   const exposicaoBrl = calcularExposicaoCambial(lotes);
   const exposicaoUsd = ptax > 0 ? exposicaoBrl / ptax : 0;
 
@@ -225,17 +249,25 @@ export async function getEvolucao(meses: number = 6): Promise<EvolucaoMensal[]> 
 export async function getTabelaAnalitica(): Promise<TabelaAnaliticaSku[]> {
   const pool = getPool();
 
+  // Tabela analitica = saldo OMIE × custo medio OMIE por SKU (arquitetura hibrida).
+  // Match cross-empresa por descricao (vw retorna codigo_produto text, nao numerico).
   const res = await pool.query(`
-    WITH saldo AS (
+    WITH saldo_omie AS (
       SELECT
-        l.produto_codigo_acxe,
-        SUM(l.quantidade_fisica_kg)::numeric AS qtd_kg,
-        CASE WHEN SUM(l.quantidade_fisica_kg) > 0
-             THEN SUM(l.quantidade_fisica_kg * COALESCE(l.custo_brl_kg, 0)) / SUM(l.quantidade_fisica_kg)
-             ELSE 0 END::numeric AS cmp_brl_kg
-      FROM stockbridge.lote l
-      WHERE l.ativo = true AND l.estagio_transito IS NULL
-      GROUP BY l.produto_codigo_acxe
+        pa.codigo_produto                                                AS produto_codigo_acxe,
+        SUM(o.saldo)::numeric                                            AS qtd_kg,
+        CASE WHEN SUM(o.saldo) > 0
+             THEN SUM(o.saldo * COALESCE(o.valor_unitario, 0)) / SUM(o.saldo)
+             ELSE 0 END::numeric                                         AS cmp_brl_kg
+      FROM public."vw_posicaoEstoqueUnificadaFamilia" o
+      INNER JOIN public."tbl_produtos_ACXE" pa ON pa.descricao = o.descricao_produto
+      WHERE o.saldo > 0
+        AND (
+          (o.codigo_estoque LIKE '%.1' AND o.empresa = 'Q2P')
+          OR
+          (o.codigo_estoque LIKE '%.2' AND o.empresa = 'Q2P')
+        )
+      GROUP BY pa.codigo_produto
     ),
     divs AS (
       SELECT l.produto_codigo_acxe, COUNT(*)::int AS c
@@ -253,7 +285,7 @@ export async function getTabelaAnalitica(): Promise<TabelaAnaliticaSku[]> {
       s.cmp_brl_kg,
       c.consumo_medio_diario_kg,
       COALESCE(d.c, 0) AS divs
-    FROM saldo s
+    FROM saldo_omie s
     LEFT JOIN public."tbl_produtos_ACXE" p ON p.codigo_produto = s.produto_codigo_acxe
     LEFT JOIN stockbridge.familia_omie_atlas f ON f.familia_omie = p.descricao_familia
     LEFT JOIN stockbridge.config_produto c ON c.produto_codigo_acxe = s.produto_codigo_acxe

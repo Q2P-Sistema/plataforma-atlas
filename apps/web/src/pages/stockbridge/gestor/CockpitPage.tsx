@@ -68,14 +68,22 @@ function useApiFetch() {
 export function CockpitPage() {
   const apiFetch = useApiFetch();
   const [cnpjFilter, setCnpjFilter] = useState<'ambos' | 'acxe' | 'q2p'>('ambos');
+  const [galpaoFilter, setGalpaoFilter] = useState<string>('');
   const [critFilter, setCritFilter] = useState<'todas' | Criticidade>('todas');
   const [showDivs, setShowDivs] = useState(false);
 
+  const { data: galpoesDisponiveis = [] } = useQuery<Array<{ galpao: string; localidades: string[] }>>({
+    queryKey: ['admin', 'galpoes-disponiveis'],
+    queryFn: async () =>
+      (await apiFetch('/api/v1/stockbridge/admin/galpoes-disponiveis')).data as Array<{ galpao: string; localidades: string[] }>,
+  });
+
   const { data, isLoading, error } = useQuery<CockpitData>({
-    queryKey: ['stockbridge', 'cockpit', cnpjFilter, critFilter],
+    queryKey: ['stockbridge', 'cockpit', cnpjFilter, galpaoFilter, critFilter],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (cnpjFilter !== 'ambos') params.set('cnpj', cnpjFilter);
+      if (galpaoFilter) params.set('galpao', galpaoFilter);
       if (critFilter !== 'todas') params.set('criticidade', critFilter);
       const body = await apiFetch(`/api/v1/stockbridge/cockpit?${params}`);
       return body.data as CockpitData;
@@ -108,7 +116,7 @@ export function CockpitPage() {
         </p>
       </div>
 
-      <div className="flex items-center gap-3 mb-5 text-sm">
+      <div className="flex items-center gap-3 mb-5 text-sm flex-wrap">
         <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded">
           {(['ambos', 'acxe', 'q2p'] as const).map((v) => (
             <button
@@ -120,6 +128,19 @@ export function CockpitPage() {
             </button>
           ))}
         </div>
+        <select
+          value={galpaoFilter}
+          onChange={(e) => setGalpaoFilter(e.target.value)}
+          className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-600 dark:bg-slate-900 text-xs"
+          title="Filtrar por galpão físico (apenas estoque OMIE; trânsito/provisório seguem agregando todos os galpões)"
+        >
+          <option value="">Todos os galpões</option>
+          {galpoesDisponiveis.map((g) => (
+            <option key={g.galpao} value={g.galpao}>
+              Galpão {g.galpao}
+            </option>
+          ))}
+        </select>
         <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded">
           {(['todas', 'critico', 'alerta', 'ok', 'excesso'] as const).map((v) => (
             <button

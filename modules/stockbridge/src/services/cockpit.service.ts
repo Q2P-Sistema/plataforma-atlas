@@ -13,6 +13,7 @@ export type FiltroCriticidade = Criticidade | 'todas';
 export interface CockpitFiltros {
   familia?: string;
   cnpj?: FiltroCnpj;
+  galpao?: string;            // ex: '11', '12', '21', '31'
   criticidade?: FiltroCriticidade;
 }
 
@@ -21,12 +22,12 @@ export interface CockpitSku {
   nome: string;
   familia: string | null;
   ncm: string | null;
-  fisicaKg: number;
-  fiscalKg: number;
-  transitoIntlKg: number;
-  portoDtaKg: number;
-  transitoInternoKg: number;
-  provisorioKg: number;
+  fisicaKg: number;          // saldo OMIE (fonte de verdade)
+  fiscalKg: number;          // = fisicaKg na arquitetura híbrida (OMIE consolida ambos)
+  transitoIntlKg: number;    // Atlas: stockbridge.lote status='transito' estagio='transito_intl'
+  portoDtaKg: number;        // idem 'porto_dta'
+  transitoInternoKg: number; // idem 'transito_interno'
+  provisorioKg: number;      // Atlas: lote provisorio AINDA NAO consolidado pelo OMIE (anti-dupla-contagem)
   consumoMedioDiarioKg: number | null;
   leadTimeDias: number | null;
   coberturaDias: number | null;
@@ -54,41 +55,92 @@ export interface CockpitData {
 }
 
 /**
- * Retorna dados consolidados para o cockpit de estoque (US2).
+ * Cockpit hibrido (Atlas como camada sobre OMIE — ver
+ * specs/007-stockbridge-module/arquitetura-atlas-camada-omie.md).
  *
- * Estrategia:
- * 1. Agrega saldo por produto usando `shared.vw_sb_saldo_por_produto`
- *    (criada na migration 0009). Filtra por CNPJ se especificado.
- * 2. Enriquece com metadados do produto vindos de `public.tb_produtos_ACXE`
- *    (sync n8n). Filtra por `stockbridge.config_produto.incluir_em_metricas`
- *    quando a familia foi flagada como excluida.
- * 3. Junta config de consumo medio + lead time para calcular cobertura/
- *    criticidade em TypeScript (Principio III — calculos financeiros em TS).
- * 4. Calcula totalizadores para o painel superior.
+ * Fontes:
+ *   - SALDO FISICO        ← OMIE (vw_posicaoEstoqueUnificadaFamilia), filtrado
+ *                           por galpao quando passado, com regra anti-dupla
+ *                           pra espelhados (.1 = importado: conta SO Q2P
+ *                           a nao ser que o filtro empresa peca ACXE
+ *                           explicitamente; .2 = nacional Q2P-only).
+ *   - SALDO TRANSITO      ← Atlas (stockbridge.lote status='transito') por estagio.
+ *                           Vem do FUP de Comex via migration 0024.
+ *   - SALDO PROVISORIO    ← Atlas (lote status='provisorio') APENAS quando o OMIE
+ *                           ainda NAO consolidou (movimentacao.status_omie != 'concluida').
+ *                           Apos consolidacao, esse mesmo volume aparece em OMIE
+ *                           e o lote vira so historico — nao soma.
+ *   - DIVERGENCIAS/APRS   ← Atlas (workflow puro).
  *
- * Em ambientes sem as tabelas OMIE sincronizadas (dev local sem sync),
- * retorna apenas lotes que existem em stockbridge.* — a lista pode ficar vazia.
+ * Filtros:
+ *   - familia: familia_atlas ou prefixo de descricao_familia OMIE
+ *   - cnpj: 'acxe' | 'q2p' | 'ambos' (default ambos)
+ *   - galpao: agrupador fisico — '11', '12', '21', '31'
+ *   - criticidade: filtro pos-calculo (TS)
  */
 export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitData> {
   const pool = getPool();
-  const cnpjFilter = filtros.cnpj && filtros.cnpj !== 'ambos' ? filtros.cnpj : null;
 
-  // 1. Saldo agregado por produto (soma cross-CNPJ ou filtrado)
-  //    Join de `vw_sb_saldo_por_produto` com metadados de produto e config.
-  //    LEFT JOIN na view de produtos porque pode nao existir (dev sem sync).
+  const empresa: FiltroCnpj = filtros.cnpj ?? 'ambos';
+  const galpao = filtros.galpao ?? null;
+  const familia = filtros.familia ?? null;
+
+  // Regra de empresa pra OMIE:
+  //   acxe  → .1 ACXE (importado fiscal ACXE)
+  //   q2p   → .1 Q2P (espelhado importado lado Q2P) + .2 Q2P (nacional)
+  //   ambos → .1 Q2P + .2 Q2P (Q2P como representante fisico do espelhado pra evitar 2x)
+  const condicaoEmpresaOmie =
+    empresa === 'acxe'
+      ? `(o.codigo_estoque LIKE '%.1' AND o.empresa = 'ACXE')`
+      : `(
+          (o.codigo_estoque LIKE '%.1' AND o.empresa = 'Q2P')
+          OR
+          (o.codigo_estoque LIKE '%.2' AND o.empresa = 'Q2P')
+        )`;
+
+  // Filtro de galpao no OMIE (quando presente, exige codigo_estoque LIKE 'galpao.%')
+  const galpaoFilterOmie = galpao ? `AND o.codigo_estoque LIKE $1 || '.%'` : '';
+
   const sql = `
-    WITH saldo AS (
+    WITH fisico_omie AS (
+      -- vw retorna codigo_produto text (ex 'PP-016'); precisa traduzir pra
+      -- codigo numerico ACXE via JOIN por descricao (mesmo padrao do consumo).
+      -- Aceita risco de ~4-7% sem match (idem cross-empresa correlacao).
       SELECT
-        v.produto_codigo_acxe,
-        SUM(v.fisica_disponivel_kg) AS fisica_kg,
-        SUM(v.fiscal_kg)            AS fiscal_kg,
-        SUM(v.provisorio_kg)        AS provisorio_kg,
-        SUM(v.transito_intl_kg)     AS transito_intl_kg,
-        SUM(v.porto_dta_kg)         AS porto_dta_kg,
-        SUM(v.transito_interno_kg)  AS transito_interno_kg
-      FROM shared.vw_sb_saldo_por_produto v
-      WHERE ($1::text IS NULL OR v.cnpj ILIKE '%' || $1 || '%')
-      GROUP BY v.produto_codigo_acxe
+        pa.codigo_produto AS produto_codigo_acxe,
+        SUM(COALESCE(o.saldo, 0)) AS fisica_kg
+      FROM public."vw_posicaoEstoqueUnificadaFamilia" o
+      INNER JOIN public."tbl_produtos_ACXE" pa ON pa.descricao = o.descricao_produto
+      WHERE o.saldo > 0
+        AND ${condicaoEmpresaOmie}
+        ${galpaoFilterOmie}
+      GROUP BY pa.codigo_produto
+    ),
+    transito_atlas AS (
+      SELECT
+        l.produto_codigo_acxe,
+        SUM(l.quantidade_fisica_kg) FILTER (WHERE l.estagio_transito = 'transito_intl')    AS transito_intl_kg,
+        SUM(l.quantidade_fisica_kg) FILTER (WHERE l.estagio_transito = 'porto_dta')        AS porto_dta_kg,
+        SUM(l.quantidade_fisica_kg) FILTER (WHERE l.estagio_transito = 'transito_interno') AS transito_interno_kg
+      FROM stockbridge.lote l
+      WHERE l.ativo = true AND l.status = 'transito'
+      GROUP BY l.produto_codigo_acxe
+    ),
+    provisorio_atlas AS (
+      -- Anti-dupla: so conta provisorios cuja movimentacao OMIE ainda NAO foi concluida
+      SELECT
+        l.produto_codigo_acxe,
+        SUM(l.quantidade_fisica_kg) AS provisorio_kg
+      FROM stockbridge.lote l
+      WHERE l.ativo = true
+        AND l.status = 'provisorio'
+        AND EXISTS (
+          SELECT 1 FROM stockbridge.movimentacao m
+          WHERE m.lote_id = l.id
+            AND m.ativo = true
+            AND m.status_omie <> 'concluida'
+        )
+      GROUP BY l.produto_codigo_acxe
     ),
     divs AS (
       SELECT l.produto_codigo_acxe, COUNT(*)::int AS c
@@ -103,47 +155,60 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
       INNER JOIN stockbridge.lote l ON l.id = a.lote_id
       WHERE a.status = 'pendente' AND l.ativo = true
       GROUP BY l.produto_codigo_acxe
+    ),
+    -- Universo: produtos que tem QUALQUER coisa (fisico OMIE OU transito OU provisorio)
+    universo AS (
+      SELECT produto_codigo_acxe FROM fisico_omie
+      UNION
+      SELECT produto_codigo_acxe FROM transito_atlas
+      UNION
+      SELECT produto_codigo_acxe FROM provisorio_atlas
     )
     SELECT
-      s.produto_codigo_acxe,
-      COALESCE(p.descricao, 'Produto ' || s.produto_codigo_acxe::text) AS nome,
+      u.produto_codigo_acxe,
+      COALESCE(p.descricao, 'Produto ' || u.produto_codigo_acxe::text) AS nome,
       p.descricao_familia AS familia,
       f.familia_atlas     AS familia_atlas,
       p.ncm,
-      COALESCE(s.fisica_kg, 0)          AS fisica_kg,
-      COALESCE(s.fiscal_kg, 0)          AS fiscal_kg,
-      COALESCE(s.transito_intl_kg, 0)   AS transito_intl_kg,
-      COALESCE(s.porto_dta_kg, 0)       AS porto_dta_kg,
-      COALESCE(s.transito_interno_kg,0) AS transito_interno_kg,
-      COALESCE(s.provisorio_kg, 0)      AS provisorio_kg,
+      COALESCE(fo.fisica_kg, 0)                AS fisica_kg,
+      COALESCE(ta.transito_intl_kg, 0)         AS transito_intl_kg,
+      COALESCE(ta.porto_dta_kg, 0)             AS porto_dta_kg,
+      COALESCE(ta.transito_interno_kg, 0)      AS transito_interno_kg,
+      COALESCE(pa.provisorio_kg, 0)            AS provisorio_kg,
       c.consumo_medio_diario_kg,
       c.lead_time_dias,
       COALESCE(d.c, 0) AS divs,
       COALESCE(a.c, 0) AS aprs
-    FROM saldo s
+    FROM universo u
+    LEFT JOIN fisico_omie fo       ON fo.produto_codigo_acxe = u.produto_codigo_acxe
+    LEFT JOIN transito_atlas ta    ON ta.produto_codigo_acxe = u.produto_codigo_acxe
+    LEFT JOIN provisorio_atlas pa  ON pa.produto_codigo_acxe = u.produto_codigo_acxe
     LEFT JOIN public."tbl_produtos_ACXE" p
-      ON p.codigo_produto = s.produto_codigo_acxe
+      ON p.codigo_produto = u.produto_codigo_acxe
     LEFT JOIN stockbridge.familia_omie_atlas f
       ON f.familia_omie = p.descricao_familia
     LEFT JOIN stockbridge.config_produto c
-      ON c.produto_codigo_acxe = s.produto_codigo_acxe
-    LEFT JOIN divs d ON d.produto_codigo_acxe = s.produto_codigo_acxe
-    LEFT JOIN apr  a ON a.produto_codigo_acxe = s.produto_codigo_acxe
+      ON c.produto_codigo_acxe = u.produto_codigo_acxe
+    LEFT JOIN divs d ON d.produto_codigo_acxe = u.produto_codigo_acxe
+    LEFT JOIN apr  a ON a.produto_codigo_acxe = u.produto_codigo_acxe
     WHERE COALESCE(f.incluir_em_metricas, true) = true
       AND COALESCE(c.incluir_em_metricas, true) = true
-      AND ($2::text IS NULL OR f.familia_atlas = $2 OR p.descricao_familia ILIKE $2 || '%')
-    ORDER BY COALESCE(p.descricao, s.produto_codigo_acxe::text)
+      AND ($${galpao ? 2 : 1}::text IS NULL
+           OR f.familia_atlas = $${galpao ? 2 : 1}
+           OR p.descricao_familia ILIKE $${galpao ? 2 : 1} || '%')
+    ORDER BY COALESCE(p.descricao, u.produto_codigo_acxe::text)
   `;
+
+  const params = galpao ? [galpao, familia] : [familia];
 
   let rows: Record<string, unknown>[] = [];
   try {
-    const result = await pool.query(sql, [cnpjFilter, filtros.familia ?? null]);
+    const result = await pool.query(sql, params);
     rows = result.rows as Record<string, unknown>[];
   } catch (err) {
-    // View pode nao existir (dev sem sync OMIE) — retorna vazio com log
     logger.warn(
       { err: (err as Error).message },
-      'Cockpit query falhou (view ou tabelas OMIE ausentes?). Retornando vazio.',
+      'Cockpit query falhou — retornando vazio',
     );
     rows = [];
   }
@@ -161,7 +226,7 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
       familia: (r.familia_atlas as string | null) ?? (r.familia as string | null) ?? null,
       ncm: (r.ncm as string | null) ?? null,
       fisicaKg,
-      fiscalKg: Number(r.fiscal_kg),
+      fiscalKg: fisicaKg, // arquitetura híbrida: fiscal = físico (OMIE consolida ambos)
       transitoIntlKg: Number(r.transito_intl_kg),
       portoDtaKg: Number(r.porto_dta_kg),
       transitoInternoKg: Number(r.transito_interno_kg),
@@ -175,14 +240,12 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
     };
   });
 
-  // Filtro por criticidade acontece no TS (calculado acima)
   const skusFiltrados =
     filtros.criticidade && filtros.criticidade !== 'todas'
       ? skus.filter((s) => s.criticidade === filtros.criticidade)
       : skus;
 
   const resumo = getResumoFromSkus(skusFiltrados);
-
   return { resumo, skus: skusFiltrados };
 }
 

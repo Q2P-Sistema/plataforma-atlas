@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { createLogger } from '@atlas/core';
-import { requireDiretor } from '../middleware/role.js';
+import { requireDiretor, requireGestor } from '../middleware/role.js';
 import {
   listarUsuariosComGalpoes,
   setGalpoesDoUsuario,
@@ -30,9 +30,11 @@ router.get(
 );
 
 // GET /admin/galpoes-disponiveis — lista galpoes (de stockbridge.localidade)
+// requireGestor (em vez de requireDiretor) porque o Cockpit/MeuEstoque consomem
+// essa lista pra popular o filtro de galpao — nao e dado sensivel.
 router.get(
   '/api/v1/stockbridge/admin/galpoes-disponiveis',
-  requireDiretor,
+  requireGestor,
   async (_req: Request, res: Response) => {
     try {
       const data = await listarGalpoesDisponiveis();

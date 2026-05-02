@@ -10,6 +10,7 @@ const router: Router = Router();
 const QuerySchema = z.object({
   familia: z.string().optional(),
   cnpj: z.enum(['acxe', 'q2p', 'ambos']).optional(),
+  galpao: z.string().optional(),
   criticidade: z.enum(['critico', 'alerta', 'ok', 'excesso', 'todas']).optional(),
 });
 
