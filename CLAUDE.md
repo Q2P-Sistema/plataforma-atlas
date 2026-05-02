@@ -53,4 +53,22 @@ TypeScript 5.5+ (strict mode, ES2022, bundler resolution) / Node.js 20 LTS: Foll
 - **Auditoria**: 8 triggers dedicados em `stockbridge.*` gravando em `shared.audit_log` (Principio IV). Soft delete em `movimentacao.ativo=false` preserva historico — nao ha hard delete.
 - **Idempotencia OMIE (migration 0016)**: toda chamada `IncluirAjusteEstoque` envia `cod_int_ajuste = ${op_id}:${sufixo}` (sufixos `acxe-trf`, `q2p-ent`, `acxe-faltando`). Se Q2P falhar apos ACXE ok, `movimentacao` e gravada com `status_omie='pendente_q2p'`. Painel admin em `GET /api/v1/stockbridge/operacoes-pendentes` (gestor+); retry idempotente em `POST /api/v1/stockbridge/operacoes-pendentes/:id/retentar` (operador limitado a 1x; gestor+ sem limite). Cobertura simetrica em `aprovacao.aprovar()`. Detalhes em `specs/007-stockbridge-module/tasks-idempotencia-omie.md`.
 
+### Arquitetura: Atlas como camada sobre OMIE
+
+Visao de longo prazo definida em 2026-05-02: **Atlas e UX/lógica de negócio; OMIE e ERP de back-office; Postgres e o espelho de leitura + estado proprio do Atlas.** Operador so tem o Atlas como ponto de contato — nao loga no OMIE. Doc completo em [specs/007-stockbridge-module/arquitetura-atlas-camada-omie.md](specs/007-stockbridge-module/arquitetura-atlas-camada-omie.md).
+
+Fontes de verdade por dominio:
+
+| Dado | Fonte de verdade | Tabela/View |
+|---|---|---|
+| Saldo fisico nos galpoes | **OMIE** | `public.vw_posicaoEstoqueUnificadaFamilia` |
+| Movimento fiscal (NF, ajustes) | **OMIE** (Atlas escreve via API) | `public.tbl_NFsEmitidas_*`, `public.tbl_movimentacaoEstoqueHistorico_*` |
+| Lote em transito (FUP de Comex) | **Atlas** (OMIE nao tem) | `stockbridge.lote` status=transito (populado via FUP migration 0024) |
+| Aprovacao hierarquica | **Atlas** | `stockbridge.aprovacao` |
+| Recebimento provisorio | **Atlas** | `stockbridge.lote` status=provisorio (transitorio ate OMIE consolidar) |
+| Configuracao de negocio (lead time, consumo, vinculos user-galpao) | **Atlas** | `stockbridge.config_produto`, `stockbridge.user_galpao`, etc |
+| Auditoria detalhada | **Atlas** | `stockbridge.movimentacao` + `shared.audit_log` |
+
+**Cockpit/Metricas devem consumir UNIAO OMIE + Atlas** (saldo fisico OMIE + camadas Atlas: transito, pendencias). Risco a vigiar: dupla contagem entre `lote provisorio` (ja gravou em OMIE via API) e `vw_posicaoEstoqueUnificadaFamilia` que reflete OMIE — provisorio so deve aparecer como "pendente Atlas" enquanto `status_omie != 'concluida'`. Apos consolidacao, ele esta no OMIE e nao deve ser somado de novo.
+
 <!-- MANUAL ADDITIONS END -->
