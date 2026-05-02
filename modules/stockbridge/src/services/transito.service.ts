@@ -1,31 +1,29 @@
-import { eq, and, inArray } from 'drizzle-orm';
-import { getDb, createLogger } from '@atlas/core';
-import { lote, localidade } from '@atlas/db';
+import { sql } from 'drizzle-orm';
+import { getDb, getPool, createLogger } from '@atlas/core';
 import { ESTAGIOS_VISIVEIS_POR_PERFIL, type EstagioTransito, type Perfil } from '../types.js';
 
 const logger = createLogger('stockbridge:transito');
 
-export class TransicaoInvalidaError extends Error {
-  constructor(public readonly atual: EstagioTransito | null, public readonly proximo: EstagioTransito) {
-    super(
-      `Transicao invalida: nao e permitido avancar de ${atual ?? 'sem estagio'} para ${proximo}. ` +
-        'Sequencia valida: transito_intl → porto_dta → transito_interno → (recebimento).',
+/**
+ * Refresh com TTL de 15min. Le FUP × pedidosCompras_ACXE e UPSERT em lote
+ * (status=transito). Se MAX(updated_at) > 15min, no-op (zero overhead).
+ * Falha silenciosa: loga warn e continua com dados stale (nao bloqueia GET).
+ */
+async function refreshLotesEmTransito(): Promise<void> {
+  const db = getDb();
+  try {
+    const result = await db.execute(
+      sql`SELECT stockbridge.refresh_lotes_em_transito_se_stale(15) AS atualizados`,
     );
-    this.name = 'TransicaoInvalidaError';
-  }
-}
-
-export class DadosEstagioFaltandoError extends Error {
-  constructor(public readonly estagio: EstagioTransito, public readonly campos: string[]) {
-    super(`Avancar para ${estagio} exige: ${campos.join(', ')}`);
-    this.name = 'DadosEstagioFaltandoError';
-  }
-}
-
-export class LoteNaoEncontradoError extends Error {
-  constructor(public readonly id: string) {
-    super(`Lote ${id} nao encontrado ou inativo`);
-    this.name = 'LoteNaoEncontradoError';
+    const atualizados = (result.rows[0] as { atualizados: number } | undefined)?.atualizados ?? 0;
+    if (atualizados > 0) {
+      logger.info({ atualizados }, 'Lotes em trânsito recalculados a partir do FUP');
+    }
+  } catch (err) {
+    logger.warn(
+      { err: (err as Error).message },
+      'Refresh de lotes em trânsito falhou — usando dados stale',
+    );
   }
 }
 
@@ -45,7 +43,22 @@ export interface LoteTransitoItem {
   dta: string | null;
   notaFiscal: string | null;
   dtPrevChegada: string | null;
-  atrasado: boolean;
+
+  // Campos extras vindos diretamente do FUP de Comex
+  pedidoComprasAcxe: string | null;
+  protocoloDi: string | null;
+  despachante: string | null;
+  terminalAtracacao: string | null;
+  numeroBl: string | null;
+  dataBl: string | null;
+  etd: string | null;
+  eta: string | null;
+  dataDesembarque: string | null;
+  dataLiberacaoTransporte: string | null;
+  dataEntradaArmazem: string | null;
+  lsd: string | null;
+  freeTime: number | null;
+  etapaFup: string | null;
 }
 
 /**
@@ -53,37 +66,59 @@ export interface LoteTransitoItem {
  *   - operador:          transito_interno, reservado
  *   - gestor / diretor:  todos os 4 estagios
  *
+ * Faz JOIN com tbl_dadosPlanilhaFUPComex pra trazer campos do FUP direto da fonte —
+ * o modulo Trânsito e puramente espelho de leitura da planilha de Comex.
+ *
  * Flag `atrasado` e true quando dt_prev_chegada < now() e lote ainda em transito.
  */
 export async function listarPorEstagio(perfil: Perfil): Promise<Record<EstagioTransito, LoteTransitoItem[]>> {
-  const db = getDb();
+  await refreshLotesEmTransito();
+
+  const pool = getPool();
   const estagios = ESTAGIOS_VISIVEIS_POR_PERFIL[perfil];
 
-  const rows = await db
-    .select({
-      id: lote.id,
-      codigo: lote.codigo,
-      produtoCodigoAcxe: lote.produtoCodigoAcxe,
-      fornecedorNome: lote.fornecedorNome,
-      paisOrigem: lote.paisOrigem,
-      quantidadeFisicaKg: lote.quantidadeFisicaKg,
-      quantidadeFiscalKg: lote.quantidadeFiscalKg,
-      custoBrlKg: lote.custoBrlKg,
-      cnpj: lote.cnpj,
-      estagioTransito: lote.estagioTransito,
-      di: lote.di,
-      dta: lote.dta,
-      notaFiscal: lote.notaFiscal,
-      dtPrevChegada: lote.dtPrevChegada,
-      localidadeCodigo: localidade.codigo,
-    })
-    .from(lote)
-    .leftJoin(localidade, eq(localidade.id, lote.localidadeId))
-    .where(and(eq(lote.ativo, true), inArray(lote.estagioTransito, [...estagios])));
+  if (estagios.length === 0) {
+    return { transito_intl: [], porto_dta: [], transito_interno: [], reservado: [] };
+  }
+  // 'reservado' segue no enum por compatibilidade mas nao e mais populado nem exposto.
 
-  const hoje = new Date().toISOString().slice(0, 10);
+  const placeholders = estagios.map((_, i) => `$${i + 1}`).join(',');
+  const res = await pool
+    .query(
+      `
+      SELECT
+        l.id, l.codigo, l.produto_codigo_acxe, l.fornecedor_nome, l.pais_origem,
+        l.quantidade_fisica_kg, l.quantidade_fiscal_kg, l.custo_brl_kg, l.cnpj,
+        l.estagio_transito, l.di, l.dta, l.nota_fiscal, l.dt_prev_chegada,
+        l.pedido_compra_acxe,
+        loc.codigo AS localidade_codigo,
+        fup.protocolo_di,
+        fup.despachante,
+        fup.terminal_atracacao,
+        fup.numero_bl,
+        fup.data_bl,
+        fup.etd,
+        fup.eta,
+        fup.data_desembarque,
+        fup.data_liberacao_transporte,
+        fup.data_entrada_armazem,
+        fup.lsd,
+        fup.free_time,
+        fup.etapa AS etapa_fup
+      FROM stockbridge.lote l
+      LEFT JOIN stockbridge.localidade loc ON loc.id = l.localidade_id
+      LEFT JOIN public."tbl_dadosPlanilhaFUPComex" fup ON fup.pedido_acxe_omie = l.pedido_compra_acxe
+      WHERE l.ativo = true
+        AND l.estagio_transito IN (${placeholders})
+      ORDER BY fup.eta NULLS LAST, l.codigo
+      `,
+      estagios,
+    )
+    .catch((err) => {
+      logger.warn({ err: err.message }, 'Query de transito falhou');
+      return { rows: [] };
+    });
 
-  // Inicializa grupos (mesmo que perfil nao veja, retornamos vazio — frontend sabe lidar)
   const agrupado: Record<EstagioTransito, LoteTransitoItem[]> = {
     transito_intl: [],
     porto_dta: [],
@@ -91,108 +126,49 @@ export async function listarPorEstagio(perfil: Perfil): Promise<Record<EstagioTr
     reservado: [],
   };
 
-  for (const r of rows) {
-    const estagio = r.estagioTransito as EstagioTransito | null;
+  for (const r of res.rows as Array<Record<string, unknown>>) {
+    const estagio = r.estagio_transito as EstagioTransito | null;
     if (!estagio) continue;
+
     agrupado[estagio].push({
-      id: r.id,
-      codigo: r.codigo,
-      produtoCodigoAcxe: Number(r.produtoCodigoAcxe),
-      fornecedorNome: r.fornecedorNome,
-      paisOrigem: r.paisOrigem,
-      quantidadeFisicaKg: Number(r.quantidadeFisicaKg),
-      quantidadeFiscalKg: Number(r.quantidadeFiscalKg),
-      custoBrlKg: r.custoBrlKg != null ? Number(r.custoBrlKg) : null,
-      cnpj: r.cnpj,
+      id: r.id as string,
+      codigo: r.codigo as string,
+      produtoCodigoAcxe: Number(r.produto_codigo_acxe),
+      fornecedorNome: r.fornecedor_nome as string,
+      paisOrigem: (r.pais_origem as string | null) ?? null,
+      quantidadeFisicaKg: Number(r.quantidade_fisica_kg),
+      quantidadeFiscalKg: Number(r.quantidade_fiscal_kg),
+      custoBrlKg: r.custo_brl_kg != null ? Number(r.custo_brl_kg) : null,
+      cnpj: r.cnpj as string,
       estagioTransito: estagio,
-      localidadeCodigo: r.localidadeCodigo ?? null,
-      di: r.di,
-      dta: r.dta,
-      notaFiscal: r.notaFiscal,
-      dtPrevChegada: r.dtPrevChegada,
-      atrasado: r.dtPrevChegada != null && r.dtPrevChegada < hoje,
+      localidadeCodigo: (r.localidade_codigo as string | null) ?? null,
+      di: (r.di as string | null) ?? null,
+      dta: (r.dta as string | null) ?? null,
+      notaFiscal: (r.nota_fiscal as string | null) ?? null,
+      dtPrevChegada: formatDate(r.dt_prev_chegada),
+      pedidoComprasAcxe: (r.pedido_compra_acxe as string | null) ?? null,
+      protocoloDi: (r.protocolo_di as string | null) ?? null,
+      despachante: (r.despachante as string | null) ?? null,
+      terminalAtracacao: (r.terminal_atracacao as string | null) ?? null,
+      numeroBl: (r.numero_bl as string | null) ?? null,
+      dataBl: formatDate(r.data_bl),
+      etd: formatDate(r.etd),
+      eta: formatDate(r.eta),
+      dataDesembarque: formatDate(r.data_desembarque),
+      dataLiberacaoTransporte: formatDate(r.data_liberacao_transporte),
+      dataEntradaArmazem: formatDate(r.data_entrada_armazem),
+      lsd: formatDate(r.lsd),
+      freeTime: r.free_time != null ? Number(r.free_time) : null,
+      etapaFup: (r.etapa_fup as string | null) ?? null,
     });
   }
 
   return agrupado;
 }
 
-export interface AvancarEstagioInput {
-  loteId: string;
-  proximoEstagio: EstagioTransito;
-  di?: string;
-  dta?: string;
-  notaFiscal?: string;
-  localidadeId?: string | null;
-  dtPrevChegada?: string;
-}
-
-// Matriz de transicoes validas
-// Chave: (atual | 'nenhum') => lista de estagios proximos permitidos
-const TRANSICOES_VALIDAS: Record<string, EstagioTransito[]> = {
-  nenhum: ['transito_intl', 'reservado'],
-  transito_intl: ['porto_dta'],
-  porto_dta: ['transito_interno'],
-  transito_interno: [], // proximo passo e recebimento (outra rota)
-  reservado: [],
-};
-
-export function transicaoEValida(
-  atual: EstagioTransito | null,
-  proximo: EstagioTransito,
-): boolean {
-  const chave = atual ?? 'nenhum';
-  return TRANSICOES_VALIDAS[chave]?.includes(proximo) ?? false;
-}
-
-/**
- * Avanca um lote para o proximo estagio, validando:
- *   - transicao permitida pela matriz
- *   - porto_dta exige DI + DTA
- *   - transito_interno exige NF de transporte + localidade destino
- */
-export async function avancarEstagio(input: AvancarEstagioInput): Promise<{ loteId: string; estagio: EstagioTransito }> {
-  const db = getDb();
-
-  const [loteAtual] = await db.select().from(lote).where(and(eq(lote.id, input.loteId), eq(lote.ativo, true))).limit(1);
-  if (!loteAtual) {
-    throw new LoteNaoEncontradoError(input.loteId);
-  }
-
-  if (!transicaoEValida(loteAtual.estagioTransito as EstagioTransito | null, input.proximoEstagio)) {
-    throw new TransicaoInvalidaError(loteAtual.estagioTransito as EstagioTransito | null, input.proximoEstagio);
-  }
-
-  // Validacao de dados obrigatorios por estagio destino
-  if (input.proximoEstagio === 'porto_dta') {
-    const faltando: string[] = [];
-    if (!input.di) faltando.push('DI');
-    if (!input.dta) faltando.push('DTA');
-    if (faltando.length > 0) throw new DadosEstagioFaltandoError('porto_dta', faltando);
-  }
-  if (input.proximoEstagio === 'transito_interno') {
-    const faltando: string[] = [];
-    if (!input.notaFiscal) faltando.push('notaFiscal (transporte)');
-    if (!input.localidadeId) faltando.push('localidadeId (destino)');
-    if (faltando.length > 0) throw new DadosEstagioFaltandoError('transito_interno', faltando);
-  }
-
-  const patch: Partial<typeof lote.$inferInsert> = {
-    estagioTransito: input.proximoEstagio,
-    status: 'transito',
-    updatedAt: new Date(),
-  };
-  if (input.di) patch.di = input.di;
-  if (input.dta) patch.dta = input.dta;
-  if (input.notaFiscal) patch.notaFiscal = input.notaFiscal;
-  if (input.localidadeId !== undefined) patch.localidadeId = input.localidadeId;
-  if (input.dtPrevChegada) patch.dtPrevChegada = input.dtPrevChegada;
-
-  await db.update(lote).set(patch).where(eq(lote.id, input.loteId));
-
-  logger.info(
-    { loteId: input.loteId, de: loteAtual.estagioTransito, para: input.proximoEstagio },
-    'Lote avancou de estagio',
-  );
-  return { loteId: input.loteId, estagio: input.proximoEstagio };
+function formatDate(v: unknown): string | null {
+  if (v == null) return null;
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  const s = String(v);
+  return s.length >= 10 ? s.slice(0, 10) : s;
 }

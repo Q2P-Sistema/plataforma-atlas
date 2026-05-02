@@ -130,10 +130,12 @@ export const NIVEL_APROVACAO_POR_SUBTIPO: Partial<Record<SubtipoMovimento, 'gest
 
 /**
  * Visibilidade por perfil.
- * Operador so ve transito_interno e reservado (FR-006).
+ * Todos os perfis veem os 3 estagios — modulo e puramente espelho do FUP de Comex,
+ * sem acoes que justifiquem RBAC mais restritivo.
+ * O estagio 'reservado' permanece no enum por compatibilidade mas nao e usado mais.
  */
 export const ESTAGIOS_VISIVEIS_POR_PERFIL: Record<Perfil, readonly EstagioTransito[]> = {
-  operador: ['transito_interno', 'reservado'],
-  gestor: ['transito_intl', 'porto_dta', 'transito_interno', 'reservado'],
-  diretor: ['transito_intl', 'porto_dta', 'transito_interno', 'reservado'],
+  operador: ['transito_intl', 'porto_dta', 'transito_interno'],
+  gestor: ['transito_intl', 'porto_dta', 'transito_interno'],
+  diretor: ['transito_intl', 'porto_dta', 'transito_interno'],
 };

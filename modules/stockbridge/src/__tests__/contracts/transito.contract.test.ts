@@ -5,36 +5,44 @@ import request from 'supertest';
 // Lote fixture com estagio transito_intl
 const loteMock = {
   id: '00000000-0000-0000-0000-000000000aaa',
-  codigo: 'T001',
-  estagioTransito: 'transito_intl',
-  ativo: true,
-  produtoCodigoAcxe: 1,
-  fornecedorNome: 'Mock',
-  paisOrigem: 'China',
-  quantidadeFisicaKg: '0',
-  quantidadeFiscalKg: '25',
-  custoBrlKg: '1200',
-  cnpj: 'Acxe Matriz',
+  codigo: 'F-499-1',
+  produto_codigo_acxe: 1,
+  fornecedor_nome: 'Mock',
+  pais_origem: 'China',
+  quantidade_fisica_kg: 25_000,
+  quantidade_fiscal_kg: 25_000,
+  custo_brl_kg: 6,
+  cnpj: 'acxe',
+  estagio_transito: 'transito_intl',
   di: null,
   dta: null,
-  notaFiscal: null,
-  dtPrevChegada: '2026-04-20',
+  nota_fiscal: null,
+  dt_prev_chegada: '2026-04-20',
+  pedido_compra_acxe: '499',
+  localidade_codigo: '90.0.2',
+  protocolo_di: null,
+  despachante: null,
+  terminal_atracacao: null,
+  numero_bl: null,
+  data_bl: null,
+  etd: null,
+  eta: '2026-05-15',
+  data_desembarque: null,
+  data_liberacao_transporte: null,
+  data_entrada_armazem: null,
+  lsd: null,
+  free_time: null,
+  etapa_fup: '10 - Aguardando Chegada do Navio',
 };
 
 vi.mock('@atlas/core', () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getDb: () => ({
-    select: () => ({
-      from: () => ({
-        leftJoin: () => ({
-          where: () => Promise.resolve([{ ...loteMock, localidadeCodigo: null }]),
-        }),
-        where: () => ({ limit: () => Promise.resolve([loteMock]) }),
-      }),
-    }),
-    update: () => ({ set: () => ({ where: () => Promise.resolve() }) }),
+    execute: vi.fn().mockResolvedValue({ rows: [{ atualizados: 0 }] }),
   }),
-  getPool: () => ({ query: vi.fn() }),
+  getPool: () => ({
+    query: vi.fn().mockResolvedValue({ rows: [loteMock] }),
+  }),
   getConfig: () => ({ SEED_ADMIN_EMAIL: 'a@a' }),
   sendEmail: vi.fn(),
 }));
@@ -56,14 +64,14 @@ vi.mock('@atlas/auth', () => ({
 }));
 
 vi.mock('@atlas/db', () => ({
-  lote: { id: {}, codigo: {}, produtoCodigoAcxe: {}, fornecedorNome: {}, paisOrigem: {}, quantidadeFisicaKg: {}, quantidadeFiscalKg: {}, custoBrlKg: {}, cnpj: {}, estagioTransito: {}, di: {}, dta: {}, notaFiscal: {}, dtPrevChegada: {}, ativo: {}, localidadeId: {}, status: {}, updatedAt: {} },
-  localidade: { id: {}, codigo: {} },
+  lote: {},
+  localidade: {},
   movimentacao: {},
   aprovacao: {},
   localidadeCorrelacao: {},
 }));
 
-describe('Transito — contratos', () => {
+describe('Transito — contratos (read-only)', () => {
   let app: express.Express;
 
   beforeAll(async () => {
@@ -73,53 +81,30 @@ describe('Transito — contratos', () => {
     app.use(stockbridgeRouter);
   });
 
-  it('GET /transito 200 para gestor com todos os estagios inicializados', async () => {
+  it('GET /transito 200 para gestor com 3 estagios (sem reservado)', async () => {
     currentUser = { id: 'u-gestor', role: 'gestor' };
     const res = await request(app).get('/api/v1/stockbridge/transito');
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveProperty('transito_intl');
     expect(res.body.data).toHaveProperty('porto_dta');
     expect(res.body.data).toHaveProperty('transito_interno');
-    expect(res.body.data).toHaveProperty('reservado');
   });
 
-  it('GET /transito 200 para operador (com filtro de visibilidade no service)', async () => {
+  it('GET /transito 200 para operador (mesma visibilidade que gestor agora)', async () => {
     currentUser = { id: 'u-op', role: 'operador' };
     const res = await request(app).get('/api/v1/stockbridge/transito');
     expect(res.status).toBe(200);
   });
 
-  it('PATCH /transito/:id/avancar 400 sem proximo_estagio', async () => {
+  it('GET /transito retorna campos extras vindos do FUP no payload', async () => {
     currentUser = { id: 'u-gestor', role: 'gestor' };
-    const res = await request(app).patch(`/api/v1/stockbridge/transito/${loteMock.id}/avancar`).send({});
-    expect(res.status).toBe(400);
-  });
-
-  it('PATCH /transito/:id/avancar 400 avancando para porto_dta sem DI/DTA', async () => {
-    currentUser = { id: 'u-gestor', role: 'gestor' };
-    const res = await request(app)
-      .patch(`/api/v1/stockbridge/transito/${loteMock.id}/avancar`)
-      .send({ proximo_estagio: 'porto_dta' });
-    expect(res.status).toBe(400);
-    expect(res.body.error.code).toBe('DADOS_FALTANDO');
-    expect(res.body.error.message).toMatch(/DI/);
-    expect(res.body.error.message).toMatch(/DTA/);
-  });
-
-  it('PATCH /transito/:id/avancar 200 avancando para porto_dta com DI+DTA', async () => {
-    currentUser = { id: 'u-gestor', role: 'gestor' };
-    const res = await request(app)
-      .patch(`/api/v1/stockbridge/transito/${loteMock.id}/avancar`)
-      .send({ proximo_estagio: 'porto_dta', di: 'DI-2026-0001', dta: 'DTA-2026-0001' });
+    const res = await request(app).get('/api/v1/stockbridge/transito');
     expect(res.status).toBe(200);
-    expect(res.body.data.estagio).toBe('porto_dta');
-  });
-
-  it('PATCH /transito/:id/avancar 403 para operador', async () => {
-    currentUser = { id: 'u-op', role: 'operador' };
-    const res = await request(app)
-      .patch(`/api/v1/stockbridge/transito/${loteMock.id}/avancar`)
-      .send({ proximo_estagio: 'porto_dta', di: 'x', dta: 'y' });
-    expect(res.status).toBe(403);
+    const lote = res.body.data.transito_intl[0];
+    expect(lote).toMatchObject({
+      pedidoComprasAcxe: '499',
+      eta: '2026-05-15',
+      etapaFup: '10 - Aguardando Chegada do Navio',
+    });
   });
 });

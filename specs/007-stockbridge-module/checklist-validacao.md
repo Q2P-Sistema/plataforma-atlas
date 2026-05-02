@@ -81,50 +81,47 @@ _Validado via teste de unidade ([recebimento.service.ts:235-249](modules/stockbr
 
 ---
 
-### 3. Config de produto ✅
+### 3. Indicadores por Produto ✅
 
-Migration 0017 + commit `e139775` resolveram este item via auto-população + lookup de família.
+Migrations 0017 → 0023 + commits `e139775`, `2c2adc5`, `80622c6`, `8de1059`, `c752cf3` resolveram este item por completo.
 
 - [x] Cada produto ACXE ativo de família relevante tem linha em `stockbridge.config_produto`
+- [x] Trigger `trg_auto_popular_config_produto` cria linha automaticamente para produto ACXE novo (consumo entra como NULL — backfill via refresh)
+- [x] UI virou listagem **read-only** com nome "Indicadores por Produto" (sem botão Editar/PATCH); ordenação por consumo desc; coluna "Regra" mostra qual camada do fallback gerou o número
+- [x] Audit log (`shared.audit_log`) ativo via triggers da 0008
 
 ```sql
--- Verificacao pos-migration 0017
+-- Estado atual (esperado: ~195 plásticos, distribuídos entre 4 camadas)
 SELECT
-  count(*)                                                      AS total_config,
-  count(*) FILTER (WHERE consumo_medio_diario_kg = 100)         AS sem_historico_default,
-  count(*) FILTER (WHERE consumo_medio_diario_kg <> 100)        AS com_historico_calculado,
-  round(avg(consumo_medio_diario_kg)::numeric, 2)               AS consumo_avg
-FROM stockbridge.config_produto;
+  COALESCE(camada_consumo, 'NULL (Sem dados)') AS camada,
+  COUNT(*) AS qtd
+FROM stockbridge.config_produto
+GROUP BY 1 ORDER BY 1;
 
--- Mapping de familia (lookup table criada na 0017)
-SELECT familia_atlas, count(*) AS familias, bool_and(incluir_em_metricas) AS todas_ativas
+-- Mapping de família (com nome completo da 0020)
+SELECT familia_atlas, nome_completo, COUNT(*) AS familias_omie, bool_and(incluir_em_metricas) AS todas_ativas
 FROM stockbridge.familia_omie_atlas
-GROUP BY familia_atlas
-ORDER BY familias DESC;
+GROUP BY familia_atlas, nome_completo ORDER BY familia_atlas;
 ```
 
-**Critério (refinado)**: `config_produto` populada via trigger AFTER INSERT em `tbl_produtos_ACXE` e backfill da migration 0017 — apenas produtos cuja família OMIE está ativa em `stockbridge.familia_omie_atlas` (PE/PP/PS/PET/ABS/ADITIVO/PIGMENTO). Famílias `USO E CONSUMO`, `ATIVO IMOBILIZADO`, `STRETCH`, `INDUSTRIALIZADO`, `UNIFORMES`, `LOCAÇÃO` ficam **fora** por design.
+**Critério (refinado)**:
+- `config_produto` populada via trigger AFTER INSERT em `tbl_produtos_ACXE` e backfill — só produtos cuja família OMIE está em `stockbridge.familia_omie_atlas` com `incluir_em_metricas=true` (PE/PP/PS/PET/ABS/ADITIVO/PIGMENTO). Famílias `USO E CONSUMO`, `ATIVO IMOBILIZADO`, `STRETCH`, `INDUSTRIALIZADO`, `UNIFORMES`, `LOCAÇÃO` ficam **fora** por design.
+- `consumo_medio_diario_kg` é calculado via função `stockbridge.calcular_consumo_medio_diario_kg(p_codigo_acxe)` que retorna `(consumo, camada)` aplicando fallback de **3 camadas**:
+  - **`70/30`** — composição 70% × média últimos 90d + 30% × média do mesmo mês do ano anterior (preferida — captura sazonalidade quando há histórico anual).
+  - **`90d`** — média dos últimos 90 dias (tendência recente, sem termo sazonal).
+  - **`365d`** — média de 365 dias (fallback p/ produto com vendas antigas mas zero recente).
+  - **`NULL`** — sem vendas em 365 dias em nenhuma fonte → UI mostra "Sem dados" (em vez do antigo default 100).
+- A função soma **3 fontes** filtradas: Q2P matriz + ACXE-externo + Q2P_Filial (histórica). Match cross-empresa por descrição textual (códigos OMIE são aleatórios por empresa).
+- Filtros aplicados em todas as fontes: `faturado='S'`, `cancelado<>'S'`, `devolvido<>'S'`, `devolvido_parcial<>'S'`, `denegado<>'S'`, `excluido_omie=false` (exceto Filial que ainda não tem essa coluna), e exclusão de **intercompany** por código de cliente:
+  - ACXE: exclui clientes Q2P matriz (`4151024070`) e Filial (`4151026325`)
+  - Q2P matriz: exclui clientes ACXE × 3 (`8429046131`, `3070534015`, `8429031700`) e Filial (`3105160549`)
+  - Filial: exclui clientes ACXE (`4554041504`) e Q2P matriz (`4460161229`)
+- Refresh automático: `stockbridge.refresh_consumo_medio_se_stale(ttl_minutes)` reaplica a função em todos os produtos quando `MAX(updated_at)` é mais antigo que o TTL (default 60min). Chamado pelo service no GET da listagem.
 
-_Resultado:_
-- _Esperado: ~196 linhas em `config_produto` (de 499 ACXE ativos)_
-- _Defaults: `consumo_medio_diario_kg=100`, `lead_time_dias=90`, `incluir_em_metricas=true`_
-- _Quando há histórico de vendas (Q2P + ACXE excluindo intercompany ACXE→Q2P): `consumo` é calculado via composição 70% últimos 90 dias + 30% mesmo mês ano anterior_
-- _`familia_categoria` foi removida da tabela; categoria vem do JOIN com `familia_omie_atlas`_
-
-- [x] Trigger AFTER INSERT em `tbl_produtos_ACXE` cria linha em `config_produto` automaticamente para produtos novos com família ativa
-
-```sql
--- Conferir o trigger
-SELECT trigger_name, event_object_table, action_timing, event_manipulation
-FROM information_schema.triggers
-WHERE trigger_name = 'trg_auto_popular_config_produto';
-```
-
-- [x] UI agora é **read-only** (sem botão Editar). Diretor não muda mais via tela — toda fonte vem do BD via JOIN
-
-_Decisão de design (commits `e139775` e `2c2adc5`): tabela `config_produto` removeu campo `familia_categoria` (substituído por JOIN com `familia_omie_atlas`); endpoint PATCH foi removido; UI vira listagem pura com sticky header._
-
-- [x] Audit log registra mudanças (`shared.audit_log`) — triggers herdados da migration 0008 continuam ativos para INSERT/UPDATE/DELETE em `config_produto`
+_Resultado (snapshot 2026-04-29 após coletas Q2P matriz + Filial)_:
+- _195 produtos plásticos em `config_produto`_
+- _Distribuição: 44 em `70/30`, 51 em `90d`, 23 em `365d`, 77 em `Sem dados`_
+- _Validado com 4 produtos manualmente: HDB5502 (90d), CRP100 PRETO (90d, produto novo), HD6070UA (70/30), EM5333AAH (70/30 — caso "padrão ouro")_
 
 ---
 
