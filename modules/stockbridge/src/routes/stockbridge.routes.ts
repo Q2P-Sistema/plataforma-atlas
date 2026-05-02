@@ -13,6 +13,8 @@ import fornecedorRouter from './fornecedor.routes.js';
 import localidadeRouter from './localidade.routes.js';
 import configRouter from './config.routes.js';
 import movimentacaoRouter from './movimentacao.routes.js';
+import meuEstoqueRouter from './meu-estoque.routes.js';
+import adminUserGalpaoRouter from './admin-user-galpao.routes.js';
 import operacoesPendentesRouter from './operacoes-pendentes.routes.js';
 
 const logger = createLogger('stockbridge:routes');
@@ -47,6 +49,10 @@ router.use(localidadeRouter);
 router.use(configRouter);
 // Phase 11 — Movimentacoes (listagem + soft delete)
 router.use(movimentacaoRouter);
+// Meu Estoque (operador/gestor/diretor) — espelha vw_posicaoEstoqueUnificadaFamilia OMIE
+router.use(meuEstoqueRouter);
+// Admin (diretor) — vinculacao N:N usuario × galpao
+router.use(adminUserGalpaoRouter);
 // Idempotencia OMIE — retry de operacoes pendentes (US2/US3/US4)
 router.use(operacoesPendentesRouter);
 

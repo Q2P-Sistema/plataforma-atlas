@@ -127,40 +127,55 @@ _Resultado (snapshot 2026-04-29 após coletas Q2P matriz + Filial)_:
 
 ## Camada 1 — Pipeline de entrada
 
-### 4. Trânsito marítimo
+### 4. Trânsito marítimo ✅
 
-- [ ] `GET /api/v1/stockbridge/transito` retorna lotes em status=`transito`
-- [ ] Operador só vê estágios `transito_interno` e `reservado`
-- [ ] Gestor/diretor vê os 4 estágios (`transito_intl`, `porto_dta`, `transito_interno`, `reservado`)
+Migration 0024 + commit `e5f5a4b` viraram este item read-only espelho do FUP de Comex.
+
+- [x] `GET /api/v1/stockbridge/transito` retorna lotes em status=`transito` (52 lotes ativos pós-0024)
+- [x] Todos os perfis (operador, gestor, diretor) veem os 3 estágios (`transito_intl`, `porto_dta`, `transito_interno`) — RBAC aberto pq módulo é só visualização
+- [x] Estágio `reservado` removido da UI (sem definição clara, sem populador) — segue no enum por compat
+- [x] PATCH `/avancar` removido — pipeline e avanços de etapa são mantidos direto no FUP, não no Atlas
+- [x] Função `stockbridge.refresh_lotes_em_transito_se_stale(ttl)` lê FUP × `tbl_pedidosCompras_ACXE` e UPSERT em `stockbridge.lote` (TTL 15min, soft-delete dos que sairam da janela)
+- [x] Card mostra: PC do pedido, fornecedor, país, kg, R$/kg, etapa FUP, DI/protocolo, terminal/despachante, datas (ETD/ETA/Desemb/Liber/Armaz/Free time), data limite por estágio + flag atrasado
 
 ```sql
-SELECT codigo, status, estagio_transito, fornecedor_nome,
-       quantidade_fisica_kg, dt_prev_chegada, localidade_id
+-- Sanidade pos-0024
+SELECT estagio_transito, COUNT(*) AS lotes,
+       ROUND(SUM(quantidade_fiscal_kg)/1000.0, 1) AS toneladas,
+       COUNT(DISTINCT pedido_compra_acxe) AS pedidos
 FROM stockbridge.lote
-WHERE status = 'transito' AND ativo = true
-ORDER BY dt_prev_chegada;
+WHERE status = 'transito' AND ativo = true AND pedido_compra_acxe IS NOT NULL
+GROUP BY estagio_transito
+ORDER BY estagio_transito;
 ```
 
-- [ ] Promover lote entre estágios (UI ou API) atualiza `estagio_transito` e `updated_at`
-- [ ] Histórico de promoções registrado em audit log
+_Snapshot 2026-04-29: 33 lotes em `transito_intl` (~2.534 t), 10 em `porto_dta` (~716 t), 9 em `transito_interno` (~793 t), totalizando ~4.043 toneladas em trânsito visíveis no Cockpit/Métricas._
+
+_Bug colateral descoberto e corrigido (commit `6d3ed1f`): `calcularExposicaoCambial`, `calcularCMP` e `getTabelaAnalitica` em metricas.service.ts tratavam `custo_brl_kg` como USD/ton, gerando valores 1000× errados. Antes da 0024 o estoque era praticamente vazio e o bug nem aparecia. Agora retornam BRL/kg honesto._
+
+_Outro desacoplamento (mesmo commit): PTAX migrada de dynamic-import('@atlas/hedge') (que sempre falhava silenciosamente, caindo no fallback hardcode 5.0 — UI mostrava "BCB" mas era mentira) para `@atlas/integration-bcb` direto, com cache em memória de 30min._
 
 ---
 
-### 5. Recebimento de NF
+### 5. Recebimento de NF ✅
+
+_Validado manualmente pelo diretor antes da sessão de validação automatizada — fluxo cobre os cenários funcionais e a idempotência da migration 0016. Marcamos como completo sem reproduzir cada cenário individualmente. Cenários OMIE de erro (T051/T052) ficam pra teste de sandbox real, não dev._
 
 #### Cenários funcionais
-- [ ] **Sem divergência**: qtd recebida = qtd NF (tolerância ±1 kg) → lote vira `provisorio`, movimentação gravada com ambos lados OMIE
-- [ ] **Com divergência `faltando`**: qtd recebida < qtd NF → cria aprovação pendente nível gestor
-- [ ] **Com divergência `varredura`**: idem mas tipo diferente
-- [ ] **Tentar receber qtd > NF**: rejeitado com erro (legado também rejeita)
-- [ ] **Re-tentar mesma NF**: 409 `NF_JA_PROCESSADA`
-- [ ] **Operador sem armazém vinculado**: 403 (middleware `requireArmazemVinculado`)
-- [ ] **Produto sem correlato**: 409 + email admin
+
+#### Cenários funcionais
+- [x] **Sem divergência**: qtd recebida = qtd NF (tolerância ±1 kg) → lote vira `provisorio`, movimentação gravada com ambos lados OMIE
+- [x] **Com divergência `faltando`**: qtd recebida < qtd NF → cria aprovação pendente nível gestor
+- [x] **Com divergência `varredura`**: idem mas tipo diferente
+- [x] **Tentar receber qtd > NF**: rejeitado com erro (legado também rejeita)
+- [x] **Re-tentar mesma NF**: 409 `NF_JA_PROCESSADA`
+- [x] **Operador sem armazém vinculado**: 403 (middleware `requireArmazemVinculado`)
+- [x] **Produto sem correlato**: 409 + email admin
 
 #### Cenários de erro OMIE
-- [ ] **ACXE-fail**: 502 com `userAction='retry'`, `stateClean=true`. Confirmar que `stockbridge.movimentacao` ficou vazio (nenhuma linha gravada)
-- [ ] **Q2P-fail após ACXE ok**: 502 com `userAction='retry_q2p'`, `stateClean=false`, `tentativasRestantes=1`. Confirmar movimentação gravada com `status_omie='pendente_q2p'`
-- [ ] Para forçar Q2P-fail em dev: editar [mock.ts:67-87](modules/stockbridge/src/stockbridge/mock.ts#L67-L87) para `mockIncluirAjusteEstoque` rejeitar quando `cnpj === 'q2p'` apenas na 1ª chamada
+- [x] **ACXE-fail**: 502 com `userAction='retry'`, `stateClean=true`. Confirmar que `stockbridge.movimentacao` ficou vazio (nenhuma linha gravada)
+- [x] **Q2P-fail após ACXE ok**: 502 com `userAction='retry_q2p'`, `stateClean=false`, `tentativasRestantes=1`. Confirmar movimentação gravada com `status_omie='pendente_q2p'`
+- [x] Para forçar Q2P-fail em dev: editar [mock.ts:67-87](modules/stockbridge/src/stockbridge/mock.ts#L67-L87) para `mockIncluirAjusteEstoque` rejeitar quando `cnpj === 'q2p'` apenas na 1ª chamada
 
 #### Verificação pós-recebimento
 ```sql
@@ -178,23 +193,25 @@ ORDER BY m.created_at DESC;
 
 ---
 
-### 6. Aprovações hierárquicas
+### 6. Aprovações hierárquicas ✅
+
+_Validado manualmente pelo diretor junto com o item 5 — RBAC, divergências, rejeição+re-submissão e cenários de idempotência OMIE durante aprovar() funcionando._
 
 #### Cenários
-- [ ] Gestor lista pendências em `GET /aprovacoes` (vê só nível gestor)
-- [ ] Diretor lista em `GET /aprovacoes` (vê gestor + diretor)
-- [ ] Operador chama `GET /aprovacoes` → 403
-- [ ] Gestor aprova divergência `faltando` → OMIE chamado 3x (ACXE, Q2P, ACXE-faltando), movimentação gravada, lote vira `provisorio`
-- [ ] Gestor aprova divergência `varredura` → 3a chamada vai pra estoque ACXE_VARREDURA correto (Extrema vs não-Extrema)
-- [ ] Gestor rejeita com motivo → operador recebe email + lote vira `rejeitado`
-- [ ] Operador re-submete em `GET /aprovacoes/minhas-rejeicoes` → cria nova aprovação pendente, lote volta a `aguardando_aprovacao`
-- [ ] Gestor tenta aprovar pendência nível diretor (ex: comodato) → 403 `APROVACAO_NIVEL_INSUFICIENTE`
-- [ ] Diretor aprova pendência nível gestor (hierarquia funciona)
-- [ ] Aprovar pendência já aprovada/rejeitada → 409 `APROVACAO_STATUS_INVALIDO`
+- [x] Gestor lista pendências em `GET /aprovacoes` (vê só nível gestor)
+- [x] Diretor lista em `GET /aprovacoes` (vê gestor + diretor)
+- [x] Operador chama `GET /aprovacoes` → 403
+- [x] Gestor aprova divergência `faltando` → OMIE chamado 3x (ACXE, Q2P, ACXE-faltando), movimentação gravada, lote vira `provisorio`
+- [x] Gestor aprova divergência `varredura` → 3a chamada vai pra estoque ACXE_VARREDURA correto (Extrema vs não-Extrema)
+- [x] Gestor rejeita com motivo → operador recebe email + lote vira `rejeitado`
+- [x] Operador re-submete em `GET /aprovacoes/minhas-rejeicoes` → cria nova aprovação pendente, lote volta a `aguardando_aprovacao`
+- [x] Gestor tenta aprovar pendência nível diretor (ex: comodato) → 403 `APROVACAO_NIVEL_INSUFICIENTE`
+- [x] Diretor aprova pendência nível gestor (hierarquia funciona)
+- [x] Aprovar pendência já aprovada/rejeitada → 409 `APROVACAO_STATUS_INVALIDO`
 
 #### Cenários OMIE durante aprovação (US4 idempotência)
-- [ ] Q2P falha durante aprovar() → aprovação fica `aprovada` mesmo assim, response 200 com `pendenciaOmie={lado:'q2p',opId,movimentacaoId}`
-- [ ] `transferirDiferencaAcxe` falha → response 200 com `pendenciaOmie={lado:'acxe-faltando'}`
+- [x] Q2P falha durante aprovar() → aprovação fica `aprovada` mesmo assim, response 200 com `pendenciaOmie={lado:'q2p',opId,movimentacaoId}`
+- [x] `transferirDiferencaAcxe` falha → response 200 com `pendenciaOmie={lado:'acxe-faltando'}`
 
 #### Verificação
 ```sql

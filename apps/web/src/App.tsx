@@ -48,6 +48,7 @@ import { SBLayout } from './pages/stockbridge/SBLayout.js';
 import { SBPlaceholderPage } from './pages/stockbridge/SBPlaceholderPage.js';
 import { FilaOmiePage } from './pages/stockbridge/operador/FilaOmiePage.js';
 import { MeuEstoquePage } from './pages/stockbridge/operador/MeuEstoquePage.js';
+import { UserGalpaoPage } from './pages/stockbridge/diretor/UserGalpaoPage.js';
 import { CockpitPage } from './pages/stockbridge/gestor/CockpitPage.js';
 import { AprovacoesPage } from './pages/stockbridge/gestor/AprovacoesPage.js';
 import { TransitoPage } from './pages/stockbridge/gestor/TransitoPage.js';
@@ -70,6 +71,7 @@ import {
   Building2,
   Landmark,
   Table,
+  Users,
 } from 'lucide-react';
 
 const FORECAST_SUB_ITEMS: SidebarSubItem[] = [
@@ -93,6 +95,7 @@ const STOCKBRIDGE_SUB_ITEMS: SidebarSubItem[] = [
   { id: 'sb-localidades', name: 'Localidades', path: '/stockbridge/localidades', icon: Landmark },
   { id: 'sb-config', name: 'Indicadores por Produto', path: '/stockbridge/config-produtos', icon: Settings },
   { id: 'sb-estoque', name: 'Meu Estoque', path: '/stockbridge/estoque', icon: Package },
+  { id: 'sb-user-galpao', name: 'Galpões × Usuários', path: '/stockbridge/admin/user-galpao', icon: Users },
 ];
 
 const BP_SUB_ITEMS: SidebarSubItem[] = [
@@ -267,6 +270,7 @@ function ProtectedShell() {
             <Route path="localidades" element={<LocalidadesPage />} />
             <Route path="config-produtos" element={<ConfigProdutosPage />} />
             <Route path="estoque" element={<MeuEstoquePage />} />
+            <Route path="admin/user-galpao" element={<UserGalpaoPage />} />
             <Route path="placeholder" element={<SBPlaceholderPage />} />
           </Route>
         )}
