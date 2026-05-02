@@ -168,20 +168,30 @@ export async function getKPIs(): Promise<MetricasKPIs> {
   const exposicaoBrl = calcularExposicaoCambial(lotes);
   const exposicaoUsd = ptax > 0 ? exposicaoBrl / ptax : 0;
 
-  // Giro medio por familia (consumo_medio_diario_kg da config_produto, familia via JOIN)
+  // Giro medio por familia: media (entre os SKUs da familia) de cobertura_dias.
+  // cobertura_dias = saldo_fisico_OMIE / consumo_medio_diario_kg.
+  // Saldo OMIE pra ser coerente com Cockpit/Valor de Estoque (arquitetura hibrida).
   const giroRes = await pool.query(`
+    WITH saldo_omie_por_sku AS (
+      SELECT pa.codigo_produto AS produto_codigo_acxe,
+             SUM(o.saldo)::numeric AS qtd_kg
+      FROM public."vw_posicaoEstoqueUnificadaFamilia" o
+      INNER JOIN public."tbl_produtos_ACXE" pa ON pa.descricao = o.descricao_produto
+      WHERE o.saldo > 0
+        AND ((o.codigo_estoque LIKE '%.1' AND o.empresa = 'Q2P')
+             OR (o.codigo_estoque LIKE '%.2' AND o.empresa = 'Q2P'))
+      GROUP BY pa.codigo_produto
+    )
     SELECT
       f.familia_atlas AS fam,
       AVG(CASE
         WHEN c.consumo_medio_diario_kg > 0
-        THEN (SELECT COALESCE(SUM(quantidade_fisica_kg), 0)
-              FROM stockbridge.lote l
-              WHERE l.produto_codigo_acxe = c.produto_codigo_acxe
-              AND l.ativo = true AND l.estagio_transito IS NULL) / c.consumo_medio_diario_kg
+        THEN COALESCE(s.qtd_kg, 0) / c.consumo_medio_diario_kg
         ELSE NULL END)::numeric AS dias_medio
     FROM stockbridge.config_produto c
     INNER JOIN public."tbl_produtos_ACXE" p ON p.codigo_produto = c.produto_codigo_acxe
     INNER JOIN stockbridge.familia_omie_atlas f ON f.familia_omie = p.descricao_familia
+    LEFT JOIN saldo_omie_por_sku s ON s.produto_codigo_acxe = c.produto_codigo_acxe
     WHERE c.incluir_em_metricas = true
       AND f.incluir_em_metricas = true
     GROUP BY f.familia_atlas
