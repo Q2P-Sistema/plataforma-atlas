@@ -339,6 +339,18 @@ export async function registrarSaidaManual(
   };
 }
 
+/**
+ * Extrai o cliente do campo observacoes do comodato origem. construirObservacao()
+ * grava como "Cliente: <nome> | Retorno previsto: ...". Mesma regex usada em
+ * listarComodatosAbertos no SQL — duplicada aqui pra uso em TS.
+ */
+function extrairClienteDaObservacao(obs: string | null | undefined): string | null {
+  if (!obs) return null;
+  const m = obs.match(/Cliente:\s*([^|]+)/);
+  const nome = m?.[1]?.trim();
+  return nome && nome.length > 0 ? nome : null;
+}
+
 function construirObservacao(input: RegistrarSaidaManualInput): string {
   const partes = [input.observacoes.trim()];
   if (input.subtipo === 'transf_intra_cnpj' && input.galpaoDestino) {
@@ -536,6 +548,12 @@ export async function registrarRetornoComodato(
   const skuMudou = input.produtoCodigoAcxeRecebido !== movOrigem.produtoCodigoAcxe;
   const qtdMudou = qtdRecebidaKg !== qtdOriginalKg;
 
+  // Texto humano-amigavel pra observacao OMIE — UUID interno fica em
+  // movimentacao_origem_id (rastreio), nao precisa poluir o campo de observacao.
+  const clienteOrigem = extrairClienteDaObservacao(movOrigem.observacoes);
+  const dtSaidaOrigem = new Date(movOrigem.createdAt).toLocaleDateString('pt-BR');
+  const cabecalhoObs = `Retorno comodato${clienteOrigem ? ` cliente ${clienteOrigem}` : ''} (saida ${dtSaidaOrigem}, ${qtdOriginalKg} kg)`;
+
   const resultado = await db.transaction(async (tx) => {
     // 1) Baixa do TROCA — SKU original × qtd ORIGINAL (devolve o que saiu)
     const [movBaixa] = await tx
@@ -551,7 +569,7 @@ export async function registrarRetornoComodato(
         criadoPor: input.userId,
         movimentacaoOrigemId: movOrigem.id,
         quantidadeKg: String(-qtdOriginalKg),
-        observacoes: `Retorno de comodato (baixa TROCA) — origem=${movOrigem.id}. ${input.observacoes}`,
+        observacoes: `${cabecalhoObs} — baixa TROCA. ${input.observacoes}`,
         statusOmie: 'pendente_q2p',
       })
       .returning();
@@ -570,7 +588,7 @@ export async function registrarRetornoComodato(
         criadoPor: input.userId,
         movimentacaoOrigemId: movOrigem.id,
         quantidadeKg: String(qtdRecebidaKg),
-        observacoes: `Retorno de comodato (entrada destino) — origem=${movOrigem.id}. ${input.observacoes}`,
+        observacoes: `${cabecalhoObs} — entrada destino. ${input.observacoes}`,
         statusOmie: 'pendente_q2p',
       })
       .returning();
@@ -587,7 +605,7 @@ export async function registrarRetornoComodato(
         precisaNivel: 'gestor',
         tipoAprovacao: 'retorno_comodato',
         quantidadeRecebidaKg: String(qtdRecebidaKg),
-        observacoes: `Retorno de comodato origem=${movOrigem.id}. ${input.observacoes}`,
+        observacoes: `${cabecalhoObs}. ${input.observacoes}`,
         lancadoPor: input.userId,
       })
       .returning();
