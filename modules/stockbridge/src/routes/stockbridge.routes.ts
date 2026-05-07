@@ -16,6 +16,7 @@ import movimentacaoRouter from './movimentacao.routes.js';
 import meuEstoqueRouter from './meu-estoque.routes.js';
 import adminUserGalpaoRouter from './admin-user-galpao.routes.js';
 import operacoesPendentesRouter from './operacoes-pendentes.routes.js';
+import adminCronRouter from './admin-cron.routes.js';
 
 const logger = createLogger('stockbridge:routes');
 const router: Router = Router();
@@ -55,6 +56,8 @@ router.use(meuEstoqueRouter);
 router.use(adminUserGalpaoRouter);
 // Idempotencia OMIE — retry de operacoes pendentes (US2/US3/US4)
 router.use(operacoesPendentesRouter);
+// Admin (gestor+) — disparo manual de crons (alerta comodato vencido, etc.)
+router.use(adminCronRouter);
 
 logger.info('StockBridge router inicializado (US1..US8 + Movimentacoes + OperacoesPendentes)');
 
