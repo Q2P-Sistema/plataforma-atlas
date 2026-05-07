@@ -54,8 +54,12 @@ function useApiFetch() {
 
 export function ComodatoRetornoPage() {
   const apiFetch = useApiFetch();
+  const queryClient = useQueryClient();
+  const role = useAuthStore((s) => s.user?.role);
+  const podeDispararCron = role === 'gestor' || role === 'diretor';
   const [busca, setBusca] = useState('');
   const [comodatoModal, setComodatoModal] = useState<ComodatoAberto | null>(null);
+  const [feedbackCron, setFeedbackCron] = useState<string | null>(null);
 
   const { data, isLoading, error } = useQuery<ComodatoAberto[], Error>({
     queryKey: ['sb', 'comodato', 'abertos'],
@@ -63,6 +67,20 @@ export function ComodatoRetornoPage() {
       const r = await apiFetch('/api/v1/stockbridge/comodato/abertos');
       return r.data as ComodatoAberto[];
     },
+  });
+
+  const dispararCronMut = useMutation({
+    mutationFn: async () => {
+      const r = await apiFetch('/api/v1/stockbridge/admin/cron/comodato-vencido/run', { method: 'POST' });
+      return r.data as { total: number; notificados: number };
+    },
+    onSuccess: (res) => {
+      setFeedbackCron(
+        `Cron rodou — ${res.total} comodato(s) vencido(s); ${res.notificados} notificacao(oes) disparada(s).`,
+      );
+      queryClient.invalidateQueries({ queryKey: ['stockbridge', 'comodatos', 'count'] });
+    },
+    onError: (err) => setFeedbackCron(`Erro: ${(err as Error).message}`),
   });
 
   const filtrados = useMemo(() => {
@@ -79,13 +97,35 @@ export function ComodatoRetornoPage() {
 
   return (
     <div className="p-6">
-      <div className="mb-5">
-        <h1 className="text-2xl font-serif text-atlas-ink mb-1">Retorno de Comodato</h1>
-        <p className="text-sm text-atlas-muted">
-          Material em comodato (estoque virtual TROCA Q2P) aguardando retorno do cliente. O retorno
-          aceita SKU/quantidade diferentes do comodato original — divergências serão justificadas e
-          aprovadas por gestor.
-        </p>
+      <div className="mb-5 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-serif text-atlas-ink mb-1">Retorno de Comodato</h1>
+          <p className="text-sm text-atlas-muted">
+            Material em comodato (estoque virtual TROCA Q2P) aguardando retorno do cliente. O retorno
+            aceita SKU/quantidade diferentes do comodato original — divergências serão justificadas e
+            aprovadas por gestor.
+          </p>
+        </div>
+        {podeDispararCron && (
+          <div className="shrink-0 text-right">
+            <button
+              onClick={() => {
+                setFeedbackCron(null);
+                dispararCronMut.mutate();
+              }}
+              disabled={dispararCronMut.isPending}
+              title="Roda agora o cron de alerta — normalmente roda às 08:00 BR todo dia"
+              className="px-3 py-1.5 text-xs font-medium border border-slate-300 dark:border-slate-600 rounded hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+            >
+              {dispararCronMut.isPending ? 'Rodando…' : '🔔 Disparar alerta agora'}
+            </button>
+            {feedbackCron && (
+              <div className="mt-1 text-[11px] text-atlas-muted max-w-[280px] text-right">
+                {feedbackCron}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="mb-4">
