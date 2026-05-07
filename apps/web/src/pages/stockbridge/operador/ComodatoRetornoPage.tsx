@@ -17,7 +17,15 @@ interface ComodatoAberto {
 }
 
 const fmtKg = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 0 });
-const fmtData = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('pt-BR') : '—');
+// dt_prevista_retorno e DATE no Postgres -> 'YYYY-MM-DD'. new Date(yyyy-mm-dd)
+// interpreta como UTC midnight e em fuso BR (UTC-3) volta um dia. Formatar a
+// string direto pra evitar o shift. Para timestamps completos, mantem Date.
+const fmtData = (iso: string | null) => {
+  if (!iso) return '—';
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  return new Date(iso).toLocaleDateString('pt-BR');
+};
 
 const GALPAO_LABELS: Record<string, string> = {
   '11.1': 'Santo André — Importado (11.1)',

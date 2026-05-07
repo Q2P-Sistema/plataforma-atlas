@@ -419,12 +419,14 @@ export async function listarComodatosAbertos(): Promise<ComodatoAberto[]> {
   `);
 
   const hoje = new Date();
+  // Hoje no fuso BR como YYYY-MM-DD pra comparar com dt_prevista_retorno (DATE)
+  // sem timezone shift. en-CA produz formato ISO direto. Comodato vencido =
+  // dt_prevista < hoje. Hoje mesmo NAO conta como vencido.
+  const hojeBR = hoje.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
   return result.rows.map((r) => {
     const dtSaida = new Date(r.dt_saida);
     const diasAbertos = Math.floor((hoje.getTime() - dtSaida.getTime()) / (1000 * 60 * 60 * 24));
-    const vencido = r.dt_prevista_retorno
-      ? new Date(r.dt_prevista_retorno) < hoje
-      : false;
+    const vencido = r.dt_prevista_retorno ? r.dt_prevista_retorno < hojeBR : false;
     return {
       movimentacaoId: r.movimentacao_id,
       produtoCodigoAcxe: Number(r.produto_codigo_acxe),
