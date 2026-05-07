@@ -3,6 +3,8 @@ name: Atlas CI
 on:
   pull_request:
     branches: [main, uat]
+  push:
+    branches: [uat]
 
 jobs:
   check:
