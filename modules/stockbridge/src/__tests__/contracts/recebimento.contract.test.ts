@@ -33,6 +33,7 @@ vi.mock('@atlas/auth', () => ({
     next();
   },
   requireRole: () => (_req: Request, _res: Response, next: NextFunction) => next(),
+  requireModule: () => (_req: Request, _res: Response, next: NextFunction) => next(),
 }));
 
 vi.mock('@atlas/db', () => ({
@@ -136,6 +137,7 @@ describe('POST /api/v1/stockbridge/recebimento — erro estruturado OMIE (US2)',
         next();
       },
       requireRole: () => (_req: Request, _res: Response, next: NextFunction) => next(),
+      requireModule: () => (_req: Request, _res: Response, next: NextFunction) => next(),
     }));
 
     vi.doMock('@atlas/db', () => ({

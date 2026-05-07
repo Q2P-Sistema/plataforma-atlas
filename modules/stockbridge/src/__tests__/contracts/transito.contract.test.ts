@@ -61,6 +61,7 @@ vi.mock('@atlas/auth', () => ({
     }
     next();
   },
+  requireModule: () => (_req: Request, _res: Response, next: NextFunction) => next(),
 }));
 
 vi.mock('@atlas/db', () => ({
