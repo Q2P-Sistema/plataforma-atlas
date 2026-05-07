@@ -2,6 +2,15 @@ import { useState } from 'react';
 import { Menu, X, ChevronLeft, Users } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
+export type SidebarBadgeColor = 'red' | 'emerald' | 'amber';
+
+export interface SidebarBadge {
+  count: number;
+  color: SidebarBadgeColor;
+  /** Tooltip ao passar o mouse — explica o que o numero representa. */
+  title?: string;
+}
+
 export interface SidebarSubItem {
   id: string;
   name: string;
@@ -9,6 +18,8 @@ export interface SidebarSubItem {
   icon: LucideIcon;
   /** Quando > 0, mostra um badge vermelho ao lado do item (estilo notificacao). */
   badge?: number | null;
+  /** Multiplos badges coloridos lado a lado. Tem precedencia sobre `badge`. */
+  badges?: SidebarBadge[];
 }
 
 export interface SidebarModule {
@@ -158,11 +169,31 @@ export function Sidebar({
                         >
                           <SubIcon size={14} className="shrink-0" />
                           <span className="truncate">{sub.name}</span>
-                          {sub.badge != null && sub.badge > 0 && (
+                          {sub.badges && sub.badges.length > 0 ? (
+                            <span className="ml-auto inline-flex items-center gap-1">
+                              {sub.badges
+                                .filter((b) => b.count > 0)
+                                .map((b, i) => (
+                                  <span
+                                    key={i}
+                                    title={b.title}
+                                    className={`inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[10px] font-bold text-white rounded-full ${
+                                      b.color === 'emerald'
+                                        ? 'bg-emerald-600'
+                                        : b.color === 'amber'
+                                          ? 'bg-amber-500'
+                                          : 'bg-red-600'
+                                    }`}
+                                  >
+                                    {b.count > 99 ? '99+' : b.count}
+                                  </span>
+                                ))}
+                            </span>
+                          ) : sub.badge != null && sub.badge > 0 ? (
                             <span className="ml-auto inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[10px] font-bold text-white bg-red-600 rounded-full">
                               {sub.badge > 99 ? '99+' : sub.badge}
                             </span>
-                          )}
+                          ) : null}
                         </button>
                       );
                     })}

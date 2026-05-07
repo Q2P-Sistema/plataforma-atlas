@@ -210,6 +210,32 @@ function ProtectedShell() {
     },
   });
 
+  // Contador de comodatos em aberto, separado por dentro/fora do prazo.
+  // Endpoint retorna { vencido: boolean } por linha — basta contar.
+  const { data: comodatosCount = { noPrazo: 0, vencidos: 0 } } = useQuery<{
+    noPrazo: number;
+    vencidos: number;
+  }>({
+    queryKey: ['stockbridge', 'comodatos', 'count'],
+    enabled: !!user,
+    refetchInterval: 60_000,
+    queryFn: async () => {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (csrfToken) headers['x-csrf-token'] = csrfToken;
+      const res = await fetch('/api/v1/stockbridge/comodato/abertos', {
+        credentials: 'include',
+        headers,
+      });
+      if (!res.ok) return { noPrazo: 0, vencidos: 0 };
+      const body = (await res.json()) as { data: Array<{ vencido: boolean }> };
+      const lista = Array.isArray(body.data) ? body.data : [];
+      return {
+        noPrazo: lista.filter((c) => !c.vencido).length,
+        vencidos: lista.filter((c) => c.vencido).length,
+      };
+    },
+  });
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-atlas-bg">
@@ -236,6 +262,15 @@ function ProtectedShell() {
     if (s.id === 'sb-aprovacoes') return { ...s, badge: aprovacoesCount };
     if (s.id === 'sb-fila') return { ...s, badge: minhasRejeicoes.recebimento };
     if (s.id === 'sb-saida-manual') return { ...s, badge: minhasRejeicoes.saidaManual };
+    if (s.id === 'sb-comodato-retorno') {
+      return {
+        ...s,
+        badges: [
+          { count: comodatosCount.noPrazo, color: 'emerald' as const, title: 'Comodatos no prazo' },
+          { count: comodatosCount.vencidos, color: 'red' as const, title: 'Comodatos vencidos' },
+        ],
+      };
+    }
     return s;
   });
 
