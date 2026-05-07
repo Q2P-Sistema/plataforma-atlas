@@ -1,6 +1,9 @@
+import { createLogger } from '@atlas/core';
 import { callOmie, isMockMode, OmieApiError, type OmieCnpj } from '../client.js';
 import { mockIncluirAjusteEstoque } from './mock.js';
 import { listarAjusteEstoque } from './listar-ajuste-estoque.js';
+
+const logger = createLogger('omie-ajuste-estoque');
 
 // Tipos OMIE IncluirAjusteEstoque (estoque/ajuste/):
 //   ENT — entrada no estoque (motivos: INV, OPE, PDV, INI)
@@ -84,19 +87,57 @@ export async function incluirAjusteEstoque(
     // Idempotencia: OMIE retorna 1035 (Já existe um ajuste de estoque para o
     // codigo de integracao [X] com o ID [Y]) quando o cod_int_ajuste ja foi
     // registrado em chamada anterior — comum em retentativas apos falha parcial.
-    // Resolvemos consultando ListarAjusteEstoque pelo cod_int e retornando como
-    // se fosse a chamada original (com idMovest/idAjuste reais).
-    if (input.codIntAjuste && err instanceof OmieApiError && err.omieCode === 'SOAP-ENV:Client-1035') {
-      const existente = await listarAjusteEstoque(cnpj, {
-        codIntAjuste: input.codIntAjuste,
-        registrosPorPagina: 1,
-      });
-      const ajuste = existente.ajustes[0];
-      if (ajuste) {
+    // Resolve em 2 etapas:
+    //   1) consulta ListarAjusteEstoque pelo cod_int (caminho ideal — pega
+    //      idMovest + idAjuste reais)
+    //   2) se listar nao acha (delay OMIE / cod_int truncado / etc), fallback
+    //      regex extrai idMovest direto da faultstring.
+    const ehDuplicado =
+      err instanceof OmieApiError &&
+      (err.omieCode === 'SOAP-ENV:Client-1035' || /Já existe um ajuste de estoque/i.test(err.message));
+
+    if (input.codIntAjuste && ehDuplicado) {
+      try {
+        const existente = await listarAjusteEstoque(cnpj, {
+          codIntAjuste: input.codIntAjuste,
+          registrosPorPagina: 1,
+        });
+        const ajuste = existente.ajustes[0];
+        if (ajuste) {
+          logger.info(
+            { codInt: input.codIntAjuste, idMovest: ajuste.idMovest, idAjuste: ajuste.idAjuste },
+            'OMIE 1035 recuperado via ListarAjusteEstoque',
+          );
+          return {
+            idMovest: ajuste.idMovest,
+            idAjuste: ajuste.idAjuste,
+            descricaoStatus: 'recuperado-por-idempotencia',
+          };
+        }
+        logger.warn(
+          { codInt: input.codIntAjuste, totalRegistros: existente.totalDeRegistros },
+          'ListarAjusteEstoque nao retornou registros pro cod_int duplicado — tentando fallback regex',
+        );
+      } catch (listErr) {
+        logger.warn(
+          { codInt: input.codIntAjuste, listErr: (listErr as Error).message },
+          'ListarAjusteEstoque falhou — tentando fallback regex',
+        );
+      }
+
+      // Fallback: extrai idMovest da faultstring. id_ajuste nao vem na
+      // mensagem — usamos o cod_int como placeholder (e marcamos no status).
+      const m = (err as OmieApiError).message.match(/com o ID \[(\d+)\]/);
+      const idMovest = m?.[1];
+      if (idMovest) {
+        logger.info(
+          { codInt: input.codIntAjuste, idMovest },
+          'OMIE 1035 recuperado via regex (idAjuste indisponivel — usando cod_int)',
+        );
         return {
-          idMovest: ajuste.idMovest,
-          idAjuste: ajuste.idAjuste,
-          descricaoStatus: 'recuperado-por-idempotencia',
+          idMovest,
+          idAjuste: input.codIntAjuste,
+          descricaoStatus: 'recuperado-por-idempotencia-regex',
         };
       }
     }
