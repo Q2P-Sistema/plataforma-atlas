@@ -25,7 +25,7 @@ function getAdminEmail(): string {
  *
  * Cai no email do admin se nada for encontrado.
  */
-async function resolverEmailsAprovadores(nivel: 'gestor' | 'diretor'): Promise<string[]> {
+export async function resolverEmailsAprovadores(nivel: 'gestor' | 'diretor'): Promise<string[]> {
   const config = getConfig();
   if (!config.MODULE_STOCKBRIDGE_ENABLED) {
     logger.warn({ nivel }, 'Modulo StockBridge desabilitado — nao envia notificacao');
@@ -212,7 +212,7 @@ export async function enviarAlertaPendenciaOmie(args: {
  * Resolve o email do usuario operador pelo id. Retorna null se nao encontrado
  * ou sem email — caller deve tratar fallback.
  */
-async function resolverEmailOperador(userId: string): Promise<string | null> {
+export async function resolverEmailOperador(userId: string): Promise<string | null> {
   try {
     const db = getDb();
     const [row] = await db.select({ email: users.email }).from(users).where(eq(users.id, userId)).limit(1);
@@ -312,3 +312,69 @@ export async function enviarNotificacaoAprovacaoOperador(args: {
     logger.error({ err, args }, 'Falha ao enviar email de aprovacao ao operador');
   }
 }
+
+/**
+ * Alerta de comodato vencido. Disparado pelo cron diario apenas nos dias de
+ * notificacao definidos pela escala (D+1, D+15, D+30, D+45, ...).
+ * Caller decide os destinatarios — D+1 vai pro operador+gestor; D>=15 escala
+ * incluindo diretor.
+ */
+export async function enviarAlertaComodatoVencido(args: {
+  movimentacaoId: string;
+  destinatarios: string[];
+  cliente: string | null;
+  produtoCodigoAcxe: number;
+  produtoDescricao: string;
+  quantidadeKg: number;
+  galpaoOrigem: string;
+  dtSaida: string;
+  dtPrevistaRetorno: string;
+  diasVencido: number;
+  /** 'inicial' (D+1) ou 'escalada' (D>=15) — muda o tom do email. */
+  fase: 'inicial' | 'escalada';
+}): Promise<void> {
+  if (args.destinatarios.length === 0) {
+    logger.warn({ movimentacaoId: args.movimentacaoId }, 'Nenhum destinatario pro alerta de comodato vencido');
+    return;
+  }
+  const config = getConfig();
+  const linkPainel = `${config.APP_URL ?? ''}/stockbridge/comodato-retorno`;
+  const fmtDataBr = (d: string) => {
+    const m = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? `${m[3]}/${m[2]}/${m[1]}` : d;
+  };
+  const tagFase = args.fase === 'escalada' ? '⚠ ESCALADO' : '⚠';
+  const subject = `StockBridge — ${tagFase} Comodato vencido há ${args.diasVencido}d (${args.cliente ?? 'cliente s/n'})`;
+  const corHeader = args.fase === 'escalada' ? '#b91c1c' : '#D97706';
+  const html = `
+    <h2 style="color: ${corHeader};">Comodato vencido — acao necessaria</h2>
+    <p>O comodato abaixo passou da data prevista de retorno e segue em aberto há <strong>${args.diasVencido} dia${args.diasVencido === 1 ? '' : 's'}</strong>.</p>
+    <ul>
+      <li><strong>Cliente:</strong> ${args.cliente ?? '— sem cliente registrado —'}</li>
+      <li><strong>Produto:</strong> ${args.produtoDescricao} (SKU ${args.produtoCodigoAcxe})</li>
+      <li><strong>Quantidade:</strong> ${args.quantidadeKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg</li>
+      <li><strong>Galpão de origem:</strong> ${args.galpaoOrigem}</li>
+      <li><strong>Saída em:</strong> ${fmtDataBr(args.dtSaida)}</li>
+      <li><strong>Retorno previsto:</strong> ${fmtDataBr(args.dtPrevistaRetorno)}</li>
+    </ul>
+    <p style="margin:16px 0;">
+      <a href="${linkPainel}"
+         style="display:inline-block;padding:10px 20px;background:#0077cc;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;">
+        Abrir Retorno de Comodato →
+      </a>
+    </p>
+    ${args.fase === 'escalada' ? '<p style="color:#b91c1c;"><strong>Esta notificacao foi escalada para a diretoria por ultrapassar 15 dias de atraso.</strong> Notificacoes seguem ocorrendo a cada 15 dias enquanto o comodato permanecer em aberto.</p>' : ''}
+    <p style="color:#888;font-size:11px;">Movimentacao: ${args.movimentacaoId}</p>
+    <p style="color:#888;font-size:11px;">Sistema Atlas — StockBridge</p>
+  `;
+  try {
+    await Promise.allSettled(args.destinatarios.map((to) => sendEmail({ to, subject, html })));
+    logger.info(
+      { movimentacaoId: args.movimentacaoId, diasVencido: args.diasVencido, destinatarios: args.destinatarios.length, fase: args.fase },
+      'Alerta de comodato vencido enviado',
+    );
+  } catch (err) {
+    logger.error({ err, movimentacaoId: args.movimentacaoId }, 'Falha ao enviar alerta comodato vencido');
+  }
+}
+
