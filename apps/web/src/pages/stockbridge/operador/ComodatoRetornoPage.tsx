@@ -318,7 +318,9 @@ function RetornoModal({ comodato, onClose, onSuccess }: RetornoModalProps) {
             {qtdMudou && (
               <div className="mt-1 text-[11px] text-amber-700">
                 ⚠ Diferença vs. original ({fmtKg(comodato.quantidadeKg)} kg): delta{' '}
-                {(qtdNum - comodato.quantidadeKg).toFixed(3)} kg — vai gerar divergência
+                {(qtdNum - comodato.quantidadeKg > 0 ? '+' : '') +
+                  (qtdNum - comodato.quantidadeKg).toLocaleString('pt-BR', { maximumFractionDigits: 3 })}{' '}
+                kg — vai gerar divergência
               </div>
             )}
           </div>
