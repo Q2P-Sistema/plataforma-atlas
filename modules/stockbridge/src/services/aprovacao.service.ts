@@ -931,6 +931,16 @@ async function aprovarSaidaManual(
           movOrigem.galpao ?? '',
           'q2p',
         );
+        // Retorno comodato divergente: produto recebido pode nao ter saldo no
+        // destino (consultarValorUnitario retorna 0). Fiscalmente o material que
+        // volta tem o custo do que saiu — entao usar valorOriginal como
+        // fallback. OMIE rejeita ajuste com valor=0 (erro 400).
+        const valorRecebido = valorUnitario > 0 ? valorUnitario : valorOriginal;
+        if (valorRecebido <= 0) {
+          throw new Error(
+            `Sem valor unitario disponivel pro retorno: produto recebido ${ap.produtoCodigoAcxe} e original ${movOrigem.produtoCodigoAcxe} ambos sem saldo OMIE`,
+          );
+        }
 
         const r = await executarRetornoComodatoOmieDual({
           opId: mov.opId,
@@ -940,7 +950,7 @@ async function aprovarSaidaManual(
           produtoCodigoAcxeRecebido: Number(ap.produtoCodigoAcxe),
           galpaoDestino: ap.galpao,
           quantidadeKgRecebida: quantidadeKg,
-          valorUnitarioRecebido: valorUnitario,
+          valorUnitarioRecebido: valorRecebido,
           observacao: observacaoOmie,
         });
         resultadoOmie = { kind: 'retorno_dual', acxe: r.acxe, q2p: r.q2p, pendenciaQ2p: r.pendenciaQ2p };
@@ -1066,9 +1076,11 @@ async function aprovarSaidaManual(
 
 /**
  * Resolve valor unitario (BRL/kg) de um SKU em um galpao+empresa.
- * Usa media ponderada de vw_posicaoEstoqueUnificadaFamilia.valor_unitario
- * sobre saldo. Se nao achar, retorna 0 — saida ainda e debitada (OMIE aceita
- * valor=0 como ajuste sem custo).
+ * Usa media ponderada de vw_posicaoEstoqueUnificadaFamilia.valor_unitario sobre
+ * saldo. Estrategia em 2 niveis: (1) galpao especifico; (2) qualquer galpao da
+ * empresa com saldo (caso comum em retorno comodato divergente, onde o produto
+ * recebido pode nao ter saldo no destino). Caller deve tratar o caso 0 — OMIE
+ * REJEITA ajuste com valor=0 (erro 400) apesar do que parecia ate descobrirmos.
  */
 async function consultarValorUnitarioProduto(
   produtoCodigoAcxe: number,
@@ -1081,7 +1093,8 @@ async function consultarValorUnitarioProduto(
       ? `(o.codigo_estoque LIKE '%.1' AND o.empresa = 'ACXE')`
       : `((o.codigo_estoque LIKE '%.1' OR o.codigo_estoque LIKE '%.2') AND o.empresa = 'Q2P')`;
 
-  const result = await db.execute<{ vu: string | null }>(sql`
+  // 1. Tenta no galpao especifico (saldo ponderado)
+  const especifico = await db.execute<{ vu: string | null }>(sql`
     WITH desc_sku AS (
       SELECT descricao FROM public."tbl_produtos_ACXE"
       WHERE codigo_produto = ${produtoCodigoAcxe}::bigint
@@ -1099,8 +1112,31 @@ async function consultarValorUnitarioProduto(
       AND o.codigo_estoque = ${galpao}
       AND ${sql.raw(filtroEmp)}
   `);
-  const v = result.rows[0]?.vu;
-  return v ? Number(v) : 0;
+  const vEspec = especifico.rows[0]?.vu ? Number(especifico.rows[0]?.vu) : 0;
+  if (vEspec > 0) return vEspec;
+
+  // 2. Fallback: qualquer galpao da mesma empresa com saldo (produto novo no
+  //    destino comum em retorno comodato divergente — usa custo medio do SKU
+  //    onde quer que ele exista).
+  const crossGalpao = await db.execute<{ vu: string | null }>(sql`
+    WITH desc_sku AS (
+      SELECT descricao FROM public."tbl_produtos_ACXE"
+      WHERE codigo_produto = ${produtoCodigoAcxe}::bigint
+      LIMIT 1
+    )
+    SELECT (
+      CASE WHEN SUM(o.saldo) > 0
+        THEN SUM(o.saldo * o.valor_unitario) / SUM(o.saldo)
+        ELSE 0
+      END
+    )::text AS vu
+    FROM public."vw_posicaoEstoqueUnificadaFamilia" o
+    INNER JOIN desc_sku d ON d.descricao = o.descricao_produto
+    WHERE o.saldo > 0
+      AND ${sql.raw(filtroEmp)}
+  `);
+  const vCross = crossGalpao.rows[0]?.vu ? Number(crossGalpao.rows[0]?.vu) : 0;
+  return vCross;
 }
 
 function checarNivel(perfil: Perfil, nivelRequerido: 'gestor' | 'diretor'): void {

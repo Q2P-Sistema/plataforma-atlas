@@ -1,5 +1,6 @@
-import { callOmie, isMockMode, type OmieCnpj } from '../client.js';
+import { callOmie, isMockMode, OmieApiError, type OmieCnpj } from '../client.js';
 import { mockIncluirAjusteEstoque } from './mock.js';
+import { listarAjusteEstoque } from './listar-ajuste-estoque.js';
 
 // Tipos OMIE IncluirAjusteEstoque (estoque/ajuste/):
 //   ENT — entrada no estoque (motivos: INV, OPE, PDV, INI)
@@ -67,15 +68,38 @@ export async function incluirAjusteEstoque(
     params.cod_int_ajuste = input.codIntAjuste;
   }
 
-  const raw = await callOmie<{ id_movest: string; id_ajuste: string; descricao_status: string }>(cnpj, {
-    endpoint: 'estoque/ajuste/',
-    method: 'IncluirAjusteEstoque',
-    params,
-  });
+  try {
+    const raw = await callOmie<{ id_movest: string; id_ajuste: string; descricao_status: string }>(cnpj, {
+      endpoint: 'estoque/ajuste/',
+      method: 'IncluirAjusteEstoque',
+      params,
+    });
 
-  return {
-    idMovest: raw.id_movest,
-    idAjuste: raw.id_ajuste,
-    descricaoStatus: raw.descricao_status,
-  };
+    return {
+      idMovest: raw.id_movest,
+      idAjuste: raw.id_ajuste,
+      descricaoStatus: raw.descricao_status,
+    };
+  } catch (err) {
+    // Idempotencia: OMIE retorna 1035 (Já existe um ajuste de estoque para o
+    // codigo de integracao [X] com o ID [Y]) quando o cod_int_ajuste ja foi
+    // registrado em chamada anterior — comum em retentativas apos falha parcial.
+    // Resolvemos consultando ListarAjusteEstoque pelo cod_int e retornando como
+    // se fosse a chamada original (com idMovest/idAjuste reais).
+    if (input.codIntAjuste && err instanceof OmieApiError && err.omieCode === 'SOAP-ENV:Client-1035') {
+      const existente = await listarAjusteEstoque(cnpj, {
+        codIntAjuste: input.codIntAjuste,
+        registrosPorPagina: 1,
+      });
+      const ajuste = existente.ajustes[0];
+      if (ajuste) {
+        return {
+          idMovest: ajuste.idMovest,
+          idAjuste: ajuste.idAjuste,
+          descricaoStatus: 'recuperado-por-idempotencia',
+        };
+      }
+    }
+    throw err;
+  }
 }
