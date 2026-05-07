@@ -30,4 +30,10 @@ jobs:
         run: pnpm typecheck
 
       - name: Test
+        env:
+          # Valores dummy: testes rodam sem servico de verdade, mas @atlas/core
+          # valida estas envs no carregamento via zod.
+          DATABASE_URL: postgres://test:test@localhost:5432/test
+          REDIS_URL: redis://localhost:6379
+          SESSION_SECRET: test_secret_with_at_least_32_chars_xx
         run: pnpm test
