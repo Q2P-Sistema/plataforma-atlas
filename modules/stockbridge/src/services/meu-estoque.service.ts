@@ -60,9 +60,10 @@ export async function listarMeuEstoque(
 ): Promise<MeuEstoqueResponse> {
   const pool = getPool();
 
-  // Filtro de galpao (gestor/diretor sem galpoes ve tudo)
+  // Filtro de galpao — granularidade sub-estoque pos migration 0030.
+  // codigo_estoque na view JÁ é "11.1", "11.2", etc — match exato com galpoes[].
   const filtroGalpao = galpoes.length > 0
-    ? `AND (${galpoes.map((_, i) => `codigo_estoque LIKE $${i + 1} || '.%'`).join(' OR ')})`
+    ? `AND codigo_estoque = ANY(ARRAY[${galpoes.map((_, i) => `$${i + 1}`).join(',')}]::text[])`
     : '';
 
   const empresaFilter =

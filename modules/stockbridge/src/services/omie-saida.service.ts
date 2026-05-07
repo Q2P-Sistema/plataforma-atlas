@@ -31,11 +31,11 @@ interface ContextoMovimentacao {
 }
 
 /**
- * Resolve correlacao OMIE completa de um galpao (codigos em ACXE + Q2P).
- * Usado para detectar espelhamento e disparar baixas duais.
+ * Resolve correlacao OMIE completa de um sub-estoque (codigos em ACXE + Q2P).
+ * Migration 0030: granularidade agora e por sub-estoque exato (11.1, 11.2,
+ * 12.1, 12.2, 21.1, 31.1) — nao mais por agregador 11/12/21/31.
  *
- * Galpoes fisicos espelhados (importado, sufixo .1) tem ambos preenchidos.
- * Galpoes nacionais (.2) so tem q2p.
+ * Galpoes espelhados (.1) tem ambas correlacoes; nacionais (.2) so Q2P.
  */
 export async function resolverCorrelacaoCompletaGalpao(
   galpao: string,
@@ -47,9 +47,8 @@ export async function resolverCorrelacaoCompletaGalpao(
       c.codigo_local_estoque_q2p::text AS q2p
     FROM stockbridge.localidade l
     INNER JOIN stockbridge.localidade_correlacao c ON c.localidade_id = l.id
-    WHERE l.codigo LIKE ${galpao + '.%'}
+    WHERE l.codigo = ${galpao}
       AND l.tipo = 'proprio'
-    ORDER BY l.codigo
     LIMIT 1
   `);
   const row = result.rows[0];

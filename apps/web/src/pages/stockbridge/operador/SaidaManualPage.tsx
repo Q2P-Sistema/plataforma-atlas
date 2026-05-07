@@ -21,16 +21,17 @@ interface MeuEstoqueItem {
   volumeTotalKg: number;
 }
 
-/** Mapeia o prefixo de galpão para nome amigável (doc Codificacao_Estoques_OMIE). */
+/** Sub-estoques pos migration 0030 (granularidade .1 importado / .2 nacional). */
 const GALPAO_LABELS: Record<string, string> = {
-  '11': 'Santo André — Galpão A',
-  '12': 'Santo André — Galpão B',
-  '13': 'Santo André — Galpão C',
-  '21': 'Extrema',
-  '31': 'Armazém Externo (ATN)',
+  '11.1': 'Santo André — Importado (11.1)',
+  '11.2': 'Santo André — Nacional (11.2) · Q2P',
+  '12.1': 'Santo André — Importado (12.1)',
+  '12.2': 'Santo André — Nacional (12.2) · Q2P',
+  '21.1': 'Extrema (21.1)',
+  '31.1': 'Armazém Externo / ATN (31.1)',
 };
 function labelGalpao(g: string): string {
-  return GALPAO_LABELS[g] ?? `Galpão ${g}`;
+  return GALPAO_LABELS[g] ?? g;
 }
 
 interface MeuEstoqueResponse {
@@ -216,7 +217,7 @@ export function SaidaManualPage() {
     const todos = [...meuEstoque.data.principal];
     return todos
       .filter((it) => {
-        if (galpaoSelecionado && !it.codigoEstoque.startsWith(`${galpaoSelecionado}.`)) return false;
+        if (galpaoSelecionado && it.codigoEstoque !== galpaoSelecionado) return false;
         if (busca) {
           const b = busca.toLowerCase();
           if (

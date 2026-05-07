@@ -30,13 +30,14 @@ interface Movimentacao {
 }
 
 const GALPAO_LABELS: Record<string, string> = {
-  '11': 'Santo André — Galpão A',
-  '12': 'Santo André — Galpão B',
-  '13': 'Santo André — Galpão C',
-  '21': 'Extrema',
-  '31': 'Armazém Externo (ATN)',
+  '11.1': 'Santo André — Importado (11.1)',
+  '11.2': 'Santo André — Nacional (11.2) · Q2P',
+  '12.1': 'Santo André — Importado (12.1)',
+  '12.2': 'Santo André — Nacional (12.2) · Q2P',
+  '21.1': 'Extrema (21.1)',
+  '31.1': 'Armazém Externo / ATN (31.1)',
 };
-const labelGalpao = (g: string) => GALPAO_LABELS[g] ?? `Galpão ${g}`;
+const labelGalpao = (g: string) => GALPAO_LABELS[g] ?? g;
 
 const TIPO_COLOR: Record<string, string> = {
   entrada_nf: 'bg-green-50 text-green-700 border-green-200',

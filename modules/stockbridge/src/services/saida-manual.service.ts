@@ -95,6 +95,7 @@ export async function consultarSaldoDisponivel(
 ): Promise<SaldoDisponivel> {
   const db = getDb();
 
+  // Migration 0030: galpao = codigo_estoque exato (11.1, 11.2, etc).
   const result = await db.execute<{ saldo_omie_kg: string | null; reservado_kg: string | null }>(sql`
     WITH descricao_sku AS (
       SELECT descricao FROM public."tbl_produtos_ACXE"
@@ -106,7 +107,7 @@ export async function consultarSaldoDisponivel(
       FROM public."vw_posicaoEstoqueUnificadaFamilia" o
       INNER JOIN descricao_sku d ON d.descricao = o.descricao_produto
       WHERE o.saldo > 0
-        AND split_part(o.codigo_estoque, '.', 1) = ${galpao}
+        AND o.codigo_estoque = ${galpao}
         AND ${sql.raw(filtroEmpresaOmie(empresa))}
     ),
     reservas AS (
@@ -221,7 +222,7 @@ export async function registrarSaidaManual(
         FROM public."vw_posicaoEstoqueUnificadaFamilia" o
         INNER JOIN descricao_sku d ON d.descricao = o.descricao_produto
         WHERE o.saldo > 0
-          AND split_part(o.codigo_estoque, '.', 1) = ${input.galpao}
+          AND o.codigo_estoque = ${input.galpao}
           AND ${sql.raw(filtroEmpresaOmie(input.empresa))}
       ),
       res AS (

@@ -1096,7 +1096,7 @@ async function consultarValorUnitarioProduto(
     FROM public."vw_posicaoEstoqueUnificadaFamilia" o
     INNER JOIN desc_sku d ON d.descricao = o.descricao_produto
     WHERE o.saldo > 0
-      AND split_part(o.codigo_estoque, '.', 1) = ${galpao}
+      AND o.codigo_estoque = ${galpao}
       AND ${sql.raw(filtroEmp)}
   `);
   const v = result.rows[0]?.vu;
