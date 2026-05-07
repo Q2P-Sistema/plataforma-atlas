@@ -234,6 +234,9 @@ function RetornoModal({ comodato, onClose, onSuccess }: RetornoModalProps) {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sb', 'comodato', 'abertos'] });
+      // Atualiza o contador da sidebar (bolinha verde/vermelha) — App.tsx usa
+      // uma key diferente porque conta vencidos vs no prazo separadamente.
+      queryClient.invalidateQueries({ queryKey: ['stockbridge', 'comodatos', 'count'] });
       onSuccess();
     },
   });
