@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../../../stores/auth.store.js';
 
@@ -177,33 +177,45 @@ interface RetornoModalProps {
   onSuccess: () => void;
 }
 
+interface ProdutoQ2P {
+  codigoAcxe: number;
+  descricao: string;
+}
+
 function RetornoModal({ comodato, onClose, onSuccess }: RetornoModalProps) {
   const apiFetch = useApiFetch();
   const queryClient = useQueryClient();
 
-  const [skuRecebido, setSkuRecebido] = useState(String(comodato.produtoCodigoAcxe));
+  // Default = produto original do comodato. Operador pode trocar via combobox.
+  const [produtoSelecionado, setProdutoSelecionado] = useState<ProdutoQ2P>({
+    codigoAcxe: comodato.produtoCodigoAcxe,
+    descricao: comodato.produtoDescricao,
+  });
   const [galpaoDestino, setGalpaoDestino] = useState(comodato.galpaoOrigem);
   const [quantidadeKg, setQuantidadeKg] = useState(String(comodato.quantidadeKg));
   const [observacoes, setObservacoes] = useState('');
 
-  // Lista de galpoes disponiveis — endpoint admin retorna { galpao, localidades }
-  const galpoesQuery = useQuery<{ galpao: string; localidades: string[] }[], Error>({
-    queryKey: ['sb', 'galpoes-disponiveis'],
+  // Galpoes do operador (mesmo endpoint da SaidaManualPage — operador tem acesso).
+  // Filtra '90' (TROCA virtual nao recebe retorno).
+  const galpoesQuery = useQuery<{ galpoes: string[] }, Error>({
+    queryKey: ['sb', 'meu-estoque', 'galpoes', 'q2p'],
     queryFn: async () => {
-      const r = await apiFetch('/api/v1/stockbridge/admin/galpoes-disponiveis');
-      return r.data as { galpao: string; localidades: string[] }[];
+      const r = await apiFetch('/api/v1/stockbridge/meu-estoque?empresa=Q2P');
+      return r.data as { galpoes: string[] };
     },
   });
+  const galpoesDisponiveis = useMemo(
+    () => (galpoesQuery.data?.galpoes ?? []).filter((g) => !g.startsWith('90')),
+    [galpoesQuery.data],
+  );
 
-  const skuNum = parseInt(skuRecebido, 10);
   const qtdNum = parseFloat(quantidadeKg.replace(',', '.'));
 
-  const skuMudou = skuNum !== comodato.produtoCodigoAcxe;
+  const skuMudou = produtoSelecionado.codigoAcxe !== comodato.produtoCodigoAcxe;
   const qtdMudou = Number.isFinite(qtdNum) && qtdNum !== comodato.quantidadeKg;
 
   const podeEnviar =
-    Number.isFinite(skuNum) &&
-    skuNum > 0 &&
+    produtoSelecionado.codigoAcxe > 0 &&
     Number.isFinite(qtdNum) &&
     qtdNum > 0 &&
     galpaoDestino &&
@@ -214,7 +226,7 @@ function RetornoModal({ comodato, onClose, onSuccess }: RetornoModalProps) {
       apiFetch(`/api/v1/stockbridge/comodato/${comodato.movimentacaoId}/retorno`, {
         method: 'POST',
         body: JSON.stringify({
-          produto_codigo_acxe_recebido: skuNum,
+          produto_codigo_acxe_recebido: produtoSelecionado.codigoAcxe,
           galpao_destino: galpaoDestino,
           quantidade_kg_recebida: qtdNum,
           observacoes,
@@ -255,17 +267,15 @@ function RetornoModal({ comodato, onClose, onSuccess }: RetornoModalProps) {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-atlas-muted mb-1">SKU recebido *</label>
-            <input
-              value={skuRecebido}
-              onChange={(e) => setSkuRecebido(e.target.value.replace(/\D/g, ''))}
-              className={`w-full px-3 py-2 border rounded text-sm font-mono dark:bg-slate-900 ${
-                skuMudou ? 'border-amber-400' : 'border-slate-300 dark:border-slate-600'
-              }`}
+            <label className="block text-xs font-semibold text-atlas-muted mb-1">Produto recebido *</label>
+            <ProdutoCombobox
+              valor={produtoSelecionado}
+              onChange={setProdutoSelecionado}
+              destacar={skuMudou}
             />
             {skuMudou && (
               <div className="mt-1 text-[11px] text-amber-700">
-                ⚠ SKU diferente do original ({comodato.produtoCodigoAcxe}) — vai gerar divergência
+                ⚠ Produto diferente do original — vai gerar divergência
               </div>
             )}
           </div>
@@ -276,16 +286,23 @@ function RetornoModal({ comodato, onClose, onSuccess }: RetornoModalProps) {
               value={galpaoDestino}
               onChange={(e) => setGalpaoDestino(e.target.value)}
               className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+              disabled={galpoesQuery.isLoading}
             >
               <option value="">— selecione —</option>
-              {galpoesQuery.data
-                ?.filter((g) => g.galpao !== '90') // exclui virtual TROCA/TRANSITO
-                .map((g) => (
-                  <option key={g.galpao} value={g.galpao}>
-                    {labelGalpao(g.galpao)}
-                  </option>
-                ))}
+              {galpoesDisponiveis.map((g) => (
+                <option key={g} value={g}>
+                  {labelGalpao(g)}
+                </option>
+              ))}
             </select>
+            {galpoesQuery.isLoading && (
+              <div className="mt-1 text-[11px] text-atlas-muted">Carregando galpões…</div>
+            )}
+            {!galpoesQuery.isLoading && galpoesDisponiveis.length === 0 && (
+              <div className="mt-1 text-[11px] text-amber-700">
+                Você não está vinculado a nenhum galpão Q2P. Solicite ao gestor.
+              </div>
+            )}
           </div>
 
           <div>
@@ -354,6 +371,110 @@ function RetornoModal({ comodato, onClose, onSuccess }: RetornoModalProps) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+interface ProdutoComboboxProps {
+  valor: ProdutoQ2P;
+  onChange: (p: ProdutoQ2P) => void;
+  destacar: boolean;
+}
+
+/**
+ * Combobox com busca por descricao em tbl_produtos_Q2P. Backend retorna o
+ * codigoAcxe canonico via JOIN por descricao. Operador escolhe pela descricao
+ * (codigos OMIE internos sao opacos pra ele).
+ */
+function ProdutoCombobox({ valor, onChange, destacar }: ProdutoComboboxProps) {
+  const apiFetch = useApiFetch();
+  const [aberto, setAberto] = useState(false);
+  const [termo, setTermo] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Fecha ao clicar fora
+  useEffect(() => {
+    if (!aberto) return;
+    const onClickFora = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setAberto(false);
+      }
+    };
+    window.addEventListener('mousedown', onClickFora);
+    return () => window.removeEventListener('mousedown', onClickFora);
+  }, [aberto]);
+
+  // Debounce de 250ms na busca
+  const [termoDebounced, setTermoDebounced] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setTermoDebounced(termo), 250);
+    return () => clearTimeout(t);
+  }, [termo]);
+
+  const { data: opcoes = [], isFetching } = useQuery<ProdutoQ2P[], Error>({
+    queryKey: ['sb', 'produtos-q2p', termoDebounced],
+    enabled: aberto,
+    queryFn: async () => {
+      const url = termoDebounced.trim().length > 0
+        ? `/api/v1/stockbridge/produtos-q2p?q=${encodeURIComponent(termoDebounced.trim())}&limit=50`
+        : '/api/v1/stockbridge/produtos-q2p?limit=50';
+      const r = await apiFetch(url);
+      return r.data as ProdutoQ2P[];
+    },
+  });
+
+  const escolher = (p: ProdutoQ2P) => {
+    onChange(p);
+    setAberto(false);
+    setTermo('');
+  };
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setAberto((v) => !v)}
+        className={`w-full px-3 py-2 border rounded text-sm text-left dark:bg-slate-900 ${
+          destacar ? 'border-amber-400' : 'border-slate-300 dark:border-slate-600'
+        } hover:border-slate-400 flex items-center justify-between gap-2`}
+      >
+        <span className="truncate" title={valor.descricao}>
+          {valor.descricao}
+        </span>
+        <span className="text-atlas-muted text-xs">▾</span>
+      </button>
+
+      {aberto && (
+        <div className="absolute z-10 mt-1 w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded shadow-lg max-h-72 overflow-hidden flex flex-col">
+          <input
+            autoFocus
+            value={termo}
+            onChange={(e) => setTermo(e.target.value)}
+            placeholder="Buscar produto pela descrição..."
+            className="w-full px-3 py-2 border-b border-slate-200 dark:border-slate-700 dark:bg-slate-900 text-sm focus:outline-none"
+          />
+          <div className="overflow-y-auto flex-1">
+            {isFetching && opcoes.length === 0 && (
+              <div className="px-3 py-2 text-xs text-atlas-muted italic">Buscando...</div>
+            )}
+            {!isFetching && opcoes.length === 0 && (
+              <div className="px-3 py-2 text-xs text-atlas-muted italic">Nenhum produto encontrado.</div>
+            )}
+            {opcoes.map((p) => (
+              <button
+                key={p.codigoAcxe}
+                type="button"
+                onClick={() => escolher(p)}
+                className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-700 ${
+                  p.codigoAcxe === valor.codigoAcxe ? 'bg-slate-100 dark:bg-slate-700/60 font-medium' : ''
+                }`}
+              >
+                <div className="truncate" title={p.descricao}>{p.descricao}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

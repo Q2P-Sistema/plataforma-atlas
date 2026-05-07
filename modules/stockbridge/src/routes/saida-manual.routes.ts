@@ -7,6 +7,7 @@ import {
   registrarRetornoComodato,
   consultarSaldoDisponivel,
   listarComodatosAbertos,
+  buscarProdutosQ2P,
   SaldoInsuficienteError,
   SubtipoInvalidoError,
   ComodatoDadosObrigatoriosError,
@@ -107,6 +108,34 @@ router.get(
     } catch (err) {
       logger.error({ err }, 'Erro ao consultar saldo disponivel');
       res.status(500).json({ data: null, error: { code: 'SALDO_QUERY_FAIL', message: (err as Error).message } });
+    }
+  },
+);
+
+// GET /produtos-q2p?q=&limit= — busca produtos por descricao (combobox retorno comodato)
+const ProdutosQ2PQuerySchema = z.object({
+  q: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+
+router.get(
+  '/api/v1/stockbridge/produtos-q2p',
+  requireOperador,
+  async (req: Request, res: Response) => {
+    const parsed = ProdutosQ2PQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({
+        data: null,
+        error: { code: 'INVALID_INPUT', message: parsed.error.issues.map((i) => i.message).join('; ') },
+      });
+      return;
+    }
+    try {
+      const data = await buscarProdutosQ2P(parsed.data.q ?? null, parsed.data.limit ?? 50);
+      res.json({ data, error: null });
+    } catch (err) {
+      logger.error({ err }, 'Erro ao buscar produtos Q2P');
+      res.status(500).json({ data: null, error: { code: 'PRODUTOS_Q2P_FAIL', message: (err as Error).message } });
     }
   },
 );

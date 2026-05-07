@@ -429,6 +429,42 @@ export async function listarComodatosAbertos(): Promise<ComodatoAberto[]> {
   });
 }
 
+export interface ProdutoQ2PItem {
+  /** Codigo numerico ACXE (canonico no Atlas — vai pra produto_codigo_acxe). */
+  codigoAcxe: number;
+  /** Descricao do produto Q2P (mesma do ACXE — match cross-empresa por descricao). */
+  descricao: string;
+}
+
+/**
+ * Busca produtos Q2P por descricao. Usado no retorno de comodato — operador
+ * escolhe pela descricao (codigos OMIE internos sao opacos pra ele) e o backend
+ * recebe o codigoAcxe canonico via JOIN tbl_produtos_ACXE x tbl_produtos_Q2P
+ * pela descricao (mesma estrategia cross-empresa do legado).
+ */
+export async function buscarProdutosQ2P(
+  termo: string | null,
+  limit: number = 50,
+): Promise<ProdutoQ2PItem[]> {
+  const db = getDb();
+  const termoLike = termo && termo.trim().length > 0 ? `%${termo.trim()}%` : null;
+  const result = await db.execute<{ codigo_acxe: string; descricao: string }>(sql`
+    SELECT pa.codigo_produto::text AS codigo_acxe,
+           pq.descricao
+    FROM public."tbl_produtos_Q2P" pq
+    INNER JOIN public."tbl_produtos_ACXE" pa ON pa.descricao = pq.descricao
+    WHERE pq.descricao IS NOT NULL
+      AND (pa.inativo IS NULL OR pa.inativo <> 'S')
+      ${termoLike ? sql`AND pq.descricao ILIKE ${termoLike}` : sql``}
+    ORDER BY pq.descricao
+    LIMIT ${limit}
+  `);
+  return result.rows.map((r) => ({
+    codigoAcxe: Number(r.codigo_acxe),
+    descricao: r.descricao,
+  }));
+}
+
 export interface RegistrarRetornoComodatoInput {
   movimentacaoOrigemId: string;
   produtoCodigoAcxeRecebido: number;
