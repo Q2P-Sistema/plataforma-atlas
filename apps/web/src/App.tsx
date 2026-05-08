@@ -84,20 +84,23 @@ const FORECAST_SUB_ITEMS: SidebarSubItem[] = [
   { id: 'forecast-config', name: 'Config', path: '/forecast/config', icon: Settings },
 ];
 
+// Roles refletem requireOperador/requireGestor/requireDiretor das rotas
+// (modules/stockbridge/src/middleware/role.ts) — fonte da verdade no backend.
+// Aqui e so visibilidade no menu pra evitar UX de clicar e levar 403.
 const STOCKBRIDGE_SUB_ITEMS: SidebarSubItem[] = [
-  { id: 'sb-cockpit', name: 'Cockpit', path: '/stockbridge/cockpit', icon: LayoutDashboard },
-  { id: 'sb-fila', name: 'Recebimento', path: '/stockbridge/fila', icon: FileText },
-  { id: 'sb-aprovacoes', name: 'Aprovações', path: '/stockbridge/aprovacoes', icon: Bell },
-  { id: 'sb-movimentacoes', name: 'Movimentações', path: '/stockbridge/movimentacoes', icon: Table },
-  { id: 'sb-transito', name: 'Trânsito', path: '/stockbridge/transito', icon: Activity },
-  { id: 'sb-saida-manual', name: 'Saída Manual', path: '/stockbridge/saida-manual', icon: ShoppingCart },
-  { id: 'sb-comodato-retorno', name: 'Retorno Comodato', path: '/stockbridge/comodato-retorno', icon: Activity },
-  { id: 'sb-metricas', name: 'Métricas', path: '/stockbridge/metricas', icon: BarChart3 },
-  { id: 'sb-fornecedores', name: 'Fornecedores', path: '/stockbridge/fornecedores', icon: Building2 },
-  { id: 'sb-localidades', name: 'Localidades', path: '/stockbridge/localidades', icon: Landmark },
-  { id: 'sb-config', name: 'Indicadores por Produto', path: '/stockbridge/config-produtos', icon: Settings },
-  { id: 'sb-estoque', name: 'Meu Estoque', path: '/stockbridge/estoque', icon: Package },
-  { id: 'sb-user-galpao', name: 'Galpões × Usuários', path: '/stockbridge/admin/user-galpao', icon: Users },
+  { id: 'sb-cockpit',          name: 'Cockpit',                 path: '/stockbridge/cockpit',           icon: LayoutDashboard, roles: ['gestor', 'diretor'] },
+  { id: 'sb-fila',             name: 'Recebimento',             path: '/stockbridge/fila',              icon: FileText,        roles: ['operador', 'gestor', 'diretor'] },
+  { id: 'sb-aprovacoes',       name: 'Aprovações',              path: '/stockbridge/aprovacoes',        icon: Bell,            roles: ['gestor', 'diretor'] },
+  { id: 'sb-movimentacoes',    name: 'Movimentações',           path: '/stockbridge/movimentacoes',     icon: Table,           roles: ['operador', 'gestor', 'diretor'] },
+  { id: 'sb-transito',         name: 'Trânsito',                path: '/stockbridge/transito',          icon: Activity,        roles: ['operador', 'gestor', 'diretor'] },
+  { id: 'sb-saida-manual',     name: 'Saída Manual',            path: '/stockbridge/saida-manual',      icon: ShoppingCart,    roles: ['operador', 'gestor', 'diretor'] },
+  { id: 'sb-comodato-retorno', name: 'Retorno Comodato',        path: '/stockbridge/comodato-retorno',  icon: Activity,        roles: ['operador', 'gestor', 'diretor'] },
+  { id: 'sb-metricas',         name: 'Métricas',                path: '/stockbridge/metricas',          icon: BarChart3,       roles: ['diretor'] },
+  { id: 'sb-fornecedores',     name: 'Fornecedores',            path: '/stockbridge/fornecedores',      icon: Building2,       roles: ['diretor'] },
+  { id: 'sb-localidades',      name: 'Localidades',             path: '/stockbridge/localidades',       icon: Landmark,        roles: ['gestor', 'diretor'] },
+  { id: 'sb-config',           name: 'Indicadores por Produto', path: '/stockbridge/config-produtos',   icon: Settings,        roles: ['diretor'] },
+  { id: 'sb-estoque',          name: 'Meu Estoque',             path: '/stockbridge/estoque',           icon: Package,         roles: ['operador', 'gestor', 'diretor'] },
+  { id: 'sb-user-galpao',      name: 'Galpões × Usuários',      path: '/stockbridge/admin/user-galpao', icon: Users,           roles: ['gestor', 'diretor'] },
 ];
 
 const BP_SUB_ITEMS: SidebarSubItem[] = [
@@ -261,21 +264,26 @@ function ProtectedShell() {
     return null;
   }
 
-  const stockbridgeSubItems = STOCKBRIDGE_SUB_ITEMS.map((s) => {
-    if (s.id === 'sb-aprovacoes') return { ...s, badge: aprovacoesCount };
-    if (s.id === 'sb-fila') return { ...s, badge: minhasRejeicoes.recebimento };
-    if (s.id === 'sb-saida-manual') return { ...s, badge: minhasRejeicoes.saidaManual };
-    if (s.id === 'sb-comodato-retorno') {
-      return {
-        ...s,
-        badges: [
-          { count: comodatosCount.noPrazo, color: 'emerald' as const, title: 'Comodatos no prazo' },
-          { count: comodatosCount.vencidos, color: 'red' as const, title: 'Comodatos vencidos' },
-        ],
-      };
-    }
-    return s;
-  });
+  // Filtra itens cujo `roles` nao inclui o role do user. Itens sem `roles`
+  // declarado ficam visiveis pra todos (default conservador). Backend continua
+  // sendo a fonte da verdade — isso aqui e cosmetico.
+  const stockbridgeSubItems = STOCKBRIDGE_SUB_ITEMS
+    .filter((s) => !s.roles || s.roles.includes(user.role))
+    .map((s) => {
+      if (s.id === 'sb-aprovacoes') return { ...s, badge: aprovacoesCount };
+      if (s.id === 'sb-fila') return { ...s, badge: minhasRejeicoes.recebimento };
+      if (s.id === 'sb-saida-manual') return { ...s, badge: minhasRejeicoes.saidaManual };
+      if (s.id === 'sb-comodato-retorno') {
+        return {
+          ...s,
+          badges: [
+            { count: comodatosCount.noPrazo, color: 'emerald' as const, title: 'Comodatos no prazo' },
+            { count: comodatosCount.vencidos, color: 'red' as const, title: 'Comodatos vencidos' },
+          ],
+        };
+      }
+      return s;
+    });
 
   const sidebarModules = modules.map((m: ModuleInfo) => ({
     id: m.id,

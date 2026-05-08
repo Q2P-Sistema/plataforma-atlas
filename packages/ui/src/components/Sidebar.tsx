@@ -11,6 +11,8 @@ export interface SidebarBadge {
   title?: string;
 }
 
+export type SidebarRole = 'operador' | 'gestor' | 'diretor';
+
 export interface SidebarSubItem {
   id: string;
   name: string;
@@ -20,6 +22,12 @@ export interface SidebarSubItem {
   badge?: number | null;
   /** Multiplos badges coloridos lado a lado. Tem precedencia sobre `badge`. */
   badges?: SidebarBadge[];
+  /**
+   * Roles que veem o item. Ausente = todos os roles autenticados veem.
+   * Filtro e responsabilidade do caller (App.tsx) — Sidebar so renderiza
+   * o que receber.
+   */
+  roles?: SidebarRole[];
 }
 
 export interface SidebarModule {
