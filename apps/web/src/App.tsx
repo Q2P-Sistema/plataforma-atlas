@@ -158,7 +158,10 @@ export function App() {
 
 function ProtectedShell() {
   const { user, isAuthenticated, isLoading } = useAuth({ requireAuth: true });
-  const { data: modules = [] } = useModules();
+  // Guard com isAuthenticated pra evitar fetch /modules retornar 401 antes
+  // do auth validar e cachear [] por 5min — sintoma classico era sidebar
+  // vazia logo apos login, exigindo F5 pra renderizar.
+  const { data: modules = [] } = useModules({ enabled: isAuthenticated });
   const location = useLocation();
   const navigate = useNavigate();
   const logout = useAuthStore((s) => s.logout);

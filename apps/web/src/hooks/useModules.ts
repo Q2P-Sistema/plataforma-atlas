@@ -38,9 +38,10 @@ const MODULE_NAMES: Record<string, string> = {
   forecast: 'Forecast',
 };
 
-export function useModules() {
+export function useModules(options: { enabled?: boolean } = {}) {
   return useQuery<ModuleInfo[]>({
     queryKey: ['modules'],
+    enabled: options.enabled ?? true,
     queryFn: async () => {
       const res = await fetch('/api/v1/auth/modules', { credentials: 'include' });
       if (!res.ok) return [];
