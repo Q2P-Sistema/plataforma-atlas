@@ -3,6 +3,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../../../stores/auth.store.js';
 import { ConferenciaModal } from './ConferenciaModal.js';
 import { ReSubmeterModal } from './ReSubmeterModal.js';
+import { RecebimentoNacionalForm } from './RecebimentoNacionalForm.js';
+
+type Aba = 'importacao' | 'nacional';
 
 interface FilaItem {
   nf: string;
@@ -54,8 +57,8 @@ function useApiFetch() {
 export function FilaOmiePage() {
   const apiFetch = useApiFetch();
   const queryClient = useQueryClient();
+  const [aba, setAba] = useState<Aba>('importacao');
   const [buscaNf, setBuscaNf] = useState('');
-  const [buscaCnpj, setBuscaCnpj] = useState<'acxe' | 'q2p'>('acxe');
   const [queryKey, setQueryKey] = useState<{ nf?: string; cnpj?: string }>({});
   const [selecionado, setSelecionado] = useState<FilaItem | null>(null);
   const [resubmitendo, setResubmitendo] = useState<MinhaRejeicao | null>(null);
@@ -122,7 +125,7 @@ export function FilaOmiePage() {
   function handleBuscar(e: FormEvent) {
     e.preventDefault();
     if (!buscaNf.trim()) return;
-    setQueryKey({ nf: buscaNf.trim(), cnpj: buscaCnpj });
+    setQueryKey({ nf: buscaNf.trim(), cnpj: 'acxe' });
   }
 
   return (
@@ -130,93 +133,57 @@ export function FilaOmiePage() {
       <div className="mb-6">
         <h1 className="text-2xl font-serif text-atlas-ink mb-1">Recebimento</h1>
         <p className="text-sm text-atlas-muted">
-          Busque uma NF de entrada (importação, devolução, compra nacional) para confirmar o recebimento físico.
+          {aba === 'importacao'
+            ? 'Busque uma NF de importação ou devolução de cliente para confirmar o recebimento físico.'
+            : 'Registre a entrada de uma NF nacional escolhendo produto, empresa e estoque destino.'}
         </p>
       </div>
 
-      <form onSubmit={handleBuscar} className="flex items-end gap-3 mb-6 p-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg">
-        <div className="flex-1">
-          <label className="block text-xs font-medium text-atlas-muted mb-1">Número da NF</label>
-          <input
-            value={buscaNf}
-            onChange={(e) => setBuscaNf(e.target.value)}
-            placeholder="Ex: 4878 ou IMP-2026-0301"
-            className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm outline-none focus:ring-2 focus:ring-atlas-accent"
-          />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-atlas-muted mb-1">CNPJ emissor</label>
-          <select
-            value={buscaCnpj}
-            onChange={(e) => setBuscaCnpj(e.target.value as 'acxe' | 'q2p')}
-            className="px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm outline-none"
-          >
-            <option value="acxe">ACXE</option>
-            <option value="q2p">Q2P</option>
-          </select>
-        </div>
-        <button type="submit" className="px-5 py-2 bg-atlas-btn-bg text-atlas-btn-text rounded text-sm font-medium hover:opacity-90">
-          Buscar
+      <div className="flex gap-1 mb-6 border-b border-slate-200 dark:border-slate-700">
+        <button
+          type="button"
+          onClick={() => setAba('importacao')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            aba === 'importacao'
+              ? 'border-atlas-accent text-atlas-ink'
+              : 'border-transparent text-atlas-muted hover:text-atlas-ink'
+          }`}
+        >
+          Importação
         </button>
-      </form>
-
-      {error && (
-        <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-sm text-red-800 dark:text-red-300">
-          {(error as Error).message}
-        </div>
-      )}
-
-      {!queryKey.nf && (
-        <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
-          Informe um número de NF para buscar.
-        </div>
-      )}
-
-      {isLoading && <div className="p-6 text-sm text-atlas-muted">Consultando OMIE...</div>}
-
-      {queryKey.nf && !isLoading && itens.length === 0 && !error && (
-        <div className="p-6 text-sm text-atlas-muted border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
-          Nenhuma NF encontrada ou já processada. Verifique o número.
-        </div>
-      )}
-
-      <div className="flex flex-col gap-3">
-        {itens.map((item) => {
-          const tipoCfg = TIPO_LABEL[item.tipo] ?? { label: item.tipo, color: 'bg-slate-100 text-slate-800' };
-          return (
-            <div key={item.nf} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4 flex items-center gap-4">
-              <span className={`text-xs font-semibold px-2 py-1 rounded ${tipoCfg.color}`}>{tipoCfg.label}</span>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-baseline gap-3 mb-1">
-                  <span className="font-serif text-lg text-atlas-ink">{item.produto.nome}</span>
-                  <span className="font-mono text-xs text-atlas-muted">NF {item.nf}</span>
-                </div>
-                <div className="text-xs text-atlas-muted">
-                  {item.cnpj.toUpperCase()} · cod. {item.produto.codigo} · {item.dtEmissao}
-                </div>
-              </div>
-              <div className="text-right">
-                <div className="font-serif text-xl text-atlas-ink">{item.qtdKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}<span className="text-xs text-atlas-muted ml-1">kg</span></div>
-                <div className="text-xs text-atlas-muted">= {(item.qtdKg / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 3 })} t</div>
-              </div>
-              <button
-                onClick={() => setSelecionado(item)}
-                className="px-4 py-2 bg-atlas-btn-bg text-atlas-btn-text rounded text-sm font-medium hover:opacity-90"
-              >
-                Conferir →
-              </button>
-            </div>
-          );
-        })}
+        <button
+          type="button"
+          onClick={() => setAba('nacional')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            aba === 'nacional'
+              ? 'border-atlas-accent text-atlas-ink'
+              : 'border-transparent text-atlas-muted hover:text-atlas-ink'
+          }`}
+        >
+          Compra nacional
+        </button>
       </div>
+
+      {aba === 'nacional' ? (
+        <RecebimentoNacionalForm />
+      ) : (
+        <ImportacaoSection
+          buscaNf={buscaNf}
+          setBuscaNf={setBuscaNf}
+          queryKey={queryKey}
+          handleBuscar={handleBuscar}
+          itens={itens}
+          isLoading={isLoading}
+          error={error}
+          onSelecionar={setSelecionado}
+        />
+      )}
 
       {selecionado && (
         <ConferenciaModal
           item={selecionado}
           onClose={() => setSelecionado(null)}
           onSucesso={() => {
-            // Limpa a busca: a NF ja foi processada, nao faz sentido manter o
-            // card na tela nem refazer o refetch (OMIE bloqueia repeticao em <40s).
             setSelecionado(null);
             setBuscaNf('');
             setQueryKey({});
@@ -238,7 +205,7 @@ export function FilaOmiePage() {
         />
       )}
 
-      {rejeicoes.length > 0 && (
+      {aba === 'importacao' && rejeicoes.length > 0 && (
         <div className="mt-8">
           <h2 className="text-lg font-serif text-atlas-ink mb-2">
             Recebimentos rejeitados ({rejeicoes.length})
@@ -291,5 +258,96 @@ export function FilaOmiePage() {
         </div>
       )}
     </div>
+  );
+}
+
+interface ImportacaoSectionProps {
+  buscaNf: string;
+  setBuscaNf: (v: string) => void;
+  queryKey: { nf?: string; cnpj?: string };
+  handleBuscar: (e: FormEvent) => void;
+  itens: FilaItem[];
+  isLoading: boolean;
+  error: unknown;
+  onSelecionar: (it: FilaItem) => void;
+}
+
+function ImportacaoSection({
+  buscaNf,
+  setBuscaNf,
+  queryKey,
+  handleBuscar,
+  itens,
+  isLoading,
+  error,
+  onSelecionar,
+}: ImportacaoSectionProps) {
+  return (
+    <>
+      <form onSubmit={handleBuscar} className="flex items-end gap-3 mb-6 p-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg">
+        <div className="flex-1">
+          <label className="block text-xs font-medium text-atlas-muted mb-1">Número da NF</label>
+          <input
+            value={buscaNf}
+            onChange={(e) => setBuscaNf(e.target.value)}
+            placeholder="Ex: 4878 ou IMP-2026-0301"
+            className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm outline-none focus:ring-2 focus:ring-atlas-accent"
+          />
+        </div>
+        <button type="submit" className="px-5 py-2 bg-atlas-btn-bg text-atlas-btn-text rounded text-sm font-medium hover:opacity-90">
+          Buscar
+        </button>
+      </form>
+
+      {error && (
+        <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-sm text-red-800 dark:text-red-300">
+          {(error as Error).message}
+        </div>
+      )}
+
+      {!queryKey.nf && (
+        <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
+          Informe um número de NF para buscar.
+        </div>
+      )}
+
+      {isLoading && <div className="p-6 text-sm text-atlas-muted">Consultando OMIE...</div>}
+
+      {queryKey.nf && !isLoading && itens.length === 0 && !error && (
+        <div className="p-6 text-sm text-atlas-muted border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
+          Nenhuma NF encontrada ou já processada. Verifique o número.
+        </div>
+      )}
+
+      <div className="flex flex-col gap-3">
+        {itens.map((item) => {
+          const tipoCfg = TIPO_LABEL[item.tipo] ?? { label: item.tipo, color: 'bg-slate-100 text-slate-800' };
+          return (
+            <div key={item.nf} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4 flex items-center gap-4">
+              <span className={`text-xs font-semibold px-2 py-1 rounded ${tipoCfg.color}`}>{tipoCfg.label}</span>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-baseline gap-3 mb-1">
+                  <span className="font-serif text-lg text-atlas-ink">{item.produto.nome}</span>
+                  <span className="font-mono text-xs text-atlas-muted">NF {item.nf}</span>
+                </div>
+                <div className="text-xs text-atlas-muted">
+                  {item.cnpj.toUpperCase()} · cod. {item.produto.codigo} · {item.dtEmissao}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="font-serif text-xl text-atlas-ink">{item.qtdKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}<span className="text-xs text-atlas-muted ml-1">kg</span></div>
+                <div className="text-xs text-atlas-muted">= {(item.qtdKg / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 3 })} t</div>
+              </div>
+              <button
+                onClick={() => onSelecionar(item)}
+                className="px-4 py-2 bg-atlas-btn-bg text-atlas-btn-text rounded text-sm font-medium hover:opacity-90"
+              >
+                Receber →
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </>
   );
 }

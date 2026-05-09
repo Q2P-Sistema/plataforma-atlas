@@ -23,8 +23,10 @@ import {
   executarTransferenciaIntraDual,
   executarComodatoOmieDual,
   executarRetornoComodatoOmieDual,
+  resolverCodigoProdutoOmie,
   type ResultadoDual,
 } from './omie-saida.service.js';
+import { incluirAjusteIdempotente } from './omie-idempotente.js';
 
 const logger = createLogger('stockbridge:aprovacao');
 
@@ -333,6 +335,12 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
   // Saidas manuais (migration 0026) — fluxo dedicado, agnostico de lote.
   if (TIPOS_SAIDA_MANUAL.has(apPre.tipoAprovacao)) {
     return aprovarSaidaManual(apPre, input);
+  }
+
+  // Recebimento nacional (entrada_manual sem lote, padrao saida manual com
+  // movimentacaoId) — fluxo single-empresa, sem dual ACXE<->Q2P.
+  if (apPre.tipoAprovacao === 'entrada_manual' && apPre.movimentacaoId) {
+    return aprovarEntradaNacional(apPre, input);
   }
 
   // Para recebimento_divergencia precisamos chamar OMIE ANTES de commitar o update.
@@ -778,6 +786,150 @@ export async function dispensarRejeicao(input: {
     .where(eq(aprovacao.id, input.id));
   logger.info({ aprovacaoId: input.id, usuarioId: input.usuarioId }, 'Rejeicao dispensada pelo operador');
   return { id: input.id, jaEstavaDispensada: false };
+}
+
+/**
+ * Fluxo de aprovacao para recebimento nacional (entrada_manual sem lote).
+ * Single-empresa: chama OMIE apenas no CNPJ destino selecionado pelo operador
+ * (sem dual ACXE<->Q2P, ja que nacional pode entrar puro Q2P ou puro ACXE).
+ *
+ * - tipo=ENT, motivo=INI (entrada inicial — mesmo padrao do recebimento de
+ *   importacao no lado Q2P)
+ * - cod_int_ajuste = ${opId}:nacional-${empresa} pra idempotencia
+ * - Valor unitario: usa custo medio existente do SKU; se 0 (produto novo no
+ *   estoque), envia 0.01 e loga warning — operador pode ajustar via OMIE
+ *   diretamente. OMIE rejeita ajuste com valor=0.
+ */
+async function aprovarEntradaNacional(
+  ap: typeof aprovacao.$inferSelect,
+  input: AprovarInput,
+): Promise<AprovarResult> {
+  const db = getDb();
+
+  const temProduto = ap.produtoCodigoAcxe != null || ap.produtoCodigoQ2p != null;
+  if (!temProduto || !ap.galpao || !ap.empresa) {
+    throw new Error(`Aprovacao ${ap.id} sem produto/galpao/empresa — registro inconsistente`);
+  }
+  if (!ap.movimentacaoId) {
+    throw new Error(`Aprovacao ${ap.id} sem movimentacao linkada — registro inconsistente`);
+  }
+
+  const [mov] = await db.select().from(movimentacao).where(eq(movimentacao.id, ap.movimentacaoId)).limit(1);
+  if (!mov) throw new Error(`Movimentacao ${ap.movimentacaoId} nao encontrada`);
+
+  const quantidadeKg = Number(ap.quantidadeRecebidaKg ?? 0);
+  if (quantidadeKg <= 0) throw new Error(`Aprovacao ${ap.id} sem quantidade valida`);
+
+  const empresa = ap.empresa as 'acxe' | 'q2p';
+  const codigoLocalEstoque = ap.galpao; // gravamos o codigo OMIE direto em galpao
+
+  // Para Q2P nacional: usa produto_codigo_q2p diretamente (sem match por descricao).
+  // Para ACXE: usa produto_codigo_acxe diretamente.
+  // Para Q2P espelhado (recebimento importacao): resolve via descricao ACXE->Q2P.
+  const idProduto =
+    empresa === 'acxe'
+      ? Number(ap.produtoCodigoAcxe)
+      : ap.produtoCodigoQ2p != null
+        ? Number(ap.produtoCodigoQ2p)
+        : await resolverCodigoProdutoOmie(Number(ap.produtoCodigoAcxe), 'q2p');
+
+  // Usa custo unitario da NF informado pelo operador se disponivel; caso contrario
+  // tenta custo medio do estoque; ultimo recurso 0.01 (OMIE rejeita valor=0).
+  const custoNf = mov.custoUnitarioBrl != null ? Number(mov.custoUnitarioBrl) : 0;
+  let valorUnitario: number;
+  if (custoNf > 0) {
+    valorUnitario = custoNf;
+  } else {
+    const valorMedio = await consultarValorUnitarioProduto(
+      Number(ap.produtoCodigoAcxe),
+      codigoLocalEstoque,
+      empresa,
+    );
+    if (valorMedio > 0) {
+      valorUnitario = valorMedio;
+    } else {
+      logger.warn(
+        { aprovacaoId: ap.id, sku: ap.produtoCodigoAcxe, empresa },
+        'Sem custo NF e sem custo medio — usando 0.01 como placeholder pra OMIE aceitar ajuste',
+      );
+      valorUnitario = 0.01;
+    }
+  }
+
+  const observacaoOmie = (ap.observacoes ?? `Recebimento nacional ${ap.id}`).slice(0, 240);
+  const codInt = `${mov.opId}:nacional-${empresa}`;
+
+  const dataAtual = (() => {
+    const d = new Date();
+    return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+  })();
+
+  let omieRes: { idMovest: string; idAjuste: string };
+  try {
+    const r = await incluirAjusteIdempotente(empresa, codInt, {
+      codigoLocalEstoque,
+      idProduto,
+      dataAtual,
+      quantidade: quantidadeKg,
+      observacao: observacaoOmie,
+      origem: 'AJU',
+      tipo: 'ENT',
+      motivo: 'INI',
+      valor: valorUnitario,
+    });
+    omieRes = { idMovest: r.idMovest, idAjuste: r.idAjuste };
+  } catch (err) {
+    logger.error({ err, aprovacaoId: ap.id, empresa }, 'OMIE falhou ao aprovar recebimento nacional');
+    throw err;
+  }
+
+  await db.transaction(async (tx) => {
+    const [apFresh] = await tx.select().from(aprovacao).where(eq(aprovacao.id, ap.id)).limit(1);
+    if (!apFresh) throw new AprovacaoNaoEncontradaError(ap.id);
+    if (apFresh.status !== 'pendente') throw new AprovacaoStatusInvalidoError(ap.id, apFresh.status);
+
+    await tx
+      .update(aprovacao)
+      .set({ status: 'aprovada', aprovadoPor: input.usuarioId, aprovadoEm: new Date() })
+      .where(eq(aprovacao.id, ap.id));
+
+    const updateMov: Record<string, unknown> = {
+      statusOmie: 'concluida',
+      updatedAt: new Date(),
+    };
+    if (empresa === 'acxe') {
+      updateMov.mvAcxe = 1;
+      updateMov.dtAcxe = new Date();
+      updateMov.idMovestAcxe = omieRes.idMovest;
+      updateMov.idAjusteAcxe = omieRes.idAjuste;
+      updateMov.idUserAcxe = input.usuarioId;
+    } else {
+      updateMov.mvQ2p = 1;
+      updateMov.dtQ2p = new Date();
+      updateMov.idMovestQ2p = omieRes.idMovest;
+      updateMov.idAjusteQ2p = omieRes.idAjuste;
+      updateMov.idUserQ2p = input.usuarioId;
+    }
+    await tx.update(movimentacao).set(updateMov).where(eq(movimentacao.id, mov.id));
+  });
+
+  logger.info(
+    { aprovacaoId: ap.id, movimentacaoId: mov.id, empresa, omieRes, quantidadeKg },
+    'Recebimento nacional aprovado e ajustado no OMIE',
+  );
+
+  // Notifica operador fora da transacao
+  await enviarNotificacaoAprovacaoOperador({
+    operadorUserId: ap.lancadoPor,
+    aprovacaoId: ap.id,
+    tipoAprovacao: ap.tipoAprovacao,
+    loteId: mov.id, // sem lote — usa movimentacaoId como referencia textual
+  });
+
+  return {
+    id: ap.id,
+    loteStatus: 'reconciliado',
+  };
 }
 
 /**

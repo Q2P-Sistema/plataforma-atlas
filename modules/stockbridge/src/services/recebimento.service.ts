@@ -89,7 +89,6 @@ export interface FilaItemOmie {
 export async function getFilaOmie(params: {
   nf?: string;
   cnpj?: 'acxe' | 'q2p';
-  armazemId?: string | null;
 }): Promise<FilaItemOmie[]> {
   const db = getDb();
 
@@ -170,7 +169,7 @@ export async function getFilaOmie(params: {
   }
 
   // TODO(phase-3.5): em producao, listar NFs pendentes lendo do sync OMIE do n8n
-  logger.info({ armazemId: params.armazemId }, 'Fila OMIE em modo real: aguardando wireup de sync n8n');
+  logger.info('Fila OMIE em modo real: aguardando wireup de sync n8n');
   return [];
 }
 

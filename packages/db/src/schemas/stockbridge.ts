@@ -130,12 +130,15 @@ export const movimentacao = stockbridgeSchema.table(
     ultimoErroOmie: jsonb('ultimo_erro_omie'),
     // Saida manual sem lote (migration 0026)
     produtoCodigoAcxe: bigint('produto_codigo_acxe', { mode: 'number' }),
+    // Recebimento nacional Q2P — produto da tabela Q2P (migration 0032)
+    produtoCodigoQ2p: bigint('produto_codigo_q2p', { mode: 'number' }),
     galpao: text('galpao'),
     galpaoDestino: text('galpao_destino'),
     empresa: text('empresa').$type<'acxe' | 'q2p'>(),
     criadoPor: uuid('criado_por').references(() => users.id),
     dtPrevistaRetorno: date('dt_prevista_retorno'),
     movimentacaoOrigemId: uuid('movimentacao_origem_id'),
+    custoUnitarioBrl: numeric('custo_unitario_brl', { precision: 14, scale: 6 }),
     ativo: boolean('ativo').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -183,6 +186,8 @@ export const aprovacao = stockbridgeSchema.table(
     rejeicaoMotivo: text('rejeicao_motivo'),
     // Migration 0026: novas colunas pra saida sem lote
     produtoCodigoAcxe: bigint('produto_codigo_acxe', { mode: 'number' }),
+    // Migration 0032: produto Q2P direto (recebimento nacional Q2P sem match ACXE)
+    produtoCodigoQ2p: bigint('produto_codigo_q2p', { mode: 'number' }),
     galpao: text('galpao'),
     empresa: text('empresa').$type<'acxe' | 'q2p'>(),
     movimentacaoId: uuid('movimentacao_id'),

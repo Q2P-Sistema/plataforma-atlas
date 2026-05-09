@@ -1,6 +1,6 @@
-import { eq, asc } from 'drizzle-orm';
+import { eq, asc, isNotNull, and, inArray } from 'drizzle-orm';
 import { getDb, createLogger } from '@atlas/core';
-import { localidade } from '@atlas/db';
+import { localidade, localidadeCorrelacao } from '@atlas/db';
 import type { TipoLocalidade } from '../types.js';
 
 const logger = createLogger('stockbridge:localidade');
@@ -47,6 +47,42 @@ export async function listarLocalidades(apenasAtivas: boolean = false): Promise<
     return query.where(eq(localidade.ativo, true));
   }
   return query;
+}
+
+export async function listarLocalidadesEspelhadas(apenasAtivas: boolean = false): Promise<Array<typeof localidade.$inferSelect>> {
+  const db = getDb();
+
+  // Localidade espelhada = tem correlacao com AMBAS acxe e q2p
+  const espelhadosIds = await db
+    .select({ id: localidadeCorrelacao.localidadeId })
+    .from(localidadeCorrelacao)
+    .where(
+      and(
+        isNotNull(localidadeCorrelacao.codigoLocalEstoqueAcxe),
+        isNotNull(localidadeCorrelacao.codigoLocalEstoqueQ2p),
+      ),
+    );
+
+  if (espelhadosIds.length === 0) {
+    return [];
+  }
+
+  // Estoques inadequados para importacao
+  const codigosExcluidos = ['90.0.1'];
+
+  const conditions = [inArray(localidade.id, espelhadosIds.map((e) => e.id))];
+  if (apenasAtivas) {
+    conditions.push(eq(localidade.ativo, true));
+  }
+
+  const resultado = await db
+    .select()
+    .from(localidade)
+    .where(and(...conditions))
+    .orderBy(asc(localidade.codigo));
+
+  // Filtrar estoques inadequados
+  return resultado.filter((l) => !codigosExcluidos.includes(l.codigo));
 }
 
 export async function criarLocalidade(input: LocalidadeInput): Promise<typeof localidade.$inferSelect> {

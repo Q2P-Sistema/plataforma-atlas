@@ -67,7 +67,12 @@ export function FornecedoresPage() {
   return (
     <div className="p-6 max-w-5xl">
       <div className="mb-5">
-        <h1 className="text-2xl font-serif text-atlas-ink mb-1">Fornecedores</h1>
+        <div className="flex items-center gap-2 mb-1">
+          <h1 className="text-2xl font-serif text-atlas-ink">Fornecedores</h1>
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700">
+            Em desenvolvimento
+          </span>
+        </div>
         <p className="text-sm text-atlas-muted">
           Excluir/reincluir fornecedores da fila de compra nacional. Importação e devolução não são afetadas.
         </p>

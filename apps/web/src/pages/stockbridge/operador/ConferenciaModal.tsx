@@ -53,9 +53,9 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
   const [sucesso, setSucesso] = useState<{ tipo: 'ok' | 'divergencia'; mensagem: string } | null>(null);
 
   const { data: localidades = [] } = useQuery<Localidade[]>({
-    queryKey: ['stockbridge', 'localidades', 'ativas'],
+    queryKey: ['stockbridge', 'localidades', 'espelhadas'],
     queryFn: async () => {
-      const body = await apiFetch('/api/v1/stockbridge/localidades?ativo=true');
+      const body = await apiFetch('/api/v1/stockbridge/localidades?ativo=true&espelhadas=true');
       return body.data as Localidade[];
     },
   });

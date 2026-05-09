@@ -3,6 +3,7 @@ import { requireAuth, requireModule } from '@atlas/auth';
 import { createLogger } from '@atlas/core';
 import filaRouter from './fila.routes.js';
 import recebimentoRouter from './recebimento.routes.js';
+import recebimentoNacionalRouter from './recebimento-nacional.routes.js';
 import cockpitRouter from './cockpit.routes.js';
 import aprovacaoRouter from './aprovacao.routes.js';
 import transitoRouter from './transito.routes.js';
@@ -32,6 +33,8 @@ router.get('/api/v1/stockbridge/health', (_req: Request, res: Response) => {
 // US1 — Recebimento de NF com conferencia fisica
 router.use(filaRouter);
 router.use(recebimentoRouter);
+// Recebimento nacional (single-empresa, sem fila OMIE)
+router.use(recebimentoNacionalRouter);
 // US2 — Cockpit de estoque por produto (gestor/diretor)
 router.use(cockpitRouter);
 // US3 — Aprovacoes hierarquicas
