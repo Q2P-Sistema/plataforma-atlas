@@ -127,7 +127,7 @@ export async function listar(filtros: ListarFiltros): Promise<ListarResultado> {
       uq.name AS user_q2p_nome,
       l.codigo AS lote_codigo,
       COALESCE(m.produto_codigo_acxe, l.produto_codigo_acxe) AS produto_codigo_acxe,
-      pa.descricao AS produto_descricao,
+      COALESCE(pa.descricao, pq.descricao) AS produto_descricao,
       m.galpao,
       m.empresa,
       m.criado_por,
@@ -140,6 +140,8 @@ export async function listar(filtros: ListarFiltros): Promise<ListarResultado> {
     LEFT JOIN stockbridge.lote l ON l.id = m.lote_id
     LEFT JOIN public."tbl_produtos_ACXE" pa
       ON pa.codigo_produto = COALESCE(m.produto_codigo_acxe, l.produto_codigo_acxe)
+    LEFT JOIN public."tbl_produtos_Q2P" pq
+      ON pq.codigo_produto = m.produto_codigo_q2p AND m.produto_codigo_acxe IS NULL
     LEFT JOIN atlas.users ua ON ua.id = m.id_user_acxe
     LEFT JOIN atlas.users uq ON uq.id = m.id_user_q2p
     LEFT JOIN atlas.users uc ON uc.id = m.criado_por
