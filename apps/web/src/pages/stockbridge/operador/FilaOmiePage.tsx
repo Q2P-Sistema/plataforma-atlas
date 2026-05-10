@@ -70,7 +70,8 @@ export function FilaOmiePage() {
     queryFn: async () => {
       const body = await apiFetch('/api/v1/stockbridge/aprovacoes/minhas-rejeicoes');
       const todas = body.data as MinhaRejeicao[];
-      return todas.filter((r) => r.loteId !== null);
+      // Recebimento: lote de importacao OU entrada_manual (recebimento nacional sem lote)
+      return todas.filter((r) => r.loteId !== null || r.tipoAprovacao === 'entrada_manual');
     },
   });
 
@@ -205,58 +206,71 @@ export function FilaOmiePage() {
         />
       )}
 
-      {aba === 'importacao' && rejeicoes.length > 0 && (
-        <div className="mt-8">
-          <h2 className="text-lg font-serif text-atlas-ink mb-2">
-            Recebimentos rejeitados ({rejeicoes.length})
-          </h2>
-          <p className="text-xs text-atlas-muted mb-3">
-            Recebimentos que foram rejeitados pelo gestor. Corrija e re-submeta para nova aprovação.
-          </p>
-          <div className="flex flex-col gap-2">
-            {rejeicoes.map((r) => (
-              <div
-                key={r.id}
-                className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 flex items-center gap-3"
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-baseline gap-2 mb-0.5">
-                    <span className="font-serif text-base text-atlas-ink">{r.loteCodigo}</span>
-                    <span className="text-xs text-atlas-muted">cod. {r.produtoCodigoAcxe} · {r.fornecedor}</span>
+      {(() => {
+        const rejeicaoImportacao = rejeicoes.filter((r) => r.loteId !== null);
+        const rejeicaoNacional = rejeicoes.filter((r) => r.tipoAprovacao === 'entrada_manual');
+        const lista = aba === 'importacao' ? rejeicaoImportacao : rejeicaoNacional;
+        if (lista.length === 0) return null;
+        return (
+          <div className="mt-8">
+            <h2 className="text-lg font-serif text-atlas-ink mb-2">
+              Recebimentos rejeitados ({lista.length})
+            </h2>
+            <p className="text-xs text-atlas-muted mb-3">
+              {aba === 'importacao'
+                ? 'Recebimentos que foram rejeitados pelo gestor. Corrija e re-submeta para nova aprovação.'
+                : 'O gestor rejeitou estes itens. Registre um novo recebimento nacional com as correções necessárias.'}
+            </p>
+            <div className="flex flex-col gap-2">
+              {lista.map((r) => (
+                <div
+                  key={r.id}
+                  className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 flex items-center gap-3"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-baseline gap-2 mb-0.5">
+                      <span className="font-serif text-base text-atlas-ink">
+                        {r.loteCodigo ?? `NF · ${r.empresa?.toUpperCase() ?? ''} · ${r.galpao ?? ''}`}
+                      </span>
+                      <span className="text-xs text-atlas-muted">
+                        {r.empresa?.toUpperCase()} · {r.quantidadeRecebidaKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg
+                      </span>
+                    </div>
+                    <div className="text-xs text-red-700 dark:text-red-300 italic truncate">
+                      "{r.motivoRejeicao || 'sem motivo registrado'}"
+                    </div>
                   </div>
-                  <div className="text-xs text-red-700 dark:text-red-300 italic truncate">
-                    "{r.motivoRejeicao || 'sem motivo registrado'}"
+                  <div className="text-right text-xs text-atlas-muted whitespace-nowrap">
+                    rejeitado em {new Date(r.rejeitadoEm).toLocaleDateString('pt-BR')}
+                  </div>
+                  <div className="flex flex-col gap-1.5 whitespace-nowrap">
+                    {aba === 'importacao' && (
+                      <button
+                        onClick={() => setResubmitendo(r)}
+                        disabled={dispensarMut.isPending}
+                        className="px-3 py-1.5 bg-atlas-btn-bg text-atlas-btn-text rounded text-xs font-medium hover:opacity-90"
+                      >
+                        Re-submeter →
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        if (confirm(`Descartar esta rejeição da sua caixa de entrada?\n\nO histórico permanece para auditoria — você só não vai ver mais aqui.`)) {
+                          dispensarMut.mutate(r.id);
+                        }
+                      }}
+                      disabled={dispensarMut.isPending}
+                      className="px-3 py-1.5 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 rounded text-xs font-medium hover:bg-slate-50 dark:hover:bg-slate-800"
+                    >
+                      Descartar
+                    </button>
                   </div>
                 </div>
-                <div className="text-right text-xs text-atlas-muted whitespace-nowrap">
-                  {r.quantidadeRecebidaKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg<br />
-                  rejeitado em {new Date(r.rejeitadoEm).toLocaleDateString('pt-BR')}
-                </div>
-                <div className="flex flex-col gap-1.5 whitespace-nowrap">
-                  <button
-                    onClick={() => setResubmitendo(r)}
-                    disabled={dispensarMut.isPending}
-                    className="px-3 py-1.5 bg-atlas-btn-bg text-atlas-btn-text rounded text-xs font-medium hover:opacity-90"
-                  >
-                    Re-submeter →
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (confirm(`Descartar esta rejeição da sua caixa de entrada?\n\nO histórico permanece para auditoria — você só não vai ver mais aqui.`)) {
-                        dispensarMut.mutate(r.id);
-                      }
-                    }}
-                    disabled={dispensarMut.isPending}
-                    className="px-3 py-1.5 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 rounded text-xs font-medium hover:bg-slate-50 dark:hover:bg-slate-800"
-                  >
-                    Descartar
-                  </button>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

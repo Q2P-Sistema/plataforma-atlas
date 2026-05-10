@@ -148,7 +148,8 @@ export function SaidaManualPage() {
     queryFn: async () => {
       const r = await apiFetch('/api/v1/stockbridge/aprovacoes/minhas-rejeicoes');
       const todas = r.data as MinhaRejeicao[];
-      return todas.filter((it) => it.loteId === null);
+      // Saida manual: sem lote e nao sendo entrada_manual (recebimento nacional vai pro Recebimento)
+      return todas.filter((it) => it.loteId === null && it.tipoAprovacao !== 'entrada_manual');
     },
   });
 
