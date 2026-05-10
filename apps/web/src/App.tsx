@@ -206,12 +206,12 @@ function ProtectedShell() {
       });
       if (!res.ok) return { recebimento: 0, saidaManual: 0 };
       const body = (await res.json()) as {
-        data: Array<{ loteId: string | null }>;
+        data: Array<{ loteId: string | null; tipoAprovacao: string }>;
       };
       const lista = Array.isArray(body.data) ? body.data : [];
       return {
-        recebimento: lista.filter((r) => r.loteId !== null).length,
-        saidaManual: lista.filter((r) => r.loteId === null).length,
+        recebimento: lista.filter((r) => r.loteId !== null || r.tipoAprovacao === 'entrada_manual').length,
+        saidaManual: lista.filter((r) => r.loteId === null && r.tipoAprovacao !== 'entrada_manual').length,
       };
     },
   });
