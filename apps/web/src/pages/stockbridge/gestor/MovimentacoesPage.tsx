@@ -198,8 +198,8 @@ export function MovimentacoesPage() {
                 <tr>
                   <th className="text-left px-3 py-2">Data</th>
                   <th className="text-left px-3 py-2">Produto</th>
-                  <th className="text-left px-3 py-2">Tipo</th>
                   <th className="text-right px-3 py-2">Qtd (kg)</th>
+                  <th className="text-left px-3 py-2">NF</th>
                   <th className="text-left px-3 py-2">Empresa(s) / Galpão</th>
                   <th className="text-left px-3 py-2">Lançado por</th>
                   <th className="text-left px-3 py-2">Aprovado por</th>
@@ -214,20 +214,26 @@ export function MovimentacoesPage() {
                       {m.produtoDescricao ? (
                         <div>
                           <div className="text-atlas-ink font-medium">{m.produtoDescricao}</div>
-                          <div className="text-atlas-muted text-[10px] font-mono">{m.notaFiscal}</div>
+                          <div>
+                            <span
+                              className={`text-[10px] px-2 py-0.5 rounded border ${TIPO_COLOR[m.tipoMovimento] ?? 'bg-slate-50 text-slate-700 border-slate-200'}`}
+                            >
+                              {m.tipoMovimento}{m.subtipo ? ` · ${m.subtipo}` : ''}
+                            </span>
+                          </div>
                         </div>
                       ) : (
-                        <span className="font-mono">{m.notaFiscal}</span>
+                        <span
+                          className={`text-[10px] px-2 py-0.5 rounded border ${TIPO_COLOR[m.tipoMovimento] ?? 'bg-slate-50 text-slate-700 border-slate-200'}`}
+                        >
+                          {m.tipoMovimento}{m.subtipo ? ` · ${m.subtipo}` : ''}
+                        </span>
                       )}
-                    </td>
-                    <td className="px-3 py-2">
-                      <span className={`text-[10px] px-2 py-0.5 rounded border ${TIPO_COLOR[m.tipoMovimento] ?? 'bg-slate-50 text-slate-700 border-slate-200'}`}>
-                        {m.tipoMovimento}{m.subtipo ? ` · ${m.subtipo}` : ''}
-                      </span>
                     </td>
                     <td className={`px-3 py-2 text-right font-serif ${m.quantidadeKg >= 0 ? 'text-green-700' : 'text-red-700'}`}>
                       {m.quantidadeKg > 0 ? '+' : ''}{m.quantidadeKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg
                     </td>
+                    <td className="px-3 py-2 text-[10px] font-mono text-atlas-muted">{m.notaFiscal}</td>
                     <td className="px-3 py-2 text-[11px] text-atlas-muted">
                       {m.galpao ? (
                         <div>
