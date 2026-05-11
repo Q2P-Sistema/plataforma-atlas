@@ -821,7 +821,23 @@ async function aprovarEntradaNacional(
   if (quantidadeKg <= 0) throw new Error(`Aprovacao ${ap.id} sem quantidade valida`);
 
   const empresa = ap.empresa as 'acxe' | 'q2p';
-  const codigoLocalEstoque = ap.galpao; // gravamos o codigo OMIE direto em galpao
+
+  // ap.galpao guarda o codigo Atlas (ex: '21.2', '11.2'). Resolve para o codigo
+  // OMIE (codigo_local_estoque_acxe/q2p) via localidade_correlacao.
+  const colCodigo = empresa === 'acxe' ? 'codigo_local_estoque_acxe' : 'codigo_local_estoque_q2p';
+  const localRes = await db.execute<{ codigo: string | null }>(sql`
+    SELECT lc.${sql.raw(colCodigo)}::text AS codigo
+    FROM stockbridge.localidade l
+    INNER JOIN stockbridge.localidade_correlacao lc ON lc.localidade_id = l.id
+    WHERE l.codigo = ${ap.galpao}
+    LIMIT 1
+  `);
+  const codigoLocalEstoque = localRes.rows[0]?.codigo;
+  if (!codigoLocalEstoque) {
+    throw new Error(
+      `Aprovacao ${ap.id}: localidade '${ap.galpao}' sem codigo OMIE para empresa ${empresa}`,
+    );
+  }
 
   // Para Q2P nacional: usa produto_codigo_q2p diretamente (sem match por descricao).
   // Para ACXE: usa produto_codigo_acxe diretamente.
