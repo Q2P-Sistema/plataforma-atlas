@@ -28,7 +28,11 @@ const GALPAO_LABELS: Record<string, string> = {
   '12.1': 'Santo André — Importado (12.1)',
   '12.2': 'Santo André — Nacional (12.2) · Q2P',
   '21.1': 'Extrema (21.1)',
+  '21.2': 'Extrema — Nacional (21.2) · ACXE',
   '31.1': 'Armazém Externo / ATN (31.1)',
+  '90': 'TROCA (virtual)',
+  '90.0.1': 'TROCA (virtual)',
+  '90.0.2': 'TRÂNSITO (virtual)',
 };
 function labelGalpao(g: string): string {
   return GALPAO_LABELS[g] ?? g;

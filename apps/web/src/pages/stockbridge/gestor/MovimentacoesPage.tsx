@@ -35,9 +35,27 @@ const GALPAO_LABELS: Record<string, string> = {
   '12.1': 'Santo André — Importado (12.1)',
   '12.2': 'Santo André — Nacional (12.2) · Q2P',
   '21.1': 'Extrema (21.1)',
+  '21.2': 'Extrema — Nacional (21.2) · ACXE',
   '31.1': 'Armazém Externo / ATN (31.1)',
+  '90': 'TROCA (virtual)',
+  '90.0.1': 'TROCA (virtual)',
+  '90.0.2': 'TRÂNSITO (virtual)',
 };
 const labelGalpao = (g: string) => GALPAO_LABELS[g] ?? g;
+
+/**
+ * Resolve quais empresas foram tocadas na movimentacao. Quando os dois lados
+ * OMIE foram gravados (ladoAcxe.idMovest E ladoQ2p.idMovest), e dual ACXE+Q2P.
+ * Senao, cai pra empresa primaria armazenada na linha (m.empresa).
+ */
+function resolverEmpresas(m: Movimentacao): string {
+  const temAcxe = !!m.ladoAcxe.idMovest;
+  const temQ2p = !!m.ladoQ2p.idMovest;
+  if (temAcxe && temQ2p) return 'ACXE + Q2P';
+  if (temAcxe) return 'ACXE';
+  if (temQ2p) return 'Q2P';
+  return m.empresa ? m.empresa.toUpperCase() : '—';
+}
 
 const TIPO_COLOR: Record<string, string> = {
   entrada_nf: 'bg-green-50 text-green-700 border-green-200',
@@ -171,15 +189,18 @@ export function MovimentacoesPage() {
 
       {data && data.items.length > 0 && (
         <>
-          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden mb-3">
+          <div
+            className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-y-auto mb-3"
+            style={{ maxHeight: 'calc(100vh - 320px)' }}
+          >
             <table className="w-full text-xs">
-              <thead className="bg-slate-50 dark:bg-slate-900/40 text-atlas-muted">
+              <thead className="bg-slate-100 dark:bg-slate-900 text-atlas-muted sticky top-0 z-10 border-b-2 border-slate-300 dark:border-slate-600">
                 <tr>
                   <th className="text-left px-3 py-2">Data</th>
                   <th className="text-left px-3 py-2">Produto</th>
                   <th className="text-left px-3 py-2">Tipo</th>
                   <th className="text-right px-3 py-2">Qtd (kg)</th>
-                  <th className="text-left px-3 py-2">Lote / Galpão</th>
+                  <th className="text-left px-3 py-2">Empresa(s) / Galpão</th>
                   <th className="text-left px-3 py-2">Lançado por</th>
                   <th className="text-left px-3 py-2">Aprovado por</th>
                   <th className="text-left px-3 py-2">Status OMIE</th>
@@ -208,12 +229,15 @@ export function MovimentacoesPage() {
                       {m.quantidadeKg > 0 ? '+' : ''}{m.quantidadeKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg
                     </td>
                     <td className="px-3 py-2 text-[11px] text-atlas-muted">
-                      {m.loteCodigo ? (
-                        <span className="font-mono">{m.loteCodigo}</span>
-                      ) : m.galpao ? (
+                      {m.galpao ? (
                         <div>
+                          <div className="text-[10px] font-semibold text-atlas-ink">{resolverEmpresas(m)}</div>
                           <div>{labelGalpao(m.galpao)}</div>
-                          {m.empresa && <div className="text-[10px]">{m.empresa.toUpperCase()}</div>}
+                        </div>
+                      ) : m.loteCodigo ? (
+                        <div>
+                          <div className="text-[10px] font-semibold text-atlas-ink">{resolverEmpresas(m)}</div>
+                          <div className="font-mono text-[10px]">{m.loteCodigo}</div>
                         </div>
                       ) : (
                         '—'

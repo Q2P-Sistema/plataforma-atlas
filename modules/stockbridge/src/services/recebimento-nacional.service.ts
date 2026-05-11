@@ -296,7 +296,9 @@ export async function processarRecebimentoNacional(
           loteId: null,
           produtoCodigoAcxe: it.produtoCodigoAcxe ?? null,
           produtoCodigoQ2p: it.produtoCodigoQ2p ?? null,
-          galpao: loc.codigoLocalEstoqueOmie,
+          // Codigo interno Atlas (ex: '11.2'), nao o codigoLocalEstoqueOmie (numerico).
+          // GALPAO_LABELS na UI mapeia o codigo interno pra label legivel.
+          galpao: loc.codigo,
           empresa: it.empresa,
           criadoPor: input.userId,
           quantidadeKg: String(quantidadeKg),
@@ -312,7 +314,7 @@ export async function processarRecebimentoNacional(
           loteId: null,
           produtoCodigoAcxe: it.produtoCodigoAcxe ?? null,
           produtoCodigoQ2p: it.produtoCodigoQ2p ?? null,
-          galpao: loc.codigoLocalEstoqueOmie,
+          galpao: loc.codigo,
           empresa: it.empresa,
           movimentacaoId: mov!.id,
           precisaNivel: 'gestor',
@@ -328,7 +330,7 @@ export async function processarRecebimentoNacional(
         aprovacaoId: apr!.id,
         produtoCodigoAcxe: it.produtoCodigoAcxe ?? codigoProduto,
         empresa: it.empresa,
-        galpao: loc.codigoLocalEstoqueOmie,
+        galpao: loc.codigo,
         quantidadeKg,
       });
     }
@@ -367,7 +369,10 @@ export async function processarRecebimentoNacional(
 
 interface LocalidadeResolvida {
   id: string;
+  /** Codigo interno Atlas (ex: '11.2'). Vai pra movimentacao.galpao. */
+  codigo: string;
   empresa: 'acxe' | 'q2p';
+  /** Codigo numerico OMIE do local_estoque. Vai pra chamadas API OMIE. */
   codigoLocalEstoqueOmie: string;
 }
 
@@ -384,11 +389,13 @@ async function resolverLocalidadesParaItens(
   for (const localidadeId of ids) {
     const result = await db.execute<{
       id: string;
+      codigo: string;
       codigo_acxe: string | null;
       codigo_q2p: string | null;
     }>(sql`
       SELECT
         l.id::text AS id,
+        l.codigo AS codigo,
         lc.codigo_local_estoque_acxe::text AS codigo_acxe,
         lc.codigo_local_estoque_q2p::text AS codigo_q2p
       FROM stockbridge.localidade l
@@ -405,9 +412,9 @@ async function resolverLocalidadesParaItens(
       // defesa em profundidade contra payload manipulado.
       if (acxe && q2p) continue;
       if (acxe && !q2p) {
-        map.set(r.id, { id: r.id, empresa: 'acxe', codigoLocalEstoqueOmie: acxe });
+        map.set(r.id, { id: r.id, codigo: r.codigo, empresa: 'acxe', codigoLocalEstoqueOmie: acxe });
       } else if (q2p && !acxe) {
-        map.set(r.id, { id: r.id, empresa: 'q2p', codigoLocalEstoqueOmie: q2p });
+        map.set(r.id, { id: r.id, codigo: r.codigo, empresa: 'q2p', codigoLocalEstoqueOmie: q2p });
       }
     }
   }
