@@ -360,7 +360,7 @@ function ProtectedShell() {
         {/* StockBridge — Phase 3 (US1 Recebimento) ativa; US2-US8 em fases futuras */}
         {enabledSet.has('stockbridge') && (
           <Route path="stockbridge" element={<SBLayout />}>
-            <Route index element={<CockpitPage />} />
+            <Route index element={<SBIndexRedirect role={user.role} />} />
             <Route path="fila" element={<FilaOmiePage />} />
             <Route path="cockpit" element={<CockpitPage />} />
             <Route path="aprovacoes" element={<AprovacoesPage />} />
@@ -397,6 +397,12 @@ function ProtectedShell() {
       </Routes>
     </ShellLayout>
   );
+}
+
+/** Redireciona a rota index do StockBridge pra tela certa por role. */
+function SBIndexRedirect({ role }: { role: string }) {
+  if (role === 'operador') return <Navigate to="/stockbridge/fila" replace />;
+  return <Navigate to="/stockbridge/cockpit" replace />;
 }
 
 function ModuleRoute({
