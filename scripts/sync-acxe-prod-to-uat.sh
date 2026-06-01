@@ -1,31 +1,38 @@
 #!/usr/bin/env bash
 # =============================================================================
-# sync-acxe-dev-to-uat.sh
-# Copia o banco acxe_q2p INTEIRO de dev -> uat.
+# sync-acxe-prod-to-uat.sh
+# Copia o banco acxe_q2p INTEIRO de prod -> uat.
 # Estrategia: DROP DATABASE no destino + CREATE DATABASE + pg_restore.
 # Tudo (schemas, tabelas, views, funcoes, triggers, sequences, dados) e
-# recriado a partir do dump do dev. O destino fica identico ao dev.
+# recriado a partir do dump do prod. O destino fica identico ao prod.
+#
+# Apos o restore, reaplica:
+#   - SELECT em public.* para 'claude_ro' (MCP read-only)
+#   - Ownership do schema 'crm' para 'crm_dev' + SELECT em public.*
+#     (acessos criados em UAT que precisam sobreviver ao sync)
 #
 # Pre-requisitos:
-#   - bw (Bitwarden CLI) logado, BW_SESSION exportado (pra senha do dev)
 #   - pg_dump / pg_restore / psql instalados (>= major version do servidor)
-#   - jq
-#   - Variaveis opcionais:
-#       PGPASSWORD_UAT   senha do postgres no UAT (se nao setada, sera pedida)
+#   - Variaveis de ambiente do prod (obrigatorias):
+#       PROD_USER         usuario do db.manager01.q2p.com.br
+#       PGPASSWORD_PROD   senha (se nao setada, sera pedida)
+#   - Variaveis do UAT (opcional):
+#       PGPASSWORD_UAT    senha do postgres no UAT (se nao setada, sera pedida)
 #
 # Uso:
-#   export BW_SESSION=$(bw unlock --raw)
-#   export PGPASSWORD_UAT='senhaaqui'    # opcional; sem isso o script pergunta
-#   scripts/sync-acxe-dev-to-uat.sh
+#   export PROD_USER=meu.usuario
+#   export PGPASSWORD_PROD='senhaaqui'    # opcional; sem isso o script pergunta
+#   export PGPASSWORD_UAT='senhaaqui'     # opcional; sem isso o script pergunta
+#   scripts/sync-acxe-prod-to-uat.sh
 # =============================================================================
 
 set -euo pipefail
 
 # -- Config ------------------------------------------------------------------
-DEV_HOST="${DEV_HOST:-159.203.89.175}"
-DEV_PORT="${DEV_PORT:-5436}"
-DEV_DB="${DEV_DB:-acxe_q2p}"
-DEV_USER="${DEV_USER:-postgres}"
+PROD_HOST="${PROD_HOST:-db.manager01.q2p.com.br}"
+PROD_PORT="${PROD_PORT:-5432}"
+PROD_DB="${PROD_DB:-acxe_q2p}"
+PROD_USER="${PROD_USER:-}"
 
 UAT_HOST="${UAT_HOST:-db.manager01.q2p.com.br}"
 UAT_PORT="${UAT_PORT:-5437}"
@@ -36,23 +43,21 @@ PARALLEL_JOBS="${PARALLEL_JOBS:-4}"
 DUMP_DIR="/tmp/acxe_dump_$(date +%Y%m%d_%H%M%S)"
 
 # -- Pre-checks --------------------------------------------------------------
-[ -z "${BW_SESSION:-}" ] && {
-  echo "X BW_SESSION nao setado."
-  echo "   Rode primeiro: export BW_SESSION=\$(bw unlock --raw)"
+[ -z "$PROD_USER" ] && {
+  echo "X PROD_USER nao setado."
+  echo "   Rode: export PROD_USER=<seu-usuario-prod>"
   exit 1
 }
 
-for cmd in pg_dump pg_restore psql jq bw; do
+for cmd in pg_dump pg_restore psql; do
   command -v "$cmd" >/dev/null || { echo "X '$cmd' nao instalado"; exit 1; }
 done
 
-# Senha do dev via Bitwarden
-DEV_PASSWORD="$(bw get item 'Atlas Dev Secrets' --session "$BW_SESSION" 2>/dev/null \
-  | jq -r '.fields[] | select(.name=="DATABASE_URL_PASSWORD") | .value')"
-[ -z "$DEV_PASSWORD" ] || [ "$DEV_PASSWORD" = "null" ] && {
-  echo "X Nao consegui ler DATABASE_URL_PASSWORD do Bitwarden (item 'Atlas Dev Secrets')."
-  exit 1
-}
+# Senha do prod
+if [ -z "${PGPASSWORD_PROD:-}" ]; then
+  read -rsp "Senha do prod ($PROD_USER@$PROD_HOST:$PROD_PORT): " PGPASSWORD_PROD
+  echo
+fi
 
 # Senha do UAT
 if [ -z "${PGPASSWORD_UAT:-}" ]; then
@@ -74,9 +79,9 @@ uat_psql() {
 cat <<EOF
 
 +-------------------------------------------------------------------------+
-| SYNC FULL acxe_q2p  dev -> uat                                          |
+| SYNC FULL acxe_q2p  prod -> uat                                         |
 +-------------------------------------------------------------------------+
-| Origem : $DEV_USER@$DEV_HOST:$DEV_PORT/$DEV_DB
+| Origem : $PROD_USER@$PROD_HOST:$PROD_PORT/$PROD_DB
 | Destino: $UAT_USER@$UAT_HOST:$UAT_PORT/$UAT_DB
 | Dump   : $DUMP_DIR (-j $PARALLEL_JOBS)
 | Modo   : DROP DATABASE + CREATE DATABASE + restore COMPLETO
@@ -93,20 +98,20 @@ mkdir -p "$DUMP_DIR"
 echo
 echo "> [1/5] Validando conectividade"
 
-PGPASSWORD="$DEV_PASSWORD" psql -h "$DEV_HOST" -p "$DEV_PORT" -U "$DEV_USER" \
-  -d "$DEV_DB" -tAc "SELECT 1" >/dev/null
-echo "  ok dev: $DEV_USER@$DEV_HOST:$DEV_PORT/$DEV_DB"
+PGPASSWORD="$PGPASSWORD_PROD" psql -h "$PROD_HOST" -p "$PROD_PORT" -U "$PROD_USER" \
+  -d "$PROD_DB" -tAc "SELECT 1" >/dev/null
+echo "  ok prod: $PROD_USER@$PROD_HOST:$PROD_PORT/$PROD_DB"
 
 uat_psql_admin -tAc "SELECT 1" >/dev/null
 echo "  ok uat: $UAT_USER@$UAT_HOST:$UAT_PORT/postgres"
 
-# -- 2) Dump do dev ----------------------------------------------------------
+# -- 2) Dump do prod ----------------------------------------------------------
 echo
-echo "> [2/5] pg_dump (dev) -> $DUMP_DIR/dump"
+echo "> [2/5] pg_dump (prod) -> $DUMP_DIR/dump"
 echo
 
-PGPASSWORD="$DEV_PASSWORD" pg_dump \
-  -h "$DEV_HOST" -p "$DEV_PORT" -U "$DEV_USER" -d "$DEV_DB" \
+PGPASSWORD="$PGPASSWORD_PROD" pg_dump \
+  -h "$PROD_HOST" -p "$PROD_PORT" -U "$PROD_USER" -d "$PROD_DB" \
   -Fd -j "$PARALLEL_JOBS" \
   --no-owner --no-privileges \
   -f "$DUMP_DIR/dump" \
@@ -166,20 +171,48 @@ SELECT
   (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema')) AS funcoes;
 SQL
 
-# -- Re-grant claude_ro -------------------------------------------------------
+# -- Reaplicar acessos do UAT -------------------------------------------------
+# Roles sao cluster-level e sobrevivem ao DROP DATABASE, mas os GRANTs e a
+# ownership de schema sao por-banco e foram perdidos. Reaplica aqui o que
+# foi configurado especificamente no UAT (claude_ro pro MCP, crm_dev pra
+# equipe de CRM). Se a role nao existir no cluster, pula com aviso.
 echo
-echo "> Re-grant SELECT para claude_ro (MCP)"
+echo "> Reaplicando acessos UAT-only (claude_ro, crm_dev)"
 uat_psql -v ON_ERROR_STOP=1 <<'SQL'
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'claude_ro') THEN
-    RAISE NOTICE 'role claude_ro nao existe no UAT — pulando grant';
-  ELSE
+  -- claude_ro: SELECT em public.*
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'claude_ro') THEN
     GRANT CONNECT ON DATABASE acxe_q2p TO claude_ro;
     GRANT USAGE ON SCHEMA public TO claude_ro;
-    GRANT SELECT ON ALL TABLES IN SCHEMA public TO claude_ro;
-    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO claude_ro;
-    RAISE NOTICE 'claude_ro re-grant ok';
+    GRANT SELECT ON ALL TABLES    IN SCHEMA public TO claude_ro;
+    GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO claude_ro;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES    TO claude_ro;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON SEQUENCES TO claude_ro;
+    RAISE NOTICE 'claude_ro ok';
+  ELSE
+    RAISE NOTICE 'role claude_ro nao existe — pulando';
+  END IF;
+
+  -- crm_dev: dono do schema crm + SELECT em public
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'crm_dev') THEN
+    GRANT CONNECT ON DATABASE acxe_q2p TO crm_dev;
+
+    -- Schema crm pode nao existir em prod ainda; cria se preciso e da owner
+    IF NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'crm') THEN
+      CREATE SCHEMA crm AUTHORIZATION crm_dev;
+    ELSE
+      ALTER SCHEMA crm OWNER TO crm_dev;
+    END IF;
+
+    GRANT USAGE ON SCHEMA public TO crm_dev;
+    GRANT SELECT ON ALL TABLES    IN SCHEMA public TO crm_dev;
+    GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO crm_dev;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES    TO crm_dev;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON SEQUENCES TO crm_dev;
+    RAISE NOTICE 'crm_dev ok';
+  ELSE
+    RAISE NOTICE 'role crm_dev nao existe — pulando';
   END IF;
 END$$;
 SQL
@@ -194,6 +227,6 @@ else
   echo "  dump preservado em $DUMP_DIR"
 fi
 
-unset PGPASSWORD_UAT DEV_PASSWORD
+unset PGPASSWORD_PROD PGPASSWORD_UAT
 echo
 echo "OK Sync concluido."
