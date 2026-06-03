@@ -36,19 +36,28 @@ router.get('/api/v1/stockbridge/cockpit', requireGestor, async (req: Request, re
   }
 });
 
-// Lista de familias_atlas disponiveis (pra dropdown de filtro do cockpit).
-// Vem do mapeamento familia_omie_atlas, filtrado por incluir_em_metricas=true.
+// Lista de familias disponiveis no Cockpit (pra dropdown de filtro).
+// Usa mesma logica do cockpit: COALESCE(familia_atlas, descricao_familia)
+// — produtos com mapeamento mostram familia_atlas (PP, PE...); sem mapeamento
+// caem no descricao_familia original do OMIE. Filtro de family no service
+// aceita ambos os formatos.
 router.get('/api/v1/stockbridge/familias', requireGestor, async (_req: Request, res: Response) => {
   try {
     const pool = getPool();
-    const result = await pool.query<{ familia_atlas: string }>(
-      `SELECT DISTINCT familia_atlas
-         FROM stockbridge.familia_omie_atlas
-         WHERE incluir_em_metricas = true
-           AND familia_atlas IS NOT NULL
-         ORDER BY familia_atlas`,
+    const result = await pool.query<{ familia: string }>(
+      `SELECT DISTINCT COALESCE(f.familia_atlas, p.descricao_familia) AS familia
+         FROM public."tbl_produtos_ACXE" p
+         LEFT JOIN stockbridge.familia_omie_atlas f
+           ON f.familia_omie = p.descricao_familia
+         LEFT JOIN stockbridge.config_produto c
+           ON c.produto_codigo_acxe = p.codigo_produto
+         WHERE COALESCE(f.incluir_em_metricas, true) = true
+           AND COALESCE(c.incluir_em_metricas, true) = true
+           AND p.descricao_familia IS NOT NULL
+           AND p.descricao_familia <> ''
+         ORDER BY familia`,
     );
-    res.json({ data: result.rows.map((r) => r.familia_atlas), error: null });
+    res.json({ data: result.rows.map((r) => r.familia), error: null });
   } catch (err) {
     logger.error({ err }, 'Erro ao listar familias');
     res.status(500).json({
