@@ -7,10 +7,18 @@ import { getCockpit } from '../services/cockpit.service.js';
 const logger = createLogger('stockbridge:cockpit');
 const router: Router = Router();
 
+// Aceita query string como ?familia=PP&familia=PE (Express retorna string[]
+// quando o mesmo nome se repete; quando vem so uma vez, retorna string).
+// O .transform() normaliza tudo para string[].
+const arrayOrSingleString = z
+  .union([z.string(), z.array(z.string())])
+  .optional()
+  .transform((v) => (v == null ? undefined : Array.isArray(v) ? v : [v]));
+
 const QuerySchema = z.object({
-  familia: z.string().optional(),
+  familia: arrayOrSingleString,
   cnpj: z.enum(['acxe', 'q2p', 'ambos']).optional(),
-  galpao: z.string().optional(),
+  galpao: arrayOrSingleString,
   criticidade: z.enum(['critico', 'alerta', 'ok', 'excesso', 'todas']).optional(),
 });
 
@@ -25,7 +33,12 @@ router.get('/api/v1/stockbridge/cockpit', requireGestor, async (req: Request, re
   }
 
   try {
-    const data = await getCockpit(parsed.data);
+    const data = await getCockpit({
+      familias: parsed.data.familia,
+      cnpj: parsed.data.cnpj,
+      galpoes: parsed.data.galpao,
+      criticidade: parsed.data.criticidade,
+    });
     res.json({ data, error: null });
   } catch (err) {
     logger.error({ err }, 'Erro ao montar cockpit');

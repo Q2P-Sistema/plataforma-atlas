@@ -11,9 +11,9 @@ export type FiltroCnpj = 'acxe' | 'q2p' | 'ambos';
 export type FiltroCriticidade = Criticidade | 'todas';
 
 export interface CockpitFiltros {
-  familia?: string;
+  familias?: string[];          // descricao_familia exata; vazio/undefined = todas
   cnpj?: FiltroCnpj;
-  galpao?: string;            // ex: '11', '12', '21', '31'
+  galpoes?: string[];           // ex: ['11', '12', '21']; vazio/undefined = todos
   criticidade?: FiltroCriticidade;
 }
 
@@ -86,8 +86,8 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
   const config = getConfig();
 
   const empresa: FiltroCnpj = filtros.cnpj ?? 'ambos';
-  const galpao = filtros.galpao ?? null;
-  const familia = filtros.familia ?? null;
+  const galpoes = filtros.galpoes && filtros.galpoes.length > 0 ? filtros.galpoes : null;
+  const familias = filtros.familias && filtros.familias.length > 0 ? filtros.familias : null;
   const incluirAcxe = empresa === 'acxe' || empresa === 'ambos';
   const incluirQ2p = empresa === 'q2p' || empresa === 'ambos';
 
@@ -114,12 +114,18 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
         )`;
 
   // Parametros (sempre na mesma ordem):
-  //   $1 = familia (text|null)
-  //   $2 = galpao (text|null)
+  //   $1 = familias (text[]|null)  — null/array vazio = todas
+  //   $2 = galpoes (text[]|null)   — null/array vazio = todos
   //   $3 = cutoff_date (date)
   //   $4 = incluir_acxe (bool)
   //   $5 = incluir_q2p (bool)
-  const galpaoFilterOmie = `AND ($2::text IS NULL OR o.codigo_estoque LIKE $2 || '.%')`;
+  // Filtro de galpao: aplicado SO ao saldo OMIE. Para multiplos galpoes,
+  // gera-se 'galpao.%' para cada e checa LIKE ANY.
+  const galpaoFilterOmie = `
+    AND ($2::text[] IS NULL OR EXISTS (
+      SELECT 1 FROM unnest($2::text[]) AS g
+      WHERE o.codigo_estoque LIKE g || '.%'
+    ))`;
 
   const sql = `
     WITH fisico_omie AS (
@@ -278,11 +284,11 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
     LEFT JOIN apr  a ON a.produto_codigo_acxe = u.produto_codigo_acxe
     WHERE COALESCE(f.incluir_em_metricas, true) = true
       AND COALESCE(c.incluir_em_metricas, true) = true
-      AND ($1::text IS NULL OR p.descricao_familia = $1)
+      AND ($1::text[] IS NULL OR p.descricao_familia = ANY($1::text[]))
     ORDER BY COALESCE(p.descricao, u.produto_codigo_acxe::text)
   `;
 
-  const params: unknown[] = [familia, galpao, cutoffDate, incluirAcxe, incluirQ2p];
+  const params: unknown[] = [familias, galpoes, cutoffDate, incluirAcxe, incluirQ2p];
 
   let rows: Record<string, unknown>[] = [];
   try {

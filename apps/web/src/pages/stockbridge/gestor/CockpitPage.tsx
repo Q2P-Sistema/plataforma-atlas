@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Info, ArrowRight, Table2, LayoutGrid } from 'lucide-react';
+import { Info, ArrowRight, Table2, LayoutGrid, ChevronDown, X } from 'lucide-react';
 import { useAuthStore } from '../../../stores/auth.store.js';
 
 type Criticidade = 'critico' | 'alerta' | 'ok' | 'excesso';
@@ -93,8 +93,8 @@ const CRIT_PRIORIDADE: Record<Criticidade, number> = {
 export function CockpitPage() {
   const apiFetch = useApiFetch();
   const [cnpjFilter, setCnpjFilter] = useState<'ambos' | 'acxe' | 'q2p'>('ambos');
-  const [galpaoFilter, setGalpaoFilter] = useState<string>('');
-  const [familiaFilter, setFamiliaFilter] = useState<string>('');
+  const [galpoesFilter, setGalpoesFilter] = useState<string[]>([]);
+  const [familiasFilter, setFamiliasFilter] = useState<string[]>([]);
   const [critFilter, setCritFilter] = useState<'todas' | Criticidade>('todas');
   const [pendenciaFilter, setPendenciaFilter] = useState<PendenciaFilter>('todas');
   const [estagioFilter, setEstagioFilter] = useState<EstagioFilter>('todos');
@@ -113,12 +113,12 @@ export function CockpitPage() {
   });
 
   const { data: rawData, isLoading, error } = useQuery<CockpitData>({
-    queryKey: ['stockbridge', 'cockpit', cnpjFilter, galpaoFilter, familiaFilter, critFilter],
+    queryKey: ['stockbridge', 'cockpit', cnpjFilter, galpoesFilter, familiasFilter, critFilter],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (cnpjFilter !== 'ambos') params.set('cnpj', cnpjFilter);
-      if (galpaoFilter) params.set('galpao', galpaoFilter);
-      if (familiaFilter) params.set('familia', familiaFilter);
+      for (const g of galpoesFilter) params.append('galpao', g);
+      for (const f of familiasFilter) params.append('familia', f);
       if (critFilter !== 'todas') params.set('criticidade', critFilter);
       const body = await apiFetch(`/api/v1/stockbridge/cockpit?${params}`);
       return body.data as CockpitData;
@@ -286,32 +286,22 @@ export function CockpitPage() {
             </button>
           ))}
         </div>
-        <select
-          value={familiaFilter}
-          onChange={(e) => setFamiliaFilter(e.target.value)}
-          className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-600 dark:bg-slate-900 text-xs"
-          title="Filtrar por família de produto (PP, PE, PS, PET, ABS, etc.)"
-        >
-          <option value="">Todas as famílias</option>
-          {familiasDisponiveis.map((f) => (
-            <option key={f} value={f}>
-              {f}
-            </option>
-          ))}
-        </select>
-        <select
-          value={galpaoFilter}
-          onChange={(e) => setGalpaoFilter(e.target.value)}
-          className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-600 dark:bg-slate-900 text-xs"
-          title="Filtrar por galpão físico (apenas estoque OMIE; trânsito/provisório seguem agregando todos os galpões)"
-        >
-          <option value="">Todos os galpões</option>
-          {galpoesDisponiveis.map((g) => (
-            <option key={g.galpao} value={g.galpao}>
-              Galpão {g.galpao}
-            </option>
-          ))}
-        </select>
+        <MultiSelectDropdown
+          label="Famílias"
+          allLabel="Todas as famílias"
+          options={familiasDisponiveis.map((f) => ({ value: f, label: f }))}
+          selected={familiasFilter}
+          onChange={setFamiliasFilter}
+          title="Filtrar por uma ou mais famílias de produto"
+        />
+        <MultiSelectDropdown
+          label="Galpões"
+          allLabel="Todos os galpões"
+          options={galpoesDisponiveis.map((g) => ({ value: g.galpao, label: `Galpão ${g.galpao}` }))}
+          selected={galpoesFilter}
+          onChange={setGalpoesFilter}
+          title="Filtrar por um ou mais galpões físicos (afeta apenas saldo OMIE; trânsito e provisório seguem agregando todos)"
+        />
         <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded">
           {(['todas', 'critico', 'alerta', 'ok', 'excesso'] as const).map((v) => (
             <button
@@ -693,6 +683,122 @@ function Cell({ label, value, accent }: { label: string; value: string; accent?:
     <div className="bg-slate-50 dark:bg-slate-900/40 rounded p-2">
       <div className="text-[10px] text-atlas-muted">{label}</div>
       <div className={`font-serif text-sm ${accent ?? 'text-atlas-ink'}`}>{value}</div>
+    </div>
+  );
+}
+
+interface MultiSelectOption {
+  value: string;
+  label: string;
+}
+
+function MultiSelectDropdown({
+  label,
+  allLabel,
+  options,
+  selected,
+  onChange,
+  title,
+}: {
+  label: string;
+  allLabel: string;
+  options: MultiSelectOption[];
+  selected: string[];
+  onChange: (v: string[]) => void;
+  title?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const toggle = (v: string) => {
+    if (selected.includes(v)) onChange(selected.filter((s) => s !== v));
+    else onChange([...selected, v]);
+  };
+
+  const triggerLabel =
+    selected.length === 0
+      ? allLabel
+      : selected.length === 1
+        ? options.find((o) => o.value === selected[0])?.label ?? selected[0]
+        : `${label}: ${selected.length} selecionados`;
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        title={title}
+        className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-600 dark:bg-slate-900 text-xs flex items-center gap-2 hover:border-slate-400 dark:hover:border-slate-500 transition"
+      >
+        <span className={selected.length > 0 ? 'text-atlas-ink' : 'text-atlas-muted'}>
+          {triggerLabel}
+        </span>
+        {selected.length > 0 && (
+          <span
+            role="button"
+            aria-label="Limpar seleção"
+            onClick={(e) => {
+              e.stopPropagation();
+              onChange([]);
+            }}
+            className="text-atlas-muted hover:text-atlas-ink"
+          >
+            <X size={12} />
+          </span>
+        )}
+        <ChevronDown size={12} className="text-atlas-muted" />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full mt-1 z-20 min-w-[220px] max-h-[320px] overflow-y-auto bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg text-xs">
+          {options.length === 0 ? (
+            <div className="px-3 py-2 text-atlas-muted">Sem opções disponíveis</div>
+          ) : (
+            <>
+              {options.map((opt) => {
+                const checked = selected.includes(opt.value);
+                return (
+                  <label
+                    key={opt.value}
+                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggle(opt.value)}
+                      className="w-3.5 h-3.5 accent-atlas-ink"
+                    />
+                    <span className={checked ? 'text-atlas-ink' : 'text-atlas-muted'}>
+                      {opt.label}
+                    </span>
+                  </label>
+                );
+              })}
+              {selected.length > 0 && (
+                <div className="border-t border-slate-200 dark:border-slate-700 px-3 py-2 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => onChange([])}
+                    className="text-[11px] text-atlas-muted hover:text-atlas-ink"
+                  >
+                    Limpar seleção
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
