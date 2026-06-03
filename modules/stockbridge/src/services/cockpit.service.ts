@@ -250,7 +250,6 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
       u.produto_codigo_acxe,
       COALESCE(p.descricao, 'Produto ' || u.produto_codigo_acxe::text) AS nome,
       p.descricao_familia AS familia,
-      f.familia_atlas     AS familia_atlas,
       p.ncm,
       COALESCE(fo.fisica_kg, 0)                AS fisica_kg,
       COALESCE(ta.transito_intl_kg, 0)         AS transito_intl_kg,
@@ -279,9 +278,7 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
     LEFT JOIN apr  a ON a.produto_codigo_acxe = u.produto_codigo_acxe
     WHERE COALESCE(f.incluir_em_metricas, true) = true
       AND COALESCE(c.incluir_em_metricas, true) = true
-      AND ($1::text IS NULL
-           OR f.familia_atlas = $1
-           OR p.descricao_familia ILIKE $1 || '%')
+      AND ($1::text IS NULL OR p.descricao_familia = $1)
     ORDER BY COALESCE(p.descricao, u.produto_codigo_acxe::text)
   `;
 
@@ -311,7 +308,7 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
     return {
       codigoAcxe: Number(r.produto_codigo_acxe),
       nome: String(r.nome),
-      familia: (r.familia_atlas as string | null) ?? (r.familia as string | null) ?? null,
+      familia: (r.familia as string | null) ?? null,
       ncm: (r.ncm as string | null) ?? null,
       fisicaKg,
       fiscalKg: fisicaKg + pendenteNacional + pendenteImportacao,

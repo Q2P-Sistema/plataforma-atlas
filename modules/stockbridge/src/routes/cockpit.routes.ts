@@ -37,15 +37,14 @@ router.get('/api/v1/stockbridge/cockpit', requireGestor, async (req: Request, re
 });
 
 // Lista de familias disponiveis no Cockpit (pra dropdown de filtro).
-// Usa mesma logica do cockpit: COALESCE(familia_atlas, descricao_familia)
-// — produtos com mapeamento mostram familia_atlas (PP, PE...); sem mapeamento
-// caem no descricao_familia original do OMIE. Filtro de family no service
-// aceita ambos os formatos.
+// Usa descricao_familia bruta da tbl_produtos_ACXE — sem agregacao via
+// familia_atlas. Mantem o filtro incluir_em_metricas para excluir categorias
+// operacionais (USO E CONSUMO, ATIVO IMOBILIZADO, UNIFORMES, etc).
 router.get('/api/v1/stockbridge/familias', requireGestor, async (_req: Request, res: Response) => {
   try {
     const pool = getPool();
     const result = await pool.query<{ familia: string }>(
-      `SELECT DISTINCT COALESCE(f.familia_atlas, p.descricao_familia) AS familia
+      `SELECT DISTINCT p.descricao_familia AS familia
          FROM public."tbl_produtos_ACXE" p
          LEFT JOIN stockbridge.familia_omie_atlas f
            ON f.familia_omie = p.descricao_familia
