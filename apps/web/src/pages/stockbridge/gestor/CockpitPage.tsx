@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Info, ArrowRight } from 'lucide-react';
+import { Info, ArrowRight, Table2, LayoutGrid } from 'lucide-react';
 import { useAuthStore } from '../../../stores/auth.store.js';
 
 type Criticidade = 'critico' | 'alerta' | 'ok' | 'excesso';
@@ -80,6 +80,15 @@ function useApiFetch() {
 
 type PendenciaFilter = 'todas' | 'divergencia' | 'aprovacao' | 'provisorio';
 type EstagioFilter = 'todos' | 'transito_intl' | 'porto_dta' | 'transito_interno';
+type ViewMode = 'tabela' | 'cards';
+
+// Prioridade de ordenacao por criticidade (menor numero = aparece primeiro)
+const CRIT_PRIORIDADE: Record<Criticidade, number> = {
+  critico: 0,
+  alerta: 1,
+  excesso: 2,
+  ok: 3,
+};
 
 export function CockpitPage() {
   const apiFetch = useApiFetch();
@@ -89,6 +98,7 @@ export function CockpitPage() {
   const [critFilter, setCritFilter] = useState<'todas' | Criticidade>('todas');
   const [pendenciaFilter, setPendenciaFilter] = useState<PendenciaFilter>('todas');
   const [estagioFilter, setEstagioFilter] = useState<EstagioFilter>('todos');
+  const [viewMode, setViewMode] = useState<ViewMode>('tabela');
 
   const { data: galpoesDisponiveis = [] } = useQuery<Array<{ galpao: string; localidades: string[] }>>({
     queryKey: ['admin', 'galpoes-disponiveis'],
@@ -117,6 +127,7 @@ export function CockpitPage() {
 
   // Filtros derivados aplicados no frontend (pendência e estágio) — o backend
   // não suporta esses filtros nativos. Aplicar aqui evita query nova por toggle.
+  // Ordenação default: criticidade (crítico→alerta→excesso→ok) + menor cobertura.
   const data = useMemo(() => {
     if (!rawData) return rawData;
     let skus = rawData.skus;
@@ -126,10 +137,43 @@ export function CockpitPage() {
     if (estagioFilter === 'transito_intl') skus = skus.filter((s) => s.transitoIntlKg > 0);
     if (estagioFilter === 'porto_dta') skus = skus.filter((s) => s.portoDtaKg > 0);
     if (estagioFilter === 'transito_interno') skus = skus.filter((s) => s.transitoInternoKg > 0);
+    const ordenados = [...skus].sort((a, b) => {
+      const pa = CRIT_PRIORIDADE[a.criticidade];
+      const pb = CRIT_PRIORIDADE[b.criticidade];
+      if (pa !== pb) return pa - pb;
+      const ca = a.coberturaDias ?? Number.POSITIVE_INFINITY;
+      const cb = b.coberturaDias ?? Number.POSITIVE_INFINITY;
+      return ca - cb;
+    });
     // Quando há filtro derivado, mantém o resumo do backend (visão global) para
     // contextualização, mas a lista de SKUs reflete apenas o subconjunto filtrado.
-    return { resumo: rawData.resumo, skus };
+    return { resumo: rawData.resumo, skus: ordenados };
   }, [rawData, pendenciaFilter, estagioFilter]);
+
+  // Top Riscos: 4 rankings executivos derivados da lista atual de SKUs.
+  // Pegamos 5 por categoria. Usa rawData para refletir TODOS os SKUs, ignorando
+  // filtros derivados (assim o ranking continua mostrando os top riscos globais).
+  const topRiscos = useMemo(() => {
+    const skus = rawData?.skus ?? [];
+    return {
+      ruptura: [...skus]
+        .filter((s) => s.criticidade === 'critico')
+        .sort((a, b) => (a.coberturaDias ?? Infinity) - (b.coberturaDias ?? Infinity))
+        .slice(0, 5),
+      excesso: [...skus]
+        .filter((s) => s.criticidade === 'excesso')
+        .sort((a, b) => b.fisicaKg - a.fisicaKg)
+        .slice(0, 5),
+      portoDta: [...skus]
+        .filter((s) => s.portoDtaKg > 0)
+        .sort((a, b) => b.portoDtaKg - a.portoDtaKg)
+        .slice(0, 5),
+      pendencias: [...skus]
+        .filter((s) => s.divergencias + s.aprovacoesPendentes > 0)
+        .sort((a, b) => (b.divergencias + b.aprovacoesPendentes) - (a.divergencias + a.aprovacoesPendentes))
+        .slice(0, 5),
+    };
+  }, [rawData]);
 
   // Cards "Volume" — onde está o estoque
   const cardsVolume: ResumoCard[] = useMemo(() => {
@@ -374,7 +418,39 @@ export function CockpitPage() {
         </div>
       )}
 
+      {data && rawData && rawData.skus.length > 0 && (
+        <TopRiscos topRiscos={topRiscos} />
+      )}
+
       {data && data.skus.length > 0 && (
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-xs uppercase tracking-wide text-atlas-muted font-medium">
+            SKUs <span className="text-atlas-muted/70 normal-case">— {data.skus.length} item{data.skus.length === 1 ? '' : 's'} {data.skus.length !== rawData?.skus.length ? `(${rawData?.skus.length} no total)` : ''}, ordem por criticidade</span>
+          </h2>
+          <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded">
+            <button
+              onClick={() => setViewMode('tabela')}
+              className={`px-2 py-1 rounded text-xs font-medium transition flex items-center gap-1 ${viewMode === 'tabela' ? 'bg-white dark:bg-slate-900 shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
+              title="Tabela executiva densa"
+            >
+              <Table2 size={12} /> Tabela
+            </button>
+            <button
+              onClick={() => setViewMode('cards')}
+              className={`px-2 py-1 rounded text-xs font-medium transition flex items-center gap-1 ${viewMode === 'cards' ? 'bg-white dark:bg-slate-900 shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
+              title="Cards visuais"
+            >
+              <LayoutGrid size={12} /> Cards
+            </button>
+          </div>
+        </div>
+      )}
+
+      {data && data.skus.length > 0 && viewMode === 'tabela' && (
+        <TabelaSkus skus={data.skus} />
+      )}
+
+      {data && data.skus.length > 0 && viewMode === 'cards' && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {data.skus.map((sku) => {
             const crit = CRIT_CFG[sku.criticidade];
@@ -437,6 +513,139 @@ export function CockpitPage() {
         </div>
       )}
 
+    </div>
+  );
+}
+
+function TopRiscos({ topRiscos }: { topRiscos: { ruptura: CockpitSku[]; excesso: CockpitSku[]; portoDta: CockpitSku[]; pendencias: CockpitSku[] } }) {
+  const blocos = [
+    {
+      titulo: 'Maior risco de ruptura',
+      subtitulo: 'Menor cobertura em dias',
+      items: topRiscos.ruptura,
+      color: 'text-red-700',
+      bg: 'bg-red-50 dark:bg-red-900/20',
+      fmtValor: (s: CockpitSku) => s.coberturaDias != null ? `${s.coberturaDias}d` : '—',
+    },
+    {
+      titulo: 'Maior excesso',
+      subtitulo: 'Mais kg parados',
+      items: topRiscos.excesso,
+      color: 'text-blue-700',
+      bg: 'bg-blue-50 dark:bg-blue-900/20',
+      fmtValor: (s: CockpitSku) => `${fmtKg(s.fisicaKg)} kg`,
+    },
+    {
+      titulo: 'Presos em Porto/DTA',
+      subtitulo: 'Maior volume retido',
+      items: topRiscos.portoDta,
+      color: 'text-orange-700',
+      bg: 'bg-orange-50 dark:bg-orange-900/20',
+      fmtValor: (s: CockpitSku) => `${fmtKg(s.portoDtaKg)} kg`,
+    },
+    {
+      titulo: 'Mais pendências',
+      subtitulo: 'Divergências + aprovações',
+      items: topRiscos.pendencias,
+      color: 'text-amber-700',
+      bg: 'bg-amber-50 dark:bg-amber-900/20',
+      fmtValor: (s: CockpitSku) => `${s.divergencias + s.aprovacoesPendentes}`,
+    },
+  ];
+  const algumComItem = blocos.some((b) => b.items.length > 0);
+  if (!algumComItem) return null;
+  return (
+    <div className="mb-5">
+      <div className="flex items-center gap-1 mb-2">
+        <h2 className="text-xs uppercase tracking-wide text-atlas-muted font-medium">Top riscos</h2>
+        <span className="inline-flex cursor-help" title="Os 5 produtos mais críticos de cada categoria. Independe dos filtros aplicados — sempre reflete o panorama global.">
+          <Info size={12} className="text-atlas-muted" aria-hidden />
+        </span>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
+        {blocos.map((b) => (
+          <div key={b.titulo} className={`border border-slate-200 dark:border-slate-700 rounded-lg ${b.bg}`}>
+            <div className="px-3 py-2 border-b border-slate-200/60 dark:border-slate-700/60">
+              <div className={`text-xs font-semibold ${b.color}`}>{b.titulo}</div>
+              <div className="text-[10px] text-atlas-muted">{b.subtitulo}</div>
+            </div>
+            <ol className="px-3 py-2 space-y-1">
+              {b.items.length === 0 && (
+                <li className="text-[11px] text-atlas-muted italic">—</li>
+              )}
+              {b.items.map((s) => (
+                <li key={s.codigoAcxe} className="flex justify-between text-[11px] gap-2">
+                  <span className="truncate text-atlas-ink" title={s.nome}>{s.nome}</span>
+                  <span className={`font-mono ${b.color} shrink-0`}>{b.fmtValor(s)}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TabelaSkus({ skus }: { skus: CockpitSku[] }) {
+  return (
+    <div className="overflow-x-auto border border-slate-200 dark:border-slate-700 rounded-lg">
+      <table className="min-w-full text-xs">
+        <thead className="bg-slate-50 dark:bg-slate-800/50 text-[10px] uppercase tracking-wide text-atlas-muted">
+          <tr>
+            <th className="text-left px-3 py-2">Status</th>
+            <th className="text-left px-3 py-2">Produto</th>
+            <th className="text-left px-3 py-2">Família</th>
+            <th className="text-right px-3 py-2">Físico</th>
+            <th className="text-right px-3 py-2">Tr. intl</th>
+            <th className="text-right px-3 py-2">Porto/DTA</th>
+            <th className="text-right px-3 py-2">Tr. int.</th>
+            <th className="text-right px-3 py-2">Provis.</th>
+            <th className="text-right px-3 py-2">Cons./d</th>
+            <th className="text-right px-3 py-2">Cob.</th>
+            <th className="text-right px-3 py-2">Lead</th>
+            <th className="text-left px-3 py-2">Pend.</th>
+          </tr>
+        </thead>
+        <tbody>
+          {skus.map((s) => {
+            const crit = CRIT_CFG[s.criticidade];
+            return (
+              <tr key={s.codigoAcxe} className="border-t border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                <td className="px-3 py-2">
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${crit.bg} ${crit.text}`}>
+                    {s.criticidade === 'critico' ? 'Ruptura' : s.criticidade === 'alerta' ? 'Atenção' : crit.label}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-atlas-ink max-w-[220px] truncate" title={s.nome}>{s.nome}</td>
+                <td className="px-3 py-2 text-atlas-muted">{s.familia ?? '—'}</td>
+                <td className="px-3 py-2 text-right font-mono text-atlas-ink">{fmtKg(s.fisicaKg)}</td>
+                <td className={`px-3 py-2 text-right font-mono ${s.transitoIntlKg > 0 ? 'text-violet-700' : 'text-atlas-muted/50'}`}>{fmtKg(s.transitoIntlKg)}</td>
+                <td className={`px-3 py-2 text-right font-mono ${s.portoDtaKg > 0 ? 'text-orange-700' : 'text-atlas-muted/50'}`}>{fmtKg(s.portoDtaKg)}</td>
+                <td className={`px-3 py-2 text-right font-mono ${s.transitoInternoKg > 0 ? 'text-teal-700' : 'text-atlas-muted/50'}`}>{fmtKg(s.transitoInternoKg)}</td>
+                <td className={`px-3 py-2 text-right font-mono ${s.provisorioKg > 0 ? 'text-amber-700' : 'text-atlas-muted/50'}`}>{fmtKg(s.provisorioKg)}</td>
+                <td className="px-3 py-2 text-right font-mono text-atlas-muted">{s.consumoMedioDiarioKg != null ? fmtKg(s.consumoMedioDiarioKg) : '—'}</td>
+                <td className={`px-3 py-2 text-right font-mono font-medium ${crit.text}`}>{s.coberturaDias != null ? `${s.coberturaDias}d` : '—'}</td>
+                <td className="px-3 py-2 text-right font-mono text-atlas-muted">{s.leadTimeDias != null ? `${s.leadTimeDias}d` : '—'}</td>
+                <td className="px-3 py-2">
+                  <div className="flex gap-1">
+                    {s.divergencias > 0 && (
+                      <span className="px-1.5 py-0.5 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 rounded text-[10px]" title={`${s.divergencias} divergência(s) aberta(s)`}>
+                        {s.divergencias} div
+                      </span>
+                    )}
+                    {s.aprovacoesPendentes > 0 && (
+                      <span className="px-1.5 py-0.5 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 rounded text-[10px]" title={`${s.aprovacoesPendentes} aprovação(ões) pendente(s)`}>
+                        {s.aprovacoesPendentes} apr
+                      </span>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
