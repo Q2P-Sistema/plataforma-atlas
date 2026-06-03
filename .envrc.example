@@ -72,6 +72,11 @@ export SENDGRID_FROM_EMAIL="sistema@q2p.com.br"
 # alerta de produto sem correlato). Util para admin acompanhar tudo por copia.
 export STOCKBRIDGE_ADMIN_CC_EMAIL="flavio.endo@acxe-polimeros.com.br"
 
+# Data de corte (YYYY-MM-DD) para calculo de "Posicao Fiscal Pendente" no Cockpit.
+# NFs emitidas antes dessa data sao ignoradas (ja foram tratadas pelo legado PHP /
+# nao fazem parte do periodo coberto pelo Atlas). Sem set: usa 180 dias atras.
+# export STOCKBRIDGE_FISCAL_CUTOFF_DATE="2026-04-01"
+
 # URL base do frontend (sem barra final). Usado em links de email
 # (ex: "Re-submeter agora" no email de rejeicao). Em prod, apontar para o dominio.
 export APP_URL="http://localhost:5173"

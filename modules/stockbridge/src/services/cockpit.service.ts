@@ -1,4 +1,4 @@
-import { getPool, createLogger } from '@atlas/core';
+import { getPool, createLogger, getConfig } from '@atlas/core';
 import {
   calcularCobertura,
   classificarCriticidade,
@@ -22,12 +22,14 @@ export interface CockpitSku {
   nome: string;
   familia: string | null;
   ncm: string | null;
-  fisicaKg: number;          // saldo OMIE (fonte de verdade)
-  fiscalKg: number;          // = fisicaKg na arquitetura híbrida (OMIE consolida ambos)
-  transitoIntlKg: number;    // Atlas: stockbridge.lote status='transito' estagio='transito_intl'
-  portoDtaKg: number;        // idem 'porto_dta'
-  transitoInternoKg: number; // idem 'transito_interno'
-  provisorioKg: number;      // Atlas: lote provisorio AINDA NAO consolidado pelo OMIE (anti-dupla-contagem)
+  fisicaKg: number;                    // saldo OMIE (fonte de verdade)
+  fiscalKg: number;                    // fisicaKg + pendentes (representa total fiscal)
+  fiscalPendenteNacionalKg: number;    // NFs nacionais entrada com n_id_receb=0 (pos cutoff)
+  fiscalPendenteImportacaoKg: number;  // NFs ACXE 3.xxx sem movimentacao subtipo=importacao
+  transitoIntlKg: number;              // Atlas: lote status='transito' estagio='transito_intl'
+  portoDtaKg: number;                  // idem 'porto_dta'
+  transitoInternoKg: number;           // idem 'transito_interno'
+  provisorioKg: number;                // Atlas: lote provisorio AINDA NAO consolidado pelo OMIE
   consumoMedioDiarioKg: number | null;
   leadTimeDias: number | null;
   coberturaDias: number | null;
@@ -39,6 +41,8 @@ export interface CockpitSku {
 export interface CockpitResumo {
   totalFisicoKg: number;
   totalFiscalKg: number;
+  totalFiscalPendenteNacionalKg: number;
+  totalFiscalPendenteImportacaoKg: number;
   transitoIntlKg: number;
   portoDtaKg: number;
   transitoInternoKg: number;
@@ -61,34 +65,44 @@ export interface CockpitData {
  * Fontes:
  *   - SALDO FISICO        ← OMIE (vw_posicaoEstoqueUnificadaFamilia), filtrado
  *                           por galpao quando passado, com regra anti-dupla
- *                           pra espelhados (.1 = importado: conta SO Q2P
- *                           a nao ser que o filtro empresa peca ACXE
- *                           explicitamente; .2 = nacional Q2P-only).
+ *                           pra espelhados.
  *   - SALDO TRANSITO      ← Atlas (stockbridge.lote status='transito') por estagio.
- *                           Vem do FUP de Comex via migration 0024.
- *   - SALDO PROVISORIO    ← Atlas (lote status='provisorio') APENAS quando o OMIE
- *                           ainda NAO consolidou (movimentacao.status_omie != 'concluida').
- *                           Apos consolidacao, esse mesmo volume aparece em OMIE
- *                           e o lote vira so historico — nao soma.
+ *   - SALDO PROVISORIO    ← Atlas (lote status='provisorio') APENAS quando OMIE
+ *                           ainda NAO consolidou.
+ *   - FISCAL PENDENTE     ← public.tbl_nf_header_* + tbl_nf_itens_*:
+ *                           - Nacional (CFOPs 1.xxx/2.xxx): NF de entrada
+ *                             com n_id_receb=0 (OMIE indica nao recebida fisica)
+ *                           - Importacao (CFOPs 3.xxx, so ACXE): NF de entrada
+ *                             cuja n_nf NAO esta em stockbridge.movimentacao
+ *                             com subtipo='importacao'.
+ *                           Cutoff temporal via STOCKBRIDGE_FISCAL_CUTOFF_DATE
+ *                           (default 180 dias atras) para ignorar NFs antigas
+ *                           que foram tratadas pelo legado pre-Atlas.
  *   - DIVERGENCIAS/APRS   ← Atlas (workflow puro).
- *
- * Filtros:
- *   - familia: familia_atlas ou prefixo de descricao_familia OMIE
- *   - cnpj: 'acxe' | 'q2p' | 'ambos' (default ambos)
- *   - galpao: agrupador fisico — '11', '12', '21', '31'
- *   - criticidade: filtro pos-calculo (TS)
  */
 export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitData> {
   const pool = getPool();
+  const config = getConfig();
 
   const empresa: FiltroCnpj = filtros.cnpj ?? 'ambos';
   const galpao = filtros.galpao ?? null;
   const familia = filtros.familia ?? null;
+  const incluirAcxe = empresa === 'acxe' || empresa === 'ambos';
+  const incluirQ2p = empresa === 'q2p' || empresa === 'ambos';
+
+  // Cutoff fiscal: ignora NFs anteriores a essa data.
+  // Sem env: 180 dias atras.
+  const cutoffDate =
+    config.STOCKBRIDGE_FISCAL_CUTOFF_DATE ??
+    (() => {
+      const d = new Date();
+      d.setDate(d.getDate() - 180);
+      return d.toISOString().slice(0, 10);
+    })();
 
   // Regra de empresa pra OMIE:
-  //   acxe  → .1 ACXE (importado fiscal ACXE)
-  //   q2p   → .1 Q2P (espelhado importado lado Q2P) + .2 Q2P (nacional)
-  //   ambos → .1 Q2P + .2 Q2P (Q2P como representante fisico do espelhado pra evitar 2x)
+  //   acxe  → .1 ACXE
+  //   q2p / ambos → .1 Q2P + .2 Q2P (Q2P como representante do espelhado)
   const condicaoEmpresaOmie =
     empresa === 'acxe'
       ? `(o.codigo_estoque LIKE '%.1' AND o.empresa = 'ACXE')`
@@ -98,14 +112,16 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
           (o.codigo_estoque LIKE '%.2' AND o.empresa = 'Q2P')
         )`;
 
-  // Filtro de galpao no OMIE (quando presente, exige codigo_estoque LIKE 'galpao.%')
-  const galpaoFilterOmie = galpao ? `AND o.codigo_estoque LIKE $1 || '.%'` : '';
+  // Parametros (sempre na mesma ordem):
+  //   $1 = familia (text|null)
+  //   $2 = galpao (text|null)
+  //   $3 = cutoff_date (date)
+  //   $4 = incluir_acxe (bool)
+  //   $5 = incluir_q2p (bool)
+  const galpaoFilterOmie = `AND ($2::text IS NULL OR o.codigo_estoque LIKE $2 || '.%')`;
 
   const sql = `
     WITH fisico_omie AS (
-      -- vw retorna codigo_produto text (ex 'PP-016'); precisa traduzir pra
-      -- codigo numerico ACXE via JOIN por descricao (mesmo padrao do consumo).
-      -- Aceita risco de ~4-7% sem match (idem cross-empresa correlacao).
       SELECT
         pa.codigo_produto AS produto_codigo_acxe,
         SUM(COALESCE(o.saldo, 0)) AS fisica_kg
@@ -127,7 +143,6 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
       GROUP BY l.produto_codigo_acxe
     ),
     provisorio_atlas AS (
-      -- Anti-dupla: so conta provisorios cuja movimentacao OMIE ainda NAO foi concluida
       SELECT
         l.produto_codigo_acxe,
         SUM(l.quantidade_fisica_kg) AS provisorio_kg
@@ -141,6 +156,69 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
             AND m.status_omie <> 'concluida'
         )
       GROUP BY l.produto_codigo_acxe
+    ),
+    fiscal_pend_nacional AS (
+      -- NFs de entrada nacional (CFOPs 1.xxx/2.xxx) sem recebimento OMIE,
+      -- consolidadas por produto_codigo_acxe (3 empresas).
+      SELECT produto_codigo_acxe, SUM(kg)::numeric AS pendente_nacional_kg
+      FROM (
+        -- ACXE nacional (link direto)
+        SELECT i.n_cod_prod AS produto_codigo_acxe, i.q_com AS kg
+        FROM public."tbl_nf_header_ACXE" h
+        JOIN public."tbl_nf_itens_ACXE" i ON i.n_id_nf = h.n_id_nf
+        WHERE $4::bool = true
+          AND h.tp_nf = 0
+          AND (h.n_id_receb = 0 OR h.n_id_receb IS NULL)
+          AND LEFT(i.cfop, 1) IN ('1','2')
+          AND h.d_emi >= $3::date
+
+        UNION ALL
+
+        -- Q2P nacional (correlaciona via descricao com ACXE)
+        SELECT pa.codigo_produto AS produto_codigo_acxe, i.q_com AS kg
+        FROM public."tbl_nf_header_Q2P" h
+        JOIN public."tbl_nf_itens_Q2P" i ON i.n_id_nf = h.n_id_nf
+        JOIN public."tbl_produtos_Q2P" pq ON pq.codigo_produto = i.n_cod_prod
+        JOIN public."tbl_produtos_ACXE" pa ON pa.descricao = pq.descricao
+        WHERE $5::bool = true
+          AND h.tp_nf = 0
+          AND (h.n_id_receb = 0 OR h.n_id_receb IS NULL)
+          AND LEFT(i.cfop, 1) IN ('1','2')
+          AND h.d_emi >= $3::date
+
+        UNION ALL
+
+        -- Q2P_Filial nacional
+        SELECT pa.codigo_produto AS produto_codigo_acxe, i.q_com AS kg
+        FROM public."tbl_nf_header_Q2P_Filial" h
+        JOIN public."tbl_nf_itens_Q2P_Filial" i ON i.n_id_nf = h.n_id_nf
+        JOIN public."tbl_produtos_Q2P_Filial" pf ON pf.codigo_produto = i.n_cod_prod
+        JOIN public."tbl_produtos_ACXE" pa ON pa.descricao = pf.descricao
+        WHERE $5::bool = true
+          AND h.tp_nf = 0
+          AND (h.n_id_receb = 0 OR h.n_id_receb IS NULL)
+          AND LEFT(i.cfop, 1) IN ('1','2')
+          AND h.d_emi >= $3::date
+      ) src
+      GROUP BY produto_codigo_acxe
+    ),
+    fiscal_pend_importacao AS (
+      -- Importacao ACXE (CFOP 3.xxx): NFs cujo n_nf NAO esta em movimentacao
+      -- Atlas com subtipo='importacao'. So existe se incluirAcxe.
+      SELECT i.n_cod_prod AS produto_codigo_acxe, SUM(i.q_com)::numeric AS pendente_importacao_kg
+      FROM public."tbl_nf_header_ACXE" h
+      JOIN public."tbl_nf_itens_ACXE" i ON i.n_id_nf = h.n_id_nf
+      WHERE $4::bool = true
+        AND h.tp_nf = 0
+        AND LEFT(i.cfop, 1) = '3'
+        AND h.d_emi >= $3::date
+        AND NOT EXISTS (
+          SELECT 1 FROM stockbridge.movimentacao m
+          WHERE m.ativo = true
+            AND m.subtipo = 'importacao'
+            AND m.nota_fiscal = h.n_nf
+        )
+      GROUP BY i.n_cod_prod
     ),
     divs AS (
       SELECT l.produto_codigo_acxe, COUNT(*)::int AS c
@@ -156,13 +234,16 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
       WHERE a.status = 'pendente' AND l.ativo = true
       GROUP BY l.produto_codigo_acxe
     ),
-    -- Universo: produtos que tem QUALQUER coisa (fisico OMIE OU transito OU provisorio)
     universo AS (
       SELECT produto_codigo_acxe FROM fisico_omie
       UNION
       SELECT produto_codigo_acxe FROM transito_atlas
       UNION
       SELECT produto_codigo_acxe FROM provisorio_atlas
+      UNION
+      SELECT produto_codigo_acxe FROM fiscal_pend_nacional
+      UNION
+      SELECT produto_codigo_acxe FROM fiscal_pend_importacao
     )
     SELECT
       u.produto_codigo_acxe,
@@ -174,15 +255,19 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
       COALESCE(ta.transito_intl_kg, 0)         AS transito_intl_kg,
       COALESCE(ta.porto_dta_kg, 0)             AS porto_dta_kg,
       COALESCE(ta.transito_interno_kg, 0)      AS transito_interno_kg,
-      COALESCE(pa.provisorio_kg, 0)            AS provisorio_kg,
+      COALESCE(pv.provisorio_kg, 0)            AS provisorio_kg,
+      COALESCE(fpn.pendente_nacional_kg, 0)    AS pendente_nacional_kg,
+      COALESCE(fpi.pendente_importacao_kg, 0)  AS pendente_importacao_kg,
       c.consumo_medio_diario_kg,
       c.lead_time_dias,
       COALESCE(d.c, 0) AS divs,
       COALESCE(a.c, 0) AS aprs
     FROM universo u
-    LEFT JOIN fisico_omie fo       ON fo.produto_codigo_acxe = u.produto_codigo_acxe
-    LEFT JOIN transito_atlas ta    ON ta.produto_codigo_acxe = u.produto_codigo_acxe
-    LEFT JOIN provisorio_atlas pa  ON pa.produto_codigo_acxe = u.produto_codigo_acxe
+    LEFT JOIN fisico_omie fo             ON fo.produto_codigo_acxe  = u.produto_codigo_acxe
+    LEFT JOIN transito_atlas ta          ON ta.produto_codigo_acxe  = u.produto_codigo_acxe
+    LEFT JOIN provisorio_atlas pv        ON pv.produto_codigo_acxe  = u.produto_codigo_acxe
+    LEFT JOIN fiscal_pend_nacional fpn   ON fpn.produto_codigo_acxe = u.produto_codigo_acxe
+    LEFT JOIN fiscal_pend_importacao fpi ON fpi.produto_codigo_acxe = u.produto_codigo_acxe
     LEFT JOIN public."tbl_produtos_ACXE" p
       ON p.codigo_produto = u.produto_codigo_acxe
     LEFT JOIN stockbridge.familia_omie_atlas f
@@ -193,13 +278,13 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
     LEFT JOIN apr  a ON a.produto_codigo_acxe = u.produto_codigo_acxe
     WHERE COALESCE(f.incluir_em_metricas, true) = true
       AND COALESCE(c.incluir_em_metricas, true) = true
-      AND ($${galpao ? 2 : 1}::text IS NULL
-           OR f.familia_atlas = $${galpao ? 2 : 1}
-           OR p.descricao_familia ILIKE $${galpao ? 2 : 1} || '%')
+      AND ($1::text IS NULL
+           OR f.familia_atlas = $1
+           OR p.descricao_familia ILIKE $1 || '%')
     ORDER BY COALESCE(p.descricao, u.produto_codigo_acxe::text)
   `;
 
-  const params = galpao ? [galpao, familia] : [familia];
+  const params: unknown[] = [familia, galpao, cutoffDate, incluirAcxe, incluirQ2p];
 
   let rows: Record<string, unknown>[] = [];
   try {
@@ -215,6 +300,8 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
 
   const skus: CockpitSku[] = rows.map((r) => {
     const fisicaKg = Number(r.fisica_kg);
+    const pendenteNacional = Number(r.pendente_nacional_kg);
+    const pendenteImportacao = Number(r.pendente_importacao_kg);
     const consumoKg = r.consumo_medio_diario_kg != null ? Number(r.consumo_medio_diario_kg) : null;
     const leadTime = r.lead_time_dias != null ? Number(r.lead_time_dias) : null;
     const cobertura = calcularCobertura(fisicaKg, consumoKg);
@@ -226,7 +313,9 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
       familia: (r.familia_atlas as string | null) ?? (r.familia as string | null) ?? null,
       ncm: (r.ncm as string | null) ?? null,
       fisicaKg,
-      fiscalKg: fisicaKg, // arquitetura híbrida: fiscal = físico (OMIE consolida ambos)
+      fiscalKg: fisicaKg + pendenteNacional + pendenteImportacao,
+      fiscalPendenteNacionalKg: pendenteNacional,
+      fiscalPendenteImportacaoKg: pendenteImportacao,
       transitoIntlKg: Number(r.transito_intl_kg),
       portoDtaKg: Number(r.porto_dta_kg),
       transitoInternoKg: Number(r.transito_interno_kg),
@@ -252,6 +341,8 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
 export function getResumoFromSkus(skus: CockpitSku[]): CockpitResumo {
   let totalFisicoKg = 0;
   let totalFiscalKg = 0;
+  let totalFiscalPendenteNacionalKg = 0;
+  let totalFiscalPendenteImportacaoKg = 0;
   let transitoIntlKg = 0;
   let portoDtaKg = 0;
   let transitoInternoKg = 0;
@@ -264,6 +355,8 @@ export function getResumoFromSkus(skus: CockpitSku[]): CockpitResumo {
   for (const s of skus) {
     totalFisicoKg += s.fisicaKg;
     totalFiscalKg += s.fiscalKg;
+    totalFiscalPendenteNacionalKg += s.fiscalPendenteNacionalKg;
+    totalFiscalPendenteImportacaoKg += s.fiscalPendenteImportacaoKg;
     transitoIntlKg += s.transitoIntlKg;
     portoDtaKg += s.portoDtaKg;
     transitoInternoKg += s.transitoInternoKg;
@@ -277,6 +370,8 @@ export function getResumoFromSkus(skus: CockpitSku[]): CockpitResumo {
   return {
     totalFisicoKg,
     totalFiscalKg,
+    totalFiscalPendenteNacionalKg,
+    totalFiscalPendenteImportacaoKg,
     transitoIntlKg,
     portoDtaKg,
     transitoInternoKg,

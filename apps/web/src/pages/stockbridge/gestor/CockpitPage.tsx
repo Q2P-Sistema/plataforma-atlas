@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '../../../stores/auth.store.js';
-import { ModalDivergencias } from './ModalDivergencias.js';
 
 type Criticidade = 'critico' | 'alerta' | 'ok' | 'excesso';
 
@@ -12,6 +11,8 @@ interface CockpitSku {
   ncm: string | null;
   fisicaKg: number;
   fiscalKg: number;
+  fiscalPendenteNacionalKg: number;
+  fiscalPendenteImportacaoKg: number;
   transitoIntlKg: number;
   portoDtaKg: number;
   transitoInternoKg: number;
@@ -27,6 +28,8 @@ interface CockpitSku {
 interface CockpitResumo {
   totalFisicoKg: number;
   totalFiscalKg: number;
+  totalFiscalPendenteNacionalKg: number;
+  totalFiscalPendenteImportacaoKg: number;
   transitoIntlKg: number;
   portoDtaKg: number;
   transitoInternoKg: number;
@@ -70,7 +73,6 @@ export function CockpitPage() {
   const [cnpjFilter, setCnpjFilter] = useState<'ambos' | 'acxe' | 'q2p'>('ambos');
   const [galpaoFilter, setGalpaoFilter] = useState<string>('');
   const [critFilter, setCritFilter] = useState<'todas' | Criticidade>('todas');
-  const [showDivs, setShowDivs] = useState(false);
 
   const { data: galpoesDisponiveis = [] } = useQuery<Array<{ galpao: string; localidades: string[] }>>({
     queryKey: ['admin', 'galpoes-disponiveis'],
@@ -93,18 +95,26 @@ export function CockpitPage() {
   const resumoCards = useMemo(() => {
     const r = data?.resumo;
     if (!r) return [];
+    const totalPendente = r.totalFiscalPendenteNacionalKg + r.totalFiscalPendenteImportacaoKg;
     return [
       { label: 'Físico Disponível',  value: `${fmtKg(r.totalFisicoKg)} kg`, color: 'text-atlas-ink' },
-      { label: 'Posição Fiscal',     value: `${fmtKg(r.totalFiscalKg)} kg`, color: 'text-atlas-ink' },
+      {
+        label: 'Posição Fiscal',
+        value: `${fmtKg(r.totalFiscalKg)} kg`,
+        color: 'text-atlas-ink',
+        hint: totalPendente > 0
+          ? `+${fmtKg(totalPendente)} kg pendentes (${fmtKg(r.totalFiscalPendenteNacionalKg)} nac · ${fmtKg(r.totalFiscalPendenteImportacaoKg)} imp)`
+          : undefined,
+      },
       { label: 'Trânsito Intl',      value: `${fmtKg(r.transitoIntlKg)} kg`, color: 'text-violet-700' },
       { label: 'Porto / DTA',        value: `${fmtKg(r.portoDtaKg)} kg`, color: 'text-orange-700' },
       { label: 'Trânsito Interno',   value: `${fmtKg(r.transitoInternoKg)} kg`, color: 'text-teal-700' },
       { label: 'Provisório',         value: `${fmtKg(r.provisorioKg)} kg`, color: 'text-amber-700' },
-      { label: 'Divergências',       value: String(r.divergenciasCount), color: 'text-red-700', onClick: () => setShowDivs(true) },
+      { label: 'Divergências',       value: String(r.divergenciasCount), color: 'text-red-700' },
       { label: 'Aprovações',         value: String(r.aprovacoesPendentes), color: 'text-amber-700' },
       { label: 'SKUs Críticos',      value: String(r.skusCriticos), color: 'text-red-700' },
       { label: 'SKUs Alerta',        value: String(r.skusAlerta), color: 'text-amber-700' },
-    ];
+    ] satisfies Array<{ label: string; value: string; color: string; hint?: string }>;
   }, [data]);
 
   return (
@@ -165,11 +175,13 @@ export function CockpitPage() {
           {resumoCards.map((c) => (
             <div
               key={c.label}
-              onClick={c.onClick}
-              className={`bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 ${c.onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
+              className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3"
             >
               <div className="text-xs text-atlas-muted mb-1">{c.label}</div>
               <div className={`font-serif text-lg ${c.color}`}>{c.value}</div>
+              {c.hint && (
+                <div className="text-[10px] text-atlas-muted mt-1 leading-tight">{c.hint}</div>
+              )}
             </div>
           ))}
         </div>
@@ -202,10 +214,12 @@ export function CockpitPage() {
                   <span className={`text-xs font-semibold px-2 py-1 rounded ${crit.bg} ${crit.text}`}>{crit.label}</span>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 mb-3">
+                <div className="grid grid-cols-3 gap-2 mb-3">
                   <Cell label="Físico" value={`${fmtKg(sku.fisicaKg)} kg`} />
                   <Cell label="Fiscal" value={`${fmtKg(sku.fiscalKg)} kg`} accent={Math.abs(sku.fisicaKg - sku.fiscalKg) > 1 ? 'text-red-700' : undefined} />
+                  <Cell label="Provisório" value={`${fmtKg(sku.provisorioKg)} kg`} accent="text-amber-700" />
                   <Cell label="Trânsito intl" value={`${fmtKg(sku.transitoIntlKg)} kg`} accent="text-violet-700" />
+                  <Cell label="Porto / DTA" value={`${fmtKg(sku.portoDtaKg)} kg`} accent="text-orange-700" />
                   <Cell label="Trânsito int." value={`${fmtKg(sku.transitoInternoKg)} kg`} accent="text-teal-700" />
                 </div>
 
@@ -237,11 +251,6 @@ export function CockpitPage() {
                       {sku.aprovacoesPendentes} apr
                     </span>
                   )}
-                  {sku.provisorioKg > 0 && (
-                    <span className="px-2 py-0.5 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 rounded">
-                      +{fmtKg(sku.provisorioKg)}kg prov
-                    </span>
-                  )}
                 </div>
               </div>
             );
@@ -249,7 +258,6 @@ export function CockpitPage() {
         </div>
       )}
 
-      {showDivs && <ModalDivergencias onClose={() => setShowDivs(false)} />}
     </div>
   );
 }

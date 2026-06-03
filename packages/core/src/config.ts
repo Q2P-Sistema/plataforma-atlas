@@ -35,6 +35,11 @@ const envSchema = z.object({
   // CC opcional em todos os emails operacionais do StockBridge (rejeicao,
   // aprovacao, alertas). Usar para que o admin/responsavel monitore por copia.
   STOCKBRIDGE_ADMIN_CC_EMAIL: z.string().email().optional(),
+  // Data de corte para deteccao de gap fiscal/fisico no Cockpit (formato YYYY-MM-DD).
+  // NFs emitidas antes dessa data sao ignoradas no calculo de "Posicao Fiscal Pendente"
+  // (ja foram tratadas pelo legado PHP / nao fazem parte do periodo Atlas).
+  // Sem set: usa 180 dias atras como fallback.
+  STOCKBRIDGE_FISCAL_CUTOFF_DATE: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   // URL base do frontend (sem barra final) — usada para montar links em emails
   // (ex: "Re-submeter agora" no email de rejeicao). Default cobre dev local.
   APP_URL: z.string().url().default('http://localhost:5173'),
