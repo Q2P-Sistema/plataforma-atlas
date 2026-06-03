@@ -51,6 +51,7 @@ export interface CockpitResumo {
   aprovacoesPendentes: number;
   skusCriticos: number;
   skusAlerta: number;
+  skusExcesso: number;
 }
 
 export interface CockpitData {
@@ -351,6 +352,7 @@ export function getResumoFromSkus(skus: CockpitSku[]): CockpitResumo {
   let aprovacoesPendentes = 0;
   let skusCriticos = 0;
   let skusAlerta = 0;
+  let skusExcesso = 0;
 
   for (const s of skus) {
     totalFisicoKg += s.fisicaKg;
@@ -365,6 +367,7 @@ export function getResumoFromSkus(skus: CockpitSku[]): CockpitResumo {
     aprovacoesPendentes += s.aprovacoesPendentes;
     if (s.criticidade === 'critico') skusCriticos += 1;
     if (s.criticidade === 'alerta') skusAlerta += 1;
+    if (s.criticidade === 'excesso') skusExcesso += 1;
   }
 
   return {
@@ -380,5 +383,6 @@ export function getResumoFromSkus(skus: CockpitSku[]): CockpitResumo {
     aprovacoesPendentes,
     skusCriticos,
     skusAlerta,
+    skusExcesso,
   };
 }

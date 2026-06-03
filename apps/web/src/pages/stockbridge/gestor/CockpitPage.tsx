@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Info, ArrowRight } from 'lucide-react';
 import { useAuthStore } from '../../../stores/auth.store.js';
 
 type Criticidade = 'critico' | 'alerta' | 'ok' | 'excesso';
@@ -38,11 +39,20 @@ interface CockpitResumo {
   aprovacoesPendentes: number;
   skusCriticos: number;
   skusAlerta: number;
+  skusExcesso: number;
 }
 
 interface CockpitData {
   resumo: CockpitResumo;
   skus: CockpitSku[];
+}
+
+interface ResumoCard {
+  label: string;
+  value: string;
+  color: string;
+  info: string;
+  hint?: string;
 }
 
 const CRIT_CFG: Record<Criticidade, { label: string; bg: string; text: string; bar: string }> = {
@@ -92,29 +102,92 @@ export function CockpitPage() {
     },
   });
 
-  const resumoCards = useMemo(() => {
+  // Cards "Volume" — onde está o estoque
+  const cardsVolume: ResumoCard[] = useMemo(() => {
     const r = data?.resumo;
     if (!r) return [];
+    const totalTransito = r.transitoIntlKg + r.portoDtaKg + r.transitoInternoKg;
     const totalPendente = r.totalFiscalPendenteNacionalKg + r.totalFiscalPendenteImportacaoKg;
     return [
-      { label: 'Físico Disponível',  value: `${fmtKg(r.totalFisicoKg)} kg`, color: 'text-atlas-ink' },
+      {
+        label: 'Disponível',
+        value: `${fmtKg(r.totalFisicoKg)} kg`,
+        color: 'text-atlas-ink',
+        info: 'Estoque físico imediatamente disponível para venda (saldo OMIE consolidado em ambos os CNPJs).',
+      },
+      {
+        label: 'Em Trânsito',
+        value: `${fmtKg(totalTransito)} kg`,
+        color: 'text-violet-700',
+        info: 'Soma dos lotes nos três estágios de trânsito: internacional, porto/DTA e trânsito interno.',
+        hint: totalTransito > 0
+          ? `${fmtKg(r.transitoIntlKg)} intl · ${fmtKg(r.portoDtaKg)} porto · ${fmtKg(r.transitoInternoKg)} interno`
+          : undefined,
+      },
+      {
+        label: 'Provisório',
+        value: `${fmtKg(r.provisorioKg)} kg`,
+        color: 'text-amber-700',
+        info: 'Material já recebido fisicamente pelo operador, mas com ajuste OMIE ainda pendente (em retry ou aguardando consolidação).',
+      },
       {
         label: 'Posição Fiscal',
         value: `${fmtKg(r.totalFiscalKg)} kg`,
         color: 'text-atlas-ink',
+        info: 'Posição contábil total = físico + NFs emitidas sem recebimento físico confirmado (nacionais via n_id_receb e importações via movimentação Atlas).',
         hint: totalPendente > 0
           ? `+${fmtKg(totalPendente)} kg pendentes (${fmtKg(r.totalFiscalPendenteNacionalKg)} nac · ${fmtKg(r.totalFiscalPendenteImportacaoKg)} imp)`
           : undefined,
       },
-      { label: 'Trânsito Intl',      value: `${fmtKg(r.transitoIntlKg)} kg`, color: 'text-violet-700' },
-      { label: 'Porto / DTA',        value: `${fmtKg(r.portoDtaKg)} kg`, color: 'text-orange-700' },
-      { label: 'Trânsito Interno',   value: `${fmtKg(r.transitoInternoKg)} kg`, color: 'text-teal-700' },
-      { label: 'Provisório',         value: `${fmtKg(r.provisorioKg)} kg`, color: 'text-amber-700' },
-      { label: 'Divergências',       value: String(r.divergenciasCount), color: 'text-red-700' },
-      { label: 'Aprovações',         value: String(r.aprovacoesPendentes), color: 'text-amber-700' },
-      { label: 'SKUs Críticos',      value: String(r.skusCriticos), color: 'text-red-700' },
-      { label: 'SKUs Alerta',        value: String(r.skusAlerta), color: 'text-amber-700' },
-    ] satisfies Array<{ label: string; value: string; color: string; hint?: string }>;
+    ];
+  }, [data]);
+
+  // Cards "Saúde" — o que demanda ação
+  const cardsSaude: ResumoCard[] = useMemo(() => {
+    const r = data?.resumo;
+    if (!r) return [];
+    return [
+      {
+        label: 'Ruptura',
+        value: String(r.skusCriticos),
+        color: 'text-red-700',
+        info: 'SKUs com cobertura abaixo de 50% do lead time. Risco real de faltar antes do próximo lote chegar.',
+      },
+      {
+        label: 'Atenção',
+        value: String(r.skusAlerta),
+        color: 'text-amber-700',
+        info: 'SKUs com cobertura entre 50% e 120% do lead time. Repor logo ou vira ruptura.',
+      },
+      {
+        label: 'Excesso',
+        value: String(r.skusExcesso),
+        color: 'text-blue-700',
+        info: 'SKUs com saldo acima de 4× o consumo no lead time. Capital parado em estoque.',
+      },
+      {
+        label: 'Pendências',
+        value: String(r.divergenciasCount + r.aprovacoesPendentes),
+        color: r.divergenciasCount + r.aprovacoesPendentes > 0 ? 'text-red-700' : 'text-atlas-ink',
+        info: 'Total de aprovações pendentes + divergências abertas que demandam ação do gestor.',
+        hint: (r.divergenciasCount > 0 || r.aprovacoesPendentes > 0)
+          ? `${r.divergenciasCount} divergências · ${r.aprovacoesPendentes} aprovações`
+          : undefined,
+      },
+    ];
+  }, [data]);
+
+  // Esteira de estágios — fluxo físico do material
+  const esteira = useMemo(() => {
+    const r = data?.resumo;
+    if (!r) return null;
+    return [
+      { label: 'Trânsito intl',    value: r.transitoIntlKg,     color: 'text-violet-700', bg: 'bg-violet-50 dark:bg-violet-900/20' },
+      { label: 'Porto / DTA',      value: r.portoDtaKg,         color: 'text-orange-700', bg: 'bg-orange-50 dark:bg-orange-900/20' },
+      { label: 'Trânsito interno', value: r.transitoInternoKg,  color: 'text-teal-700',   bg: 'bg-teal-50 dark:bg-teal-900/20' },
+      { label: 'Provisório',       value: r.provisorioKg,       color: 'text-amber-700',  bg: 'bg-amber-50 dark:bg-amber-900/20' },
+      { label: 'Disponível',       value: r.totalFisicoKg,      color: 'text-green-700',  bg: 'bg-green-50 dark:bg-green-900/20' },
+    ];
   }, [data]);
 
   return (
@@ -170,20 +243,37 @@ export function CockpitPage() {
         </div>
       )}
 
-      {data && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-6">
-          {resumoCards.map((c) => (
-            <div
-              key={c.label}
-              className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3"
+      {data && esteira && (
+        <div className="mb-5">
+          <div className="flex items-center gap-1 mb-2">
+            <h2 className="text-xs uppercase tracking-wide text-atlas-muted font-medium">Fluxo do material</h2>
+            <span
+              className="inline-flex cursor-help"
+              title="Estágios em sequência: material começa no exterior, passa por porto/DTA, chega ao trânsito interno, vira lote provisório quando recebido, e finalmente fica disponível para venda."
             >
-              <div className="text-xs text-atlas-muted mb-1">{c.label}</div>
-              <div className={`font-serif text-lg ${c.color}`}>{c.value}</div>
-              {c.hint && (
-                <div className="text-[10px] text-atlas-muted mt-1 leading-tight">{c.hint}</div>
-              )}
-            </div>
-          ))}
+              <Info size={12} className="text-atlas-muted" aria-hidden />
+            </span>
+          </div>
+          <div className="flex items-stretch gap-1 overflow-x-auto">
+            {esteira.map((stage, i) => (
+              <div key={stage.label} className="flex items-center gap-1 flex-1 min-w-[140px]">
+                <div className={`flex-1 rounded-lg border border-slate-200 dark:border-slate-700 p-3 ${stage.bg}`}>
+                  <div className={`text-[11px] font-medium ${stage.color}`}>{stage.label}</div>
+                  <div className="font-serif text-base text-atlas-ink mt-0.5">{fmtKg(stage.value)} kg</div>
+                </div>
+                {i < esteira.length - 1 && (
+                  <ArrowRight size={16} className="text-atlas-muted shrink-0" aria-hidden />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {data && (
+        <div className="space-y-4 mb-6">
+          <ResumoBloco titulo="Volume" descricao="Onde está o estoque agora" cards={cardsVolume} />
+          <ResumoBloco titulo="Saúde" descricao="O que demanda ação" cards={cardsSaude} />
         </div>
       )}
 
@@ -258,6 +348,44 @@ export function CockpitPage() {
         </div>
       )}
 
+    </div>
+  );
+}
+
+function ResumoBloco({
+  titulo,
+  descricao,
+  cards,
+}: {
+  titulo: string;
+  descricao: string;
+  cards: ResumoCard[];
+}) {
+  return (
+    <div>
+      <div className="flex items-baseline gap-2 mb-2">
+        <h2 className="text-xs uppercase tracking-wide text-atlas-muted font-medium">{titulo}</h2>
+        <span className="text-[11px] text-atlas-muted">— {descricao}</span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        {cards.map((c) => (
+          <div
+            key={c.label}
+            className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3"
+          >
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-xs text-atlas-muted">{c.label}</div>
+              <span className="inline-flex cursor-help shrink-0" title={c.info}>
+                <Info size={12} className="text-atlas-muted" aria-hidden />
+              </span>
+            </div>
+            <div className={`font-serif text-lg ${c.color}`}>{c.value}</div>
+            {c.hint && (
+              <div className="text-[10px] text-atlas-muted mt-1 leading-tight">{c.hint}</div>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
