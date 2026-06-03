@@ -16,7 +16,13 @@
 #   - public."tbl_posicaoEstoque_ACXE"           saldo atual por SKU/local OMIE
 #   - public."tbl_posicaoEstoque_Q2P"            (consumido por Meu Estoque do
 #                                                 StockBridge via vw_posicaoEstoqueUnificadaFamilia)
+#   - public."tbl_nf_header_ACXE"                + _itens_ACXE        historico
+#   - public."tbl_nf_header_Q2P"                 + _itens_Q2P         de NFs
+#   - public."tbl_nf_header_Q2P_Filial"          + _itens_Q2P_Filial  do OMIE
+#       (header + itens; usado pelo StockBridge para reconciliar posicao fiscal x
+#       fisica via campo nIdReceb)
 #   Obs: tbl_posicaoEstoque_Q2P_Filial NAO existe em prod — Filial nao opera estoque.
+#   Obs: tbl_staging_nf_header_* NAO sincronizadas — sao transientes do n8n.
 #
 # Tratamento de views dependentes:
 #   pg_restore --clean nao suporta CASCADE. Se houver views (ou matviews) no
@@ -67,6 +73,12 @@ TABLES=(
   'tbl_produtos_Q2P_Filial'
   'tbl_posicaoEstoque_ACXE'
   'tbl_posicaoEstoque_Q2P'
+  'tbl_nf_header_ACXE'
+  'tbl_nf_itens_ACXE'
+  'tbl_nf_header_Q2P'
+  'tbl_nf_itens_Q2P'
+  'tbl_nf_header_Q2P_Filial'
+  'tbl_nf_itens_Q2P_Filial'
 )
 
 # ── Pre-checks ───────────────────────────────────────────────────────────────
