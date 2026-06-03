@@ -78,11 +78,17 @@ function useApiFetch() {
   };
 }
 
+type PendenciaFilter = 'todas' | 'divergencia' | 'aprovacao' | 'provisorio';
+type EstagioFilter = 'todos' | 'transito_intl' | 'porto_dta' | 'transito_interno';
+
 export function CockpitPage() {
   const apiFetch = useApiFetch();
   const [cnpjFilter, setCnpjFilter] = useState<'ambos' | 'acxe' | 'q2p'>('ambos');
   const [galpaoFilter, setGalpaoFilter] = useState<string>('');
+  const [familiaFilter, setFamiliaFilter] = useState<string>('');
   const [critFilter, setCritFilter] = useState<'todas' | Criticidade>('todas');
+  const [pendenciaFilter, setPendenciaFilter] = useState<PendenciaFilter>('todas');
+  const [estagioFilter, setEstagioFilter] = useState<EstagioFilter>('todos');
 
   const { data: galpoesDisponiveis = [] } = useQuery<Array<{ galpao: string; localidades: string[] }>>({
     queryKey: ['admin', 'galpoes-disponiveis'],
@@ -90,17 +96,40 @@ export function CockpitPage() {
       (await apiFetch('/api/v1/stockbridge/admin/galpoes-disponiveis')).data as Array<{ galpao: string; localidades: string[] }>,
   });
 
-  const { data, isLoading, error } = useQuery<CockpitData>({
-    queryKey: ['stockbridge', 'cockpit', cnpjFilter, galpaoFilter, critFilter],
+  const { data: familiasDisponiveis = [] } = useQuery<string[]>({
+    queryKey: ['stockbridge', 'familias'],
+    queryFn: async () =>
+      (await apiFetch('/api/v1/stockbridge/familias')).data as string[],
+  });
+
+  const { data: rawData, isLoading, error } = useQuery<CockpitData>({
+    queryKey: ['stockbridge', 'cockpit', cnpjFilter, galpaoFilter, familiaFilter, critFilter],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (cnpjFilter !== 'ambos') params.set('cnpj', cnpjFilter);
       if (galpaoFilter) params.set('galpao', galpaoFilter);
+      if (familiaFilter) params.set('familia', familiaFilter);
       if (critFilter !== 'todas') params.set('criticidade', critFilter);
       const body = await apiFetch(`/api/v1/stockbridge/cockpit?${params}`);
       return body.data as CockpitData;
     },
   });
+
+  // Filtros derivados aplicados no frontend (pendência e estágio) — o backend
+  // não suporta esses filtros nativos. Aplicar aqui evita query nova por toggle.
+  const data = useMemo(() => {
+    if (!rawData) return rawData;
+    let skus = rawData.skus;
+    if (pendenciaFilter === 'divergencia') skus = skus.filter((s) => s.divergencias > 0);
+    if (pendenciaFilter === 'aprovacao') skus = skus.filter((s) => s.aprovacoesPendentes > 0);
+    if (pendenciaFilter === 'provisorio') skus = skus.filter((s) => s.provisorioKg > 0);
+    if (estagioFilter === 'transito_intl') skus = skus.filter((s) => s.transitoIntlKg > 0);
+    if (estagioFilter === 'porto_dta') skus = skus.filter((s) => s.portoDtaKg > 0);
+    if (estagioFilter === 'transito_interno') skus = skus.filter((s) => s.transitoInternoKg > 0);
+    // Quando há filtro derivado, mantém o resumo do backend (visão global) para
+    // contextualização, mas a lista de SKUs reflete apenas o subconjunto filtrado.
+    return { resumo: rawData.resumo, skus };
+  }, [rawData, pendenciaFilter, estagioFilter]);
 
   // Cards "Volume" — onde está o estoque
   const cardsVolume: ResumoCard[] = useMemo(() => {
@@ -195,7 +224,9 @@ export function CockpitPage() {
       <div className="mb-5">
         <h1 className="text-2xl font-serif text-atlas-ink mb-1">Cockpit de Estoque</h1>
         <p className="text-sm text-atlas-muted">
-          Saldo consolidado por SKU com cobertura em dias e criticidade segundo lead time e consumo médio.
+          Visão executiva do estoque físico: onde o material está, quem demanda ação imediata e
+          como o pipeline de chegada se distribui. <span className="text-atlas-muted/70">Cobertura
+          calculada por consumo médio diário vs lead time configurado por SKU.</span>
         </p>
       </div>
 
@@ -211,6 +242,19 @@ export function CockpitPage() {
             </button>
           ))}
         </div>
+        <select
+          value={familiaFilter}
+          onChange={(e) => setFamiliaFilter(e.target.value)}
+          className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-600 dark:bg-slate-900 text-xs"
+          title="Filtrar por família de produto (PP, PE, PS, PET, ABS, etc.)"
+        >
+          <option value="">Todas as famílias</option>
+          {familiasDisponiveis.map((f) => (
+            <option key={f} value={f}>
+              {f}
+            </option>
+          ))}
+        </select>
         <select
           value={galpaoFilter}
           onChange={(e) => setGalpaoFilter(e.target.value)}
@@ -230,8 +274,53 @@ export function CockpitPage() {
               key={v}
               onClick={() => setCritFilter(v)}
               className={`px-3 py-1 rounded text-xs font-medium transition ${critFilter === v ? 'bg-white dark:bg-slate-900 shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
+              title={
+                v === 'critico' ? 'Cobertura < 50% do lead time'
+                : v === 'alerta' ? 'Cobertura entre 50% e 120% do lead time'
+                : v === 'ok' ? 'Cobertura saudável (120%-400% do lead time)'
+                : v === 'excesso' ? 'Saldo > 4× consumo no lead time'
+                : 'Mostrar todos os SKUs'
+              }
             >
-              {v === 'todas' ? 'Todas' : CRIT_CFG[v].label}
+              {v === 'todas' ? 'Todas' : v === 'critico' ? 'Ruptura' : v === 'alerta' ? 'Atenção' : CRIT_CFG[v].label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3 mb-5 text-sm flex-wrap">
+        <span className="text-[11px] uppercase tracking-wide text-atlas-muted/70 font-medium">Drill-down:</span>
+        <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded">
+          {(['todas', 'divergencia', 'aprovacao', 'provisorio'] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => setPendenciaFilter(v)}
+              className={`px-3 py-1 rounded text-xs font-medium transition ${pendenciaFilter === v ? 'bg-white dark:bg-slate-900 shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
+              title={
+                v === 'divergencia' ? 'SKUs com pelo menos uma divergência aberta'
+                : v === 'aprovacao' ? 'SKUs com pelo menos uma aprovação pendente'
+                : v === 'provisorio' ? 'SKUs com saldo provisório (aguardando OMIE)'
+                : 'Sem filtro de pendência'
+              }
+            >
+              {v === 'todas' ? 'Sem pendência' : v === 'divergencia' ? 'Com divergência' : v === 'aprovacao' ? 'Com aprovação' : 'Com provisório'}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded">
+          {(['todos', 'transito_intl', 'porto_dta', 'transito_interno'] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => setEstagioFilter(v)}
+              className={`px-3 py-1 rounded text-xs font-medium transition ${estagioFilter === v ? 'bg-white dark:bg-slate-900 shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
+              title={
+                v === 'transito_intl' ? 'SKUs com lote em trânsito internacional'
+                : v === 'porto_dta' ? 'SKUs com lote no porto/DTA'
+                : v === 'transito_interno' ? 'SKUs com lote em trânsito interno'
+                : 'Sem filtro de estágio'
+              }
+            >
+              {v === 'todos' ? 'Sem estágio' : v === 'transito_intl' ? 'Trânsito intl' : v === 'porto_dta' ? 'Porto/DTA' : 'Trânsito int.'}
             </button>
           ))}
         </div>
