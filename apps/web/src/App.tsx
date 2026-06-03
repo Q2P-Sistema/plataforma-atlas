@@ -17,6 +17,7 @@ import {
   Package,
   Bell,
   Settings,
+  AlertTriangle,
 } from 'lucide-react';
 import { LoginPage } from './pages/LoginPage.js';
 import { TwoFactorPage } from './pages/TwoFactorPage.js';
@@ -59,6 +60,7 @@ import { FornecedoresPage } from './pages/stockbridge/diretor/FornecedoresPage.j
 import { ConfigProdutosPage } from './pages/stockbridge/diretor/ConfigProdutosPage.js';
 import { LocalidadesPage } from './pages/stockbridge/gestor/LocalidadesPage.js';
 import { MovimentacoesPage } from './pages/stockbridge/gestor/MovimentacoesPage.js';
+import { DivergenciasPage } from './pages/stockbridge/gestor/DivergenciasPage.js';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage.js';
 import { ResetPasswordPage } from './pages/ResetPasswordPage.js';
 import { useAuth } from './hooks/useAuth.js';
@@ -91,6 +93,7 @@ const STOCKBRIDGE_SUB_ITEMS: SidebarSubItem[] = [
   { id: 'sb-cockpit',          name: 'Cockpit',                 path: '/stockbridge/cockpit',           icon: LayoutDashboard, roles: ['gestor', 'diretor'] },
   { id: 'sb-fila',             name: 'Recebimento',             path: '/stockbridge/fila',              icon: FileText,        roles: ['operador', 'gestor', 'diretor'] },
   { id: 'sb-aprovacoes',       name: 'Aprovações',              path: '/stockbridge/aprovacoes',        icon: Bell,            roles: ['gestor', 'diretor'] },
+  { id: 'sb-divergencias',     name: 'Divergências',            path: '/stockbridge/divergencias',      icon: AlertTriangle,   roles: ['gestor', 'diretor'] },
   { id: 'sb-movimentacoes',    name: 'Movimentações',           path: '/stockbridge/movimentacoes',     icon: Table,           roles: ['operador', 'gestor', 'diretor'] },
   { id: 'sb-transito',         name: 'Trânsito',                path: '/stockbridge/transito',          icon: Activity,        roles: ['operador', 'gestor', 'diretor'] },
   { id: 'sb-saida-manual',     name: 'Saída Manual',            path: '/stockbridge/saida-manual',      icon: ShoppingCart,    roles: ['operador', 'gestor', 'diretor'] },
@@ -187,6 +190,21 @@ function ProtectedShell() {
     },
   });
 
+  // Contador de divergencias abertas — gestor/diretor (badge no menu lateral).
+  const { data: divergenciasCount = 0 } = useQuery<number>({
+    queryKey: ['stockbridge', 'divergencias', 'count'],
+    enabled: !!user && podeAprovar,
+    refetchInterval: 30_000,
+    queryFn: async () => {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (csrfToken) headers['x-csrf-token'] = csrfToken;
+      const res = await fetch('/api/v1/stockbridge/divergencias?status=aberta', { credentials: 'include', headers });
+      if (!res.ok) return 0;
+      const body = (await res.json()) as { data: unknown[] };
+      return Array.isArray(body.data) ? body.data.length : 0;
+    },
+  });
+
   // Contador de rejeicoes pendentes do operador — quebrado entre recebimento (tem
   // loteId) e saida manual (nao tem). Cada badge aparece no item da sidebar
   // correspondente: o operador ve um sino vermelho quando tem coisa esperando dele.
@@ -271,6 +289,7 @@ function ProtectedShell() {
     .filter((s) => !s.roles || s.roles.includes(user.role))
     .map((s) => {
       if (s.id === 'sb-aprovacoes') return { ...s, badge: aprovacoesCount };
+      if (s.id === 'sb-divergencias') return { ...s, badge: divergenciasCount };
       if (s.id === 'sb-fila') return { ...s, badge: minhasRejeicoes.recebimento };
       if (s.id === 'sb-saida-manual') return { ...s, badge: minhasRejeicoes.saidaManual };
       if (s.id === 'sb-comodato-retorno') {
@@ -364,6 +383,7 @@ function ProtectedShell() {
             <Route path="fila" element={<FilaOmiePage />} />
             <Route path="cockpit" element={<CockpitPage />} />
             <Route path="aprovacoes" element={<AprovacoesPage />} />
+            <Route path="divergencias" element={<DivergenciasPage />} />
             <Route path="movimentacoes" element={<MovimentacoesPage />} />
             <Route path="transito" element={<TransitoPage />} />
             <Route path="saida-manual" element={<SaidaManualPage />} />

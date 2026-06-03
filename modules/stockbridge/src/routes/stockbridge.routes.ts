@@ -6,6 +6,7 @@ import recebimentoRouter from './recebimento.routes.js';
 import recebimentoNacionalRouter from './recebimento-nacional.routes.js';
 import cockpitRouter from './cockpit.routes.js';
 import aprovacaoRouter from './aprovacao.routes.js';
+import divergenciaRouter from './divergencia.routes.js';
 import transitoRouter from './transito.routes.js';
 import saidaAutomaticaRouter from './saida-automatica.routes.js';
 import saidaManualRouter from './saida-manual.routes.js';
@@ -39,6 +40,8 @@ router.use(recebimentoNacionalRouter);
 router.use(cockpitRouter);
 // US3 — Aprovacoes hierarquicas
 router.use(aprovacaoRouter);
+// Divergencias (drill-down do cockpit) — gestor+
+router.use(divergenciaRouter);
 // US4 — Pipeline de transito maritimo
 router.use(transitoRouter);
 // US5 — Saidas automaticas via OMIE (polling n8n)
