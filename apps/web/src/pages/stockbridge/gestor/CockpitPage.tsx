@@ -297,7 +297,17 @@ export function CockpitPage() {
         <MultiSelectDropdown
           label="Galpões"
           allLabel="Todos os galpões"
-          options={galpoesDisponiveis.map((g) => ({ value: g.galpao, label: `Galpão ${g.galpao}` }))}
+          options={galpoesDisponiveis.map((g) => {
+            // localidades[0] vem como "11.1 — SANTO ANDRÉ (IMPORTADO)";
+            // extrai só a parte após o " — " e capitaliza.
+            const raw = g.localidades[0] ?? g.galpao;
+            const nome = raw.includes(' — ') ? (raw.split(' — ')[1] ?? raw) : raw;
+            const tituloNome = nome
+              .split(' ')
+              .map((w) => w.length > 2 ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w.toLowerCase())
+              .join(' ');
+            return { value: g.galpao, label: `${tituloNome} (${g.galpao})` };
+          })}
           selected={galpoesFilter}
           onChange={setGalpoesFilter}
           title="Filtrar por um ou mais galpões físicos (afeta apenas saldo OMIE; trânsito e provisório seguem agregando todos)"
