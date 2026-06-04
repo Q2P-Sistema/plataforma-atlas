@@ -175,44 +175,22 @@ export function CockpitPage() {
     };
   }, [rawData]);
 
-  // Cards "Volume" — onde está o estoque
-  const cardsVolume: ResumoCard[] = useMemo(() => {
+  // Card "Posicao Fiscal" — visao contabil que complementa a esteira (que mostra
+  // so o fisico/transito/provisorio). Separa do bloco Saude porque nao e um
+  // indicador de acao, e sim uma metrica contextual.
+  const cardPosicaoFiscal: ResumoCard | null = useMemo(() => {
     const r = data?.resumo;
-    if (!r) return [];
-    const totalTransito = r.transitoIntlKg + r.portoDtaKg + r.transitoInternoKg;
+    if (!r) return null;
     const totalPendente = r.totalFiscalPendenteNacionalKg + r.totalFiscalPendenteImportacaoKg;
-    return [
-      {
-        label: 'Disponível',
-        value: `${fmtKg(r.totalFisicoKg)} kg`,
-        color: 'text-atlas-ink',
-        info: 'Estoque físico imediatamente disponível para venda (saldo OMIE consolidado em ambos os CNPJs).',
-      },
-      {
-        label: 'Em Trânsito',
-        value: `${fmtKg(totalTransito)} kg`,
-        color: 'text-violet-700',
-        info: 'Soma dos lotes nos três estágios de trânsito: internacional, porto/DTA e trânsito interno.',
-        hint: totalTransito > 0
-          ? `${fmtKg(r.transitoIntlKg)} intl · ${fmtKg(r.portoDtaKg)} porto · ${fmtKg(r.transitoInternoKg)} interno`
-          : undefined,
-      },
-      {
-        label: 'Provisório',
-        value: `${fmtKg(r.provisorioKg)} kg`,
-        color: 'text-amber-700',
-        info: 'Material já recebido fisicamente pelo operador, mas com ajuste OMIE ainda pendente (em retry ou aguardando consolidação).',
-      },
-      {
-        label: 'Posição Fiscal',
-        value: `${fmtKg(r.totalFiscalKg)} kg`,
-        color: 'text-atlas-ink',
-        info: 'Posição contábil total = físico + NFs emitidas sem recebimento físico confirmado (nacionais via n_id_receb e importações via movimentação Atlas).',
-        hint: totalPendente > 0
-          ? `+${fmtKg(totalPendente)} kg pendentes (${fmtKg(r.totalFiscalPendenteNacionalKg)} nac · ${fmtKg(r.totalFiscalPendenteImportacaoKg)} imp)`
-          : undefined,
-      },
-    ];
+    return {
+      label: 'Posição Fiscal',
+      value: `${fmtKg(r.totalFiscalKg)} kg`,
+      color: 'text-atlas-ink',
+      info: 'Posição contábil total = físico + NFs emitidas sem recebimento físico confirmado (nacionais via n_id_receb e importações via movimentação Atlas).',
+      hint: totalPendente > 0
+        ? `+${fmtKg(totalPendente)} kg pendentes (${fmtKg(r.totalFiscalPendenteNacionalKg)} nac · ${fmtKg(r.totalFiscalPendenteImportacaoKg)} imp)`
+        : undefined,
+    };
   }, [data]);
 
   // Cards "Saúde" — o que demanda ação
@@ -403,9 +381,27 @@ export function CockpitPage() {
         </div>
       )}
 
+      {data && cardPosicaoFiscal && (
+        <div className="mb-5">
+          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 flex items-center gap-4">
+            <div className="flex items-center gap-1 shrink-0">
+              <span className="text-xs uppercase tracking-wide text-atlas-muted font-medium">{cardPosicaoFiscal.label}</span>
+              <span className="inline-flex cursor-help" title={cardPosicaoFiscal.info}>
+                <Info size={12} className="text-atlas-muted" aria-hidden />
+              </span>
+            </div>
+            <div className="flex items-baseline gap-3 flex-1 min-w-0">
+              <span className={`font-serif text-lg ${cardPosicaoFiscal.color}`}>{cardPosicaoFiscal.value}</span>
+              {cardPosicaoFiscal.hint && (
+                <span className="text-[11px] text-atlas-muted truncate">{cardPosicaoFiscal.hint}</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {data && (
         <div className="space-y-4 mb-6">
-          <ResumoBloco titulo="Volume" descricao="Onde está o estoque agora" cards={cardsVolume} />
           <ResumoBloco titulo="Saúde" descricao="O que demanda ação" cards={cardsSaude} />
         </div>
       )}
