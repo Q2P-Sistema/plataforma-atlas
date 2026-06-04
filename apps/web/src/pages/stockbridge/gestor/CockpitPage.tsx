@@ -18,6 +18,7 @@ interface CockpitSku {
   portoDtaKg: number;
   transitoInternoKg: number;
   provisorioKg: number;
+  comodatoKg: number;
   consumoMedioDiarioKg: number | null;
   leadTimeDias: number | null;
   coberturaDias: number | null;
@@ -35,6 +36,7 @@ interface CockpitResumo {
   portoDtaKg: number;
   transitoInternoKg: number;
   provisorioKg: number;
+  comodatoKg: number;
   divergenciasCount: number;
   aprovacoesPendentes: number;
   skusCriticos: number;
@@ -171,6 +173,10 @@ export function CockpitPage() {
       pendencias: [...skus]
         .filter((s) => s.divergencias + s.aprovacoesPendentes > 0)
         .sort((a, b) => (b.divergencias + b.aprovacoesPendentes) - (a.divergencias + a.aprovacoesPendentes))
+        .slice(0, 5),
+      comodato: [...skus]
+        .filter((s) => s.comodatoKg > 0)
+        .sort((a, b) => b.comodatoKg - a.comodatoKg)
         .slice(0, 5),
     };
   }, [rawData]);
@@ -382,21 +388,20 @@ export function CockpitPage() {
       )}
 
       {data && cardPosicaoFiscal && (
-        <div className="mb-5">
-          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 flex items-center gap-4">
-            <div className="flex items-center gap-1 shrink-0">
-              <span className="text-xs uppercase tracking-wide text-atlas-muted font-medium">{cardPosicaoFiscal.label}</span>
-              <span className="inline-flex cursor-help" title={cardPosicaoFiscal.info}>
-                <Info size={12} className="text-atlas-muted" aria-hidden />
-              </span>
-            </div>
-            <div className="flex items-baseline gap-3 flex-1 min-w-0">
-              <span className={`font-serif text-lg ${cardPosicaoFiscal.color}`}>{cardPosicaoFiscal.value}</span>
-              {cardPosicaoFiscal.hint && (
-                <span className="text-[11px] text-atlas-muted truncate">{cardPosicaoFiscal.hint}</span>
-              )}
-            </div>
-          </div>
+        <div className="mb-5 grid grid-cols-1 md:grid-cols-2 gap-2">
+          <CardHorizontal
+            label={cardPosicaoFiscal.label}
+            value={cardPosicaoFiscal.value}
+            color={cardPosicaoFiscal.color}
+            info={cardPosicaoFiscal.info}
+            hint={cardPosicaoFiscal.hint}
+          />
+          <CardHorizontal
+            label="Comodato"
+            value={`${fmtKg(data.resumo.comodatoKg)} kg`}
+            color={data.resumo.comodatoKg > 0 ? 'text-atlas-ink' : 'text-atlas-muted'}
+            info="Material emprestado a clientes (OMIE galpão 90.0.1 — TROCA). Não está disponível para venda, mas precisa ser lembrado pelos gestores para não esquecer das devoluções."
+          />
         </div>
       )}
 
@@ -513,7 +518,7 @@ export function CockpitPage() {
   );
 }
 
-function TopRiscos({ topRiscos }: { topRiscos: { ruptura: CockpitSku[]; excesso: CockpitSku[]; portoDta: CockpitSku[]; pendencias: CockpitSku[] } }) {
+function TopRiscos({ topRiscos }: { topRiscos: { ruptura: CockpitSku[]; excesso: CockpitSku[]; portoDta: CockpitSku[]; pendencias: CockpitSku[]; comodato: CockpitSku[] } }) {
   const blocos = [
     {
       titulo: 'Maior risco de ruptura',
@@ -547,6 +552,14 @@ function TopRiscos({ topRiscos }: { topRiscos: { ruptura: CockpitSku[]; excesso:
       bg: 'bg-amber-50 dark:bg-amber-900/20',
       fmtValor: (s: CockpitSku) => `${s.divergencias + s.aprovacoesPendentes}`,
     },
+    {
+      titulo: 'Maior comodato',
+      subtitulo: 'Mais kg emprestados',
+      items: topRiscos.comodato,
+      color: 'text-purple-700',
+      bg: 'bg-purple-50 dark:bg-purple-900/20',
+      fmtValor: (s: CockpitSku) => `${fmtKg(s.comodatoKg)} kg`,
+    },
   ];
   const algumComItem = blocos.some((b) => b.items.length > 0);
   if (!algumComItem) return null;
@@ -558,7 +571,7 @@ function TopRiscos({ topRiscos }: { topRiscos: { ruptura: CockpitSku[]; excesso:
           <Info size={12} className="text-atlas-muted" aria-hidden />
         </span>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-2">
         {blocos.map((b) => (
           <div key={b.titulo} className={`border border-slate-200 dark:border-slate-700 rounded-lg ${b.bg}`}>
             <div className="px-3 py-2 border-b border-slate-200/60 dark:border-slate-700/60">
@@ -679,6 +692,35 @@ function ResumoBloco({
             )}
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function CardHorizontal({
+  label,
+  value,
+  color,
+  info,
+  hint,
+}: {
+  label: string;
+  value: string;
+  color: string;
+  info: string;
+  hint?: string;
+}) {
+  return (
+    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 flex items-center gap-4">
+      <div className="flex items-center gap-1 shrink-0">
+        <span className="text-xs uppercase tracking-wide text-atlas-muted font-medium">{label}</span>
+        <span className="inline-flex cursor-help" title={info}>
+          <Info size={12} className="text-atlas-muted" aria-hidden />
+        </span>
+      </div>
+      <div className="flex items-baseline gap-3 flex-1 min-w-0">
+        <span className={`font-serif text-lg ${color}`}>{value}</span>
+        {hint && <span className="text-[11px] text-atlas-muted truncate">{hint}</span>}
       </div>
     </div>
   );

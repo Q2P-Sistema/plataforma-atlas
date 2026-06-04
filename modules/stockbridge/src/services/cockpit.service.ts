@@ -28,8 +28,9 @@ export interface CockpitSku {
   fiscalPendenteImportacaoKg: number;  // NFs ACXE 3.xxx sem movimentacao subtipo=importacao
   transitoIntlKg: number;              // Atlas: lote status='transito' estagio='transito_intl'
   portoDtaKg: number;                  // idem 'porto_dta'
-  transitoInternoKg: number;           // idem 'transito_interno'
+  transitoInternoKg: number;           // Atlas 'transito_interno' + OMIE codigo 90.0.2 (TRANSITO virtual)
   provisorioKg: number;                // Atlas: lote provisorio AINDA NAO consolidado pelo OMIE
+  comodatoKg: number;                  // OMIE 90.0.1 (TROCA): material emprestado a clientes
   consumoMedioDiarioKg: number | null;
   leadTimeDias: number | null;
   coberturaDias: number | null;
@@ -47,6 +48,7 @@ export interface CockpitResumo {
   portoDtaKg: number;
   transitoInternoKg: number;
   provisorioKg: number;
+  comodatoKg: number;
   divergenciasCount: number;
   aprovacoesPendentes: number;
   skusCriticos: number;
@@ -101,17 +103,23 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
       return d.toISOString().slice(0, 10);
     })();
 
-  // Regra de empresa pra OMIE:
-  //   acxe  → .1 ACXE
-  //   q2p / ambos → .1 Q2P + .2 Q2P (Q2P como representante do espelhado)
-  const condicaoEmpresaOmie =
+  // Whitelist de galpoes fisicos reais (entram em "Disponivel"). Tudo que
+  // estiver fora desta lista e os codigos especiais 90.0.* nao soma como
+  // estoque disponível — saldo de OPERACIONAIS (VARREDURA, FALTANDO, PROCESSO,
+  // CONSUMO, PRODUÇÃO) e ignorado pelo cockpit.
+  const GALPOES_FISICOS = ['11.1', '11.2', '12.1', '12.2', '21.1', '21.2', '31.1'];
+  const CODIGO_TRANSITO_OMIE = '90.0.2'; // soma com transito_interno do Atlas
+  const CODIGO_COMODATO_OMIE = '90.0.1'; // estoque emprestado a clientes
+
+  // Regra de empresa pra OMIE: filtra por empresa do registro. Em "ambos",
+  // sem filtro — o agrupamento por (produto, codigo_estoque) com COALESCE
+  // Q2P > ACXE evita dupla contagem do espelhado (11.1 tem ambos).
+  const filtroEmpresaOmie =
     empresa === 'acxe'
-      ? `(o.codigo_estoque LIKE '%.1' AND o.empresa = 'ACXE')`
-      : `(
-          (o.codigo_estoque LIKE '%.1' AND o.empresa = 'Q2P')
-          OR
-          (o.codigo_estoque LIKE '%.2' AND o.empresa = 'Q2P')
-        )`;
+      ? `AND o.empresa = 'ACXE'`
+      : empresa === 'q2p'
+        ? `AND o.empresa = 'Q2P'`
+        : '';
 
   // Parametros (sempre na mesma ordem):
   //   $1 = familias (text[]|null)  — null/array vazio = todas
@@ -120,24 +128,83 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
   //   $4 = incluir_acxe (bool)
   //   $5 = incluir_q2p (bool)
   // Filtro de galpao: aplicado SO ao saldo OMIE. Para multiplos galpoes,
-  // gera-se 'galpao.%' para cada e checa LIKE ANY.
+  // compara codigo_estoque diretamente com a lista.
   const galpaoFilterOmie = `
-    AND ($2::text[] IS NULL OR EXISTS (
-      SELECT 1 FROM unnest($2::text[]) AS g
-      WHERE o.codigo_estoque LIKE g || '.%'
-    ))`;
+    AND ($2::text[] IS NULL OR o.codigo_estoque = ANY($2::text[]))`;
 
   const sql = `
     WITH fisico_omie AS (
-      SELECT
-        pa.codigo_produto AS produto_codigo_acxe,
-        SUM(COALESCE(o.saldo, 0)) AS fisica_kg
-      FROM public."vw_posicaoEstoqueUnificadaFamilia" o
-      INNER JOIN public."tbl_produtos_ACXE" pa ON pa.descricao = o.descricao_produto
-      WHERE o.saldo > 0
-        AND ${condicaoEmpresaOmie}
-        ${galpaoFilterOmie}
-      GROUP BY pa.codigo_produto
+      -- 1) Linhas brutas: produto + codigo_estoque + empresa + saldo
+      --    Whitelist de galpoes fisicos reais, filtro de empresa, galpao multi.
+      WITH posicao_bruta AS (
+        SELECT
+          pa.codigo_produto AS produto_codigo_acxe,
+          o.codigo_estoque,
+          o.empresa,
+          o.saldo
+        FROM public."vw_posicaoEstoqueUnificadaFamilia" o
+        INNER JOIN public."tbl_produtos_ACXE" pa ON pa.descricao = o.descricao_produto
+        WHERE o.saldo > 0
+          AND o.codigo_estoque = ANY('{${GALPOES_FISICOS.join(',')}}'::text[])
+          ${filtroEmpresaOmie}
+          ${galpaoFilterOmie}
+      ),
+      -- 2) Por (produto, codigo_estoque) escolhe Q2P se existe, senao ACXE.
+      --    Anti-dupla-contagem do espelhado (ex: 11.1 tem ACXE+Q2P, conta Q2P).
+      posicao_consolidada AS (
+        SELECT
+          produto_codigo_acxe,
+          codigo_estoque,
+          COALESCE(
+            MAX(saldo) FILTER (WHERE empresa = 'Q2P'),
+            MAX(saldo) FILTER (WHERE empresa = 'ACXE')
+          ) AS saldo_local
+        FROM posicao_bruta
+        GROUP BY produto_codigo_acxe, codigo_estoque
+      )
+      SELECT produto_codigo_acxe, SUM(saldo_local) AS fisica_kg
+      FROM posicao_consolidada
+      GROUP BY produto_codigo_acxe
+    ),
+    -- TRANSITO virtual OMIE (90.0.2): material com NF mae emitida, no porto/
+    -- transito interno. Soma com transito_interno do Atlas. Mesma regra Q2P>ACXE.
+    transito_omie_902 AS (
+      SELECT produto_codigo_acxe, SUM(saldo_local) AS transito_interno_kg
+      FROM (
+        SELECT
+          pa.codigo_produto AS produto_codigo_acxe,
+          COALESCE(
+            MAX(o.saldo) FILTER (WHERE o.empresa = 'Q2P'),
+            MAX(o.saldo) FILTER (WHERE o.empresa = 'ACXE')
+          ) AS saldo_local
+        FROM public."vw_posicaoEstoqueUnificadaFamilia" o
+        INNER JOIN public."tbl_produtos_ACXE" pa ON pa.descricao = o.descricao_produto
+        WHERE o.saldo > 0
+          AND o.codigo_estoque = '${CODIGO_TRANSITO_OMIE}'
+          ${filtroEmpresaOmie}
+        GROUP BY pa.codigo_produto
+      ) src
+      GROUP BY produto_codigo_acxe
+    ),
+    -- COMODATO OMIE (90.0.1): material emprestado a clientes. Nao disponivel
+    -- mas precisa ser vigiado pelos gestores para nao esquecer.
+    comodato_omie AS (
+      SELECT produto_codigo_acxe, SUM(saldo_local) AS comodato_kg
+      FROM (
+        SELECT
+          pa.codigo_produto AS produto_codigo_acxe,
+          COALESCE(
+            MAX(o.saldo) FILTER (WHERE o.empresa = 'Q2P'),
+            MAX(o.saldo) FILTER (WHERE o.empresa = 'ACXE')
+          ) AS saldo_local
+        FROM public."vw_posicaoEstoqueUnificadaFamilia" o
+        INNER JOIN public."tbl_produtos_ACXE" pa ON pa.descricao = o.descricao_produto
+        WHERE o.saldo > 0
+          AND o.codigo_estoque = '${CODIGO_COMODATO_OMIE}'
+          ${filtroEmpresaOmie}
+        GROUP BY pa.codigo_produto
+      ) src
+      GROUP BY produto_codigo_acxe
     ),
     transito_atlas AS (
       SELECT
@@ -246,6 +313,10 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
       UNION
       SELECT produto_codigo_acxe FROM transito_atlas
       UNION
+      SELECT produto_codigo_acxe FROM transito_omie_902
+      UNION
+      SELECT produto_codigo_acxe FROM comodato_omie
+      UNION
       SELECT produto_codigo_acxe FROM provisorio_atlas
       UNION
       SELECT produto_codigo_acxe FROM fiscal_pend_nacional
@@ -260,8 +331,10 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
       COALESCE(fo.fisica_kg, 0)                AS fisica_kg,
       COALESCE(ta.transito_intl_kg, 0)         AS transito_intl_kg,
       COALESCE(ta.porto_dta_kg, 0)             AS porto_dta_kg,
-      COALESCE(ta.transito_interno_kg, 0)      AS transito_interno_kg,
+      -- Transito interno = Atlas + 90.0.2 OMIE (TRANSITO virtual)
+      COALESCE(ta.transito_interno_kg, 0) + COALESCE(to902.transito_interno_kg, 0) AS transito_interno_kg,
       COALESCE(pv.provisorio_kg, 0)            AS provisorio_kg,
+      COALESCE(cm.comodato_kg, 0)              AS comodato_kg,
       COALESCE(fpn.pendente_nacional_kg, 0)    AS pendente_nacional_kg,
       COALESCE(fpi.pendente_importacao_kg, 0)  AS pendente_importacao_kg,
       c.consumo_medio_diario_kg,
@@ -269,11 +342,13 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
       COALESCE(d.c, 0) AS divs,
       COALESCE(a.c, 0) AS aprs
     FROM universo u
-    LEFT JOIN fisico_omie fo             ON fo.produto_codigo_acxe  = u.produto_codigo_acxe
-    LEFT JOIN transito_atlas ta          ON ta.produto_codigo_acxe  = u.produto_codigo_acxe
-    LEFT JOIN provisorio_atlas pv        ON pv.produto_codigo_acxe  = u.produto_codigo_acxe
-    LEFT JOIN fiscal_pend_nacional fpn   ON fpn.produto_codigo_acxe = u.produto_codigo_acxe
-    LEFT JOIN fiscal_pend_importacao fpi ON fpi.produto_codigo_acxe = u.produto_codigo_acxe
+    LEFT JOIN fisico_omie fo             ON fo.produto_codigo_acxe    = u.produto_codigo_acxe
+    LEFT JOIN transito_atlas ta          ON ta.produto_codigo_acxe    = u.produto_codigo_acxe
+    LEFT JOIN transito_omie_902 to902    ON to902.produto_codigo_acxe = u.produto_codigo_acxe
+    LEFT JOIN comodato_omie cm           ON cm.produto_codigo_acxe    = u.produto_codigo_acxe
+    LEFT JOIN provisorio_atlas pv        ON pv.produto_codigo_acxe    = u.produto_codigo_acxe
+    LEFT JOIN fiscal_pend_nacional fpn   ON fpn.produto_codigo_acxe   = u.produto_codigo_acxe
+    LEFT JOIN fiscal_pend_importacao fpi ON fpi.produto_codigo_acxe   = u.produto_codigo_acxe
     LEFT JOIN public."tbl_produtos_ACXE" p
       ON p.codigo_produto = u.produto_codigo_acxe
     LEFT JOIN stockbridge.familia_omie_atlas f
@@ -324,6 +399,7 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
       portoDtaKg: Number(r.porto_dta_kg),
       transitoInternoKg: Number(r.transito_interno_kg),
       provisorioKg: Number(r.provisorio_kg),
+      comodatoKg: Number(r.comodato_kg),
       consumoMedioDiarioKg: consumoKg,
       leadTimeDias: leadTime,
       coberturaDias: cobertura,
@@ -351,6 +427,7 @@ export function getResumoFromSkus(skus: CockpitSku[]): CockpitResumo {
   let portoDtaKg = 0;
   let transitoInternoKg = 0;
   let provisorioKg = 0;
+  let comodatoKg = 0;
   let divergenciasCount = 0;
   let aprovacoesPendentes = 0;
   let skusCriticos = 0;
@@ -366,6 +443,7 @@ export function getResumoFromSkus(skus: CockpitSku[]): CockpitResumo {
     portoDtaKg += s.portoDtaKg;
     transitoInternoKg += s.transitoInternoKg;
     provisorioKg += s.provisorioKg;
+    comodatoKg += s.comodatoKg;
     divergenciasCount += s.divergencias;
     aprovacoesPendentes += s.aprovacoesPendentes;
     if (s.criticidade === 'critico') skusCriticos += 1;
@@ -382,6 +460,7 @@ export function getResumoFromSkus(skus: CockpitSku[]): CockpitResumo {
     portoDtaKg,
     transitoInternoKg,
     provisorioKg,
+    comodatoKg,
     divergenciasCount,
     aprovacoesPendentes,
     skusCriticos,
