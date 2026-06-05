@@ -133,7 +133,36 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
     AND ($2::text[] IS NULL OR o.codigo_estoque = ANY($2::text[]))`;
 
   const sql = `
-    WITH fisico_omie AS (
+    -- Le direto das tabelas-fonte usando MAX(ddataposicao) por empresa.
+    -- Antes usavamos public."vw_posicaoEstoqueUnificadaFamilia" mas ela
+    -- filtra estritamente ddataposicao = CURRENT_DATE, zerando o cockpit
+    -- toda meia-noite UTC se o sync diario ainda nao rodou.
+    -- Replicamos a logica da view (UNION ALL ACXE+Q2P, JOIN com locais
+    -- de estoque) mas usando a data mais recente disponivel por empresa.
+    WITH posicao_unificada AS (
+      SELECT
+        'ACXE'::text AS empresa,
+        e.codigo AS codigo_estoque,
+        p.cdescricao AS descricao_produto,
+        p.nsaldo AS saldo
+      FROM public."tbl_posicaoEstoque_ACXE" p
+      INNER JOIN public."tbl_locaisEstoques_ACXE" e
+        ON p.codigo_local_estoque = e.codigo_local_estoque
+      WHERE p.fisico >= 0
+        AND p.ddataposicao = (SELECT MAX(ddataposicao) FROM public."tbl_posicaoEstoque_ACXE")
+      UNION ALL
+      SELECT
+        'Q2P'::text,
+        e.codigo,
+        p.cdescricao,
+        p.nsaldo
+      FROM public."tbl_posicaoEstoque_Q2P" p
+      INNER JOIN public."tbl_locaisEstoques_Q2P" e
+        ON p.codigo_local_estoque = e.codigo_local_estoque
+      WHERE p.fisico >= 0
+        AND p.ddataposicao = (SELECT MAX(ddataposicao) FROM public."tbl_posicaoEstoque_Q2P")
+    ),
+    fisico_omie AS (
       -- 1) Linhas brutas: produto + codigo_estoque + empresa + saldo
       --    Whitelist de galpoes fisicos reais, filtro de empresa, galpao multi.
       WITH posicao_bruta AS (
@@ -142,7 +171,7 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
           o.codigo_estoque,
           o.empresa,
           o.saldo
-        FROM public."vw_posicaoEstoqueUnificadaFamilia" o
+        FROM posicao_unificada o
         INNER JOIN public."tbl_produtos_ACXE" pa ON pa.descricao = o.descricao_produto
         WHERE o.saldo > 0
           AND o.codigo_estoque = ANY('{${GALPOES_FISICOS.join(',')}}'::text[])
@@ -177,7 +206,7 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
             MAX(o.saldo) FILTER (WHERE o.empresa = 'Q2P'),
             MAX(o.saldo) FILTER (WHERE o.empresa = 'ACXE')
           ) AS saldo_local
-        FROM public."vw_posicaoEstoqueUnificadaFamilia" o
+        FROM posicao_unificada o
         INNER JOIN public."tbl_produtos_ACXE" pa ON pa.descricao = o.descricao_produto
         WHERE o.saldo > 0
           AND o.codigo_estoque = '${CODIGO_TRANSITO_OMIE}'
@@ -197,7 +226,7 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
             MAX(o.saldo) FILTER (WHERE o.empresa = 'Q2P'),
             MAX(o.saldo) FILTER (WHERE o.empresa = 'ACXE')
           ) AS saldo_local
-        FROM public."vw_posicaoEstoqueUnificadaFamilia" o
+        FROM posicao_unificada o
         INNER JOIN public."tbl_produtos_ACXE" pa ON pa.descricao = o.descricao_produto
         WHERE o.saldo > 0
           AND o.codigo_estoque = '${CODIGO_COMODATO_OMIE}'
