@@ -5,6 +5,7 @@ const logger = createLogger('email');
 
 interface EmailOptions {
   to: string;
+  cc?: string | string[];
   subject: string;
   html: string;
   text?: string;
@@ -13,10 +14,19 @@ interface EmailOptions {
 export async function sendEmail(options: EmailOptions): Promise<void> {
   const config = getConfig();
 
+  // SendGrid retorna 400 se o mesmo endereco aparece em `to` e `cc` da mesma
+  // personalizacao. Acontece quando STOCKBRIDGE_ADMIN_CC_EMAIL e o mesmo do
+  // operador alvo (caso comum no inicio do roll-out, onde o admin atua como
+  // operador tambem). Filtra antes de enviar.
+  const toLower = options.to.toLowerCase();
+  const ccList = options.cc ? (Array.isArray(options.cc) ? options.cc : [options.cc]) : [];
+  const ccFiltered = ccList.filter((c) => c.toLowerCase() !== toLower);
+  const cc = ccFiltered.length > 0 ? ccFiltered : undefined;
+
   if (!config.SENDGRID_API_KEY || !config.SENDGRID_FROM_EMAIL) {
     // Dev fallback: log instead of sending
     logger.info(
-      { to: options.to, subject: options.subject },
+      { to: options.to, cc, subject: options.subject },
       `[DEV EMAIL] Would send email to ${options.to}`,
     );
     logger.info({ html: options.html }, '[DEV EMAIL] Content');
@@ -28,13 +38,14 @@ export async function sendEmail(options: EmailOptions): Promise<void> {
 
   await sgMail.default.send({
     to: options.to,
+    cc,
     from: config.SENDGRID_FROM_EMAIL,
     subject: options.subject,
     html: options.html,
     text: options.text,
   });
 
-  logger.info({ to: options.to, subject: options.subject }, 'Email sent');
+  logger.info({ to: options.to, cc, subject: options.subject }, 'Email sent');
 }
 
 export function buildPasswordResetEmail(resetUrl: string): {

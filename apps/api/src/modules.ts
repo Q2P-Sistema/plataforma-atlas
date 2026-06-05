@@ -91,9 +91,10 @@ export function registerModuleRoutes(app: Express): void {
   }
 
   if (config.MODULE_STOCKBRIDGE_ENABLED) {
-    import('@atlas/stockbridge').then(({ stockbridgeRouter }) => {
+    import('@atlas/stockbridge').then(({ stockbridgeRouter, iniciarCronsStockBridge }) => {
       app.use(stockbridgeRouter);
       logger.info('StockBridge routes registered');
+      iniciarCronsStockBridge();
     }).catch((err) => {
       logger.error({ err }, 'Failed to load StockBridge module');
     });

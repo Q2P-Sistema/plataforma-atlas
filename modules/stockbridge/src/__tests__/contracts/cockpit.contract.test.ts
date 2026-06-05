@@ -12,15 +12,15 @@ vi.mock('@atlas/core', () => ({
           nome: 'PP RAFIA',
           familia: 'PP RAFIA',
           ncm: '3902.10.10',
-          fisica_t: 42,
-          fiscal_t: 42,
-          transito_intl_t: 15,
-          porto_dta_t: 0,
-          transito_interno_t: 0,
-          provisorio_t: 0,
-          consumo_medio_diario_t: 1.2,
+          fisica_kg: 42_000,
+          fiscal_kg: 42_000,
+          transito_intl_kg: 15_000,
+          porto_dta_kg: 0,
+          transito_interno_kg: 0,
+          provisorio_kg: 0,
+          consumo_medio_diario_kg: 1200,
           lead_time_dias: 60,
-          familia_categoria: 'PP',
+          familia_atlas: 'PP',
           incluir: true,
           divs: 0,
           aprs: 0,
@@ -45,6 +45,7 @@ vi.mock('@atlas/auth', () => ({
     next();
   },
   requireRole: () => (_req: Request, _res: Response, next: NextFunction) => next(),
+  requireModule: () => (_req: Request, _res: Response, next: NextFunction) => next(),
 }));
 
 vi.mock('@atlas/db', () => ({
@@ -80,7 +81,7 @@ describe('GET /api/v1/stockbridge/cockpit — contratos', () => {
     expect(res.body.data.skus[0]).toMatchObject({
       codigoAcxe: 12345,
       nome: 'PP RAFIA',
-      fisicaT: 42,
+      fisicaKg: 42_000,
       criticidade: expect.stringMatching(/critico|alerta|ok|excesso/),
     });
   });
@@ -88,7 +89,7 @@ describe('GET /api/v1/stockbridge/cockpit — contratos', () => {
   it('cobertura e criticidade sao calculados no TS', async () => {
     const res = await request(app).get('/api/v1/stockbridge/cockpit');
     const sku = res.body.data.skus[0];
-    // 42 / 1.2 = 35 dias ; 35 < 60*1.2 (72) mas > 60*0.5 (30) => alerta
+    // 42000 kg / 1200 kg/dia = 35 dias ; 35 < 60*1.2 (72) mas > 60*0.5 (30) => alerta
     expect(sku.coberturaDias).toBe(35);
     expect(sku.criticidade).toBe('alerta');
   });

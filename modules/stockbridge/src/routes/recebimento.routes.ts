@@ -9,6 +9,8 @@ import {
   OmieAjusteError,
 } from '../services/recebimento.service.js';
 import { CorrelacaoNaoEncontradaError } from '../services/correlacao.service.js';
+import { mapearErroOmieParaResposta } from '../services/erros-omie.js';
+import type { Perfil } from '../types.js';
 
 const logger = createLogger('stockbridge:recebimento');
 const router: Router = Router();
@@ -20,6 +22,7 @@ const BodySchema = z.object({
   unidade_input: z.enum(['t', 'kg', 'saco', 'bigbag']),
   localidade_id: z.string().uuid(),
   observacoes: z.string().optional(),
+  tipo_divergencia: z.enum(['faltando', 'varredura']).optional(),
 });
 
 router.post('/api/v1/stockbridge/recebimento', requireOperador, requireArmazemVinculado, async (req: Request, res: Response) => {
@@ -46,6 +49,7 @@ router.post('/api/v1/stockbridge/recebimento', requireOperador, requireArmazemVi
       unidadeInput: parsed.data.unidade_input,
       localidadeId: parsed.data.localidade_id,
       observacoes: parsed.data.observacoes,
+      tipoDivergencia: parsed.data.tipo_divergencia,
       userId,
     });
     res.status(201).json({ data: result, error: null });
@@ -59,8 +63,9 @@ router.post('/api/v1/stockbridge/recebimento', requireOperador, requireArmazemVi
       return;
     }
     if (err instanceof OmieAjusteError) {
-      const code = err.lado === 'acxe' ? 'OMIE_ACXE_FAIL' : 'OMIE_Q2P_FAIL';
-      res.status(502).json({ data: null, error: { code, message: err.message } });
+      const role = (req.user?.role ?? 'operador') as Perfil;
+      const { httpStatus, body } = mapearErroOmieParaResposta(err, { role });
+      res.status(httpStatus).json({ data: null, error: body });
       return;
     }
     logger.error({ err, nf: parsed.data.nf }, 'Erro inesperado em recebimento');

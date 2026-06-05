@@ -6,7 +6,7 @@ import { useAuthStore } from '../../../stores/auth.store.js';
 interface Props {
   aprovacaoId: string;
   loteCodigo: string;
-  quantidadeOriginalT: number;
+  quantidadeOriginalKg: number;
   motivoRejeicao: string;
   onClose: () => void;
   onSucesso: () => void;
@@ -24,9 +24,9 @@ function useApiFetch() {
   };
 }
 
-export function ReSubmeterModal({ aprovacaoId, loteCodigo, quantidadeOriginalT, motivoRejeicao, onClose, onSucesso }: Props) {
+export function ReSubmeterModal({ aprovacaoId, loteCodigo, quantidadeOriginalKg, motivoRejeicao, onClose, onSucesso }: Props) {
   const apiFetch = useApiFetch();
-  const [quantidade, setQuantidade] = useState(String(quantidadeOriginalT));
+  const [quantidade, setQuantidade] = useState(String(quantidadeOriginalKg));
   const [observacoes, setObservacoes] = useState('');
 
   const resubmeterMut = useMutation({
@@ -34,7 +34,7 @@ export function ReSubmeterModal({ aprovacaoId, loteCodigo, quantidadeOriginalT, 
       apiFetch(`/api/v1/stockbridge/aprovacoes/${aprovacaoId}/resubmeter`, {
         method: 'POST',
         body: JSON.stringify({
-          quantidade_recebida_t: parseFloat(quantidade.replace(',', '.')),
+          quantidade_recebida_kg: parseFloat(quantidade.replace(',', '.')),
           observacoes,
         }),
       }),
@@ -52,11 +52,11 @@ export function ReSubmeterModal({ aprovacaoId, loteCodigo, quantidadeOriginalT, 
           <p className="text-red-700 dark:text-red-300 italic">"{motivoRejeicao || 'sem motivo registrado'}"</p>
         </div>
         <p className="text-sm text-atlas-muted">
-          Lote <strong>{loteCodigo}</strong> — corrija a quantidade e/ou motivo e envie para nova aprovacao.
+          Lote <strong>{loteCodigo}</strong> — corrija a quantidade e/ou motivo e envie para nova aprovação.
         </p>
 
         <div>
-          <label className="block text-xs font-semibold text-atlas-muted mb-1">Nova quantidade recebida (t)</label>
+          <label className="block text-xs font-semibold text-atlas-muted mb-1">Nova quantidade recebida (kg)</label>
           <input
             value={quantidade}
             onChange={(e) => setQuantidade(e.target.value)}
@@ -66,7 +66,7 @@ export function ReSubmeterModal({ aprovacaoId, loteCodigo, quantidadeOriginalT, 
         </div>
 
         <div>
-          <label className="block text-xs font-semibold text-atlas-muted mb-1">Nova observacao / motivo *</label>
+          <label className="block text-xs font-semibold text-atlas-muted mb-1">Nova observação / motivo *</label>
           <textarea
             value={observacoes}
             onChange={(e) => setObservacoes(e.target.value)}
@@ -87,9 +87,9 @@ export function ReSubmeterModal({ aprovacaoId, loteCodigo, quantidadeOriginalT, 
           <button
             onClick={() => resubmeterMut.mutate()}
             disabled={!podeEnviar || resubmeterMut.isPending}
-            className={`px-5 py-2 rounded text-sm font-medium ${podeEnviar ? 'bg-atlas-ink text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
+            className={`px-5 py-2 rounded text-sm font-medium ${podeEnviar ? 'bg-atlas-btn-bg text-atlas-btn-text' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
           >
-            {resubmeterMut.isPending ? 'Enviando...' : 'Re-submeter para aprovacao'}
+            {resubmeterMut.isPending ? 'Enviando...' : 'Re-submeter para aprovação'}
           </button>
         </div>
       </div>

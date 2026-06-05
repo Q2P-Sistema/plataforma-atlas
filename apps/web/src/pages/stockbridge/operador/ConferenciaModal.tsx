@@ -5,7 +5,7 @@ import { useAuthStore } from '../../../stores/auth.store.js';
 
 type Unidade = 't' | 'kg' | 'saco' | 'bigbag';
 
-const FATOR_T: Record<Unidade, number> = { t: 1, kg: 0.001, saco: 0.025, bigbag: 1 };
+const FATOR_KG: Record<Unidade, number> = { t: 1000, kg: 1, saco: 25, bigbag: 1000 };
 
 interface FilaItem {
   nf: string;
@@ -13,9 +13,9 @@ interface FilaItem {
   produto: { codigo: number; nome: string };
   qtdOriginal: number;
   unidade: Unidade;
-  qtdT: number;
+  qtdKg: number;
   localidadeCodigo: string;
-  custoUsd: number;
+  custoBrl: number;
 }
 
 interface Props {
@@ -49,24 +49,29 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
   const [unidadeInput, setUnidadeInput] = useState<Unidade>(item.unidade);
   const [localidadeId, setLocalidadeId] = useState('');
   const [obs, setObs] = useState('');
+  const [tipoDivergencia, setTipoDivergencia] = useState<'faltando' | 'varredura'>('faltando');
   const [sucesso, setSucesso] = useState<{ tipo: 'ok' | 'divergencia'; mensagem: string } | null>(null);
 
   const { data: localidades = [] } = useQuery<Localidade[]>({
-    queryKey: ['stockbridge', 'localidades', 'ativas'],
+    queryKey: ['stockbridge', 'localidades', 'espelhadas'],
     queryFn: async () => {
-      const body = await apiFetch('/api/v1/stockbridge/localidades?ativo=true');
+      const body = await apiFetch('/api/v1/stockbridge/localidades?ativo=true&espelhadas=true');
       return body.data as Localidade[];
     },
   });
 
-  const qtdFisicaT = useMemo(() => {
+  const qtdFisicaKg = useMemo(() => {
     const n = parseFloat(qtdInput.replace(',', '.'));
-    return Number.isFinite(n) ? n * FATOR_T[unidadeInput] : 0;
+    return Number.isFinite(n) ? n * FATOR_KG[unidadeInput] : 0;
   }, [qtdInput, unidadeInput]);
-  const delta = qtdFisicaT - item.qtdT;
-  const temDivergencia = Math.abs(delta) > 0.01;
-  const motivoObrigatorio = temDivergencia && qtdFisicaT > 0;
-  const podeConfirmar = qtdFisicaT > 0 && localidadeId && (!motivoObrigatorio || obs.trim().length > 0);
+  const deltaKg = qtdFisicaKg - item.qtdKg;
+  const temDivergencia = Math.abs(deltaKg) > 1; // tolerancia 1 kg
+  const motivoObrigatorio = temDivergencia && qtdFisicaKg > 0;
+  // Legado so aceita "recebido < NF" (delta negativo) — excedente nao e tratado
+  const excedente = deltaKg > 1 && qtdFisicaKg > 0;
+  const podeConfirmar = qtdFisicaKg > 0 && localidadeId
+    && (!motivoObrigatorio || obs.trim().length > 0)
+    && !excedente;
 
   const recebimentoMut = useMutation({
     mutationFn: async () =>
@@ -79,12 +84,14 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
           unidade_input: unidadeInput,
           localidade_id: localidadeId,
           observacoes: obs || undefined,
+          tipo_divergencia: temDivergencia ? tipoDivergencia : undefined,
         }),
       }),
     onSuccess: (res) => {
-      const data = res.data as { status: string; deltaT?: number };
+      const data = res.data as { status: string; deltaKg?: number };
       if (data.status === 'aguardando_aprovacao') {
-        setSucesso({ tipo: 'divergencia', mensagem: `Recebido com divergencia de ${Math.abs(data.deltaT ?? 0).toFixed(3)} t — encaminhado para aprovacao do Gestor.` });
+        const deltaAbs = Math.abs(data.deltaKg ?? 0);
+        setSucesso({ tipo: 'divergencia', mensagem: `Recebido com divergência de ${deltaAbs.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg — encaminhado para aprovação do Gestor.` });
       } else {
         setSucesso({ tipo: 'ok', mensagem: 'Recebimento registrado com sucesso em ACXE + Q2P.' });
       }
@@ -99,7 +106,7 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
           <p className="text-sm text-atlas-muted mb-4">{sucesso.mensagem}</p>
           <button
             onClick={() => { onClose(); onSucesso(); }}
-            className="px-5 py-2 bg-atlas-ink text-white rounded text-sm font-medium"
+            className="px-5 py-2 bg-atlas-btn-bg text-atlas-btn-text rounded text-sm font-medium"
           >
             Fechar
           </button>
@@ -109,22 +116,22 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
   }
 
   return (
-    <Modal open title={`Conferencia — ${item.produto.nome}`} onClose={onClose}>
+    <Modal open title={`Conferência — ${item.produto.nome}`} onClose={onClose}>
       <div className="space-y-4">
         <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded text-sm">
           <div className="flex justify-between mb-1"><span className="text-atlas-muted">NF:</span><span className="font-mono">{item.nf}</span></div>
           <div className="flex justify-between mb-1"><span className="text-atlas-muted">CNPJ:</span><span>{item.cnpj.toUpperCase()}</span></div>
-          <div className="flex justify-between"><span className="text-atlas-muted">Qtd NF:</span><span className="font-semibold">{item.qtdT.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} t</span></div>
+          <div className="flex justify-between"><span className="text-atlas-muted">Qtd NF:</span><span className="font-semibold">{item.qtdKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg <span className="text-xs text-atlas-muted font-normal">({(item.qtdKg / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 3 })} t)</span></span></div>
         </div>
 
         <div>
-          <label className="block text-xs font-semibold text-atlas-muted mb-1">Quantidade fisica recebida</label>
+          <label className="block text-xs font-semibold text-atlas-muted mb-1">Quantidade física recebida</label>
           <div className="grid grid-cols-[2fr_1fr] gap-2">
             <input
               value={qtdInput}
               onChange={(e) => setQtdInput(e.target.value)}
               autoFocus
-              className={`w-full px-3 py-2 border rounded text-lg font-serif outline-none ${temDivergencia && qtdFisicaT > 0 ? 'border-amber-400 bg-amber-50 dark:bg-amber-900/20' : 'border-slate-300 dark:border-slate-600'}`}
+              className={`w-full px-3 py-2 border rounded text-lg font-serif outline-none ${temDivergencia && qtdFisicaKg > 0 ? 'border-amber-400 bg-amber-50 dark:bg-amber-900/20' : 'border-slate-300 dark:border-slate-600'}`}
             />
             <select
               value={unidadeInput}
@@ -137,25 +144,25 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
               <option value="bigbag">big bag (1 t)</option>
             </select>
           </div>
-          {qtdFisicaT > 0 && unidadeInput !== 't' && (
-            <div className="text-xs text-atlas-muted mt-1">= {qtdFisicaT.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} t</div>
+          {qtdFisicaKg > 0 && unidadeInput !== 'kg' && (
+            <div className="text-xs text-atlas-muted mt-1">= {qtdFisicaKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg</div>
           )}
         </div>
 
-        {qtdFisicaT > 0 && (
+        {qtdFisicaKg > 0 && (
           <div className="grid grid-cols-3 gap-2 text-center">
             <div className="p-2 bg-slate-50 dark:bg-slate-800 rounded">
               <div className="text-xs text-atlas-muted">NF</div>
-              <div className="font-serif text-sm">{item.qtdT.toFixed(3)} t</div>
+              <div className="font-serif text-sm">{item.qtdKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg</div>
             </div>
             <div className="p-2 bg-slate-50 dark:bg-slate-800 rounded">
               <div className="text-xs text-atlas-muted">Recebido</div>
-              <div className={`font-serif text-sm ${temDivergencia ? 'text-amber-700' : 'text-green-700'}`}>{qtdFisicaT.toFixed(3)} t</div>
+              <div className={`font-serif text-sm ${temDivergencia ? 'text-amber-700' : 'text-green-700'}`}>{qtdFisicaKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg</div>
             </div>
             <div className="p-2 bg-slate-50 dark:bg-slate-800 rounded">
               <div className="text-xs text-atlas-muted">Delta</div>
-              <div className={`font-serif text-sm ${Math.abs(delta) < 0.01 ? 'text-green-700' : delta > 0 ? 'text-amber-700' : 'text-red-700'}`}>
-                {delta > 0 ? '+' : ''}{delta.toFixed(3)} t
+              <div className={`font-serif text-sm ${Math.abs(deltaKg) < 1 ? 'text-green-700' : deltaKg > 0 ? 'text-amber-700' : 'text-red-700'}`}>
+                {deltaKg > 0 ? '+' : ''}{deltaKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg
               </div>
             </div>
           </div>
@@ -175,20 +182,43 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
           </select>
           {localidades.length === 0 && (
             <div className="text-xs text-atlas-muted mt-1">
-              Nenhuma localidade ativa cadastrada. Peca ao gestor para cadastrar em /stockbridge/localidades.
+              Nenhuma localidade ativa cadastrada. Peça ao gestor para cadastrar em /stockbridge/localidades.
             </div>
           )}
         </div>
 
+        {motivoObrigatorio && (
+          <div>
+            <label className="block text-xs font-semibold text-atlas-muted mb-1">Tipo de divergência *</label>
+            <select
+              value={tipoDivergencia}
+              onChange={(e) => setTipoDivergencia(e.target.value as 'faltando' | 'varredura')}
+              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+            >
+              <option value="faltando">Faltando — material não chegou (vai para ACXE-COMEX-FALTANDO)</option>
+              <option value="varredura">Varredura — material para inspeção (vai para ACXE-VARREDURA)</option>
+            </select>
+            <div className="text-[11px] text-atlas-muted mt-1">
+              Os {Math.abs(deltaKg).toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg divergentes serão transferidos do Extrema para o estoque especial conforme o tipo escolhido.
+            </div>
+          </div>
+        )}
+
+        {excedente && (
+          <div className="p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 rounded text-sm text-red-800 dark:text-red-300">
+            Quantidade recebida não pode ser maior que a NF. Se houve excedente, registre o recebimento normal e depois lance uma <strong>entrada manual</strong> para a diferença.
+          </div>
+        )}
+
         <div>
           <label className="block text-xs font-semibold text-atlas-muted mb-1">
-            {motivoObrigatorio ? 'Motivo da divergencia (obrigatorio)' : 'Observacao (opcional)'}
+            {motivoObrigatorio ? 'Motivo da divergência (obrigatório)' : 'Observação (opcional)'}
           </label>
           <textarea
             value={obs}
             onChange={(e) => setObs(e.target.value)}
             rows={3}
-            placeholder={motivoObrigatorio ? 'Ex: 2 big bags avariados na conferencia fisica' : 'Material conferido, embalagens integras'}
+            placeholder={motivoObrigatorio ? 'Ex: 2 big bags avariados na conferência física' : 'Material conferido, embalagens íntegras'}
             className={`w-full px-3 py-2 border rounded text-sm outline-none ${motivoObrigatorio && !obs.trim() ? 'border-red-300' : 'border-slate-300 dark:border-slate-600'}`}
           />
         </div>
@@ -204,9 +234,9 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
           <button
             onClick={() => recebimentoMut.mutate()}
             disabled={!podeConfirmar || recebimentoMut.isPending}
-            className={`px-5 py-2 rounded text-sm font-medium ${podeConfirmar && !recebimentoMut.isPending ? 'bg-atlas-ink text-white hover:opacity-90' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
+            className={`px-5 py-2 rounded text-sm font-medium ${podeConfirmar && !recebimentoMut.isPending ? 'bg-atlas-btn-bg text-atlas-btn-text hover:opacity-90' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
           >
-            {recebimentoMut.isPending ? 'Enviando...' : temDivergencia ? 'Registrar com divergencia' : 'Confirmar recebimento'}
+            {recebimentoMut.isPending ? 'Enviando...' : temDivergencia ? 'Registrar com divergência' : 'Confirmar recebimento'}
           </button>
         </div>
       </div>

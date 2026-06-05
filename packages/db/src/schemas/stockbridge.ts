@@ -10,6 +10,7 @@ import {
   date,
   text,
   smallint,
+  jsonb,
   index,
 } from 'drizzle-orm/pg-core';
 import { users } from './atlas.js';
@@ -57,9 +58,11 @@ export const lote = stockbridgeSchema.table(
     produtoCodigoQ2p: bigint('produto_codigo_q2p', { mode: 'number' }),
     fornecedorNome: varchar('fornecedor_nome', { length: 255 }).notNull(),
     paisOrigem: varchar('pais_origem', { length: 100 }),
-    quantidadeFisica: numeric('quantidade_fisica', { precision: 12, scale: 3 }).notNull().default('0'),
-    quantidadeFiscal: numeric('quantidade_fiscal', { precision: 12, scale: 3 }).notNull().default('0'),
-    custoUsd: numeric('custo_usd', { precision: 12, scale: 2 }),
+    quantidadeFisicaKg: numeric('quantidade_fisica_kg', { precision: 12, scale: 3 }).notNull().default('0'),
+    quantidadeFiscalKg: numeric('quantidade_fiscal_kg', { precision: 12, scale: 3 }).notNull().default('0'),
+    custoBrlKg: numeric('custo_brl_kg', { precision: 12, scale: 2 }),
+    valorTotalNfBrl: numeric('valor_total_nf_brl', { precision: 14, scale: 2 }),
+    codigoLocalEstoqueOrigemAcxe: varchar('codigo_local_estoque_origem_acxe', { length: 50 }),
     status: varchar('status', { length: 30 })
       .notNull()
       .default('provisorio')
@@ -105,7 +108,7 @@ export const movimentacao = stockbridgeSchema.table(
       >(),
     subtipo: varchar('subtipo', { length: 50 }),
     loteId: uuid('lote_id').references(() => lote.id),
-    quantidadeT: numeric('quantidade_t', { precision: 12, scale: 3 }).notNull(),
+    quantidadeKg: numeric('quantidade_kg', { precision: 12, scale: 3 }).notNull(),
     mvAcxe: smallint('mv_acxe'),
     dtAcxe: timestamp('dt_acxe', { withTimezone: true }),
     idMovestAcxe: varchar('id_movest_acxe', { length: 100 }),
@@ -117,6 +120,25 @@ export const movimentacao = stockbridgeSchema.table(
     idAjusteQ2p: varchar('id_ajuste_q2p', { length: 100 }),
     idUserQ2p: uuid('id_user_q2p').references(() => users.id),
     observacoes: text('observacoes'),
+    opId: uuid('op_id').notNull().defaultRandom(),
+    statusOmie: text('status_omie')
+      .notNull()
+      .default('concluida')
+      .$type<'concluida' | 'pendente_q2p' | 'pendente_acxe_faltando' | 'falha'>(),
+    tentativasQ2p: smallint('tentativas_q2p').notNull().default(0),
+    tentativasAcxeFaltando: smallint('tentativas_acxe_faltando').notNull().default(0),
+    ultimoErroOmie: jsonb('ultimo_erro_omie'),
+    // Saida manual sem lote (migration 0026)
+    produtoCodigoAcxe: bigint('produto_codigo_acxe', { mode: 'number' }),
+    // Recebimento nacional Q2P — produto da tabela Q2P (migration 0032)
+    produtoCodigoQ2p: bigint('produto_codigo_q2p', { mode: 'number' }),
+    galpao: text('galpao'),
+    galpaoDestino: text('galpao_destino'),
+    empresa: text('empresa').$type<'acxe' | 'q2p'>(),
+    criadoPor: uuid('criado_por').references(() => users.id),
+    dtPrevistaRetorno: date('dt_prevista_retorno'),
+    movimentacaoOrigemId: uuid('movimentacao_origem_id'),
+    custoUnitarioBrl: numeric('custo_unitario_brl', { precision: 14, scale: 6 }),
     ativo: boolean('ativo').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -125,6 +147,8 @@ export const movimentacao = stockbridgeSchema.table(
     index('movimentacao_tipo_ativo_idx').on(t.tipoMovimento, t.ativo),
     index('movimentacao_created_idx').on(t.createdAt),
     index('movimentacao_lote_idx').on(t.loteId),
+    index('movimentacao_sku_galpao_empresa_idx').on(t.produtoCodigoAcxe, t.galpao, t.empresa),
+    index('movimentacao_criado_por_idx').on(t.criadoPor, t.createdAt),
   ],
 );
 
@@ -133,7 +157,8 @@ export const aprovacao = stockbridgeSchema.table(
   'aprovacao',
   {
     id: uuid('id').defaultRandom().primaryKey(),
-    loteId: uuid('lote_id').notNull().references(() => lote.id, { onDelete: 'cascade' }),
+    // Migration 0026: lote_id virou opcional; usar produto_codigo_acxe+galpao+empresa quando saida sem lote
+    loteId: uuid('lote_id').references(() => lote.id, { onDelete: 'cascade' }),
     precisaNivel: varchar('precisa_nivel', { length: 20 }).notNull().$type<'gestor' | 'diretor'>(),
     tipoAprovacao: varchar('tipo_aprovacao', { length: 30 }).notNull().$type<
       | 'recebimento_divergencia'
@@ -144,9 +169,10 @@ export const aprovacao = stockbridgeSchema.table(
       | 'saida_descarte'
       | 'saida_quebra'
       | 'ajuste_inventario'
+      | 'retorno_comodato'
     >(),
-    quantidadePrevistaT: numeric('quantidade_prevista_t', { precision: 12, scale: 3 }),
-    quantidadeRecebidaT: numeric('quantidade_recebida_t', { precision: 12, scale: 3 }),
+    quantidadePrevistaKg: numeric('quantidade_prevista_kg', { precision: 12, scale: 3 }),
+    quantidadeRecebidaKg: numeric('quantidade_recebida_kg', { precision: 12, scale: 3 }),
     tipoDivergencia: varchar('tipo_divergencia', { length: 30 }).$type<'faltando' | 'varredura' | 'cruzada' | null>(),
     observacoes: text('observacoes'),
     lancadoPor: uuid('lancado_por').notNull().references(() => users.id),
@@ -158,12 +184,38 @@ export const aprovacao = stockbridgeSchema.table(
       .default('pendente')
       .$type<'pendente' | 'aprovada' | 'rejeitada'>(),
     rejeicaoMotivo: text('rejeicao_motivo'),
+    // Migration 0026: novas colunas pra saida sem lote
+    produtoCodigoAcxe: bigint('produto_codigo_acxe', { mode: 'number' }),
+    // Migration 0032: produto Q2P direto (recebimento nacional Q2P sem match ACXE)
+    produtoCodigoQ2p: bigint('produto_codigo_q2p', { mode: 'number' }),
+    galpao: text('galpao'),
+    empresa: text('empresa').$type<'acxe' | 'q2p'>(),
+    movimentacaoId: uuid('movimentacao_id'),
+    // Migration 0029: operador descarta rejeicao da inbox sem alterar status
+    dispensadaEm: timestamp('dispensada_em', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index('aprovacao_status_nivel_idx').on(t.status, t.precisaNivel),
     index('aprovacao_lote_idx').on(t.loteId),
   ],
+);
+
+// ── Reserva de saldo (controle de concorrencia para saida manual) ──
+export const reservaSaldo = stockbridgeSchema.table(
+  'reserva_saldo',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    movimentacaoId: uuid('movimentacao_id').notNull().unique(),
+    produtoCodigoAcxe: bigint('produto_codigo_acxe', { mode: 'number' }).notNull(),
+    galpao: text('galpao').notNull(),
+    empresa: text('empresa').notNull().$type<'acxe' | 'q2p'>(),
+    quantidadeKg: numeric('quantidade_kg', { precision: 12, scale: 3 }).notNull(),
+    status: text('status').notNull().default('ativa').$type<'ativa' | 'liberada' | 'consumida'>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    resolvidoEm: timestamp('resolvido_em', { withTimezone: true }),
+  },
+  (t) => [index('reserva_sku_idx').on(t.produtoCodigoAcxe, t.galpao, t.empresa, t.status)],
 );
 
 // ── Divergencia ────────────────────────────────────────────
@@ -176,7 +228,7 @@ export const divergencia = stockbridgeSchema.table(
     tipo: varchar('tipo', { length: 30 })
       .notNull()
       .$type<'faltando' | 'varredura' | 'cruzada' | 'fiscal_pendente'>(),
-    quantidadeDeltaT: numeric('quantidade_delta_t', { precision: 12, scale: 3 }).notNull(),
+    quantidadeDeltaKg: numeric('quantidade_delta_kg', { precision: 12, scale: 3 }).notNull(),
     valorUsd: numeric('valor_usd', { precision: 12, scale: 2 }),
     status: varchar('status', { length: 20 })
       .notNull()
@@ -214,11 +266,26 @@ export const configProduto = stockbridgeSchema.table(
   {
     id: uuid('id').defaultRandom().primaryKey(),
     produtoCodigoAcxe: bigint('produto_codigo_acxe', { mode: 'number' }).notNull().unique(),
-    consumoMedioDiarioT: numeric('consumo_medio_diario_t', { precision: 10, scale: 3 }),
+    consumoMedioDiarioKg: numeric('consumo_medio_diario_kg', { precision: 10, scale: 3 }),
     leadTimeDias: integer('lead_time_dias'),
-    familiaCategoria: varchar('familia_categoria', { length: 50 }),
     incluirEmMetricas: boolean('incluir_em_metricas').notNull().default(true),
     updatedBy: uuid('updated_by').references(() => users.id),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+);
+
+// ── Familia OMIE Atlas (mapping macro) ─────────────────────
+// Lookup que mapeia descricao_familia do OMIE -> categoria Atlas (PE/PP/PS/etc).
+// Migration 0017. Substitui o campo config_produto.familia_categoria — agora a
+// categoria e derivada via JOIN, evitando duplicacao por SKU.
+export const familiaOmieAtlas = stockbridgeSchema.table(
+  'familia_omie_atlas',
+  {
+    familiaOmie: text('familia_omie').primaryKey(),
+    familiaAtlas: text('familia_atlas').notNull(),
+    incluirEmMetricas: boolean('incluir_em_metricas').notNull().default(true),
+    observacao: text('observacao'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
 );
@@ -234,9 +301,13 @@ export type Movimentacao = typeof movimentacao.$inferSelect;
 export type NewMovimentacao = typeof movimentacao.$inferInsert;
 export type Aprovacao = typeof aprovacao.$inferSelect;
 export type NewAprovacao = typeof aprovacao.$inferInsert;
+export type ReservaSaldo = typeof reservaSaldo.$inferSelect;
+export type NewReservaSaldo = typeof reservaSaldo.$inferInsert;
 export type Divergencia = typeof divergencia.$inferSelect;
 export type NewDivergencia = typeof divergencia.$inferInsert;
 export type FornecedorExclusao = typeof fornecedorExclusao.$inferSelect;
 export type NewFornecedorExclusao = typeof fornecedorExclusao.$inferInsert;
 export type ConfigProduto = typeof configProduto.$inferSelect;
 export type NewConfigProduto = typeof configProduto.$inferInsert;
+export type FamiliaOmieAtlas = typeof familiaOmieAtlas.$inferSelect;
+export type NewFamiliaOmieAtlas = typeof familiaOmieAtlas.$inferInsert;

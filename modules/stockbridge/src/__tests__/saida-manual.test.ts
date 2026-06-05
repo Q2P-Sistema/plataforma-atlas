@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   isSubtipoSaidaManual,
   registrarSaidaManual,
-  LoteInvalidoError,
+  SaldoInsuficienteError,
+  SubtipoInvalidoError,
+  ComodatoDadosObrigatoriosError,
 } from '../services/saida-manual.service.js';
 import { NIVEL_APROVACAO_POR_SUBTIPO } from '../types.js';
 
@@ -14,41 +16,35 @@ vi.mock('@atlas/core', () => ({
 }));
 
 vi.mock('@atlas/db', () => ({
-  lote: {
-    id: {}, ativo: {}, status: {}, codigo: {}, quantidadeFisica: {},
-    fornecedorNome: {}, updatedAt: {},
-  },
   movimentacao: {},
   aprovacao: {},
   divergencia: {},
+  reservaSaldo: {},
 }));
 
-function mockLote(overrides: Partial<Record<string, unknown>> = {}) {
-  return {
-    id: 'lote-1',
-    codigo: 'L001',
-    quantidadeFisica: 50,
-    status: 'reconciliado',
-    fornecedorNome: 'Sinopec',
-    ativo: true,
-    ...overrides,
-  };
-}
+vi.mock('../services/notificacao.service.js', () => ({
+  enviarAlertaAprovacaoPendente: vi.fn().mockResolvedValue(undefined),
+}));
 
-function criarDbMock(loteData: Record<string, unknown> | null) {
+/** Mock do db.execute retornando saldo OMIE configuravel + reservas configuraveis. */
+function criarDbMockSaldo(saldoKg: number, reservadoKg: number) {
   const tx = {
     insert: vi.fn().mockReturnThis(),
     values: vi.fn().mockReturnThis(),
-    returning: vi.fn().mockResolvedValue([{ id: 'nova-id', codigo: 'L001' }]),
+    returning: vi.fn().mockResolvedValue([{ id: 'novo-id' }]),
     update: vi.fn().mockReturnThis(),
     set: vi.fn().mockReturnThis(),
     where: vi.fn().mockResolvedValue(undefined),
+    select: vi.fn().mockReturnThis(),
+    from: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockResolvedValue([]),
+    execute: vi.fn().mockResolvedValue({
+      rows: [{ disp_kg: String(saldoKg - reservadoKg) }],
+    }),
   };
   return {
-    select: () => ({
-      from: () => ({
-        where: () => ({ limit: () => Promise.resolve(loteData ? [loteData] : []) }),
-      }),
+    execute: vi.fn().mockResolvedValue({
+      rows: [{ saldo_omie_kg: String(saldoKg), reservado_kg: String(reservadoKg) }],
     }),
     transaction: async (fn: (tx: typeof tx) => Promise<unknown>) => fn(tx),
   };
@@ -87,68 +83,80 @@ describe('NIVEL_APROVACAO_POR_SUBTIPO — regras de autoridade', () => {
 describe('saida-manual#registrarSaidaManual — validacoes', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  const inputBase = {
+    subtipo: 'descarte' as const,
+    produtoCodigoAcxe: 1234,
+    galpao: '11',
+    empresa: 'q2p' as const,
+    quantidadeOriginal: 1000,
+    unidade: 'kg' as const,
+    observacoes: 'teste',
+    userId: 'u1',
+  };
+
   it('rejeita motivo vazio', async () => {
-    await expect(registrarSaidaManual({
-      subtipo: 'descarte', loteId: 'lote-1', quantidadeOriginal: 1, unidade: 't',
-      observacoes: '', userId: 'u1',
-    })).rejects.toThrow(/motivo|obrigatorio/i);
+    await expect(registrarSaidaManual({ ...inputBase, observacoes: '' })).rejects.toThrow(/motivo|obrigatorio/i);
   });
 
   it('rejeita motivo apenas com whitespace', async () => {
-    await expect(registrarSaidaManual({
-      subtipo: 'descarte', loteId: 'lote-1', quantidadeOriginal: 1, unidade: 't',
-      observacoes: '   ', userId: 'u1',
-    })).rejects.toThrow(/motivo|obrigatorio/i);
+    await expect(registrarSaidaManual({ ...inputBase, observacoes: '   ' })).rejects.toThrow(/motivo|obrigatorio/i);
   });
 
-  it('lanca LoteInvalidoError quando lote nao existe', async () => {
-    const { getDb } = await import('@atlas/core');
-    vi.mocked(getDb).mockReturnValue(criarDbMock(null) as never);
-
-    await expect(registrarSaidaManual({
-      subtipo: 'descarte', loteId: 'inexistente', quantidadeOriginal: 1, unidade: 't',
-      observacoes: 'teste', userId: 'u1',
-    })).rejects.toThrow(LoteInvalidoError);
+  it('rejeita subtipo invalido', async () => {
+    await expect(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      registrarSaidaManual({ ...inputBase, subtipo: 'venda' as any }),
+    ).rejects.toThrow(SubtipoInvalidoError);
   });
 
-  it('rejeita lote em status transito ou rejeitado', async () => {
-    const { getDb } = await import('@atlas/core');
-    vi.mocked(getDb).mockReturnValue(criarDbMock(mockLote({ status: 'transito' })) as never);
-
-    await expect(registrarSaidaManual({
-      subtipo: 'descarte', loteId: 'lote-1', quantidadeOriginal: 1, unidade: 't',
-      observacoes: 'teste', userId: 'u1',
-    })).rejects.toThrow(/reconciliados\/provisorios/);
+  it('comodato exige dtPrevistaRetorno', async () => {
+    await expect(
+      registrarSaidaManual({
+        ...inputBase,
+        subtipo: 'comodato',
+        empresa: 'q2p',
+        cliente: 'Cliente X',
+      }),
+    ).rejects.toThrow(ComodatoDadosObrigatoriosError);
   });
 
-  it('rejeita quantidade maior que saldo fisico', async () => {
-    const { getDb } = await import('@atlas/core');
-    vi.mocked(getDb).mockReturnValue(criarDbMock(mockLote({ quantidadeFisica: 10 })) as never);
-
-    await expect(registrarSaidaManual({
-      subtipo: 'descarte', loteId: 'lote-1', quantidadeOriginal: 15, unidade: 't',
-      observacoes: 'teste', userId: 'u1',
-    })).rejects.toThrow(/excede saldo fisico/);
+  it('comodato exige cliente', async () => {
+    await expect(
+      registrarSaidaManual({
+        ...inputBase,
+        subtipo: 'comodato',
+        empresa: 'q2p',
+        dtPrevistaRetorno: '2026-12-31',
+      }),
+    ).rejects.toThrow(ComodatoDadosObrigatoriosError);
   });
 
-  it('aceita conversao de unidade no calculo de saldo (kg → t)', async () => {
+  it('rejeita quando solicitado > saldo OMIE - reservas (SaldoInsuficienteError)', async () => {
     const { getDb } = await import('@atlas/core');
-    vi.mocked(getDb).mockReturnValue(criarDbMock(mockLote({ quantidadeFisica: 5 })) as never);
+    // saldo 5000 kg - reservado 1000 = 4000 disponivel; pediu 6000 → rejeita
+    vi.mocked(getDb).mockReturnValue(criarDbMockSaldo(5000, 1000) as never);
 
-    // 4000 kg = 4 t < 5 t saldo OK
-    await expect(registrarSaidaManual({
-      subtipo: 'descarte', loteId: 'lote-1', quantidadeOriginal: 4000, unidade: 'kg',
-      observacoes: 'teste', userId: 'u1',
-    })).resolves.toBeDefined();
+    await expect(
+      registrarSaidaManual({ ...inputBase, quantidadeOriginal: 6000 }),
+    ).rejects.toThrow(SaldoInsuficienteError);
   });
 
-  it('6000 kg (6t) em lote com 5t fisico rejeita', async () => {
+  it('aceita quando solicitado <= saldo disponivel', async () => {
     const { getDb } = await import('@atlas/core');
-    vi.mocked(getDb).mockReturnValue(criarDbMock(mockLote({ quantidadeFisica: 5 })) as never);
+    vi.mocked(getDb).mockReturnValue(criarDbMockSaldo(5000, 0) as never);
 
-    await expect(registrarSaidaManual({
-      subtipo: 'descarte', loteId: 'lote-1', quantidadeOriginal: 6000, unidade: 'kg',
-      observacoes: 'teste', userId: 'u1',
-    })).rejects.toThrow(/excede/);
+    const res = await registrarSaidaManual({ ...inputBase, quantidadeOriginal: 4000 });
+    expect(res).toMatchObject({ status: 'aguardando_aprovacao' });
+  });
+
+  it('transf_intra_cnpj exige galpao destino diferente da origem', async () => {
+    await expect(
+      registrarSaidaManual({
+        ...inputBase,
+        subtipo: 'transf_intra_cnpj',
+        galpao: '11',
+        galpaoDestino: '11',
+      }),
+    ).rejects.toThrow(/destino/i);
   });
 });

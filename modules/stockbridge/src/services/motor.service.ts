@@ -1,11 +1,11 @@
-import { FATOR_PARA_TONELADA, type UnidadeMedida } from '../types.js';
+import { FATOR_PARA_KG, type UnidadeMedida } from '../types.js';
 
 /**
- * Converte uma quantidade em unidade arbitraria para toneladas.
+ * Converte uma quantidade em unidade arbitraria para Kg.
  * Preserva sinal (valores negativos para saidas).
  */
-export function converterParaToneladas(quantidade: number, unidade: UnidadeMedida): number {
-  return quantidade * FATOR_PARA_TONELADA[unidade];
+export function converterParaKg(quantidade: number, unidade: UnidadeMedida): number {
+  return quantidade * FATOR_PARA_KG[unidade];
 }
 
 const UNIDADE_LABEL: Record<UnidadeMedida, string> = {
@@ -35,9 +35,9 @@ const LEAD_TIME_DEFAULT_DIAS = 60;
  * saldo / consumoMedioDiario, arredondado para inteiro.
  * Retorna null se consumo nao configurado (sem base para dividir).
  */
-export function calcularCobertura(saldoFisicoT: number, consumoMedioDiarioT: number | null): number | null {
-  if (consumoMedioDiarioT == null || consumoMedioDiarioT <= 0) return null;
-  return Math.round(saldoFisicoT / consumoMedioDiarioT);
+export function calcularCobertura(saldoFisicoKg: number, consumoMedioDiarioKg: number | null): number | null {
+  if (consumoMedioDiarioKg == null || consumoMedioDiarioKg <= 0) return null;
+  return Math.round(saldoFisicoKg / consumoMedioDiarioKg);
 }
 
 /**
@@ -52,16 +52,35 @@ export function calcularCobertura(saldoFisicoT: number, consumoMedioDiarioT: num
 export function classificarCriticidade(
   cobertura: number | null,
   leadTimeDias: number | null,
-  saldoFisicoT: number,
-  consumoMedioDiarioT: number | null,
+  saldoFisicoKg: number,
+  consumoMedioDiarioKg: number | null,
 ): Criticidade {
-  if (consumoMedioDiarioT == null || consumoMedioDiarioT <= 0) return 'ok';
+  if (consumoMedioDiarioKg == null || consumoMedioDiarioKg <= 0) return 'ok';
   const lt = leadTimeDias ?? LEAD_TIME_DEFAULT_DIAS;
-  const cob = cobertura ?? calcularCobertura(saldoFisicoT, consumoMedioDiarioT);
+  const cob = cobertura ?? calcularCobertura(saldoFisicoKg, consumoMedioDiarioKg);
   if (cob == null) return 'ok';
 
-  if (saldoFisicoT > consumoMedioDiarioT * lt * 4) return 'excesso';
+  if (saldoFisicoKg > consumoMedioDiarioKg * lt * 4) return 'excesso';
   if (cob < lt * 0.5) return 'critico';
   if (cob < lt * 1.2) return 'alerta';
   return 'ok';
+}
+
+/**
+ * Normaliza um numero de NF para o formato canonico que o OMIE retorna em
+ * `consultarNF.nNF`: 8 digitos zero-padded para NFs numericas (ex: "300" -> "00000300").
+ *
+ * NFs alfanumericas (ex: mock "IMP-2026-0301") sao retornadas como vieram —
+ * nesse caso nao faz sentido aplicar zero-pad e o OMIE preserva o formato original.
+ *
+ * Necessario porque o operador tipicamente digita o numero "limpo" ("300") mas
+ * gravamos no DB o que veio do OMIE ("00000300"). Sem normalizar, a checagem de
+ * idempotencia nao reconhece a NF ja processada.
+ */
+export function normalizarNumeroNf(nfInput: string): string {
+  const trimmed = nfInput.trim();
+  if (!/^\d+$/.test(trimmed)) return trimmed;
+  const numero = Number(trimmed);
+  if (!Number.isFinite(numero) || numero <= 0) return trimmed;
+  return String(numero).padStart(8, '0');
 }

@@ -2,11 +2,32 @@ import { useState } from 'react';
 import { Menu, X, ChevronLeft, Users } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
+export type SidebarBadgeColor = 'red' | 'emerald' | 'amber';
+
+export interface SidebarBadge {
+  count: number;
+  color: SidebarBadgeColor;
+  /** Tooltip ao passar o mouse — explica o que o numero representa. */
+  title?: string;
+}
+
+export type SidebarRole = 'operador' | 'gestor' | 'diretor';
+
 export interface SidebarSubItem {
   id: string;
   name: string;
   path: string;
   icon: LucideIcon;
+  /** Quando > 0, mostra um badge vermelho ao lado do item (estilo notificacao). */
+  badge?: number | null;
+  /** Multiplos badges coloridos lado a lado. Tem precedencia sobre `badge`. */
+  badges?: SidebarBadge[];
+  /**
+   * Roles que veem o item. Ausente = todos os roles autenticados veem.
+   * Filtro e responsabilidade do caller (App.tsx) — Sidebar so renderiza
+   * o que receber.
+   */
+  roles?: SidebarRole[];
 }
 
 export interface SidebarModule {
@@ -156,6 +177,31 @@ export function Sidebar({
                         >
                           <SubIcon size={14} className="shrink-0" />
                           <span className="truncate">{sub.name}</span>
+                          {sub.badges && sub.badges.length > 0 ? (
+                            <span className="ml-auto inline-flex items-center gap-1">
+                              {sub.badges
+                                .filter((b) => b.count > 0)
+                                .map((b, i) => (
+                                  <span
+                                    key={i}
+                                    title={b.title}
+                                    className={`inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[10px] font-bold text-white rounded-full ${
+                                      b.color === 'emerald'
+                                        ? 'bg-emerald-600'
+                                        : b.color === 'amber'
+                                          ? 'bg-amber-500'
+                                          : 'bg-red-600'
+                                    }`}
+                                  >
+                                    {b.count > 99 ? '99+' : b.count}
+                                  </span>
+                                ))}
+                            </span>
+                          ) : sub.badge != null && sub.badge > 0 ? (
+                            <span className="ml-auto inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[10px] font-bold text-white bg-red-600 rounded-full">
+                              {sub.badge > 99 ? '99+' : sub.badge}
+                            </span>
+                          ) : null}
                         </button>
                       );
                     })}
@@ -171,7 +217,7 @@ export function Sidebar({
           <div className="px-2 pb-1">
             <button
               onClick={() => { onNavigate('/admin/users'); setMobileOpen(false); }}
-              title={collapsed ? 'Usuarios' : undefined}
+              title={collapsed ? 'Usuários' : undefined}
               className={`
                 w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium
                 transition-colors focus:outline-none focus:ring-2 focus:ring-acxe
@@ -179,7 +225,7 @@ export function Sidebar({
               `}
             >
               <Users size={18} className="shrink-0" />
-              {!collapsed && <span>Usuarios</span>}
+              {!collapsed && <span>Usuários</span>}
             </button>
           </div>
         )}

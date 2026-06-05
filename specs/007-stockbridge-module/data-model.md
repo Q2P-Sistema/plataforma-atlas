@@ -63,9 +63,9 @@ Unidade rastreavel de estoque. Um lote e criado no recebimento, evolui por estag
 | `produto_codigo_q2p` | `bigint` | Y | NULL | Resolvido via correlacao de descricao; NULL ate correlato cadastrado |
 | `fornecedor_nome` | `varchar(255)` | N | — | Nome textual (legado) |
 | `pais_origem` | `varchar(100)` | Y | NULL | "China", "USA", "Korea", etc. |
-| `quantidade_fisica` | `numeric(12,3)` | N | 0 | Toneladas (sempre em t apos conversao) |
-| `quantidade_fiscal` | `numeric(12,3)` | N | 0 | Toneladas |
-| `custo_usd` | `numeric(12,2)` | Y | NULL | USD/tonelada |
+| `quantidade_fisica_kg` | `numeric(12,3)` | N | 0 | Kg (sempre em kg apos conversao) |
+| `quantidade_fiscal_kg` | `numeric(12,3)` | N | 0 | Kg |
+| `custo_usd_ton` | `numeric(12,2)` | Y | NULL | USD por tonelada (valor de importacao). Valor BRL = `quantidade_kg * custo_usd_ton / 1000 * ptax` |
 | `status` | `varchar(30)` | N | `'provisorio'` | enum: `reconciliado`, `divergencia`, `transito`, `provisorio`, `aguardando_aprovacao`, `rejeitado` |
 | `estagio_transito` | `varchar(30)` | Y | NULL | enum: `transito_intl`, `porto_dta`, `transito_interno`, `reservado`; NULL se nao esta em transito |
 | `localidade_id` | `uuid` | Y | NULL | FK → `stockbridge.localidade(id)`; NULL para transito_intl |
@@ -103,7 +103,7 @@ Log dual-CNPJ de movimentacoes. Uma linha por NF, com lados ACXE e Q2P consolida
 | `tipo_movimento` | `varchar(30)` | N | — | enum: `entrada_nf`, `entrada_manual`, `saida_automatica`, `saida_manual`, `ajuste`, `regularizacao_fiscal`, `debito_cruzado` |
 | `subtipo` | `varchar(50)` | Y | NULL | Refina o tipo. Cobre os 19 tipos do diagrama legado: **Entradas (7):** `importacao`, `devolucao_cliente`, `compra_nacional`, `retorno_remessa`, `retorno_comodato`, `entrada_manual`, `inventario_mais`. **Saidas (12):** `venda`, `remessa_beneficiamento`, `transf_cnpj`, `devolucao_fornecedor`, `debito_cruzado`, `regularizacao_fiscal`, `transf_intra_cnpj`, `comodato`, `amostra`, `descarte`, `quebra`, `inventario_menos` |
 | `lote_id` | `uuid` | Y | NULL | FK → `stockbridge.lote(id)` (NULL para ajuste global) |
-| `quantidade_t` | `numeric(12,3)` | N | — | Toneladas (positiva para entrada, negativa para saida) |
+| `quantidade_kg` | `numeric(12,3)` | N | — | Kg (positiva para entrada, negativa para saida) |
 | `mv_acxe` | `smallint` | Y | NULL | Status do lancamento ACXE (1=sucesso) |
 | `dt_acxe` | `timestamptz` | Y | NULL | Quando foi lancado no OMIE ACXE |
 | `id_movest_acxe` | `varchar(100)` | Y | NULL | ID retornado pelo OMIE ACXE |
@@ -135,8 +135,8 @@ Pendencias de aprovacao hierarquica (operador→gestor→diretor).
 | `lote_id` | `uuid` | N | — | FK → `stockbridge.lote(id)` |
 | `precisa_nivel` | `varchar(20)` | N | — | enum: `gestor`, `diretor` |
 | `tipo_aprovacao` | `varchar(30)` | N | — | enum: `recebimento_divergencia`, `entrada_manual`, `saida_transf_intra`, `saida_comodato`, `saida_amostra`, `saida_descarte`, `saida_quebra`, `ajuste_inventario` |
-| `quantidade_prevista_t` | `numeric(12,3)` | Y | NULL | Para divergencias |
-| `quantidade_recebida_t` | `numeric(12,3)` | Y | NULL | Para divergencias |
+| `quantidade_prevista_kg` | `numeric(12,3)` | Y | NULL | Para divergencias |
+| `quantidade_recebida_kg` | `numeric(12,3)` | Y | NULL | Para divergencias |
 | `tipo_divergencia` | `varchar(30)` | Y | NULL | enum: `faltando`, `varredura`, `cruzada` (para recebimento_divergencia) |
 | `observacoes` | `text` | Y | NULL | Motivo/justificativa |
 | `lancado_por` | `uuid` | N | — | FK → `shared.users(id)` |
@@ -163,7 +163,7 @@ Divergencias fiscais detectadas (separado de aprovacao para permitir divergencia
 | `lote_id` | `uuid` | Y | NULL | FK → `stockbridge.lote(id)`; NULL se divergencia a nivel de CNPJ (ex: cruzada) |
 | `movimentacao_id` | `uuid` | Y | NULL | FK → `stockbridge.movimentacao(id)` |
 | `tipo` | `varchar(30)` | N | — | enum: `faltando`, `varredura`, `cruzada`, `fiscal_pendente` |
-| `quantidade_delta_t` | `numeric(12,3)` | N | — | Diferenca fisica - fiscal (pode ser negativa) |
+| `quantidade_delta_kg` | `numeric(12,3)` | N | — | Diferenca fisica - fiscal (pode ser negativa) |
 | `valor_usd` | `numeric(12,2)` | Y | NULL | Impacto financeiro estimado |
 | `status` | `varchar(20)` | N | `'aberta'` | enum: `aberta`, `regularizada`, `descartada` |
 | `regularizada_em` | `timestamptz` | Y | NULL | |
@@ -198,7 +198,7 @@ Configuracao por SKU (consumo medio, lead time). Nao vem do OMIE — editavel pe
 |---|---|---|---|---|
 | `id` | `uuid` | N | `gen_random_uuid()` | PK |
 | `produto_codigo_acxe` | `bigint` | N | — | UNIQUE, FK logico para OMIE |
-| `consumo_medio_diario_t` | `numeric(10,3)` | Y | NULL | Toneladas/dia |
+| `consumo_medio_diario_kg` | `numeric(10,3)` | Y | NULL | Kg/dia |
 | `lead_time_dias` | `integer` | Y | NULL | Dias |
 | `familia_categoria` | `varchar(50)` | Y | NULL | PP / PE / PS (derivado mas configuravel) |
 | `incluir_em_metricas` | `boolean` | N | `true` | Exclui "USO E CONSUMO", "ATIVO IMOBILIZADO" |
@@ -221,12 +221,12 @@ SELECT
   l.produto_codigo_acxe,
   l.cnpj,
   l.localidade_id,
-  SUM(CASE WHEN l.status = 'reconciliado' AND l.estagio_transito IS NULL THEN l.quantidade_fisica ELSE 0 END) AS fisica_disponivel_t,
-  SUM(CASE WHEN l.status = 'reconciliado' AND l.estagio_transito IS NULL THEN l.quantidade_fiscal ELSE 0 END) AS fiscal_t,
-  SUM(CASE WHEN l.status = 'provisorio' THEN l.quantidade_fisica ELSE 0 END) AS provisorio_t,
-  SUM(CASE WHEN l.estagio_transito = 'transito_intl' THEN l.quantidade_fisica ELSE 0 END) AS transito_intl_t,
-  SUM(CASE WHEN l.estagio_transito = 'porto_dta' THEN l.quantidade_fisica ELSE 0 END) AS porto_dta_t,
-  SUM(CASE WHEN l.estagio_transito = 'transito_interno' THEN l.quantidade_fisica ELSE 0 END) AS transito_interno_t
+  SUM(CASE WHEN l.status = 'reconciliado' AND l.estagio_transito IS NULL THEN l.quantidade_fisica_kg ELSE 0 END) AS fisica_disponivel_kg,
+  SUM(CASE WHEN l.status = 'reconciliado' AND l.estagio_transito IS NULL THEN l.quantidade_fiscal_kg ELSE 0 END) AS fiscal_kg,
+  SUM(CASE WHEN l.status = 'provisorio' THEN l.quantidade_fisica_kg ELSE 0 END) AS provisorio_kg,
+  SUM(CASE WHEN l.estagio_transito = 'transito_intl' THEN l.quantidade_fisica_kg ELSE 0 END) AS transito_intl_kg,
+  SUM(CASE WHEN l.estagio_transito = 'porto_dta' THEN l.quantidade_fisica_kg ELSE 0 END) AS porto_dta_kg,
+  SUM(CASE WHEN l.estagio_transito = 'transito_interno' THEN l.quantidade_fisica_kg ELSE 0 END) AS transito_interno_kg
 FROM stockbridge.lote l
 WHERE l.ativo = true
 GROUP BY l.produto_codigo_acxe, l.cnpj, l.localidade_id;

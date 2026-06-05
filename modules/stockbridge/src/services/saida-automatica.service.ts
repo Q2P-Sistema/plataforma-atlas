@@ -2,7 +2,7 @@ import { eq, and, sql } from 'drizzle-orm';
 import Decimal from 'decimal.js';
 import { getDb, createLogger } from '@atlas/core';
 import { movimentacao, divergencia, localidadeCorrelacao, localidade } from '@atlas/db';
-import { converterParaToneladas } from './motor.service.js';
+import { converterParaKg } from './motor.service.js';
 import { enviarAlertaDebitoCruzado } from './notificacao.service.js';
 import type { SubtipoMovimento, TipoMovimento, UnidadeMedida } from '../types.js';
 
@@ -84,8 +84,8 @@ export async function processarSaidaAutomatica(
   //    Se o emissor for Q2P mas o estoque estiver em localidade ACXE, e debito cruzado.
   const origemInfo = await resolverLocalidadeFisica(input.cnpjEmissor, input.localidadeOrigemCodigo);
   const cnpjFisico = origemInfo?.cnpjLocalidade ?? null;
-  const quantidadeT = Number(
-    new Decimal(converterParaToneladas(input.quantidadeOriginal, input.unidade)).toFixed(3),
+  const quantidadeKg = Number(
+    new Decimal(converterParaKg(input.quantidadeOriginal, input.unidade)).toFixed(3),
   );
 
   const debitoCruzado = cnpjFisico !== null && cnpjFisico !== input.cnpjEmissor;
@@ -100,7 +100,7 @@ export async function processarSaidaAutomatica(
         notaFiscal: input.nf,
         tipoMovimento: tipoMov,
         subtipo,
-        quantidadeT: String(-Math.abs(quantidadeT)), // saida = negativo
+        quantidadeKg: String(-Math.abs(quantidadeKg)), // saida = negativo
         mvAcxe: input.cnpjEmissor === 'acxe' ? 1 : null,
         dtAcxe: input.cnpjEmissor === 'acxe' ? new Date(input.dtEmissao) : null,
         idMovestAcxe: input.cnpjEmissor === 'acxe' ? input.idMovestOmie : null,
@@ -122,7 +122,7 @@ export async function processarSaidaAutomatica(
         .values({
           movimentacaoId: movCriada!.id,
           tipo: 'cruzada',
-          quantidadeDeltaT: String(quantidadeT),
+          quantidadeDeltaKg: String(quantidadeKg),
           status: 'aberta',
           observacoes: `Emissor: ${input.cnpjEmissor}; fisico: ${cnpjFisico} — aguarda NF de transferencia de regularizacao`,
         })
@@ -139,7 +139,7 @@ export async function processarSaidaAutomatica(
       notaFiscal: input.nf,
       cnpjEmissor: input.cnpjEmissor,
       cnpjFisico: cnpjFisico!,
-      quantidadeT,
+      quantidadeKg,
       movimentacaoId: resultado.movimentacaoId,
     });
   }

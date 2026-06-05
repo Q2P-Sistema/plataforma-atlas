@@ -16,6 +16,9 @@ import {
   generateQRCodeDataUrl,
   generateOtpauthUrl,
   verifyCode,
+  getUserModules,
+  isModuleEnabledGlobally,
+  MODULE_KEYS,
 } from '@atlas/auth';
 import { sendSuccess, sendError } from '../envelope.js';
 
@@ -462,6 +465,32 @@ router.get(
       totp_enabled: user.totpEnabled,
       last_login_at: user.lastLoginAt,
     });
+  },
+);
+
+// GET /api/v1/auth/modules
+// Lista os modulos acessiveis ao user logado (intersecao: env global × grant; diretor bypass).
+// Modulos retornados ja estao enabled — modulos sem acesso nao aparecem.
+router.get(
+  '/api/v1/auth/modules',
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const user = req.user!;
+      const grantedSet =
+        user.role === 'diretor'
+          ? new Set<string>(MODULE_KEYS)
+          : new Set<string>(await getUserModules(user.id));
+
+      const modules = MODULE_KEYS
+        .filter((key) => isModuleEnabledGlobally(key) && grantedSet.has(key))
+        .map((id) => ({ id, enabled: true }));
+
+      sendSuccess(res, { modules });
+    } catch (err) {
+      logger.error({ err }, 'Get user modules error');
+      sendError(res, 'INTERNAL_ERROR', 'Erro interno do servidor', 500);
+    }
   },
 );
 

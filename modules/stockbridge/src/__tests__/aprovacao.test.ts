@@ -12,87 +12,360 @@ import {
 vi.mock('@atlas/core', () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getDb: vi.fn(),
+  getConfig: () => ({ SEED_ADMIN_EMAIL: 'admin@atlas.local' }),
+  sendEmail: vi.fn().mockResolvedValue(undefined),
+  getPool: () => ({ query: vi.fn() }),
 }));
 
 vi.mock('@atlas/db', () => ({
-  aprovacao: { id: {}, status: {}, loteId: {}, precisaNivel: {}, tipoAprovacao: {}, quantidadePrevistaT: {}, quantidadeRecebidaT: {}, tipoDivergencia: {}, observacoes: {}, lancadoPor: {}, lancadoEm: {} },
-  lote: { id: {}, status: {}, quantidadeFisica: {}, updatedAt: {} },
+  aprovacao: { id: {}, status: {}, loteId: {}, precisaNivel: {}, tipoAprovacao: {}, quantidadePrevistaKg: {}, quantidadeRecebidaKg: {}, tipoDivergencia: {}, observacoes: {}, lancadoPor: {}, lancadoEm: {} },
+  lote: { id: {}, status: {}, quantidadeFisicaKg: {}, produtoCodigoAcxe: {}, produtoCodigoQ2p: {}, localidadeId: {}, notaFiscal: {}, custoBrlKg: {}, updatedAt: {} },
+  movimentacao: { id: {} },
+  localidadeCorrelacao: { localidadeId: {}, codigoLocalEstoqueAcxe: {}, codigoLocalEstoqueQ2p: {} },
+  users: { id: {}, email: {} },
 }));
 
-type MockTx = {
-  select: (..._args: unknown[]) => MockTx;
-  from: (..._args: unknown[]) => MockTx;
-  where: (..._args: unknown[]) => MockTx;
-  limit: (..._args: unknown[]) => Promise<unknown[]>;
-  update: (..._args: unknown[]) => MockTx;
-  set: (..._args: unknown[]) => MockTx;
-  insert: (..._args: unknown[]) => MockTx;
-  values: (..._args: unknown[]) => MockTx;
-  returning: (..._args: unknown[]) => Promise<unknown[]>;
-};
+vi.mock('@atlas/integration-omie', () => ({
+  incluirAjusteEstoque: vi.fn().mockResolvedValue({
+    idMovest: 'MOCK-MOVEST',
+    idAjuste: 'MOCK-AJUSTE',
+    descricaoStatus: 'ok',
+  }),
+  consultarNF: vi.fn(),
+  isMockMode: () => true,
+}));
 
-function criarDbComAprovacao(apr: Record<string, unknown> | null) {
-  const tx: Partial<MockTx> = {};
-  tx.select = vi.fn().mockReturnValue(tx);
-  tx.from = vi.fn().mockReturnValue(tx);
-  tx.where = vi.fn().mockReturnValue(tx);
-  tx.limit = vi.fn().mockResolvedValue(apr ? [apr] : []);
-  tx.update = vi.fn().mockReturnValue(tx);
-  tx.set = vi.fn().mockReturnValue(tx);
-  tx.insert = vi.fn().mockReturnValue(tx);
-  tx.values = vi.fn().mockReturnValue(tx);
-  tx.returning = vi.fn().mockResolvedValue([{ id: 'nova-aprovacao-id' }]);
-  return {
-    transaction: async (fn: (tx: MockTx) => Promise<unknown>) => fn(tx as MockTx),
+/**
+ * Mock generico que responde diferentes selects baseando-se no objeto "from".
+ * Constroi um chain select().from(X).where().limit() que retorna a lista mapeada
+ * por referencia de tabela. `transaction` reaproveita o mesmo chain.
+ */
+function criarDbComTabelas(rows: Map<object, unknown[]>) {
+  let currentRows: unknown[] = [];
+  const chain = {
+    select: vi.fn().mockReturnThis(),
+    from: vi.fn((table: object) => {
+      currentRows = rows.get(table) ?? [];
+      return chain;
+    }),
+    where: vi.fn().mockReturnThis(),
+    innerJoin: vi.fn().mockReturnThis(),
+    leftJoin: vi.fn().mockReturnThis(),
+    orderBy: vi.fn().mockReturnThis(),
+    limit: vi.fn(() => Promise.resolve(currentRows)),
+    update: vi.fn().mockReturnThis(),
+    set: vi.fn().mockReturnThis(),
+    insert: vi.fn().mockReturnThis(),
+    values: vi.fn().mockReturnThis(),
+    returning: vi.fn().mockResolvedValue([{ id: 'nova-id' }]),
   };
+  return {
+    ...chain,
+    transaction: async (fn: (tx: typeof chain) => Promise<unknown>) => fn(chain),
+  };
+}
+
+// Helpers para montar o Map de tabelas esperadas
+async function tabelas(aprovacaoRow: Record<string, unknown> | null, loteRow?: Record<string, unknown> | null) {
+  const mod = await import('@atlas/db');
+  const m = new Map<object, unknown[]>();
+  m.set(mod.aprovacao, aprovacaoRow ? [aprovacaoRow] : []);
+  m.set(mod.lote, loteRow ? [loteRow] : []);
+  m.set(mod.localidadeCorrelacao, [
+    { localidadeId: 'loc-1', codigoLocalEstoqueAcxe: 111, codigoLocalEstoqueQ2p: 222 },
+  ]);
+  m.set(mod.users, [{ email: 'operador@test.local' }]);
+  return m;
 }
 
 describe('aprovacao.service#aprovar', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('aprova pendencia de recebimento_divergencia e promove lote a provisorio', async () => {
+  it('aprova pendencia de entrada_manual e promove lote a provisorio (sem OMIE)', async () => {
     const { getDb } = await import('@atlas/core');
-    vi.mocked(getDb).mockReturnValue(criarDbComAprovacao({
-      id: 'apr-1', loteId: 'lote-1', status: 'pendente',
-      precisaNivel: 'gestor', tipoAprovacao: 'recebimento_divergencia',
-    }) as never);
-
+    vi.mocked(getDb).mockReturnValue(
+      criarDbComTabelas(await tabelas({
+        id: 'apr-1', loteId: 'lote-1', status: 'pendente',
+        precisaNivel: 'gestor', tipoAprovacao: 'entrada_manual', lancadoPor: 'op-1',
+      })) as never,
+    );
     const res = await aprovar({ id: 'apr-1', usuarioId: 'u1', perfilUsuario: 'gestor' });
     expect(res).toEqual({ id: 'apr-1', loteStatus: 'provisorio' });
   });
 
   it('lanca AprovacaoNaoEncontradaError quando id nao existe', async () => {
     const { getDb } = await import('@atlas/core');
-    vi.mocked(getDb).mockReturnValue(criarDbComAprovacao(null) as never);
+    vi.mocked(getDb).mockReturnValue(criarDbComTabelas(await tabelas(null)) as never);
     await expect(aprovar({ id: 'naoexiste', usuarioId: 'u1', perfilUsuario: 'gestor' })).rejects.toThrow(AprovacaoNaoEncontradaError);
   });
 
   it('lanca AprovacaoStatusInvalidoError quando ja aprovada', async () => {
     const { getDb } = await import('@atlas/core');
-    vi.mocked(getDb).mockReturnValue(criarDbComAprovacao({
-      id: 'apr-1', loteId: 'lote-1', status: 'aprovada',
-      precisaNivel: 'gestor', tipoAprovacao: 'recebimento_divergencia',
-    }) as never);
+    vi.mocked(getDb).mockReturnValue(
+      criarDbComTabelas(await tabelas({
+        id: 'apr-1', loteId: 'lote-1', status: 'aprovada',
+        precisaNivel: 'gestor', tipoAprovacao: 'entrada_manual', lancadoPor: 'op-1',
+      })) as never,
+    );
     await expect(aprovar({ id: 'apr-1', usuarioId: 'u1', perfilUsuario: 'gestor' })).rejects.toThrow(AprovacaoStatusInvalidoError);
   });
 
   it('gestor nao pode aprovar pendencia nivel diretor (comodato)', async () => {
     const { getDb } = await import('@atlas/core');
-    vi.mocked(getDb).mockReturnValue(criarDbComAprovacao({
-      id: 'apr-1', loteId: 'lote-1', status: 'pendente',
-      precisaNivel: 'diretor', tipoAprovacao: 'saida_comodato',
-    }) as never);
+    vi.mocked(getDb).mockReturnValue(
+      criarDbComTabelas(await tabelas({
+        id: 'apr-1', loteId: 'lote-1', status: 'pendente',
+        precisaNivel: 'diretor', tipoAprovacao: 'saida_comodato', lancadoPor: 'op-1',
+      })) as never,
+    );
     await expect(aprovar({ id: 'apr-1', usuarioId: 'u1', perfilUsuario: 'gestor' })).rejects.toThrow(AprovacaoNivelInsuficienteError);
   });
 
-  it('diretor pode aprovar pendencia nivel gestor (cobre nivel inferior)', async () => {
+  it('diretor pode aprovar pendencia nivel gestor', async () => {
     const { getDb } = await import('@atlas/core');
-    vi.mocked(getDb).mockReturnValue(criarDbComAprovacao({
-      id: 'apr-1', loteId: 'lote-1', status: 'pendente',
-      precisaNivel: 'gestor', tipoAprovacao: 'recebimento_divergencia',
-    }) as never);
+    vi.mocked(getDb).mockReturnValue(
+      criarDbComTabelas(await tabelas({
+        id: 'apr-1', loteId: 'lote-1', status: 'pendente',
+        precisaNivel: 'gestor', tipoAprovacao: 'entrada_manual', lancadoPor: 'op-1',
+      })) as never,
+    );
     const res = await aprovar({ id: 'apr-1', usuarioId: 'u1', perfilUsuario: 'diretor' });
     expect(res.id).toBe('apr-1');
+  });
+
+  it('aprovar recebimento_divergencia chama OMIE ACXE+Q2P e grava movimentacao', async () => {
+    const { getDb } = await import('@atlas/core');
+    const omieMod = await import('@atlas/integration-omie');
+    const aprRow = {
+      id: 'apr-1', loteId: 'lote-1', status: 'pendente',
+      precisaNivel: 'gestor', tipoAprovacao: 'recebimento_divergencia',
+      quantidadeRecebidaKg: '24500', tipoDivergencia: 'faltando', lancadoPor: 'op-1',
+    };
+    // Lote com dados da NF persistidos no momento do recebimento
+    // vNF=31250, qtdNf=25000kg → ACXE = round(31250/25000 * 100)/100 = 1.25
+    //                            Q2P  = ceil(31250/25000 * 1.145 * 100)/100 = ceil(143.125)/100 = 1.44
+    const loteRow = {
+      id: 'lote-1', codigo: 'L001', notaFiscal: '123', cnpj: 'Acxe Matriz',
+      produtoCodigoAcxe: 1001, produtoCodigoQ2p: 2001,
+      localidadeId: 'loc-1', quantidadeFisicaKg: '24500',
+      quantidadeFiscalKg: '25000', custoBrlKg: '1.20',
+      valorTotalNfBrl: '31250.00', codigoLocalEstoqueOrigemAcxe: '999',
+    };
+    vi.mocked(getDb).mockReturnValue(criarDbComTabelas(await tabelas(aprRow, loteRow)) as never);
+
+    const res = await aprovar({ id: 'apr-1', usuarioId: 'u1', perfilUsuario: 'gestor' });
+    expect(res).toEqual({ id: 'apr-1', loteStatus: 'provisorio' });
+    expect(omieMod.consultarNF).not.toHaveBeenCalled(); // usa lote persistido
+    // 3 chamadas: ACXE primaria (recebido), Q2P (recebido), ACXE diferenca (faltando)
+    expect(omieMod.incluirAjusteEstoque).toHaveBeenCalledTimes(3);
+    expect(omieMod.incluirAjusteEstoque).toHaveBeenNthCalledWith(1, 'acxe', expect.objectContaining({
+      quantidade: 24500,
+      tipo: 'TRF',
+      motivo: 'TRF',
+      codigoLocalEstoque: '999',
+      codigoLocalEstoqueDestino: '111',
+      valor: 1.25, // vNF/qCom = 31250/25000 = 1.25 (com tributos embutidos, NAO o vUnCom=1.20)
+    }));
+    expect(omieMod.incluirAjusteEstoque).toHaveBeenNthCalledWith(2, 'q2p', expect.objectContaining({
+      quantidade: 24500,
+      tipo: 'ENT',
+      motivo: 'INI',
+      valor: 1.44, // ceil(1.25 * 1.145 * 100)/100 = ceil(143.125)/100
+    }));
+    // 3a chamada: ACXE transferindo diferenca (500kg) para ACXE-COMEX-FALTANDO
+    // (tipoDivergencia=faltando → 4506855468)
+    expect(omieMod.incluirAjusteEstoque).toHaveBeenNthCalledWith(3, 'acxe', expect.objectContaining({
+      quantidade: 500, // 25000 NF - 24500 recebido
+      tipo: 'TRF',
+      motivo: 'TRF',
+      codigoLocalEstoque: '999',
+      codigoLocalEstoqueDestino: '4506855468', // ACXE-COMEX-FALTANDO
+      valor: 1.25,
+    }));
+  });
+
+  it('aprovar recebimento_divergencia varredura → diferenca vai pra estoque varredura nao-extrema', async () => {
+    const { getDb } = await import('@atlas/core');
+    const omieMod = await import('@atlas/integration-omie');
+    const aprRow = {
+      id: 'apr-2', loteId: 'lote-2', status: 'pendente',
+      precisaNivel: 'gestor', tipoAprovacao: 'recebimento_divergencia',
+      quantidadeRecebidaKg: '24500', tipoDivergencia: 'varredura', lancadoPor: 'op-1',
+    };
+    const loteRow = {
+      id: 'lote-2', codigo: 'L002', notaFiscal: '124', cnpj: 'Acxe Matriz',
+      produtoCodigoAcxe: 1001, produtoCodigoQ2p: 2001,
+      localidadeId: 'loc-1', quantidadeFisicaKg: '24500',
+      quantidadeFiscalKg: '25000', custoBrlKg: '1.20',
+      valorTotalNfBrl: '31250.00', codigoLocalEstoqueOrigemAcxe: '999',
+    };
+    vi.mocked(getDb).mockReturnValue(criarDbComTabelas(await tabelas(aprRow, loteRow)) as never);
+
+    await aprovar({ id: 'apr-2', usuarioId: 'u1', perfilUsuario: 'gestor' });
+
+    // Destino do recebimento (corr.codigoLocalEstoqueAcxe = 111) NAO e Extrema (4004166399),
+    // entao a diferenca vai pra ACXE_VARREDURA_NAO_EXTREMA = 4506526722
+    expect(omieMod.incluirAjusteEstoque).toHaveBeenNthCalledWith(3, 'acxe', expect.objectContaining({
+      quantidade: 500,
+      codigoLocalEstoqueDestino: '4506526722',
+    }));
+  });
+
+  // US4: Q2P falha durante aprovacao → grava pendente_q2p e nao bloqueia aprovacao
+  it('Q2P falha durante aprovar(): movimentacao parcial pendente_q2p + aprovacao continua aprovada', async () => {
+    const { getDb } = await import('@atlas/core');
+    const omieMod = await import('@atlas/integration-omie');
+
+    // 1a chamada ACXE ok, 2a Q2P falha
+    vi.mocked(omieMod.incluirAjusteEstoque)
+      .mockResolvedValueOnce({ idMovest: 'M-ACXE', idAjuste: 'A-ACXE', descricaoStatus: 'ok' })
+      .mockRejectedValueOnce(new Error('OMIE Q2P 503'));
+
+    const aprRow = {
+      id: 'apr-q2pfail', loteId: 'lote-q2pfail', status: 'pendente',
+      precisaNivel: 'gestor', tipoAprovacao: 'recebimento_divergencia',
+      quantidadeRecebidaKg: '24500', tipoDivergencia: 'faltando', lancadoPor: 'op-1',
+    };
+    const loteRow = {
+      id: 'lote-q2pfail', codigo: 'L-Q', notaFiscal: '500', cnpj: 'Acxe Matriz',
+      produtoCodigoAcxe: 1001, produtoCodigoQ2p: 2001,
+      localidadeId: 'loc-1', quantidadeFisicaKg: '24500',
+      quantidadeFiscalKg: '25000', custoBrlKg: '1.20',
+      valorTotalNfBrl: '31250.00', codigoLocalEstoqueOrigemAcxe: '999',
+    };
+    const dbMock = criarDbComTabelas(await tabelas(aprRow, loteRow));
+    vi.mocked(getDb).mockReturnValue(dbMock as never);
+
+    const res = await aprovar({ id: 'apr-q2pfail', usuarioId: 'u1', perfilUsuario: 'gestor' });
+
+    // 1) Aprovacao retorna com pendenciaOmie
+    expect(res.id).toBe('apr-q2pfail');
+    expect(res.loteStatus).toBe('provisorio');
+    expect(res.pendenciaOmie).toBeDefined();
+    expect(res.pendenciaOmie!.lado).toBe('q2p');
+    expect(res.pendenciaOmie!.movimentacaoId).toBe('nova-id');
+    expect(res.pendenciaOmie!.opId).toMatch(/^[0-9a-f-]{36}$/);
+
+    // 2) Movimentacao gravada com statusOmie=pendente_q2p
+    const valuesCalls = dbMock.values.mock.calls as Array<[Record<string, unknown>]>;
+    const movInsert = valuesCalls.find((c) => c[0] && 'idMovestAcxe' in c[0]);
+    expect(movInsert).toBeDefined();
+    expect(movInsert![0]).toMatchObject({
+      idMovestAcxe: 'M-ACXE',
+      idAjusteAcxe: 'A-ACXE',
+      idMovestQ2p: null,
+      idAjusteQ2p: null,
+      mvQ2p: null,
+      idUserQ2p: null,
+      statusOmie: 'pendente_q2p',
+      tentativasQ2p: 1,
+      tentativasAcxeFaltando: 0,
+    });
+    expect(movInsert![0].ultimoErroOmie).toMatchObject({
+      lado: 'q2p',
+      mensagem: expect.stringContaining('OMIE Q2P 503'),
+    });
+
+    // 3) Apenas 2 chamadas OMIE (transferirDiferencaAcxe nao roda quando ja ha pendente_q2p)
+    expect(omieMod.incluirAjusteEstoque).toHaveBeenCalledTimes(2);
+  });
+
+  // US4: transferirDiferencaAcxe falha → pendente_acxe_faltando
+  it('transferirDiferencaAcxe falha: movimentacao com pendente_acxe_faltando, dual call salvo', async () => {
+    const { getDb } = await import('@atlas/core');
+    const omieMod = await import('@atlas/integration-omie');
+
+    // ACXE primary ok, Q2P ok, ACXE diferenca falha
+    vi.mocked(omieMod.incluirAjusteEstoque)
+      .mockResolvedValueOnce({ idMovest: 'M-ACXE', idAjuste: 'A-ACXE', descricaoStatus: 'ok' })
+      .mockResolvedValueOnce({ idMovest: 'M-Q2P', idAjuste: 'A-Q2P', descricaoStatus: 'ok' })
+      .mockRejectedValueOnce(new Error('OMIE ACXE timeout na transferencia diferenca'));
+
+    const aprRow = {
+      id: 'apr-difffail', loteId: 'lote-diff', status: 'pendente',
+      precisaNivel: 'gestor', tipoAprovacao: 'recebimento_divergencia',
+      quantidadeRecebidaKg: '24500', tipoDivergencia: 'faltando', lancadoPor: 'op-1',
+    };
+    const loteRow = {
+      id: 'lote-diff', codigo: 'L-D', notaFiscal: '501', cnpj: 'Acxe Matriz',
+      produtoCodigoAcxe: 1001, produtoCodigoQ2p: 2001,
+      localidadeId: 'loc-1', quantidadeFisicaKg: '24500',
+      quantidadeFiscalKg: '25000', custoBrlKg: '1.20',
+      valorTotalNfBrl: '31250.00', codigoLocalEstoqueOrigemAcxe: '999',
+    };
+    const dbMock = criarDbComTabelas(await tabelas(aprRow, loteRow));
+    vi.mocked(getDb).mockReturnValue(dbMock as never);
+
+    const res = await aprovar({ id: 'apr-difffail', usuarioId: 'u1', perfilUsuario: 'gestor' });
+
+    expect(res.pendenciaOmie).toBeDefined();
+    expect(res.pendenciaOmie!.lado).toBe('acxe-faltando');
+
+    const valuesCalls = dbMock.values.mock.calls as Array<[Record<string, unknown>]>;
+    const movInsert = valuesCalls.find((c) => c[0] && 'idMovestAcxe' in c[0]);
+    expect(movInsert).toBeDefined();
+    expect(movInsert![0]).toMatchObject({
+      // Dual call sucedeu — ambos lados gravados
+      idMovestAcxe: 'M-ACXE',
+      idMovestQ2p: 'M-Q2P',
+      mvAcxe: 1,
+      mvQ2p: 1,
+      // ... mas a transferencia da diferenca falhou
+      statusOmie: 'pendente_acxe_faltando',
+      tentativasQ2p: 0,
+      tentativasAcxeFaltando: 1,
+    });
+    expect(movInsert![0].ultimoErroOmie).toMatchObject({
+      lado: 'acxe-faltando',
+      mensagem: expect.stringContaining('timeout'),
+    });
+
+    // 3 chamadas OMIE (todas tentadas)
+    expect(omieMod.incluirAjusteEstoque).toHaveBeenCalledTimes(3);
+  });
+
+  // US1: idempotencia OMIE — opId compartilhado em todas as chamadas + persistido na movimentacao
+  it('aprovar divergencia: codIntAjuste compartilha opId e movimentacao grava com statusOmie=concluida', async () => {
+    const { getDb } = await import('@atlas/core');
+    const omieMod = await import('@atlas/integration-omie');
+    const aprRow = {
+      id: 'apr-3', loteId: 'lote-3', status: 'pendente',
+      precisaNivel: 'gestor', tipoAprovacao: 'recebimento_divergencia',
+      quantidadeRecebidaKg: '24500', tipoDivergencia: 'faltando', lancadoPor: 'op-1',
+    };
+    const loteRow = {
+      id: 'lote-3', codigo: 'L003', notaFiscal: '125', cnpj: 'Acxe Matriz',
+      produtoCodigoAcxe: 1001, produtoCodigoQ2p: 2001,
+      localidadeId: 'loc-1', quantidadeFisicaKg: '24500',
+      quantidadeFiscalKg: '25000', custoBrlKg: '1.20',
+      valorTotalNfBrl: '31250.00', codigoLocalEstoqueOrigemAcxe: '999',
+    };
+    const dbMock = criarDbComTabelas(await tabelas(aprRow, loteRow));
+    vi.mocked(getDb).mockReturnValue(dbMock as never);
+
+    await aprovar({ id: 'apr-3', usuarioId: 'u1', perfilUsuario: 'gestor' });
+
+    // 1) Todas as 3 chamadas OMIE compartilham o mesmo opId no cod_int_ajuste
+    const calls = vi.mocked(omieMod.incluirAjusteEstoque).mock.calls;
+    const codIntAjustes = calls.map((c) => (c[1] as { codIntAjuste?: string }).codIntAjuste ?? '');
+    const opIds = codIntAjustes.map((c) => c.split(':')[0]);
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+    expect(opIds[0]).toMatch(uuidRegex);
+    expect(new Set(opIds).size).toBe(1); // mesmo opId nas 3 chamadas
+    expect(codIntAjustes[0]).toMatch(/:acxe-trf$/);
+    expect(codIntAjustes[1]).toMatch(/:q2p-ent$/);
+    expect(codIntAjustes[2]).toMatch(/:acxe-faltando$/);
+
+    // 2) Movimentacao foi inserida com opId UUID + statusOmie=concluida
+    const valuesCalls = dbMock.values.mock.calls as Array<[Record<string, unknown>]>;
+    const movInsert = valuesCalls.find((c) => c[0] && typeof c[0] === 'object' && 'idMovestAcxe' in c[0]);
+    expect(movInsert).toBeDefined();
+    expect(movInsert![0]).toMatchObject({
+      opId: expect.stringMatching(uuidRegex),
+      statusOmie: 'concluida',
+    });
+    // E o opId persistido bate com o opId dos cod_int_ajuste
+    expect(movInsert![0].opId).toBe(opIds[0]);
   });
 });
 
@@ -101,12 +374,31 @@ describe('aprovacao.service#rejeitar', () => {
 
   it('rejeita pendencia e marca lote como rejeitado', async () => {
     const { getDb } = await import('@atlas/core');
-    vi.mocked(getDb).mockReturnValue(criarDbComAprovacao({
-      id: 'apr-1', loteId: 'lote-1', status: 'pendente',
-      precisaNivel: 'gestor', tipoAprovacao: 'recebimento_divergencia',
-    }) as never);
+    vi.mocked(getDb).mockReturnValue(
+      criarDbComTabelas(await tabelas({
+        id: 'apr-1', loteId: 'lote-1', status: 'pendente',
+        precisaNivel: 'gestor', tipoAprovacao: 'entrada_manual', lancadoPor: 'op-1',
+      })) as never,
+    );
     const res = await rejeitar({ id: 'apr-1', usuarioId: 'u1', perfilUsuario: 'gestor', motivo: 'Quantidade incorreta' });
     expect(res.id).toBe('apr-1');
+  });
+
+  it('notifica operador por email ao rejeitar', async () => {
+    const { getDb, sendEmail } = await import('@atlas/core');
+    vi.mocked(getDb).mockReturnValue(
+      criarDbComTabelas(await tabelas({
+        id: 'apr-1', loteId: 'lote-1', status: 'pendente',
+        precisaNivel: 'gestor', tipoAprovacao: 'entrada_manual', lancadoPor: 'op-1',
+      })) as never,
+    );
+    await rejeitar({ id: 'apr-1', usuarioId: 'u1', perfilUsuario: 'gestor', motivo: 'Motivo teste' });
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'operador@test.local',
+        subject: expect.stringContaining('rejeitado'),
+      }),
+    );
   });
 
   it('exige motivo', async () => {
@@ -120,32 +412,36 @@ describe('aprovacao.service#resubmeter', () => {
 
   it('cria nova linha de aprovacao (preserva historico)', async () => {
     const { getDb } = await import('@atlas/core');
-    vi.mocked(getDb).mockReturnValue(criarDbComAprovacao({
-      id: 'apr-1', loteId: 'lote-1', status: 'rejeitada',
-      precisaNivel: 'gestor', tipoAprovacao: 'recebimento_divergencia',
-      quantidadePrevistaT: '25', quantidadeRecebidaT: '20', tipoDivergencia: 'faltando',
-    }) as never);
+    vi.mocked(getDb).mockReturnValue(
+      criarDbComTabelas(await tabelas({
+        id: 'apr-1', loteId: 'lote-1', status: 'rejeitada',
+        precisaNivel: 'gestor', tipoAprovacao: 'recebimento_divergencia',
+        quantidadePrevistaKg: '25', quantidadeRecebidaKg: '20', tipoDivergencia: 'faltando',
+      })) as never,
+    );
     const res = await resubmeter({
       id: 'apr-1', usuarioId: 'u-operador',
-      quantidadeRecebidaT: 22, observacoes: 'Recontagem: encontrados 2t adicionais',
+      quantidadeRecebidaKg: 22, observacoes: 'Recontagem: encontrados 2t adicionais',
     });
-    expect(res.novaAprovacaoId).toBe('nova-aprovacao-id');
+    expect(res.novaAprovacaoId).toBe('nova-id');
     expect(res.id).toBe('apr-1');
   });
 
   it('bloqueia resubmissao se status nao e rejeitada', async () => {
     const { getDb } = await import('@atlas/core');
-    vi.mocked(getDb).mockReturnValue(criarDbComAprovacao({
-      id: 'apr-1', loteId: 'lote-1', status: 'pendente',
-      precisaNivel: 'gestor', tipoAprovacao: 'recebimento_divergencia',
-    }) as never);
+    vi.mocked(getDb).mockReturnValue(
+      criarDbComTabelas(await tabelas({
+        id: 'apr-1', loteId: 'lote-1', status: 'pendente',
+        precisaNivel: 'gestor', tipoAprovacao: 'recebimento_divergencia',
+      })) as never,
+    );
     await expect(resubmeter({
-      id: 'apr-1', usuarioId: 'u1', quantidadeRecebidaT: 22, observacoes: 'x',
+      id: 'apr-1', usuarioId: 'u1', quantidadeRecebidaKg: 22, observacoes: 'x',
     })).rejects.toThrow(AprovacaoStatusInvalidoError);
   });
 
   it('exige motivo', async () => {
-    await expect(resubmeter({ id: 'apr-1', usuarioId: 'u1', quantidadeRecebidaT: 20, observacoes: '' })).rejects.toThrow(/motivo/i);
+    await expect(resubmeter({ id: 'apr-1', usuarioId: 'u1', quantidadeRecebidaKg: 20, observacoes: '' })).rejects.toThrow(/motivo/i);
   });
 });
 

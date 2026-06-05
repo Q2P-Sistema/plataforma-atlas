@@ -7,7 +7,8 @@ const mockTx = {
   from: vi.fn().mockReturnThis(),
   where: vi.fn().mockReturnThis(),
   limit: vi.fn().mockResolvedValue([
-    { id: 'apr-1', loteId: 'lote-1', status: 'pendente', precisaNivel: 'gestor', tipoAprovacao: 'recebimento_divergencia' },
+    // tipoAprovacao = entrada_manual nao dispara fluxo OMIE — mantem contract simples
+    { id: 'apr-1', loteId: 'lote-1', status: 'pendente', precisaNivel: 'gestor', tipoAprovacao: 'entrada_manual', lancadoPor: 'u-op' },
   ]),
   update: vi.fn().mockReturnThis(),
   set: vi.fn().mockReturnThis(),
@@ -50,11 +51,15 @@ vi.mock('@atlas/auth', () => ({
     }
     next();
   },
+  requireModule: () => (_req: Request, _res: Response, next: NextFunction) => next(),
 }));
 
 vi.mock('@atlas/db', () => ({
   aprovacao: {},
   lote: {},
+  movimentacao: {},
+  localidadeCorrelacao: {},
+  users: {},
 }));
 
 describe('Aprovacoes — contratos', () => {
@@ -103,8 +108,70 @@ describe('Aprovacoes — contratos', () => {
     currentUser = { id: 'u-gestor', role: 'gestor' };
     const res = await request(app)
       .post('/api/v1/stockbridge/aprovacoes/apr-1/resubmeter')
-      .send({ quantidade_recebida_t: 22, observacoes: 'ok' });
+      .send({ quantidade_recebida_kg: 22_000, observacoes: 'ok' });
     // requireOperador allows gestor too (hierarquico), entao este teste passa 200 ou 409
     expect([200, 409]).toContain(res.status);
+  });
+});
+
+describe('POST /aprovacoes/:id/aprovar — pendenciaOmie residual (US4)', () => {
+  let app: express.Express;
+
+  beforeAll(async () => {
+    vi.resetModules();
+    vi.doMock('../../services/aprovacao.service.js', async () => {
+      const real = await vi.importActual<typeof import('../../services/aprovacao.service.js')>(
+        '../../services/aprovacao.service.js',
+      );
+      return {
+        ...real,
+        aprovar: vi.fn(),
+      };
+    });
+    const { default: stockbridgeRouter } = await import('../../routes/stockbridge.routes.js');
+    app = express();
+    app.use(express.json());
+    app.use(stockbridgeRouter);
+  });
+
+  it('200 com pendenciaOmie quando OMIE deixa Q2P pendente apos aprovacao', async () => {
+    currentUser = { id: 'u-gestor', role: 'gestor' };
+    const svc = await import('../../services/aprovacao.service.js');
+    vi.mocked(svc.aprovar).mockResolvedValueOnce({
+      id: 'apr-1',
+      loteStatus: 'provisorio',
+      pendenciaOmie: {
+        lado: 'q2p',
+        opId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        movimentacaoId: 'mov-pendente',
+        mensagem: 'OMIE Q2P 503',
+      },
+    });
+
+    const res = await request(app).post('/api/v1/stockbridge/aprovacoes/apr-1/aprovar');
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({
+      id: 'apr-1',
+      loteStatus: 'provisorio',
+      pendenciaOmie: {
+        lado: 'q2p',
+        opId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        movimentacaoId: 'mov-pendente',
+      },
+    });
+  });
+
+  it('200 sem pendenciaOmie quando aprovacao concluiu OMIE inteiramente', async () => {
+    currentUser = { id: 'u-gestor', role: 'gestor' };
+    const svc = await import('../../services/aprovacao.service.js');
+    vi.mocked(svc.aprovar).mockResolvedValueOnce({
+      id: 'apr-2',
+      loteStatus: 'provisorio',
+    });
+
+    const res = await request(app).post('/api/v1/stockbridge/aprovacoes/apr-2/aprovar');
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({ id: 'apr-2', loteStatus: 'provisorio' });
+    expect(res.body.data.pendenciaOmie).toBeUndefined();
   });
 });

@@ -1,8 +1,9 @@
 import type { Request, Response, NextFunction } from 'express';
-import { eq } from 'drizzle-orm';
-import { getDb } from '@atlas/core';
-import { users, type User, type Session } from '@atlas/db';
+import { and, eq } from 'drizzle-orm';
+import { getDb, getConfig } from '@atlas/core';
+import { users, userModules, type User, type Session } from '@atlas/db';
 import { validateSession } from './session.js';
+import type { ModuleKey } from './modules.js';
 
 declare global {
   namespace Express {
@@ -85,5 +86,78 @@ export function requireRole(...allowedRoles: Array<User['role']>) {
     }
 
     next();
+  };
+}
+
+const MODULE_ENV_FLAG: Record<ModuleKey, keyof ReturnType<typeof getConfig>> = {
+  hedge: 'MODULE_HEDGE_ENABLED',
+  stockbridge: 'MODULE_STOCKBRIDGE_ENABLED',
+  breakingpoint: 'MODULE_BREAKINGPOINT_ENABLED',
+  clevel: 'MODULE_CLEVEL_ENABLED',
+  comexinsight: 'MODULE_COMEXINSIGHT_ENABLED',
+  comexflow: 'MODULE_COMEXFLOW_ENABLED',
+  forecast: 'MODULE_FORECAST_ENABLED',
+};
+
+export function isModuleEnabledGlobally(moduleKey: ModuleKey): boolean {
+  const config = getConfig();
+  const flag = MODULE_ENV_FLAG[moduleKey];
+  return Boolean(config[flag]);
+}
+
+/**
+ * Bloqueia rotas se o modulo nao esta habilitado globalmente OU
+ * se o user nao tem grant explicito (diretor sempre passa).
+ * Aplicar em todos os routers de modulo apos requireAuth.
+ */
+export function requireModule(moduleKey: ModuleKey) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.user) {
+      res.status(401).json({
+        data: null,
+        error: { code: 'UNAUTHENTICATED', message: 'Não autenticado' },
+      });
+      return;
+    }
+
+    if (!isModuleEnabledGlobally(moduleKey)) {
+      res.status(404).json({
+        data: null,
+        error: { code: 'MODULE_DISABLED', message: 'Módulo não habilitado' },
+      });
+      return;
+    }
+
+    // Diretor: bypass automatico
+    if (req.user.role === 'diretor') {
+      next();
+      return;
+    }
+
+    const db = getDb();
+    db
+      .select({ moduleKey: userModules.moduleKey })
+      .from(userModules)
+      .where(
+        and(
+          eq(userModules.userId, req.user.id),
+          eq(userModules.moduleKey, moduleKey),
+        ),
+      )
+      .limit(1)
+      .then((rows) => {
+        if (rows.length === 0) {
+          res.status(403).json({
+            data: null,
+            error: {
+              code: 'MODULE_FORBIDDEN',
+              message: 'Sem acesso a este módulo',
+            },
+          });
+          return;
+        }
+        next();
+      })
+      .catch(next);
   };
 }

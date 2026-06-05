@@ -37,7 +37,7 @@ export function TwoFactorSetupPage() {
       setSecret(body.data.secret);
       setStep('scan');
     } catch {
-      setError('Erro de conexao com o servidor');
+      setError('Erro de conexão com o servidor');
     }
   }
 
@@ -67,7 +67,7 @@ export function TwoFactorSetupPage() {
       const body = (await res.json()) as any;
 
       if (!res.ok) {
-        setError(body.error?.message ?? 'Codigo invalido');
+        setError(body.error?.message ?? 'Código inválido');
         setCode('');
         return;
       }
@@ -75,7 +75,7 @@ export function TwoFactorSetupPage() {
       // 2FA is now enabled, redirect to dashboard
       navigate('/', { replace: true });
     } catch {
-      setError('Erro de conexao com o servidor');
+      setError('Erro de conexão com o servidor');
     } finally {
       setSubmitting(false);
     }
@@ -101,7 +101,7 @@ export function TwoFactorSetupPage() {
             Configurar 2FA
           </h1>
           <p className="text-atlas-muted text-sm mt-2">
-            Seu perfil requer autenticacao em dois fatores.
+            Seu perfil requer autenticação em dois fatores.
           </p>
         </div>
 
@@ -120,7 +120,7 @@ export function TwoFactorSetupPage() {
               <div className="flex justify-center">
                 <img
                   src={qrCodeDataUrl}
-                  alt="QR Code para configuracao 2FA"
+                  alt="QR Code para configuração 2FA"
                   className="w-48 h-48 rounded-lg border border-atlas-border"
                 />
               </div>
@@ -128,7 +128,7 @@ export function TwoFactorSetupPage() {
 
             <div className="bg-atlas-bg rounded-lg p-3 border border-atlas-border">
               <p className="text-xs text-atlas-muted mb-1">
-                Ou digite o codigo manualmente:
+                Ou digite o código manualmente:
               </p>
               <code className="text-sm font-mono text-atlas-text break-all select-all">
                 {secret}
@@ -139,7 +139,7 @@ export function TwoFactorSetupPage() {
               onClick={() => setStep('confirm')}
               className="w-full py-2.5 rounded-lg bg-acxe text-white font-medium hover:bg-acxe/90 focus:outline-none focus:ring-2 focus:ring-acxe focus:ring-offset-2 transition-colors"
             >
-              Proximo: Confirmar codigo
+              Próximo: Confirmar código
             </button>
           </div>
         )}
@@ -148,7 +148,7 @@ export function TwoFactorSetupPage() {
           <form onSubmit={handleConfirm} className="space-y-6">
             <div className="space-y-3">
               <p className="text-sm text-atlas-text font-medium">
-                3. Digite o codigo de 6 digitos do aplicativo:
+                3. Digite o código de 6 dígitos do aplicativo:
               </p>
             </div>
 

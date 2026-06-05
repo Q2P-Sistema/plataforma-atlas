@@ -77,7 +77,27 @@ export const sessions = atlasSchema.table(
   ],
 );
 
+export const userModules = atlasSchema.table(
+  'user_modules',
+  {
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    moduleKey: varchar('module_key', { length: 40 }).notNull(),
+    grantedAt: timestamp('granted_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    grantedBy: uuid('granted_by').references(() => users.id),
+  },
+  (table) => [
+    index('user_modules_user_idx').on(table.userId),
+    index('user_modules_key_idx').on(table.moduleKey),
+  ],
+);
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
+export type UserModule = typeof userModules.$inferSelect;
+export type NewUserModule = typeof userModules.$inferInsert;

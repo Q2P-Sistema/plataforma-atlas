@@ -25,8 +25,8 @@ GROUP BY l.produto_codigo_acxe, l.cnpj, l.localidade_id;
 -- Em ambientes sem essas tabelas, a view retorna erro ao ser consultada, mas a criacao nao falha.
 DO $$
 BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('tb_produtos_ACXE', 'tb_produtos_acxe'))
-       AND EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('tb_produtos_Q2P', 'tb_produtos_q2p')) THEN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('tbl_produtos_ACXE', 'tbl_produtos_acxe'))
+       AND EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('tbl_produtos_Q2P', 'tbl_produtos_q2p')) THEN
         EXECUTE $view$
             CREATE OR REPLACE VIEW shared.vw_sb_correlacao_produto AS
             SELECT
@@ -35,13 +35,13 @@ BEGIN
                 a.descricao,
                 a.codigo_familia AS codigo_familia_acxe,
                 q.codigo_familia AS codigo_familia_q2p
-            FROM public.tb_produtos_ACXE a
-            INNER JOIN public.tb_produtos_Q2P q ON a.descricao = q.descricao
+            FROM public."tbl_produtos_ACXE" a
+            INNER JOIN public."tbl_produtos_Q2P" q ON a.descricao = q.descricao
             WHERE (a.inativo IS NULL OR a.inativo <> 'S')
               AND (q.inativo IS NULL OR q.inativo <> 'S')
         $view$;
     ELSE
-        RAISE NOTICE 'Tabelas public.tb_produtos_ACXE/Q2P nao existem neste ambiente. View vw_sb_correlacao_produto nao sera criada. Execute sync OMIE primeiro.';
+        RAISE NOTICE 'Tabelas public.tbl_produtos_ACXE/Q2P nao existem neste ambiente. View vw_sb_correlacao_produto nao sera criada. Execute sync OMIE primeiro.';
     END IF;
 END $$;
 
@@ -53,7 +53,7 @@ BEGIN
         EXECUTE $view$
             CREATE OR REPLACE VIEW shared.vw_sb_fornecedor_ativo AS
             SELECT f.*
-            FROM public.tbl_cadastroFornecedoresClientes_ACXE f
+            FROM public."tbl_cadastroFornecedoresClientes_ACXE" f
             LEFT JOIN stockbridge.fornecedor_exclusao e
                 ON e.fornecedor_cnpj = f.cnpj_cpf
                AND e.reincluido_em IS NULL

@@ -6,7 +6,13 @@ export {
   destroyUserSessions,
 } from './session.js';
 export { csrfProtection } from './csrf.js';
-export { requireAuth, requireRole } from './auth.middleware.js';
+export {
+  requireAuth,
+  requireRole,
+  requireModule,
+  isModuleEnabledGlobally,
+} from './auth.middleware.js';
+export { MODULE_KEYS, isModuleKey, type ModuleKey } from './modules.js';
 export {
   checkLoginRateLimit,
   recordFailedLogin,
@@ -26,6 +32,8 @@ export {
   reactivateUser,
   adminResetPassword,
   adminReset2FA,
+  getUserModules,
+  setUserModules,
   UserError,
   type UserPublic,
 } from './auth.service.js';

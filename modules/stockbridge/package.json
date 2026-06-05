@@ -9,21 +9,25 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "migrate-from-mysql": "tsx src/scripts/migrate-from-mysql.ts"
+    "migrate-from-mysql": "tsx src/scripts/migrate-from-mysql.ts",
+    "validar-paridade": "tsx src/scripts/validar-paridade.ts"
   },
   "description": "Controle físico de estoque — lotes, dual-CNPJ, recebimento OMIE, aprovações hierárquicas. Porte do sistema legado PHP.",
   "dependencies": {
     "@atlas/auth": "workspace:*",
     "@atlas/core": "workspace:*",
     "@atlas/db": "workspace:*",
+    "@atlas/integration-bcb": "workspace:*",
     "@atlas/integration-omie": "workspace:*",
     "decimal.js": "^10.4.0",
     "drizzle-orm": "^0.38.0",
     "express": "^4.21.0",
+    "node-cron": "^4.2.1",
     "zod": "^3.24.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
+    "@types/node-cron": "^3.0.11",
     "@types/supertest": "^6.0.0",
     "@vitest/coverage-v8": "^2.1.9",
     "supertest": "^7.0.0",

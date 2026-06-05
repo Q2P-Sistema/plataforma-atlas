@@ -59,7 +59,8 @@ export type TipoAprovacao =
   | 'saida_amostra'
   | 'saida_descarte'
   | 'saida_quebra'
-  | 'ajuste_inventario';
+  | 'ajuste_inventario'
+  | 'retorno_comodato';
 
 export type TipoDivergencia = 'faltando' | 'varredura' | 'cruzada' | 'fiscal_pendente';
 
@@ -67,15 +68,44 @@ export type StatusAprovacao = 'pendente' | 'aprovada' | 'rejeitada';
 
 export type StatusDivergencia = 'aberta' | 'regularizada' | 'descartada';
 
+/**
+ * Estado de sincronizacao com OMIE de uma movimentacao.
+ * - concluida: ambos lados (ACXE + Q2P) confirmados (default).
+ * - pendente_q2p: ACXE escreveu mas Q2P falhou — aguarda retry.
+ * - pendente_acxe_faltando: segunda chamada ACXE (transferirDiferenca) falhou.
+ * - falha: marcada manualmente por admin como nao-recuperavel.
+ */
+export type StatusOmie = 'concluida' | 'pendente_q2p' | 'pendente_acxe_faltando' | 'falha';
+
+export function isStatusOmiePendente(status: StatusOmie): boolean {
+  return status === 'pendente_q2p' || status === 'pendente_acxe_faltando';
+}
+
+/**
+ * Sufixos do cod_int_ajuste enviado ao OMIE. Combinados com o op_id da
+ * movimentacao para identificar de forma unica cada chamada IncluirAjusteEstoque.
+ */
+export const COD_INT_AJUSTE_SUFIXO = {
+  acxeTrf: 'acxe-trf',
+  q2pEnt: 'q2p-ent',
+  acxeFaltando: 'acxe-faltando',
+} as const;
+
+export type CodIntAjusteSufixo = (typeof COD_INT_AJUSTE_SUFIXO)[keyof typeof COD_INT_AJUSTE_SUFIXO];
+
+export function buildCodIntAjuste(opId: string, sufixo: CodIntAjusteSufixo): string {
+  return `${opId}:${sufixo}`;
+}
+
 export type TipoLocalidade = 'proprio' | 'tpl' | 'porto_seco' | 'virtual_transito' | 'virtual_ajuste';
 
 export type UnidadeMedida = 't' | 'kg' | 'saco' | 'bigbag';
 
-export const FATOR_PARA_TONELADA: Record<UnidadeMedida, number> = {
-  t: 1,
-  kg: 0.001,
-  saco: 0.025, // saco de 25 kg
-  bigbag: 1, // big bag de 1 tonelada
+export const FATOR_PARA_KG: Record<UnidadeMedida, number> = {
+  t: 1000,
+  kg: 1,
+  saco: 25, // saco de 25 kg
+  bigbag: 1000, // big bag de 1 tonelada = 1000 kg
 };
 
 export const CNPJ_ACXE = 'Acxe Matriz';
@@ -101,10 +131,12 @@ export const NIVEL_APROVACAO_POR_SUBTIPO: Partial<Record<SubtipoMovimento, 'gest
 
 /**
  * Visibilidade por perfil.
- * Operador so ve transito_interno e reservado (FR-006).
+ * Todos os perfis veem os 3 estagios — modulo e puramente espelho do FUP de Comex,
+ * sem acoes que justifiquem RBAC mais restritivo.
+ * O estagio 'reservado' permanece no enum por compatibilidade mas nao e usado mais.
  */
 export const ESTAGIOS_VISIVEIS_POR_PERFIL: Record<Perfil, readonly EstagioTransito[]> = {
-  operador: ['transito_interno', 'reservado'],
-  gestor: ['transito_intl', 'porto_dta', 'transito_interno', 'reservado'],
-  diretor: ['transito_intl', 'porto_dta', 'transito_interno', 'reservado'],
+  operador: ['transito_intl', 'porto_dta', 'transito_interno'],
+  gestor: ['transito_intl', 'porto_dta', 'transito_interno'],
+  diretor: ['transito_intl', 'porto_dta', 'transito_interno'],
 };

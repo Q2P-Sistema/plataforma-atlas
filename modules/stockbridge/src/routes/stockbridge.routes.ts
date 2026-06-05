@@ -1,10 +1,12 @@
 import { Router, type Request, type Response } from 'express';
-import { requireAuth } from '@atlas/auth';
+import { requireAuth, requireModule } from '@atlas/auth';
 import { createLogger } from '@atlas/core';
 import filaRouter from './fila.routes.js';
 import recebimentoRouter from './recebimento.routes.js';
+import recebimentoNacionalRouter from './recebimento-nacional.routes.js';
 import cockpitRouter from './cockpit.routes.js';
 import aprovacaoRouter from './aprovacao.routes.js';
+import divergenciaRouter from './divergencia.routes.js';
 import transitoRouter from './transito.routes.js';
 import saidaAutomaticaRouter from './saida-automatica.routes.js';
 import saidaManualRouter from './saida-manual.routes.js';
@@ -13,12 +15,16 @@ import fornecedorRouter from './fornecedor.routes.js';
 import localidadeRouter from './localidade.routes.js';
 import configRouter from './config.routes.js';
 import movimentacaoRouter from './movimentacao.routes.js';
+import meuEstoqueRouter from './meu-estoque.routes.js';
+import adminUserGalpaoRouter from './admin-user-galpao.routes.js';
+import operacoesPendentesRouter from './operacoes-pendentes.routes.js';
+import adminCronRouter from './admin-cron.routes.js';
 
 const logger = createLogger('stockbridge:routes');
 const router: Router = Router();
 
-// Todas as rotas do StockBridge exigem autenticacao
-router.use('/api/v1/stockbridge', requireAuth);
+// Todas as rotas do StockBridge exigem autenticacao + acesso ao modulo
+router.use('/api/v1/stockbridge', requireAuth, requireModule('stockbridge'));
 
 // Health check
 router.get('/api/v1/stockbridge/health', (_req: Request, res: Response) => {
@@ -28,10 +34,14 @@ router.get('/api/v1/stockbridge/health', (_req: Request, res: Response) => {
 // US1 — Recebimento de NF com conferencia fisica
 router.use(filaRouter);
 router.use(recebimentoRouter);
+// Recebimento nacional (single-empresa, sem fila OMIE)
+router.use(recebimentoNacionalRouter);
 // US2 — Cockpit de estoque por produto (gestor/diretor)
 router.use(cockpitRouter);
 // US3 — Aprovacoes hierarquicas
 router.use(aprovacaoRouter);
+// Divergencias (drill-down do cockpit) — gestor+
+router.use(divergenciaRouter);
 // US4 — Pipeline de transito maritimo
 router.use(transitoRouter);
 // US5 — Saidas automaticas via OMIE (polling n8n)
@@ -46,7 +56,15 @@ router.use(localidadeRouter);
 router.use(configRouter);
 // Phase 11 — Movimentacoes (listagem + soft delete)
 router.use(movimentacaoRouter);
+// Meu Estoque (operador/gestor/diretor) — espelha vw_posicaoEstoqueUnificadaFamilia OMIE
+router.use(meuEstoqueRouter);
+// Admin (diretor) — vinculacao N:N usuario × galpao
+router.use(adminUserGalpaoRouter);
+// Idempotencia OMIE — retry de operacoes pendentes (US2/US3/US4)
+router.use(operacoesPendentesRouter);
+// Admin (gestor+) — disparo manual de crons (alerta comodato vencido, etc.)
+router.use(adminCronRouter);
 
-logger.info('StockBridge router inicializado (US1..US8 + Movimentacoes montadas)');
+logger.info('StockBridge router inicializado (US1..US8 + Movimentacoes + OperacoesPendentes)');
 
 export default router;

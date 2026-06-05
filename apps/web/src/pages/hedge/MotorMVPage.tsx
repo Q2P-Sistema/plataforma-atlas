@@ -210,7 +210,7 @@ export function MotorMVPage() {
           </div>
           <div>
             <div className="flex justify-between text-xs text-atlas-muted mb-1">
-              <span>% Estoque nao pago</span>
+              <span>% Estoque não pago</span>
               <span className="font-bold text-amber-600">{pctEstoque}%</span>
             </div>
             <input type="range" min={0} max={100} step={5} value={pctEstoque}

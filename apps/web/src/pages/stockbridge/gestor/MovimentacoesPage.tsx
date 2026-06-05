@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Modal } from '@atlas/ui';
+import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '../../../stores/auth.store.js';
 
 interface LadoCnpj {
@@ -15,12 +14,47 @@ interface Movimentacao {
   notaFiscal: string;
   tipoMovimento: string;
   subtipo: string | null;
-  quantidadeT: number;
+  quantidadeKg: number;
   loteCodigo: string | null;
   observacoes: string | null;
+  produtoCodigoAcxe: number | null;
+  produtoDescricao: string | null;
+  galpao: string | null;
+  empresa: 'acxe' | 'q2p' | null;
+  criadoPor: { id: string | null; nome: string | null };
+  aprovadoPor: { id: string | null; nome: string | null; em: string | null };
+  statusOmie: string | null;
   ladoAcxe: LadoCnpj;
   ladoQ2p: LadoCnpj;
   createdAt: string;
+}
+
+const GALPAO_LABELS: Record<string, string> = {
+  '11.1': 'Santo André — Importado (11.1)',
+  '11.2': 'Santo André — Nacional (11.2) · Q2P',
+  '12.1': 'Santo André — Importado (12.1)',
+  '12.2': 'Santo André — Nacional (12.2) · Q2P',
+  '21.1': 'Extrema (21.1)',
+  '21.2': 'Extrema — Nacional (21.2) · ACXE',
+  '31.1': 'Armazém Externo / ATN (31.1)',
+  '90': 'TROCA (virtual)',
+  '90.0.1': 'TROCA (virtual)',
+  '90.0.2': 'TRÂNSITO (virtual)',
+};
+const labelGalpao = (g: string) => GALPAO_LABELS[g] ?? g;
+
+/**
+ * Resolve quais empresas foram tocadas na movimentacao. Quando os dois lados
+ * OMIE foram gravados (ladoAcxe.idMovest E ladoQ2p.idMovest), e dual ACXE+Q2P.
+ * Senao, cai pra empresa primaria armazenada na linha (m.empresa).
+ */
+function resolverEmpresas(m: Movimentacao): string {
+  const temAcxe = !!m.ladoAcxe.idMovest;
+  const temQ2p = !!m.ladoQ2p.idMovest;
+  if (temAcxe && temQ2p) return 'ACXE + Q2P';
+  if (temAcxe) return 'ACXE';
+  if (temQ2p) return 'Q2P';
+  return m.empresa ? m.empresa.toUpperCase() : '—';
 }
 
 const TIPO_COLOR: Record<string, string> = {
@@ -47,36 +81,25 @@ function useApiFetch() {
 
 export function MovimentacoesPage() {
   const apiFetch = useApiFetch();
-  const queryClient = useQueryClient();
+  const role = useAuthStore((s) => s.user?.role) ?? 'operador';
   const [page, setPage] = useState(1);
   const [filtroTipo, setFiltroTipo] = useState('');
+  const [filtroSubtipo, setFiltroSubtipo] = useState('');
   const [filtroNf, setFiltroNf] = useState('');
   const [filtroCnpj, setFiltroCnpj] = useState<'' | 'acxe' | 'q2p' | 'ambos'>('');
-  const [apagando, setApagando] = useState<Movimentacao | null>(null);
-  const [motivo, setMotivo] = useState('');
+  const [apenasMinhas, setApenasMinhas] = useState(role === 'operador');
 
   const { data, isLoading, error } = useQuery<{ items: Movimentacao[]; total: number }>({
-    queryKey: ['sb', 'movimentacoes', page, filtroTipo, filtroNf, filtroCnpj],
+    queryKey: ['sb', 'movimentacoes', page, filtroTipo, filtroSubtipo, filtroNf, filtroCnpj, apenasMinhas],
     queryFn: async () => {
       const params = new URLSearchParams({ page: String(page), pageSize: '50' });
       if (filtroTipo) params.set('tipoMovimento', filtroTipo);
+      if (filtroSubtipo) params.set('subtipo', filtroSubtipo);
       if (filtroNf) params.set('nf', filtroNf);
       if (filtroCnpj) params.set('cnpj', filtroCnpj);
+      if (apenasMinhas) params.set('apenasMinhas', 'true');
       const body = await apiFetch(`/api/v1/stockbridge/movimentacoes?${params}`);
       return { items: body.data as Movimentacao[], total: body.meta?.total ?? 0 };
-    },
-  });
-
-  const deleteMut = useMutation({
-    mutationFn: async (args: { id: string; motivo: string }) =>
-      apiFetch(`/api/v1/stockbridge/movimentacoes/${args.id}`, {
-        method: 'DELETE',
-        body: JSON.stringify({ motivo: args.motivo }),
-      }),
-    onSuccess: () => {
-      setApagando(null);
-      setMotivo('');
-      queryClient.invalidateQueries({ queryKey: ['sb', 'movimentacoes'] });
     },
   });
 
@@ -85,9 +108,9 @@ export function MovimentacoesPage() {
   return (
     <div className="p-6 max-w-7xl">
       <div className="mb-5">
-        <h1 className="text-2xl font-serif text-atlas-ink mb-1">Movimentacoes</h1>
+        <h1 className="text-2xl font-serif text-atlas-ink mb-1">Movimentações</h1>
         <p className="text-sm text-atlas-muted">
-          Log consolidado dual-CNPJ (ACXE + Q2P). Exclusao e soft — historico preservado em audit log.
+          Log consolidado dual-CNPJ (ACXE + Q2P). Para reverter um lançamento, registre uma movimentação compensatória — soft delete daria divergência silenciosa com OMIE.
         </p>
       </div>
 
@@ -100,28 +123,54 @@ export function MovimentacoesPage() {
         />
         <select
           value={filtroTipo}
-          onChange={(e) => { setPage(1); setFiltroTipo(e.target.value); }}
+          onChange={(e) => { setPage(1); setFiltroTipo(e.target.value); setFiltroSubtipo(''); }}
           className="px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
         >
           <option value="">Todos os tipos</option>
           <option value="entrada_nf">Entrada NF</option>
           <option value="entrada_manual">Entrada manual</option>
-          <option value="saida_automatica">Saida automatica</option>
-          <option value="saida_manual">Saida manual</option>
-          <option value="debito_cruzado">Debito cruzado</option>
-          <option value="regularizacao_fiscal">Regularizacao fiscal</option>
+          <option value="saida_automatica">Saída automática</option>
+          <option value="saida_manual">Saída manual</option>
+          <option value="debito_cruzado">Débito cruzado</option>
+          <option value="regularizacao_fiscal">Regularização fiscal</option>
           <option value="ajuste">Ajuste</option>
         </select>
+        {filtroTipo === 'saida_manual' && (
+          <select
+            value={filtroSubtipo}
+            onChange={(e) => { setPage(1); setFiltroSubtipo(e.target.value); }}
+            className="px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+          >
+            <option value="">Todos subtipos</option>
+            <option value="transf_intra_cnpj">Transferência intra-CNPJ</option>
+            <option value="comodato">Comodato</option>
+            <option value="amostra">Amostra</option>
+            <option value="descarte">Descarte</option>
+            <option value="quebra">Quebra</option>
+            <option value="inventario_menos">Inventário (-)</option>
+          </select>
+        )}
         <select
           value={filtroCnpj}
           onChange={(e) => { setPage(1); setFiltroCnpj(e.target.value as '' | 'acxe' | 'q2p' | 'ambos'); }}
           className="px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
         >
           <option value="">Todos CNPJs</option>
-          <option value="acxe">So ACXE</option>
-          <option value="q2p">So Q2P</option>
+          <option value="acxe">Só ACXE</option>
+          <option value="q2p">Só Q2P</option>
           <option value="ambos">Ambos (dual)</option>
         </select>
+        {role !== 'operador' && (
+          <label className="flex items-center gap-1.5 px-3 py-2 border border-slate-300 dark:border-slate-600 rounded text-sm cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800">
+            <input
+              type="checkbox"
+              checked={apenasMinhas}
+              onChange={(e) => { setPage(1); setApenasMinhas(e.target.checked); }}
+              className="rounded"
+            />
+            Apenas minhas
+          </label>
+        )}
       </div>
 
       {error && (
@@ -134,67 +183,99 @@ export function MovimentacoesPage() {
 
       {data && data.items.length === 0 && !isLoading && (
         <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
-          Nenhuma movimentacao para os filtros aplicados.
+          Nenhuma movimentação para os filtros aplicados.
         </div>
       )}
 
       {data && data.items.length > 0 && (
         <>
-          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden mb-3">
+          <div
+            className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-y-auto mb-3"
+            style={{ maxHeight: 'calc(100vh - 320px)' }}
+          >
             <table className="w-full text-xs">
-              <thead className="bg-slate-50 dark:bg-slate-900/40 text-atlas-muted">
+              <thead className="bg-slate-100 dark:bg-slate-900 text-atlas-muted sticky top-0 z-10 border-b-2 border-slate-300 dark:border-slate-600">
                 <tr>
                   <th className="text-left px-3 py-2">Data</th>
+                  <th className="text-left px-3 py-2">Produto</th>
+                  <th className="text-right px-3 py-2">Qtd (kg)</th>
                   <th className="text-left px-3 py-2">NF</th>
-                  <th className="text-left px-3 py-2">Tipo</th>
-                  <th className="text-right px-3 py-2">Qtd (t)</th>
-                  <th className="text-left px-3 py-2">Lote</th>
-                  <th className="text-left px-3 py-2">ACXE</th>
-                  <th className="text-left px-3 py-2">Q2P</th>
-                  <th className="text-right px-3 py-2">Acao</th>
+                  <th className="text-left px-3 py-2">Empresa(s) / Galpão</th>
+                  <th className="text-left px-3 py-2">Lançado por</th>
+                  <th className="text-left px-3 py-2">Aprovado por</th>
+                  <th className="text-left px-3 py-2">Status OMIE</th>
                 </tr>
               </thead>
               <tbody>
                 {data.items.map((m) => (
                   <tr key={m.id} className="border-t border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-900/30">
                     <td className="px-3 py-2 text-atlas-muted">{new Date(m.createdAt).toLocaleString('pt-BR')}</td>
-                    <td className="px-3 py-2 font-mono text-[11px]">{m.notaFiscal}</td>
-                    <td className="px-3 py-2">
-                      <span className={`text-[10px] px-2 py-0.5 rounded border ${TIPO_COLOR[m.tipoMovimento] ?? 'bg-slate-50 text-slate-700 border-slate-200'}`}>
-                        {m.tipoMovimento}{m.subtipo ? ` · ${m.subtipo}` : ''}
-                      </span>
+                    <td className="px-3 py-2 text-[11px]">
+                      {m.produtoDescricao ? (
+                        <div>
+                          <div className="text-atlas-ink font-medium">{m.produtoDescricao}</div>
+                          <div>
+                            <span
+                              className={`text-[10px] px-2 py-0.5 rounded border ${TIPO_COLOR[m.tipoMovimento] ?? 'bg-slate-50 text-slate-700 border-slate-200'}`}
+                            >
+                              {m.tipoMovimento}{m.subtipo ? ` · ${m.subtipo}` : ''}
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <span
+                          className={`text-[10px] px-2 py-0.5 rounded border ${TIPO_COLOR[m.tipoMovimento] ?? 'bg-slate-50 text-slate-700 border-slate-200'}`}
+                        >
+                          {m.tipoMovimento}{m.subtipo ? ` · ${m.subtipo}` : ''}
+                        </span>
+                      )}
                     </td>
-                    <td className={`px-3 py-2 text-right font-serif ${m.quantidadeT >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                      {m.quantidadeT > 0 ? '+' : ''}{m.quantidadeT.toFixed(3)}
+                    <td className={`px-3 py-2 text-right font-serif ${m.quantidadeKg >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                      {m.quantidadeKg > 0 ? '+' : ''}{m.quantidadeKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg
                     </td>
-                    <td className="px-3 py-2 font-mono text-[11px] text-atlas-muted">{m.loteCodigo ?? '—'}</td>
-                    <td className="px-3 py-2">
-                      {m.ladoAcxe.status ? (
-                        <div className="text-[11px]">
-                          <div className={m.ladoAcxe.status === 'Sucesso' ? 'text-green-700' : 'text-red-700'}>{m.ladoAcxe.status}</div>
-                          <div className="text-atlas-muted">{m.ladoAcxe.usuario ?? '—'}</div>
+                    <td className="px-3 py-2 text-[10px] font-mono text-atlas-muted">{m.notaFiscal}</td>
+                    <td className="px-3 py-2 text-[11px] text-atlas-muted">
+                      {m.galpao ? (
+                        <div>
+                          <div className="text-[10px] font-semibold text-atlas-ink">{resolverEmpresas(m)}</div>
+                          <div>{labelGalpao(m.galpao)}</div>
+                        </div>
+                      ) : m.loteCodigo ? (
+                        <div>
+                          <div className="text-[10px] font-semibold text-atlas-ink">{resolverEmpresas(m)}</div>
+                          <div className="font-mono text-[10px]">{m.loteCodigo}</div>
+                        </div>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-[11px]">{m.criadoPor.nome ?? '—'}</td>
+                    <td className="px-3 py-2 text-[11px]">
+                      {m.aprovadoPor.nome ? (
+                        <div>
+                          <div>{m.aprovadoPor.nome}</div>
+                          {m.aprovadoPor.em && (
+                            <div className="text-[10px] text-atlas-muted">
+                              {new Date(m.aprovadoPor.em).toLocaleString('pt-BR')}
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <span className="text-atlas-muted">—</span>
                       )}
                     </td>
                     <td className="px-3 py-2">
-                      {m.ladoQ2p.status ? (
-                        <div className="text-[11px]">
-                          <div className={m.ladoQ2p.status === 'Sucesso' ? 'text-green-700' : 'text-red-700'}>{m.ladoQ2p.status}</div>
-                          <div className="text-atlas-muted">{m.ladoQ2p.usuario ?? '—'}</div>
-                        </div>
+                      {m.statusOmie === 'concluida' ? (
+                        <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-700 rounded">Concluída</span>
+                      ) : m.statusOmie === 'pendente_q2p' ? (
+                        <span className="text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded">Pendente</span>
+                      ) : m.statusOmie === 'pendente_acxe_faltando' ? (
+                        <span className="text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded">Pend. ACXE</span>
+                      ) : m.statusOmie === 'falha' ? (
+                        <span className="text-[10px] px-1.5 py-0.5 bg-red-50 text-red-700 rounded">Falha</span>
                       ) : (
                         <span className="text-atlas-muted">—</span>
                       )}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <button
-                        onClick={() => setApagando(m)}
-                        className="px-2 py-1 text-[11px] border border-red-300 text-red-700 rounded hover:bg-red-50"
-                      >
-                        Soft delete
-                      </button>
                     </td>
                   </tr>
                 ))}
@@ -204,7 +285,7 @@ export function MovimentacoesPage() {
 
           <div className="flex items-center justify-between text-sm">
             <div className="text-atlas-muted">
-              {data.total} movimentacoes · Pagina {page} de {totalPages}
+              {data.total} movimentações · Página {page} de {totalPages}
             </div>
             <div className="flex gap-2">
               <button
@@ -219,47 +300,11 @@ export function MovimentacoesPage() {
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 className="px-3 py-1 border border-slate-300 rounded disabled:opacity-50"
               >
-                Proxima →
+                Próxima →
               </button>
             </div>
           </div>
         </>
-      )}
-
-      {apagando && (
-        <Modal open title={`Soft delete — NF ${apagando.notaFiscal}`} onClose={() => setApagando(null)}>
-          <div className="space-y-3">
-            <p className="text-sm text-atlas-muted">
-              Esta acao <strong>nao apaga o registro</strong> — apenas marca como inativo.
-              Todo o historico continua no audit log e pode ser recuperado com intervencao do admin.
-            </p>
-            <div>
-              <label className="block text-xs font-semibold text-atlas-muted mb-1">Motivo (opcional)</label>
-              <textarea
-                value={motivo}
-                onChange={(e) => setMotivo(e.target.value)}
-                rows={2}
-                placeholder="Ex: lancamento duplicado"
-                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
-              />
-            </div>
-            {deleteMut.isError && (
-              <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-800">
-                {(deleteMut.error as Error).message}
-              </div>
-            )}
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => setApagando(null)} className="px-4 py-2 border border-slate-300 rounded text-sm">Cancelar</button>
-              <button
-                onClick={() => deleteMut.mutate({ id: apagando.id, motivo })}
-                disabled={deleteMut.isPending}
-                className="px-5 py-2 bg-red-700 text-white rounded text-sm font-medium disabled:opacity-50"
-              >
-                Confirmar soft delete
-              </button>
-            </div>
-          </div>
-        </Modal>
       )}
     </div>
   );

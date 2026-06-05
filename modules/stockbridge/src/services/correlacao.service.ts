@@ -45,8 +45,8 @@ export async function getCorrelacao(
       a.descricao,
       c.codigo_local_estoque_acxe,
       c.codigo_local_estoque_q2p
-    FROM public.tb_produtos_ACXE a
-    INNER JOIN public.tb_produtos_Q2P q ON a.descricao = q.descricao
+    FROM public."tbl_produtos_ACXE" a
+    INNER JOIN public."tbl_produtos_Q2P" q ON a.descricao = q.descricao
     INNER JOIN stockbridge.localidade_correlacao c
       ON c.codigo_local_estoque_acxe = $2
     WHERE a.codigo_produto = $1

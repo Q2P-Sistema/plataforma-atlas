@@ -29,7 +29,7 @@ export function LoginPage() {
 
       navigate(from, { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro de conexao com o servidor');
+      setError(err instanceof Error ? err.message : 'Erro de conexão com o servidor');
     } finally {
       setLoading(false);
     }

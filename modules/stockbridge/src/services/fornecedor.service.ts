@@ -53,13 +53,13 @@ export async function listarFornecedores(): Promise<Array<{
   }
 
   const res = await pool.query(`
-    SELECT cnpj_cpf AS cnpj, razao_social AS nome, endereco_pais AS pais
-    FROM public.tbl_cadastroFornecedoresClientes_ACXE
+    SELECT cnpj_cpf AS cnpj, razao_social AS nome, codigo_pais AS pais
+    FROM public."tbl_cadastroFornecedoresClientes_ACXE"
     WHERE inativo IS NULL OR inativo <> 'S'
     ORDER BY razao_social
     LIMIT 500
   `).catch((err) => {
-    logger.warn({ err: err.message }, 'Query de fornecedores ACXE falhou (tabela ausente em dev?)');
+    logger.warn({ err: err.message }, 'Query de fornecedores ACXE falhou');
     return { rows: [] };
   });
 

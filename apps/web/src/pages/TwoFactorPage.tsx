@@ -74,7 +74,7 @@ export function TwoFactorPage() {
       const body = (await res.json()) as any;
 
       if (!res.ok) {
-        setError(body.error?.message ?? 'Codigo invalido');
+        setError(body.error?.message ?? 'Código inválido');
         setDigits(Array(CODE_LENGTH).fill(''));
         inputRefs.current[0]?.focus();
         return;
@@ -83,7 +83,7 @@ export function TwoFactorPage() {
       setUser(body.data.user, body.data.csrfToken);
       navigate('/', { replace: true });
     } catch {
-      setError('Erro de conexao com o servidor');
+      setError('Erro de conexão com o servidor');
     } finally {
       setLoading(false);
     }
@@ -98,10 +98,10 @@ export function TwoFactorPage() {
       <div className="w-full max-w-sm bg-atlas-card rounded-xl shadow-lg p-8 border border-atlas-border">
         <div className="text-center mb-8">
           <h1 className="font-heading text-2xl font-bold text-atlas-text">
-            Verificacao 2FA
+            Verificação 2FA
           </h1>
           <p className="text-atlas-muted text-sm mt-2">
-            Digite o codigo de 6 digitos do seu aplicativo autenticador.
+            Digite o código de 6 dígitos do seu aplicativo autenticador.
           </p>
         </div>
 
@@ -119,7 +119,7 @@ export function TwoFactorPage() {
                 onKeyDown={(e) => handleKeyDown(i, e)}
                 className="w-11 h-13 text-center text-xl font-mono rounded-lg border border-atlas-border bg-atlas-bg text-atlas-text focus:outline-none focus:ring-2 focus:ring-acxe"
                 autoFocus={i === 0}
-                aria-label={`Digito ${i + 1}`}
+                aria-label={`Dígito ${i + 1}`}
               />
             ))}
           </div>

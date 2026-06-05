@@ -1,34 +1,53 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '@atlas/ui';
 import { useAuthStore } from '../../../stores/auth.store.js';
 
 interface Pendencia {
   id: string;
-  loteId: string;
-  loteCodigo: string;
+  /** Pode ser null para saidas manuais sem lote (migration 0026). */
+  loteId: string | null;
+  loteCodigo: string | null;
   tipoAprovacao: string;
   precisaNivel: 'gestor' | 'diretor';
-  quantidadePrevistaT: number | null;
-  quantidadeRecebidaT: number | null;
-  deltaT: number | null;
+  quantidadePrevistaKg: number | null;
+  quantidadeRecebidaKg: number | null;
+  deltaKg: number | null;
   tipoDivergencia: string | null;
   observacoes: string | null;
   lancadoPor: { id: string; nome: string };
   lancadoEm: string;
   produto: { codigoAcxe: number; fornecedor: string };
+  /** Saidas manuais sem lote: galpao + empresa do material. */
+  galpao: string | null;
+  empresa: 'acxe' | 'q2p' | null;
 }
 
 const TIPO_LABEL: Record<string, string> = {
-  recebimento_divergencia: 'Recebimento com divergencia',
+  recebimento_divergencia: 'Recebimento com divergência',
   entrada_manual: 'Entrada manual',
-  saida_transf_intra: 'Transferencia intra-CNPJ',
+  saida_transf_intra: 'Transferência intra-CNPJ',
   saida_comodato: 'Comodato',
   saida_amostra: 'Amostra/Brinde',
   saida_descarte: 'Descarte/Perda',
-  saida_quebra: 'Quebra tecnica',
-  ajuste_inventario: 'Ajuste de inventario',
+  saida_quebra: 'Quebra técnica',
+  ajuste_inventario: 'Ajuste de inventário',
+  retorno_comodato: 'Retorno de Comodato',
 };
+
+const GALPAO_LABELS: Record<string, string> = {
+  '11.1': 'Santo André — Importado (11.1)',
+  '11.2': 'Santo André — Nacional (11.2) · Q2P',
+  '12.1': 'Santo André — Importado (12.1)',
+  '12.2': 'Santo André — Nacional (12.2) · Q2P',
+  '21.1': 'Extrema (21.1)',
+  '21.2': 'Extrema — Nacional (21.2) · ACXE',
+  '31.1': 'Armazém Externo / ATN (31.1)',
+  '90': 'TROCA (virtual)',
+  '90.0.1': 'TROCA (virtual)',
+  '90.0.2': 'TRÂNSITO (virtual)',
+};
+const labelGalpao = (g: string) => GALPAO_LABELS[g] ?? g;
 
 function useApiFetch() {
   const csrfToken = useAuthStore((s) => s.csrfToken);
@@ -36,8 +55,21 @@ function useApiFetch() {
     const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(opts.headers as Record<string, string>) };
     if (csrfToken) headers['x-csrf-token'] = csrfToken;
     const res = await fetch(url, { credentials: 'include', ...opts, headers });
-    const body = (await res.json()) as { data: unknown; error: { message?: string } | null };
-    if (!res.ok) throw new Error(body.error?.message ?? 'Erro');
+    // Body pode estar vazio (server reiniciou no meio do request, proxy timeout,
+    // 204, etc). Ler como texto e parsear defensivamente para nao mascarar o
+    // status real com "Unexpected end of JSON input".
+    const text = await res.text();
+    let body: { data: unknown; error: { message?: string } | null } = { data: null, error: null };
+    if (text) {
+      try {
+        body = JSON.parse(text);
+      } catch {
+        throw new Error(`HTTP ${res.status}: resposta nao-JSON (${text.slice(0, 120)})`);
+      }
+    }
+    if (!res.ok) {
+      throw new Error(body.error?.message ?? `HTTP ${res.status} sem body — servidor pode ter reiniciado, tente novamente`);
+    }
     return body;
   };
 }
@@ -47,6 +79,13 @@ export function AprovacoesPage() {
   const queryClient = useQueryClient();
   const [rejeitando, setRejeitando] = useState<Pendencia | null>(null);
   const [motivoRejeicao, setMotivoRejeicao] = useState('');
+  const [feedback, setFeedback] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null);
+
+  useEffect(() => {
+    if (!feedback) return;
+    const t = setTimeout(() => setFeedback(null), 5000);
+    return () => clearTimeout(t);
+  }, [feedback]);
 
   const { data: pendencias = [], isLoading, error } = useQuery<Pendencia[]>({
     queryKey: ['stockbridge', 'aprovacoes'],
@@ -58,30 +97,65 @@ export function AprovacoesPage() {
   });
 
   const aprovarMut = useMutation({
-    mutationFn: async (id: string) =>
-      apiFetch(`/api/v1/stockbridge/aprovacoes/${id}/aprovar`, { method: 'POST' }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['stockbridge'] }),
+    mutationFn: async (p: Pendencia) =>
+      apiFetch(`/api/v1/stockbridge/aprovacoes/${p.id}/aprovar`, { method: 'POST' }).then((body) => ({
+        body,
+        pendencia: p,
+      })),
+    onSuccess: ({ pendencia }) => {
+      setFeedback({
+        tipo: 'sucesso',
+        texto: `✓ ${TIPO_LABEL[pendencia.tipoAprovacao] ?? pendencia.tipoAprovacao} aprovada — ${pendencia.produto.fornecedor}`,
+      });
+      queryClient.invalidateQueries({ queryKey: ['stockbridge'] });
+    },
+    onError: (err) => setFeedback({ tipo: 'erro', texto: `Erro ao aprovar: ${(err as Error).message}` }),
   });
 
   const rejeitarMut = useMutation({
-    mutationFn: async (args: { id: string; motivo: string }) =>
-      apiFetch(`/api/v1/stockbridge/aprovacoes/${args.id}/rejeitar`, {
+    mutationFn: async (args: { p: Pendencia; motivo: string }) =>
+      apiFetch(`/api/v1/stockbridge/aprovacoes/${args.p.id}/rejeitar`, {
         method: 'POST',
         body: JSON.stringify({ motivo: args.motivo }),
-      }),
-    onSuccess: () => {
+      }).then((body) => ({ body, pendencia: args.p })),
+    onSuccess: ({ pendencia }) => {
       setRejeitando(null);
       setMotivoRejeicao('');
+      setFeedback({
+        tipo: 'sucesso',
+        texto: `✓ ${TIPO_LABEL[pendencia.tipoAprovacao] ?? pendencia.tipoAprovacao} rejeitada — ${pendencia.produto.fornecedor}. Operador foi notificado por email.`,
+      });
       queryClient.invalidateQueries({ queryKey: ['stockbridge'] });
     },
+    onError: (err) => setFeedback({ tipo: 'erro', texto: `Erro ao rejeitar: ${(err as Error).message}` }),
   });
 
   return (
     <div className="p-6 max-w-6xl">
+      {feedback && (
+        <div
+          className={`fixed top-4 right-4 z-50 max-w-md p-4 rounded-lg shadow-lg border ${
+            feedback.tipo === 'sucesso'
+              ? 'bg-emerald-50 border-emerald-300 text-emerald-900 dark:bg-emerald-900/40 dark:border-emerald-700 dark:text-emerald-100'
+              : 'bg-red-50 border-red-300 text-red-900 dark:bg-red-900/40 dark:border-red-700 dark:text-red-100'
+          }`}
+        >
+          <div className="flex items-start gap-2">
+            <div className="flex-1 text-sm font-medium">{feedback.texto}</div>
+            <button
+              onClick={() => setFeedback(null)}
+              className="text-lg leading-none opacity-60 hover:opacity-100"
+              aria-label="Fechar"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
       <div className="mb-5">
-        <h1 className="text-2xl font-serif text-atlas-ink mb-1">Aprovacoes Pendentes</h1>
+        <h1 className="text-2xl font-serif text-atlas-ink mb-1">Aprovações Pendentes</h1>
         <p className="text-sm text-atlas-muted">
-          Divergencias de recebimento, entradas manuais e saidas que exigem sua autorizacao.
+          Divergências de recebimento, entradas manuais e saídas que exigem sua autorização.
         </p>
       </div>
 
@@ -95,13 +169,13 @@ export function AprovacoesPage() {
 
       {!isLoading && pendencias.length === 0 && (
         <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
-          ✓ Nenhuma pendencia de aprovacao
+          ✓ Nenhuma pendência de aprovação
         </div>
       )}
 
       <div className="flex flex-col gap-3">
         {pendencias.map((p) => {
-          const hasDivergencia = p.deltaT != null && Math.abs(p.deltaT) > 0.01;
+          const hasDivergencia = p.deltaKg != null && Math.abs(p.deltaKg) > 1;
           return (
             <div
               key={p.id}
@@ -125,19 +199,27 @@ export function AprovacoesPage() {
                     )}
                   </div>
                   <div className="font-serif text-base text-atlas-ink">
-                    Lote {p.loteCodigo} — {p.produto.fornecedor}
+                    {p.loteCodigo ? `Lote ${p.loteCodigo} — ` : ''}{p.produto.fornecedor}
                   </div>
+                  {!p.loteCodigo && (p.galpao || p.empresa) && (
+                    <div className="text-xs text-atlas-muted mt-0.5">
+                      SKU <span className="font-mono">{p.produto.codigoAcxe}</span>
+                      {p.galpao && <> · {labelGalpao(p.galpao)}</>}
+                      {p.empresa && <> · {p.empresa.toUpperCase()}</>}
+                      {p.quantidadeRecebidaKg != null && <> · {Math.abs(p.quantidadeRecebidaKg).toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg</>}
+                    </div>
+                  )}
                   <div className="text-xs text-atlas-muted mt-0.5">
-                    Lancado por <strong>{p.lancadoPor.nome}</strong> em {new Date(p.lancadoEm).toLocaleString('pt-BR')}
+                    Lançado por <strong>{p.lancadoPor.nome}</strong> em {new Date(p.lancadoEm).toLocaleString('pt-BR')}
                   </div>
                 </div>
               </div>
 
               {hasDivergencia && (
                 <div className="grid grid-cols-3 gap-2 mb-3">
-                  <Cell label="Previsto NF" value={`${p.quantidadePrevistaT?.toFixed(3)} t`} />
-                  <Cell label="Recebido" value={`${p.quantidadeRecebidaT?.toFixed(3)} t`} accent="text-amber-700" />
-                  <Cell label="Delta" value={`${p.deltaT! > 0 ? '+' : ''}${p.deltaT?.toFixed(3)} t`} accent={p.deltaT! < 0 ? 'text-red-700' : 'text-amber-700'} />
+                  <Cell label="Previsto NF" value={`${p.quantidadePrevistaKg?.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg`} />
+                  <Cell label="Recebido" value={`${p.quantidadeRecebidaKg?.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg`} accent="text-amber-700" />
+                  <Cell label="Delta" value={`${p.deltaKg! > 0 ? '+' : ''}${p.deltaKg?.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg`} accent={p.deltaKg! < 0 ? 'text-red-700' : 'text-amber-700'} />
                 </div>
               )}
 
@@ -156,7 +238,7 @@ export function AprovacoesPage() {
                   Rejeitar
                 </button>
                 <button
-                  onClick={() => aprovarMut.mutate(p.id)}
+                  onClick={() => aprovarMut.mutate(p)}
                   disabled={aprovarMut.isPending || rejeitarMut.isPending}
                   className="px-4 py-1.5 bg-green-700 text-white rounded text-sm font-medium hover:opacity-90"
                 >
@@ -168,27 +250,21 @@ export function AprovacoesPage() {
         })}
       </div>
 
-      {aprovarMut.isError && (
-        <div className="fixed bottom-4 right-4 p-3 bg-red-50 border border-red-300 rounded shadow-lg text-sm text-red-800">
-          Erro ao aprovar: {(aprovarMut.error as Error).message}
-        </div>
-      )}
-
       {rejeitando && (
-        <Modal open title="Rejeitar pendencia" onClose={() => setRejeitando(null)}>
+        <Modal open title="Rejeitar pendência" onClose={() => setRejeitando(null)}>
           <div className="space-y-3">
             <p className="text-sm text-atlas-muted">
               Lote <strong>{rejeitando.loteCodigo}</strong> — {rejeitando.produto.fornecedor}
             </p>
             <div>
-              <label className="block text-xs font-semibold text-atlas-muted mb-1">Motivo da rejeicao *</label>
+              <label className="block text-xs font-semibold text-atlas-muted mb-1">Motivo da rejeição *</label>
               <textarea
                 value={motivoRejeicao}
                 onChange={(e) => setMotivoRejeicao(e.target.value)}
                 rows={3}
                 autoFocus
-                placeholder="Ex: Quantidade incorreta, solicitar reconferencia"
-                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+                placeholder="Ex: Quantidade incorreta, solicitar reconferência"
+                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded text-sm"
               />
             </div>
             {rejeitarMut.isError && (
@@ -197,13 +273,18 @@ export function AprovacoesPage() {
               </div>
             )}
             <div className="flex gap-2 justify-end">
-              <button onClick={() => setRejeitando(null)} className="px-4 py-2 border border-slate-300 rounded text-sm">Cancelar</button>
               <button
-                onClick={() => rejeitarMut.mutate({ id: rejeitando.id, motivo: motivoRejeicao })}
+                onClick={() => setRejeitando(null)}
+                className="px-4 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 rounded text-sm"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => rejeitarMut.mutate({ p: rejeitando, motivo: motivoRejeicao })}
                 disabled={!motivoRejeicao.trim() || rejeitarMut.isPending}
                 className={`px-5 py-2 rounded text-sm font-medium ${motivoRejeicao.trim() ? 'bg-red-700 text-white hover:opacity-90' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
               >
-                {rejeitarMut.isPending ? 'Enviando...' : 'Confirmar rejeicao'}
+                {rejeitarMut.isPending ? 'Enviando...' : 'Confirmar rejeição'}
               </button>
             </div>
           </div>

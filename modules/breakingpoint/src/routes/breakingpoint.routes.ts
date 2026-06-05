@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
-import { requireAuth, requireRole } from '@atlas/auth';
+import { requireAuth, requireRole, requireModule } from '@atlas/auth';
 import { createLogger } from '@atlas/core';
 import { getDadosMotor, listContas } from '../services/dados.service.js';
 import { calcular } from '../services/motor.service.js';
@@ -36,7 +36,12 @@ function parseEmpresa(req: Request): Empresa {
   return EmpresaSchema.parse(req.query.empresa ?? 'acxe');
 }
 
-router.use('/api/v1/bp', requireAuth, requireRole('gestor', 'diretor'));
+router.use(
+  '/api/v1/bp',
+  requireAuth,
+  requireModule('breakingpoint'),
+  requireRole('gestor', 'diretor'),
+);
 
 // ── Projeção (US1) ─────────────────────────────────────────
 router.get('/api/v1/bp/projecao', async (req: Request, res: Response) => {

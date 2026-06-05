@@ -4,6 +4,7 @@ import { createLogger } from '@atlas/core';
 import { requireOperador, requireGestor } from '../middleware/role.js';
 import {
   listarLocalidades,
+  listarLocalidadesEspelhadas,
   criarLocalidade,
   atualizarLocalidade,
   desativarLocalidade,
@@ -31,8 +32,9 @@ const UpdateSchema = CreateSchema.partial();
 // GET /localidades — operador pode listar (precisa pra saber UUID destino no recebimento)
 router.get('/api/v1/stockbridge/localidades', requireOperador, async (req: Request, res: Response) => {
   const apenasAtivas = req.query.ativo === 'true';
+  const apenasEspelhadas = req.query.espelhadas === 'true';
   try {
-    const data = await listarLocalidades(apenasAtivas);
+    const data = apenasEspelhadas ? await listarLocalidadesEspelhadas(apenasAtivas) : await listarLocalidades(apenasAtivas);
     res.json({ data, error: null });
   } catch (err) {
     logger.error({ err }, 'Erro ao listar localidades');

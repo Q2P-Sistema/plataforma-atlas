@@ -11,7 +11,7 @@
 - Todos os endpoints retornam `{ "data": ... }` em sucesso e `{ "error": { "code", "message" } }` em falha.
 - Paginacao: `?page=1&pageSize=50`, resposta inclui `meta: { total, page, pageSize }`.
 - Timestamps em ISO 8601 UTC.
-- Quantidades sempre em toneladas (numeric).
+- Quantidades sempre em Kg (numeric). Custo unitario segue em USD/tonelada (`custo_usd_ton`).
 - Role middleware aplicado por endpoint: `@operador`, `@gestor`, `@diretor`, `@any`.
 
 ---
@@ -38,10 +38,10 @@ Lista NFs pendentes de conciliacao (nao processadas) nos dois CNPJs.
       "produto": { "codigo": 12345, "nome": "PP RAFIA", "ncm": "3902.10.10" },
       "qtd_original": 980,
       "unidade": "saco",
-      "qtd_t": 24.5,
+      "qtd_kg": 24.5,
       "localidade_sugerida": "11.1",
       "dt_emissao": "2026-03-10",
-      "custo_usd": 1175
+      "custo_usd_ton": 1175
     }
   ]
 }
@@ -62,7 +62,7 @@ Confirma recebimento fisico de uma NF.
 ```json
 {
   "nf": "IMP-2026-0301",
-  "quantidade_recebida_t": 24.5,
+  "quantidade_recebida_kg": 24.5,
   "unidade_input": "saco",
   "quantidade_input": 980,
   "localidade_id": "uuid-localidade",
@@ -93,7 +93,7 @@ Confirma recebimento fisico de uma NF.
     "codigo_lote": "L743",
     "status": "aguardando_aprovacao",
     "aprovacao_id": "uuid",
-    "delta_t": -0.5,
+    "delta_kg": -0.5,
     "tipo_divergencia": "faltando"
   }
 }
@@ -102,7 +102,7 @@ Confirma recebimento fisico de uma NF.
 **Regras**:
 - Valida idempotencia por `nf` (409 se ja processada).
 - Valida correlacao de produto ACXE↔Q2P via `vw_sb_correlacao_produto` (409 se nao existe + envia email admin).
-- Se `quantidade_recebida_t` diverge da NF: cria lote `aguardando_aprovacao`, dispara aprovacao.
+- Se `quantidade_recebida_kg` diverge da NF: cria lote `aguardando_aprovacao`, dispara aprovacao.
 - Se confere: chama OMIE (ACXE primeiro, depois Q2P), cria lote `provisorio`, grava movimentacao com ambos os lados.
 - Transacional: se OMIE Q2P falhar apos ACXE ter sucesso, rollback no BD + log de alerta (mas o ajuste ACXE na OMIE ja aconteceu — cenario que operador precisa ser notificado).
 
@@ -123,11 +123,11 @@ Retorna SKUs com saldos, cobertura e criticidade.
 {
   "data": {
     "resumo": {
-      "total_fisico_t": 285.4,
-      "total_fiscal_t": 287.2,
-      "transito_intl_t": 60,
-      "transito_interno_t": 30,
-      "provisorio_t": 12,
+      "total_fisico_kg": 285.4,
+      "total_fiscal_kg": 287.2,
+      "transito_intl_kg": 60,
+      "transito_interno_kg": 30,
+      "provisorio_kg": 12,
       "divergencias_count": 3,
       "aprovacoes_pendentes": 2,
       "skus_criticos": 1,
@@ -139,17 +139,17 @@ Retorna SKUs com saldos, cobertura e criticidade.
         "nome": "PP RAFIA",
         "familia": "PP",
         "ncm": "3902.10.10",
-        "fisica_t": 42,
-        "fiscal_t": 42,
-        "transito_t": 15,
-        "provisorio_t": 0,
-        "consumo_medio_diario_t": 1.2,
+        "fisica_kg": 42,
+        "fiscal_kg": 42,
+        "transito_kg": 15,
+        "provisorio_kg": 0,
+        "consumo_medio_diario_kg": 1.2,
         "cobertura_dias": 35,
         "lead_time_dias": 60,
         "criticidade": "alerta",
         "divergencias": 0,
         "aprovacoes_pendentes": 0,
-        "lotes": [{ "id": "uuid", "codigo": "L020", "quantidade_fisica_t": 35, "status": "reconciliado", "localidade": "Q2P - 21.1 EXTREMA" }]
+        "lotes": [{ "id": "uuid", "codigo": "L020", "quantidade_fisica_kg": 35, "status": "reconciliado", "localidade": "Q2P - 21.1 EXTREMA" }]
       }
     ]
   }
@@ -173,7 +173,7 @@ Edicao manual (ajuste de qtd, localidade) — gera movimentacao tipo `ajuste`.
 
 **Request**:
 ```json
-{ "quantidade_fisica_t": 41.5, "observacoes": "Ajuste apos contagem" }
+{ "quantidade_fisica_kg": 41.5, "observacoes": "Ajuste apos contagem" }
 ```
 
 ---
@@ -191,9 +191,9 @@ Pendencias do nivel do usuario.
       "id": "uuid",
       "lote_id": "uuid",
       "tipo_aprovacao": "recebimento_divergencia",
-      "quantidade_prevista_t": 25.0,
-      "quantidade_recebida_t": 24.5,
-      "delta_t": -0.5,
+      "quantidade_prevista_kg": 25.0,
+      "quantidade_recebida_kg": 24.5,
+      "delta_kg": -0.5,
       "tipo_divergencia": "faltando",
       "observacoes": "2 big bags avariados",
       "lancado_por": { "id": "uuid", "nome": "Flavia Novak" },
@@ -212,7 +212,7 @@ Aprova a pendencia, atualiza lote, registra movimentacao.
 Rejeita. Lote vai para status `rejeitado`. Operador pode re-submeter depois.
 
 ### `POST /aprovacoes/:id/resubmeter` `@operador`
-**Request**: `{ "quantidade_recebida_t": 24.5, "observacoes": "..." }`
+**Request**: `{ "quantidade_recebida_kg": 24.5, "observacoes": "..." }`
 Re-submete apos rejeicao. Lote volta para `aguardando_aprovacao`.
 
 ---
@@ -226,9 +226,9 @@ Lotes em cada estagio de trânsito.
 ```json
 {
   "data": {
-    "transito_intl": [{ "lote_id": "uuid", "codigo": "T001", "produto": "PP RAFIA", "qtd_prev_t": 60, "dt_prev_chegada": "2026-04-22", "custo_usd": 1170 }],
+    "transito_intl": [{ "lote_id": "uuid", "codigo": "T001", "produto": "PP RAFIA", "qtd_prev_kg": 60, "dt_prev_chegada": "2026-04-22", "custo_usd_ton": 1170 }],
     "porto_dta": [{ "lote_id": "uuid", "codigo": "T003", "di": "DI-2026-...", "dta": "DTA-2026-0312", "porto": "Santos" }],
-    "transito_interno": [{ "lote_id": "uuid", "codigo": "T004", "nf": "NF-004321", "qtd_fiscal_t": 18 }],
+    "transito_interno": [{ "lote_id": "uuid", "codigo": "T004", "nf": "NF-004321", "qtd_fiscal_kg": 18 }],
     "reservado": []
   }
 }
@@ -257,7 +257,7 @@ Log paginado.
       "nota_fiscal": "IMP-2026-0301",
       "tipo_movimento": "entrada_nf",
       "subtipo": "importacao",
-      "quantidade_t": 24.5,
+      "quantidade_kg": 24.5,
       "lote_codigo": "L742",
       "lado_acxe": { "status": "Sucesso", "dt": "2026-04-16T18:57:11Z", "usuario": "Flavia Novak", "id_movest": "4809443706" },
       "lado_q2p": { "status": "Sucesso", "dt": "2026-04-16T18:57:12Z", "usuario": "Flavia Novak", "id_movest": "8455282361" },
@@ -322,7 +322,7 @@ Registra saida manual com aprovacao.
 {
   "subtipo": "comodato",
   "lote_id": "uuid",
-  "quantidade_t": 2.5,
+  "quantidade_kg": 2.5,
   "localidade_destino": "Cliente XYZ",
   "observacoes": "Empréstimo para teste",
   "referencia": "COM-2026-001"
@@ -393,7 +393,7 @@ Tabela completa por SKU (qtd, CMP, cobertura, divergencias).
 
 ### `GET /config/produtos` `@diretor`
 ### `PATCH /config/produtos/:codigo_acxe` `@diretor`
-**Request**: `{ "consumo_medio_diario_t": 1.2, "lead_time_dias": 55, "incluir_em_metricas": true }`
+**Request**: `{ "consumo_medio_diario_kg": 1.2, "lead_time_dias": 55, "incluir_em_metricas": true }`
 
 ---
 

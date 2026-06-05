@@ -2,10 +2,13 @@ export {
   atlasSchema,
   users,
   sessions,
+  userModules,
   type User,
   type NewUser,
   type Session,
   type NewSession,
+  type UserModule,
+  type NewUserModule,
 } from './schemas/atlas.js';
 
 export {
@@ -71,6 +74,7 @@ export {
   lote,
   movimentacao,
   aprovacao,
+  reservaSaldo,
   divergencia,
   fornecedorExclusao,
   configProduto,
@@ -84,6 +88,8 @@ export {
   type NewMovimentacao,
   type Aprovacao,
   type NewAprovacao,
+  type ReservaSaldo,
+  type NewReservaSaldo,
   type Divergencia,
   type NewDivergencia,
   type FornecedorExclusao,

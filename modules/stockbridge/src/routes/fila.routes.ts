@@ -20,11 +20,9 @@ router.get('/api/v1/stockbridge/fila', requireOperador, requireArmazemVinculado,
       res.status(400).json({ data: null, error: { code: 'INVALID_QUERY', message: parsed.error.issues.map((i) => i.message).join(', ') } });
       return;
     }
-    const armazemId = (req.user as unknown as { armazemId?: string | null })?.armazemId ?? null;
     const items = await getFilaOmie({
       nf: parsed.data.nf,
       cnpj: parsed.data.cnpj,
-      armazemId,
     });
     res.json({ data: items, error: null });
   } catch (err) {

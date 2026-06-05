@@ -83,15 +83,28 @@ export async function callOmie<TResponse = unknown>(
   try { body = JSON.parse(raw); } catch { body = raw; }
 
   if (!res.ok) {
-    logger.error({ cnpj, endpoint: endpoint.endpoint, method: endpoint.method, status: res.status, elapsed }, 'OMIE HTTP erro');
-    const omieError = typeof body === 'object' && body !== null ? (body as Record<string, unknown>).faultcode : null;
+    // Inclui body (truncado se gigante) para facilitar debug
+    const bodyPreview = typeof body === 'string'
+      ? body.slice(0, 1000)
+      : JSON.stringify(body).slice(0, 1000);
+    logger.error(
+      { cnpj, endpoint: endpoint.endpoint, method: endpoint.method, status: res.status, elapsed, body: bodyPreview },
+      'OMIE HTTP erro',
+    );
+    const omieFault = typeof body === 'object' && body !== null
+      ? (body as Record<string, unknown>)
+      : null;
+    const faultcode = omieFault?.faultcode;
+    const faultstring = omieFault?.faultstring;
     throw new OmieApiError(
       cnpj,
       endpoint.endpoint,
       endpoint.method,
       res.status,
-      typeof omieError === 'string' ? omieError : null,
-      `OMIE ${cnpj} retornou ${res.status}`,
+      typeof faultcode === 'string' ? faultcode : null,
+      typeof faultstring === 'string'
+        ? `OMIE ${cnpj} ${res.status}: ${faultstring}`
+        : `OMIE ${cnpj} retornou ${res.status} — ${bodyPreview.slice(0, 200)}`,
     );
   }
 

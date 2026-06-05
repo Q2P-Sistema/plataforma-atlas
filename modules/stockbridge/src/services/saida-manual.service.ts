@@ -1,15 +1,18 @@
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import Decimal from 'decimal.js';
 import { getDb, createLogger } from '@atlas/core';
-import { lote, movimentacao, aprovacao, divergencia } from '@atlas/db';
-import { converterParaToneladas } from './motor.service.js';
+import { movimentacao, aprovacao, divergencia, reservaSaldo } from '@atlas/db';
+import { converterParaKg } from './motor.service.js';
 import { enviarAlertaAprovacaoPendente } from './notificacao.service.js';
 import { NIVEL_APROVACAO_POR_SUBTIPO, type SubtipoMovimento, type UnidadeMedida } from '../types.js';
 
 const logger = createLogger('stockbridge:saida-manual');
 
-export class LoteInvalidoError extends Error {
-  constructor(msg: string) { super(msg); this.name = 'LoteInvalidoError'; }
+export class SaldoInsuficienteError extends Error {
+  constructor(public readonly disponivelKg: number, public readonly solicitadoKg: number) {
+    super(`Saldo insuficiente: disponivel ${disponivelKg} kg, solicitado ${solicitadoKg} kg`);
+    this.name = 'SaldoInsuficienteError';
+  }
 }
 
 export class SubtipoInvalidoError extends Error {
@@ -19,15 +22,13 @@ export class SubtipoInvalidoError extends Error {
   }
 }
 
-/**
- * Subtipos de saida manual suportados (T086):
- *   transf_intra_cnpj:  -origem +destino,  sem impacto fiscal      (gestor)
- *   comodato:           -fisico temporario, fiscal inalterado      (diretor)
- *   amostra:            -fisico definitivo, divergencia fiscal     (gestor)
- *   descarte:           -fisico definitivo, divergencia fiscal     (gestor)
- *   quebra:             -fisico definitivo, divergencia registrada (gestor)
- *   inventario_menos:   -saldo fisico, divergencia registrada      (gestor)
- */
+export class ComodatoDadosObrigatoriosError extends Error {
+  constructor(public readonly campo: string) {
+    super(`Campo "${campo}" obrigatorio para subtipo=comodato`);
+    this.name = 'ComodatoDadosObrigatoriosError';
+  }
+}
+
 export type SubtipoSaidaManual =
   | 'transf_intra_cnpj'
   | 'comodato'
@@ -57,30 +58,119 @@ const SUBTIPO_CRIA_DIVERGENCIA_FISCAL: ReadonlySet<SubtipoSaidaManual> = new Set
   'amostra', 'descarte', 'quebra', 'inventario_menos',
 ]);
 
+export type EmpresaSaida = 'acxe' | 'q2p';
+
+export interface SaldoDisponivel {
+  produtoCodigoAcxe: number;
+  galpao: string;
+  empresa: EmpresaSaida;
+  saldoOmieKg: number;
+  reservadoKg: number;
+  disponivelKg: number;
+}
+
+/**
+ * Filtro por empresa na vw_posicaoEstoqueUnificadaFamilia (mesmo padrao do Cockpit):
+ *   acxe  → codigo_estoque '%.1' + empresa='ACXE'
+ *   q2p   → codigo_estoque '%.1' OR '%.2' + empresa='Q2P'
+ */
+function filtroEmpresaOmie(empresa: EmpresaSaida): string {
+  return empresa === 'acxe'
+    ? `(o.codigo_estoque LIKE '%.1' AND o.empresa = 'ACXE')`
+    : `((o.codigo_estoque LIKE '%.1' OR o.codigo_estoque LIKE '%.2') AND o.empresa = 'Q2P')`;
+}
+
+/**
+ * Consulta saldo disponivel de um SKU em um galpao + empresa.
+ * Saldo OMIE (vw_posicaoEstoqueUnificadaFamilia) menos reservas ativas no Atlas.
+ *
+ * IMPORTANTE: a view tem codigo_produto text (ex 'PP-016'), nao bate com
+ * tbl_produtos_ACXE.codigo_produto bigint. Match cross-empresa e por descricao
+ * (mesmo padrao do consumo medio e do Cockpit).
+ */
+export async function consultarSaldoDisponivel(
+  produtoCodigoAcxe: number,
+  galpao: string,
+  empresa: EmpresaSaida,
+): Promise<SaldoDisponivel> {
+  const db = getDb();
+
+  // Migration 0030: galpao = codigo_estoque exato (11.1, 11.2, etc).
+  const result = await db.execute<{ saldo_omie_kg: string | null; reservado_kg: string | null }>(sql`
+    WITH descricao_sku AS (
+      SELECT descricao FROM public."tbl_produtos_ACXE"
+      WHERE codigo_produto = ${produtoCodigoAcxe}::bigint
+      LIMIT 1
+    ),
+    saldo_omie AS (
+      SELECT COALESCE(SUM(o.saldo), 0) AS saldo_kg
+      FROM public."vw_posicaoEstoqueUnificadaFamilia" o
+      INNER JOIN descricao_sku d ON d.descricao = o.descricao_produto
+      WHERE o.saldo > 0
+        AND o.codigo_estoque = ${galpao}
+        AND ${sql.raw(filtroEmpresaOmie(empresa))}
+    ),
+    reservas AS (
+      SELECT COALESCE(SUM(quantidade_kg), 0) AS reservado_kg
+      FROM stockbridge.reserva_saldo
+      WHERE produto_codigo_acxe = ${produtoCodigoAcxe}::bigint
+        AND galpao = ${galpao}
+        AND empresa = ${empresa}
+        AND status = 'ativa'
+    )
+    SELECT
+      (SELECT saldo_kg FROM saldo_omie)::text AS saldo_omie_kg,
+      (SELECT reservado_kg FROM reservas)::text AS reservado_kg
+  `);
+
+  const row = result.rows[0];
+  const saldoOmie = row?.saldo_omie_kg ? Number(row.saldo_omie_kg) : 0;
+  const reservado = row?.reservado_kg ? Number(row.reservado_kg) : 0;
+  const disponivel = Number(new Decimal(saldoOmie).minus(reservado).toFixed(3));
+
+  return {
+    produtoCodigoAcxe,
+    galpao,
+    empresa,
+    saldoOmieKg: saldoOmie,
+    reservadoKg: reservado,
+    disponivelKg: Math.max(0, disponivel),
+  };
+}
+
 export interface RegistrarSaidaManualInput {
   subtipo: SubtipoSaidaManual;
-  loteId: string;
+  produtoCodigoAcxe: number;
+  galpao: string;
+  empresa: EmpresaSaida;
   quantidadeOriginal: number;
   unidade: UnidadeMedida;
-  localidadeDestinoId?: string | null;
-  referencia?: string;
+  /** Galpao destino — obrigatorio quando subtipo=transf_intra_cnpj. */
+  galpaoDestino?: string | null;
   observacoes: string;
+  /** Comodato: data prevista de retorno. */
+  dtPrevistaRetorno?: string | null;
+  /** Comodato: cliente/destinatario (texto livre, vai pra observacoes). */
+  cliente?: string | null;
   userId: string;
 }
 
 export interface RegistrarSaidaManualResult {
   movimentacaoId: string;
   aprovacaoId: string;
+  reservaId: string;
   status: 'aguardando_aprovacao';
   precisaNivel: 'gestor' | 'diretor';
   divergenciaId?: string;
 }
 
 /**
- * Registra uma saida manual que requer aprovacao (gestor ou diretor).
- * Nao debita saldo imediatamente — so apos aprovacao (fluxo de US3).
- * Cria movimentacao com tipo=saida_manual + subtipo + aprovacao pendente.
- * Para subtipos com divergencia fiscal, cria stockbridge.divergencia tipo=fiscal_pendente.
+ * Registra uma saida manual sem lote — agnostica de FIFO.
+ * Persiste movimentacao + reserva_saldo + aprovacao pendente. Saldo so e
+ * efetivamente debitado no OMIE quando o aprovador (gestor/diretor) aprova
+ * via aprovacao.service.aprovar().
+ *
+ * Comodato: dual ACXE+Q2P pra galpoes espelhados (TROCA criada nas duas — migration 0027).
  */
 export async function registrarSaidaManual(
   input: RegistrarSaidaManualInput,
@@ -91,52 +181,109 @@ export async function registrarSaidaManual(
   if (!input.observacoes || input.observacoes.trim().length === 0) {
     throw new Error('Motivo/observacao obrigatorio para saida manual');
   }
-
-  const db = getDb();
-  const [loteRow] = await db.select().from(lote).where(and(eq(lote.id, input.loteId), eq(lote.ativo, true))).limit(1);
-  if (!loteRow) {
-    throw new LoteInvalidoError(`Lote ${input.loteId} nao encontrado ou inativo`);
+  if (input.subtipo === 'comodato') {
+    // Comodato agora suporta ACXE e Q2P (TROCA criada em ambos no OMIE — migration 0027).
+    if (!input.dtPrevistaRetorno) throw new ComodatoDadosObrigatoriosError('dtPrevistaRetorno');
+    if (!input.cliente || input.cliente.trim().length === 0) {
+      throw new ComodatoDadosObrigatoriosError('cliente');
+    }
   }
-  if (loteRow.status !== 'reconciliado' && loteRow.status !== 'provisorio') {
-    throw new LoteInvalidoError(
-      `Lote esta em status "${loteRow.status}" — apenas lotes reconciliados/provisorios podem sofrer saida manual`,
-    );
+  if (input.subtipo === 'transf_intra_cnpj' && (!input.galpaoDestino || input.galpaoDestino === input.galpao)) {
+    throw new Error('Galpao destino obrigatorio e diferente da origem para transf_intra_cnpj');
   }
 
-  const quantidadeT = Number(new Decimal(converterParaToneladas(input.quantidadeOriginal, input.unidade)).toFixed(3));
-  const fisicoAtual = Number(loteRow.quantidadeFisica);
-  if (quantidadeT > fisicoAtual) {
-    throw new LoteInvalidoError(
-      `Quantidade solicitada (${quantidadeT} t) excede saldo fisico do lote (${fisicoAtual} t)`,
-    );
+  const quantidadeKg = Number(new Decimal(converterParaKg(input.quantidadeOriginal, input.unidade)).toFixed(3));
+  if (quantidadeKg <= 0) throw new Error('Quantidade deve ser positiva');
+
+  // Validacao de saldo (snapshot antes de gravar — race vai ser pega pela
+  // re-checagem dentro da transacao, abaixo).
+  const saldo = await consultarSaldoDisponivel(input.produtoCodigoAcxe, input.galpao, input.empresa);
+  if (quantidadeKg > saldo.disponivelKg) {
+    throw new SaldoInsuficienteError(saldo.disponivelKg, quantidadeKg);
   }
 
   const nivel = NIVEL_APROVACAO_POR_SUBTIPO[input.subtipo as keyof typeof NIVEL_APROVACAO_POR_SUBTIPO] ?? 'gestor';
   const tipoAprovacao = SUBTIPO_PARA_TIPO_APROVACAO[input.subtipo];
   const criaDivFiscal = SUBTIPO_CRIA_DIVERGENCIA_FISCAL.has(input.subtipo);
 
+  const obsFinal = construirObservacao(input);
+
+  const db = getDb();
   const resultado = await db.transaction(async (tx) => {
+    // Re-checa saldo dentro da tx para evitar race condition entre concorrentes.
+    const reChk = await tx.execute<{ disp_kg: string }>(sql`
+      WITH descricao_sku AS (
+        SELECT descricao FROM public."tbl_produtos_ACXE"
+        WHERE codigo_produto = ${input.produtoCodigoAcxe}::bigint
+        LIMIT 1
+      ),
+      saldo AS (
+        SELECT COALESCE(SUM(o.saldo), 0) AS s
+        FROM public."vw_posicaoEstoqueUnificadaFamilia" o
+        INNER JOIN descricao_sku d ON d.descricao = o.descricao_produto
+        WHERE o.saldo > 0
+          AND o.codigo_estoque = ${input.galpao}
+          AND ${sql.raw(filtroEmpresaOmie(input.empresa))}
+      ),
+      res AS (
+        SELECT COALESCE(SUM(quantidade_kg), 0) AS r
+        FROM stockbridge.reserva_saldo
+        WHERE produto_codigo_acxe = ${input.produtoCodigoAcxe}::bigint
+          AND galpao = ${input.galpao}
+          AND empresa = ${input.empresa}
+          AND status = 'ativa'
+      )
+      SELECT ((SELECT s FROM saldo) - (SELECT r FROM res))::text AS disp_kg
+    `);
+    const dispRecheck = Number(reChk.rows[0]?.disp_kg ?? 0);
+    if (quantidadeKg > dispRecheck) {
+      throw new SaldoInsuficienteError(dispRecheck, quantidadeKg);
+    }
+
     const [mov] = await tx
       .insert(movimentacao)
       .values({
-        notaFiscal: input.referencia ?? `MANUAL-${input.subtipo.toUpperCase()}-${Date.now()}`,
+        notaFiscal: `MANUAL-${input.subtipo.toUpperCase()}-${Date.now()}`,
         tipoMovimento: 'saida_manual',
         subtipo: input.subtipo as SubtipoMovimento,
-        loteId: loteRow.id,
-        quantidadeT: String(-Math.abs(quantidadeT)), // saida = negativo
-        observacoes: input.observacoes,
+        loteId: null,
+        produtoCodigoAcxe: input.produtoCodigoAcxe,
+        galpao: input.galpao,
+        galpaoDestino: input.subtipo === 'transf_intra_cnpj' ? input.galpaoDestino ?? null : null,
+        empresa: input.empresa,
+        criadoPor: input.userId,
+        dtPrevistaRetorno: input.subtipo === 'comodato' ? input.dtPrevistaRetorno ?? null : null,
+        quantidadeKg: String(-Math.abs(quantidadeKg)),
+        observacoes: obsFinal,
+        statusOmie: 'pendente_q2p', // saida ainda nao foi processada no OMIE; aprovacao dispara
       })
       .returning();
 
     const [apr] = await tx
       .insert(aprovacao)
       .values({
-        loteId: loteRow.id,
+        loteId: null,
+        produtoCodigoAcxe: input.produtoCodigoAcxe,
+        galpao: input.galpao,
+        empresa: input.empresa,
+        movimentacaoId: mov!.id,
         precisaNivel: nivel,
         tipoAprovacao,
-        quantidadeRecebidaT: String(quantidadeT),
-        observacoes: input.observacoes,
+        quantidadeRecebidaKg: String(quantidadeKg),
+        observacoes: obsFinal,
         lancadoPor: input.userId,
+      })
+      .returning();
+
+    const [rsv] = await tx
+      .insert(reservaSaldo)
+      .values({
+        movimentacaoId: mov!.id,
+        produtoCodigoAcxe: input.produtoCodigoAcxe,
+        galpao: input.galpao,
+        empresa: input.empresa,
+        quantidadeKg: String(quantidadeKg),
+        status: 'ativa',
       })
       .returning();
 
@@ -145,10 +292,10 @@ export async function registrarSaidaManual(
       const [div] = await tx
         .insert(divergencia)
         .values({
-          loteId: loteRow.id,
+          loteId: null,
           movimentacaoId: mov!.id,
           tipo: 'fiscal_pendente',
-          quantidadeDeltaT: String(-quantidadeT),
+          quantidadeDeltaKg: String(-quantidadeKg),
           status: 'aberta',
           observacoes: `Saida manual tipo ${input.subtipo} — aguarda regularizacao fiscal`,
         })
@@ -156,77 +303,363 @@ export async function registrarSaidaManual(
       divId = div!.id;
     }
 
-    // Marca lote como aguardando_aprovacao para bloquear outras saidas no mesmo lote
-    await tx.update(lote).set({ status: 'aguardando_aprovacao', updatedAt: new Date() }).where(eq(lote.id, loteRow.id));
-
-    return { movimentacaoId: mov!.id, aprovacaoId: apr!.id, divergenciaId: divId };
+    return { movimentacaoId: mov!.id, aprovacaoId: apr!.id, reservaId: rsv!.id, divergenciaId: divId };
   });
 
   await enviarAlertaAprovacaoPendente({
     aprovacaoId: resultado.aprovacaoId,
     tipoAprovacao,
     nivel,
-    loteCodigo: loteRow.codigo,
-    produto: loteRow.fornecedorNome,
-    quantidadeT,
+    loteCodigo: `SKU ${input.produtoCodigoAcxe} @ ${input.galpao}`,
+    produto: `${input.produtoCodigoAcxe}`,
+    quantidadeKg,
     detalhes: `Saida manual ${input.subtipo} — ${input.observacoes}`,
-  });
+  }).catch((err) => logger.error({ err }, 'Falha ao notificar aprovacao pendente'));
 
   logger.info(
-    { movimentacaoId: resultado.movimentacaoId, subtipo: input.subtipo, nivel, quantidadeT },
+    {
+      movimentacaoId: resultado.movimentacaoId,
+      subtipo: input.subtipo,
+      empresa: input.empresa,
+      galpao: input.galpao,
+      sku: input.produtoCodigoAcxe,
+      nivel,
+      quantidadeKg,
+    },
     'Saida manual registrada, aguarda aprovacao',
   );
 
   return {
     movimentacaoId: resultado.movimentacaoId,
     aprovacaoId: resultado.aprovacaoId,
+    reservaId: resultado.reservaId,
     status: 'aguardando_aprovacao',
     precisaNivel: nivel,
     divergenciaId: resultado.divergenciaId,
   };
 }
 
-export interface RetornoComodatoInput {
+/**
+ * Extrai o cliente do campo observacoes do comodato origem. construirObservacao()
+ * grava como "Cliente: <nome> | Retorno previsto: ...". Mesma regex usada em
+ * listarComodatosAbertos no SQL — duplicada aqui pra uso em TS.
+ */
+function extrairClienteDaObservacao(obs: string | null | undefined): string | null {
+  if (!obs) return null;
+  const m = obs.match(/Cliente:\s*([^|]+)/);
+  const nome = m?.[1]?.trim();
+  return nome && nome.length > 0 ? nome : null;
+}
+
+function construirObservacao(input: RegistrarSaidaManualInput): string {
+  const partes = [input.observacoes.trim()];
+  if (input.subtipo === 'transf_intra_cnpj' && input.galpaoDestino) {
+    partes.push(`Destino: galpao ${input.galpaoDestino}`);
+  }
+  if (input.subtipo === 'comodato') {
+    if (input.cliente) partes.push(`Cliente: ${input.cliente.trim()}`);
+    if (input.dtPrevistaRetorno) partes.push(`Retorno previsto: ${input.dtPrevistaRetorno}`);
+  }
+  return partes.join(' | ');
+}
+
+export interface ComodatoAberto {
+  movimentacaoId: string;
+  produtoCodigoAcxe: number;
+  produtoDescricao: string;
+  galpaoOrigem: string;
+  empresa: EmpresaSaida;
+  quantidadeKg: number;
+  cliente: string | null;
+  dtPrevistaRetorno: string | null;
+  dtSaida: string;
+  diasEmAberto: number;
+  vencido: boolean;
+}
+
+/**
+ * Lista comodatos aprovados sem retorno registrado.
+ * Filtros: empresa (so Q2P por design); incluir vencidos.
+ */
+export async function listarComodatosAbertos(): Promise<ComodatoAberto[]> {
+  const db = getDb();
+  const result = await db.execute<{
+    movimentacao_id: string;
+    produto_codigo_acxe: string;
+    descricao: string | null;
+    galpao_origem: string;
+    empresa: string;
+    quantidade_kg: string;
+    cliente: string | null;
+    dt_prevista_retorno: string | null;
+    dt_saida: string;
+  }>(sql`
+    SELECT m.id AS movimentacao_id,
+           m.produto_codigo_acxe::text,
+           p.descricao,
+           m.galpao AS galpao_origem,
+           m.empresa,
+           ABS(m.quantidade_kg)::text AS quantidade_kg,
+           NULLIF(regexp_replace(m.observacoes, '.*Cliente: ([^|]+).*', '\\1'), m.observacoes) AS cliente,
+           m.dt_prevista_retorno::text,
+           m.created_at::text AS dt_saida
+    FROM stockbridge.movimentacao m
+    LEFT JOIN public."tbl_produtos_ACXE" p ON p.codigo_produto = m.produto_codigo_acxe
+    WHERE m.subtipo = 'comodato'
+      AND m.tipo_movimento = 'saida_manual'
+      AND m.status_omie = 'concluida'
+      AND m.ativo = true
+      AND NOT EXISTS (
+        SELECT 1 FROM stockbridge.movimentacao r
+        WHERE r.movimentacao_origem_id = m.id
+          AND r.subtipo = 'retorno_comodato'
+          AND r.ativo = true
+      )
+    ORDER BY m.created_at ASC
+  `);
+
+  const hoje = new Date();
+  // Hoje no fuso BR como YYYY-MM-DD pra comparar com dt_prevista_retorno (DATE)
+  // sem timezone shift. en-CA produz formato ISO direto. Comodato vencido =
+  // dt_prevista < hoje. Hoje mesmo NAO conta como vencido.
+  const hojeBR = hoje.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  return result.rows.map((r) => {
+    const dtSaida = new Date(r.dt_saida);
+    const diasAbertos = Math.floor((hoje.getTime() - dtSaida.getTime()) / (1000 * 60 * 60 * 24));
+    const vencido = r.dt_prevista_retorno ? r.dt_prevista_retorno < hojeBR : false;
+    return {
+      movimentacaoId: r.movimentacao_id,
+      produtoCodigoAcxe: Number(r.produto_codigo_acxe),
+      produtoDescricao: r.descricao ?? `SKU ${r.produto_codigo_acxe}`,
+      galpaoOrigem: r.galpao_origem,
+      empresa: r.empresa as EmpresaSaida,
+      quantidadeKg: Number(r.quantidade_kg),
+      cliente: r.cliente,
+      dtPrevistaRetorno: r.dt_prevista_retorno,
+      dtSaida: r.dt_saida,
+      diasEmAberto: diasAbertos,
+      vencido,
+    };
+  });
+}
+
+export interface ProdutoQ2PItem {
+  /** Codigo numerico ACXE (canonico no Atlas — vai pra produto_codigo_acxe). */
+  codigoAcxe: number;
+  /** Descricao do produto Q2P (mesma do ACXE — match cross-empresa por descricao). */
+  descricao: string;
+}
+
+/**
+ * Busca produtos Q2P por descricao. Usado no retorno de comodato — operador
+ * escolhe pela descricao (codigos OMIE internos sao opacos pra ele) e o backend
+ * recebe o codigoAcxe canonico via JOIN tbl_produtos_ACXE x tbl_produtos_Q2P
+ * pela descricao (mesma estrategia cross-empresa do legado).
+ */
+export async function buscarProdutosQ2P(
+  termo: string | null,
+  limit: number = 50,
+): Promise<ProdutoQ2PItem[]> {
+  const db = getDb();
+  const termoLike = termo && termo.trim().length > 0 ? `%${termo.trim()}%` : null;
+  const result = await db.execute<{ codigo_acxe: string; descricao: string }>(sql`
+    SELECT pa.codigo_produto::text AS codigo_acxe,
+           pq.descricao
+    FROM public."tbl_produtos_Q2P" pq
+    INNER JOIN public."tbl_produtos_ACXE" pa ON pa.descricao = pq.descricao
+    WHERE pq.descricao IS NOT NULL
+      AND (pa.inativo IS NULL OR pa.inativo <> 'S')
+      ${termoLike ? sql`AND pq.descricao ILIKE ${termoLike}` : sql``}
+    ORDER BY pq.descricao
+    LIMIT ${limit}
+  `);
+  return result.rows.map((r) => ({
+    codigoAcxe: Number(r.codigo_acxe),
+    descricao: r.descricao,
+  }));
+}
+
+export interface RegistrarRetornoComodatoInput {
   movimentacaoOrigemId: string;
-  quantidadeRetornadaT: number;
+  produtoCodigoAcxeRecebido: number;
+  galpaoDestino: string;
+  quantidadeKgRecebida: number;
   observacoes: string;
   userId: string;
 }
 
+export interface RegistrarRetornoComodatoResult {
+  movimentacaoBaixaId: string;
+  movimentacaoEntradaId: string;
+  aprovacaoId: string;
+  divergenciaId?: string;
+}
+
 /**
- * Registra retorno de comodato — reverte o debito fisico temporario.
- * Cria movimentacao de entrada vinculada a original + atualiza lote + fecha divergencia
- * fiscal se tiver (comodato nao cria divergencia mas, caso a qtd retornada seja menor
- * que a emprestada, a diferenca fica como saldo negativo).
+ * Registra retorno de comodato. Aceita SKU/qtd diferentes do comodato original
+ * (clarificacao 2026-05-06). Gera 2 movimentacoes:
+ *   1. baixa do TROCA: SKU original × qtd ORIGINAL (zera o comodato)
+ *   2. entrada no destino: SKU recebido × qtd recebida (pode ser ≠)
+ * Cria 1 aprovacao gestor cobrindo ambas. Diferenca SKU/qtd vira divergencia
+ * pra justificativa caso a caso (decisao 4.b).
  */
 export async function registrarRetornoComodato(
-  input: RetornoComodatoInput,
-): Promise<{ movimentacaoRetornoId: string }> {
+  input: RegistrarRetornoComodatoInput,
+): Promise<RegistrarRetornoComodatoResult> {
+  if (!input.observacoes || input.observacoes.trim().length === 0) {
+    throw new Error('Motivo/observacao obrigatorio para retorno de comodato');
+  }
+  if (input.quantidadeKgRecebida <= 0) {
+    throw new Error('Quantidade recebida deve ser positiva');
+  }
+
   const db = getDb();
 
-  const [movOrigem] = await db.select().from(movimentacao).where(eq(movimentacao.id, input.movimentacaoOrigemId)).limit(1);
-  if (!movOrigem) throw new LoteInvalidoError(`Movimentacao origem ${input.movimentacaoOrigemId} nao encontrada`);
-  if (movOrigem.subtipo !== 'comodato') throw new LoteInvalidoError('Apenas movimentacoes de comodato podem ter retorno');
-  if (!movOrigem.loteId) throw new LoteInvalidoError('Movimentacao origem sem lote vinculado');
+  const [movOrigem] = await db
+    .select()
+    .from(movimentacao)
+    .where(and(eq(movimentacao.id, input.movimentacaoOrigemId), eq(movimentacao.ativo, true)))
+    .limit(1);
+  if (!movOrigem) throw new Error(`Comodato ${input.movimentacaoOrigemId} nao encontrado`);
+  if (movOrigem.subtipo !== 'comodato' || movOrigem.tipoMovimento !== 'saida_manual') {
+    throw new Error('Movimentacao origem nao e um comodato valido');
+  }
+  if (movOrigem.empresa !== 'q2p') {
+    throw new Error('Comodato origem deve ser Q2P (regra de negocio)');
+  }
+  if (!movOrigem.produtoCodigoAcxe || !movOrigem.galpao) {
+    throw new Error('Comodato origem sem SKU/galpao — registro inconsistente');
+  }
+
+  // Verifica se ja existe retorno
+  const [existeRetorno] = await db
+    .select({ id: movimentacao.id })
+    .from(movimentacao)
+    .where(
+      and(
+        eq(movimentacao.movimentacaoOrigemId, movOrigem.id),
+        eq(movimentacao.subtipo, 'retorno_comodato' as SubtipoMovimento),
+        eq(movimentacao.ativo, true),
+      ),
+    )
+    .limit(1);
+  if (existeRetorno) throw new Error('Comodato ja foi retornado');
+
+  const qtdOriginalKg = Math.abs(Number(movOrigem.quantidadeKg));
+  const qtdRecebidaKg = Number(new Decimal(input.quantidadeKgRecebida).toFixed(3));
+  const skuMudou = input.produtoCodigoAcxeRecebido !== movOrigem.produtoCodigoAcxe;
+  const qtdMudou = qtdRecebidaKg !== qtdOriginalKg;
+
+  // Texto humano-amigavel pra observacao OMIE — UUID interno fica em
+  // movimentacao_origem_id (rastreio), nao precisa poluir o campo de observacao.
+  const clienteOrigem = extrairClienteDaObservacao(movOrigem.observacoes);
+  const dtSaidaOrigem = new Date(movOrigem.createdAt).toLocaleDateString('pt-BR');
+  const cabecalhoObs = `Retorno comodato${clienteOrigem ? ` cliente ${clienteOrigem}` : ''} (saida ${dtSaidaOrigem}, ${qtdOriginalKg} kg)`;
 
   const resultado = await db.transaction(async (tx) => {
-    const [mov] = await tx
+    // 1) Baixa do TROCA — SKU original × qtd ORIGINAL (devolve o que saiu)
+    const [movBaixa] = await tx
       .insert(movimentacao)
       .values({
-        notaFiscal: `RET-${movOrigem.notaFiscal}`,
-        tipoMovimento: 'entrada_manual',
-        subtipo: 'retorno_comodato',
-        loteId: movOrigem.loteId!,
-        quantidadeT: String(Math.abs(input.quantidadeRetornadaT)),
-        observacoes: `Retorno de comodato da movimentacao ${input.movimentacaoOrigemId}: ${input.observacoes}`,
+        notaFiscal: `RET-BAIXA-${movOrigem.id.slice(0, 8)}-${Date.now()}`,
+        tipoMovimento: 'ajuste',
+        subtipo: 'retorno_comodato' as SubtipoMovimento,
+        loteId: null,
+        produtoCodigoAcxe: movOrigem.produtoCodigoAcxe,
+        galpao: '90', // TROCA = 90.0.1
+        empresa: 'q2p',
+        criadoPor: input.userId,
+        movimentacaoOrigemId: movOrigem.id,
+        quantidadeKg: String(-qtdOriginalKg),
+        observacoes: `${cabecalhoObs} — baixa TROCA. ${input.observacoes}`,
+        statusOmie: 'pendente_q2p',
       })
       .returning();
 
-    return { movimentacaoRetornoId: mov!.id };
+    // 2) Entrada no destino — SKU recebido × qtd recebida
+    const [movEntrada] = await tx
+      .insert(movimentacao)
+      .values({
+        notaFiscal: `RET-ENT-${movOrigem.id.slice(0, 8)}-${Date.now()}`,
+        tipoMovimento: 'entrada_manual',
+        subtipo: 'retorno_comodato' as SubtipoMovimento,
+        loteId: null,
+        produtoCodigoAcxe: input.produtoCodigoAcxeRecebido,
+        galpao: input.galpaoDestino,
+        empresa: 'q2p',
+        criadoPor: input.userId,
+        movimentacaoOrigemId: movOrigem.id,
+        quantidadeKg: String(qtdRecebidaKg),
+        observacoes: `${cabecalhoObs} — entrada destino. ${input.observacoes}`,
+        statusOmie: 'pendente_q2p',
+      })
+      .returning();
+
+    // 3) Aprovacao gestor cobrindo a operacao toda (linkada a movEntrada por padrao)
+    const [apr] = await tx
+      .insert(aprovacao)
+      .values({
+        loteId: null,
+        produtoCodigoAcxe: input.produtoCodigoAcxeRecebido,
+        galpao: input.galpaoDestino,
+        empresa: 'q2p',
+        movimentacaoId: movEntrada!.id,
+        precisaNivel: 'gestor',
+        tipoAprovacao: 'retorno_comodato',
+        quantidadeRecebidaKg: String(qtdRecebidaKg),
+        observacoes: `${cabecalhoObs}. ${input.observacoes}`,
+        lancadoPor: input.userId,
+      })
+      .returning();
+
+    // 4) Divergencia se SKU/qtd diferentes do comodato original
+    let divId: string | undefined;
+    if (skuMudou || qtdMudou) {
+      const tipoDiv: 'faltando' | 'varredura' = qtdRecebidaKg < qtdOriginalKg ? 'faltando' : 'varredura';
+      const detalhes = [
+        skuMudou ? `SKU mudou: ${movOrigem.produtoCodigoAcxe} -> ${input.produtoCodigoAcxeRecebido}` : null,
+        qtdMudou ? `Qtd mudou: ${qtdOriginalKg} kg -> ${qtdRecebidaKg} kg (delta=${(qtdRecebidaKg - qtdOriginalKg).toFixed(3)})` : null,
+      ].filter(Boolean).join('; ');
+      const [div] = await tx
+        .insert(divergencia)
+        .values({
+          loteId: null,
+          movimentacaoId: movEntrada!.id,
+          tipo: tipoDiv,
+          quantidadeDeltaKg: String(qtdRecebidaKg - qtdOriginalKg),
+          status: 'aberta',
+          observacoes: `Retorno comodato divergente — ${detalhes}. Operador justificar caso a caso.`,
+        })
+        .returning();
+      divId = div!.id;
+    }
+
+    return {
+      movimentacaoBaixaId: movBaixa!.id,
+      movimentacaoEntradaId: movEntrada!.id,
+      aprovacaoId: apr!.id,
+      divergenciaId: divId,
+    };
   });
 
+  await enviarAlertaAprovacaoPendente({
+    aprovacaoId: resultado.aprovacaoId,
+    tipoAprovacao: 'retorno_comodato',
+    nivel: 'gestor',
+    loteCodigo: `Retorno comodato ${movOrigem.id.slice(0, 8)}`,
+    produto: `${input.produtoCodigoAcxeRecebido}`,
+    quantidadeKg: qtdRecebidaKg,
+    detalhes: `Retorno de comodato — ${input.observacoes}${skuMudou || qtdMudou ? ' [DIVERGENTE]' : ''}`,
+  }).catch((err) => logger.error({ err }, 'Falha ao notificar retorno comodato'));
+
   logger.info(
-    { movimentacaoOrigemId: input.movimentacaoOrigemId, retornoId: resultado.movimentacaoRetornoId },
+    {
+      movimentacaoOrigemId: input.movimentacaoOrigemId,
+      movimentacaoBaixaId: resultado.movimentacaoBaixaId,
+      movimentacaoEntradaId: resultado.movimentacaoEntradaId,
+      skuMudou,
+      qtdMudou,
+    },
     'Retorno de comodato registrado',
   );
 
