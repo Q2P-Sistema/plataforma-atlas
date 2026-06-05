@@ -32,8 +32,10 @@
 #                                                 pra rastrear lote ↔ pedido.
 #   Obs: tbl_posicaoEstoque_Q2P_Filial NAO existe em prod — Filial nao opera estoque.
 #   Obs: tbl_staging_nf_header_* NAO sincronizadas — sao transientes do n8n.
-#   Obs: sync das FUP/pedidos NAO re-aplica migration 0024 automaticamente — os
-#       lotes ja existentes em stockbridge.lote permanecem como estao.
+#   Obs: apos sincronizar FUP/pedidos, o script chama
+#       stockbridge.refresh_lotes_em_transito_se_stale(0) na etapa [5/6] pra
+#       UPSERT/soft-delete dos lotes em stockbridge.lote. Lotes ja recebidos
+#       (status != 'transito') ou ja movidos pra localidade fisica sao preservados.
 #
 # Tratamento de views dependentes:
 #   pg_restore --clean nao suporta CASCADE. Se houver views (ou matviews) no
@@ -285,9 +287,17 @@ else
   echo "▶ [4/5] Sem views dependentes — pulando"
 fi
 
-# ── 5) Validacao ─────────────────────────────────────────────────────────────
+# ── 5) Refresh stockbridge.lote a partir do FUP atualizado ──────────────────
+# Forca TTL=0 porque acabamos de trocar todos os dados de origem (FUP +
+# pedidos de compra). O auto-refresh do GET /transito tem TTL de 15min e
+# poderia ficar bloqueado se o updated_at dos lotes for recente.
 echo
-echo "▶ [5/5] Validando contagens no dev"
+echo "▶ [5/6] Refresh stockbridge.lote a partir do FUP sincronizado"
+dev_psql -v ON_ERROR_STOP=1 -c "SELECT stockbridge.refresh_lotes_em_transito_se_stale(0) AS lotes_atualizados;"
+
+# ── 6) Validacao ─────────────────────────────────────────────────────────────
+echo
+echo "▶ [6/6] Validando contagens no dev"
 echo
 
 dev_psql -v ON_ERROR_STOP=1 -X -A -F$'\t' <<SQL
