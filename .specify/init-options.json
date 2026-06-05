@@ -1,8 +1,8 @@
 {
-  "ai": "gemini",
+  "ai": "copilot",
   "branch_numbering": "sequential",
   "here": true,
-  "integration": "gemini",
+  "integration": "copilot",
   "preset": null,
   "script": "sh",
   "speckit_version": "0.5.0"
