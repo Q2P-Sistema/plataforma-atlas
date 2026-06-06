@@ -32,10 +32,20 @@
 #                                                 pra rastrear lote ↔ pedido.
 #   Obs: tbl_posicaoEstoque_Q2P_Filial NAO existe em prod — Filial nao opera estoque.
 #   Obs: tbl_staging_nf_header_* NAO sincronizadas — sao transientes do n8n.
-#   Obs: apos sincronizar FUP/pedidos, o script chama
-#       stockbridge.refresh_lotes_em_transito_se_stale(0) na etapa [5/6] pra
-#       UPSERT/soft-delete dos lotes em stockbridge.lote. Lotes ja recebidos
-#       (status != 'transito') ou ja movidos pra localidade fisica sao preservados.
+#
+# Sync MySQL legado (etapa [5/7], OPCIONAL):
+#   - Se MYSQL_HOST/USER/PASSWORD setadas, copia db_q2p.tb_movimentacao do MySQL
+#     prod para public."tb_movimentacao_q2p_legado" (tabela criada pela migration
+#     0036). Essa tabela e a fonte canonica de "NF recebida" durante validacao
+#     paralela do StockBridge novo. Sem ela, Nacionalizacao no cockpit vai incluir
+#     NFs ja recebidas no PHP legado.
+#
+# Refresh stockbridge.lote (etapa [6/7]):
+#   - Chama stockbridge.refresh_lotes_em_transito_se_stale(0). Migration 0036
+#     reescreveu a funcao: Transito Intl agora vem so de FUP em '02 - Em Aguas';
+#     Nacionalizacao vem de NFs de entrada emitidas nos ultimos 90d e ainda nao
+#     recebidas (em tb_movimentacao_q2p_legado OU stockbridge.movimentacao).
+#     Lotes ja recebidos / movidos pelo operador sao preservados via soft-delete.
 #
 # Tratamento de views dependentes:
 #   pg_restore --clean nao suporta CASCADE. Se houver views (ou matviews) no
@@ -157,7 +167,7 @@ mkdir -p "$DUMP_DIR"
 
 # ── 1) Captura definicao das views dependentes ───────────────────────────────
 echo
-echo "▶ [1/5] Detectando views/matviews dependentes no dev"
+echo "▶ [1/7] Detectando views/matviews dependentes no dev"
 
 # Lista de views dependentes (cadeia transitiva via CTE recursivo).
 # Pega views diretas (nivel 1) e tambem views que dependem de views (nivel N+).
@@ -248,7 +258,7 @@ fi
 
 # ── 2) Dump do prod ──────────────────────────────────────────────────────────
 echo
-echo "▶ [2/5] pg_dump (prod) → $DUMP_DIR/dump"
+echo "▶ [2/7] pg_dump (prod) → $DUMP_DIR/dump"
 echo
 
 DUMP_ARGS=(-h "$PROD_HOST" -p "$PROD_PORT" -U "$PROD_USER" -d "$PROD_DB"
@@ -266,7 +276,7 @@ echo "✓ Dump pronto. Tamanho: $(du -sh "$DUMP_DIR/dump" | awk '{print $1}')"
 
 # ── 3) Restore no dev ────────────────────────────────────────────────────────
 echo
-echo "▶ [3/5] pg_restore (dev) — DROP + recriar tabelas"
+echo "▶ [3/7] pg_restore (dev) — DROP + recriar tabelas"
 echo
 
 PGPASSWORD="$DEV_PASSWORD" pg_restore \
@@ -287,17 +297,64 @@ else
   echo "▶ [4/5] Sem views dependentes — pulando"
 fi
 
-# ── 5) Refresh stockbridge.lote a partir do FUP atualizado ──────────────────
-# Forca TTL=0 porque acabamos de trocar todos os dados de origem (FUP +
-# pedidos de compra). O auto-refresh do GET /transito tem TTL de 15min e
-# poderia ficar bloqueado se o updated_at dos lotes for recente.
+# ── 5) Sync MySQL legado db_q2p.tb_movimentacao → public.tb_movimentacao_q2p_legado ──
+# Tabela usada pela migration 0036 como fonte de "NF recebida" (mv_acxe=1 +
+# mv_q2p=1 + ativo=1). Sem ela, o refresh da Parte 2 trataria TODAS as NFs
+# emitidas dos ultimos 90 dias como "em aberto", inflando Nacionalizacao.
+#
+# Variaveis necessarias no .envrc (Bitwarden "Atlas Dev Secrets"):
+#   MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD
+#
+# Se nao setadas, pula com aviso (refresh roda mesmo assim — sem essa fonte).
 echo
-echo "▶ [5/6] Refresh stockbridge.lote a partir do FUP sincronizado"
+if [ -n "${MYSQL_HOST:-}" ] && [ -n "${MYSQL_USER:-}" ] && [ -n "${MYSQL_PASSWORD:-}" ]; then
+  echo "▶ [5/7] Sync db_q2p.tb_movimentacao do MySQL prod"
+  command -v mysql >/dev/null || { echo "❌ 'mysql' client nao instalado (apt install mysql-client)"; exit 1; }
+
+  MYSQL_TSV="$DUMP_DIR/tb_movimentacao.tsv"
+  MYSQL_PWD="$MYSQL_PASSWORD" mysql -h "$MYSQL_HOST" -u "$MYSQL_USER" db_q2p \
+    --batch --raw --quick --skip-column-names -e "
+      SELECT
+        nota_fiscal,
+        IFNULL(mv_acxe, '\\\\N'),
+        IFNULL(DATE_FORMAT(dt_acxe, '%Y-%m-%d %H:%i:%s'), '\\\\N'),
+        IFNULL(id_movest_acxe, '\\\\N'),
+        IFNULL(id_ajuste_acxe, '\\\\N'),
+        IFNULL(id_user_acxe, '\\\\N'),
+        IFNULL(mv_q2p, '\\\\N'),
+        IFNULL(DATE_FORMAT(dt_q2p, '%Y-%m-%d %H:%i:%s'), '\\\\N'),
+        IFNULL(id_movest_q2p, '\\\\N'),
+        IFNULL(id_ajuste_q2p, '\\\\N'),
+        IFNULL(id_user_q2p, '\\\\N'),
+        IFNULL(ativo, '\\\\N')
+      FROM tb_movimentacao
+    " > "$MYSQL_TSV"
+
+  TSV_LINES=$(wc -l < "$MYSQL_TSV")
+  echo "  ✓ MySQL exportou $TSV_LINES linhas para $MYSQL_TSV"
+
+  dev_psql -v ON_ERROR_STOP=1 <<SQL
+    TRUNCATE public."tb_movimentacao_q2p_legado";
+    \\copy public."tb_movimentacao_q2p_legado"(nota_fiscal,mv_acxe,dt_acxe,id_movest_acxe,id_ajuste_acxe,id_user_acxe,mv_q2p,dt_q2p,id_movest_q2p,id_ajuste_q2p,id_user_q2p,ativo) FROM '$MYSQL_TSV' WITH (FORMAT csv, DELIMITER E'\t', NULL '\\N');
+    UPDATE public."tb_movimentacao_q2p_legado" SET synced_at = now();
+SQL
+  echo "  ✓ Carregado em public.tb_movimentacao_q2p_legado"
+else
+  echo "▶ [5/7] MySQL sync pulado (MYSQL_HOST/USER/PASSWORD nao setados)"
+  echo "  ⚠ Sem essa fonte, Nacionalizacao vai incluir NFs ja recebidas no legado"
+fi
+
+# ── 6) Refresh stockbridge.lote a partir do FUP+NF atualizado ───────────────
+# Forca TTL=0 porque acabamos de trocar todos os dados de origem.
+# Migration 0036: refresh usa FUP (Transito Intl) + NFs (Nacionalizacao) +
+# tb_movimentacao_q2p_legado (NF recebida).
+echo
+echo "▶ [6/7] Refresh stockbridge.lote (FUP + NFs)"
 dev_psql -v ON_ERROR_STOP=1 -c "SELECT stockbridge.refresh_lotes_em_transito_se_stale(0) AS lotes_atualizados;"
 
-# ── 6) Validacao ─────────────────────────────────────────────────────────────
+# ── 7) Validacao ─────────────────────────────────────────────────────────────
 echo
-echo "▶ [6/6] Validando contagens no dev"
+echo "▶ [7/7] Validando contagens no dev"
 echo
 
 dev_psql -v ON_ERROR_STOP=1 -X -A -F$'\t' <<SQL

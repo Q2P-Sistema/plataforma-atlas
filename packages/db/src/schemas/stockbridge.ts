@@ -78,6 +78,8 @@ export const lote = stockbridgeSchema.table(
     dta: varchar('dta', { length: 50 }),
     dtEntrada: date('dt_entrada').notNull(),
     dtPrevChegada: date('dt_prev_chegada'),
+    pedidoCompraAcxe: text('pedido_compra_acxe'),
+    nfOrigemId: bigint('nf_origem_id', { mode: 'number' }),
     ativo: boolean('ativo').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

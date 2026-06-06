@@ -38,10 +38,11 @@ interface LoteTransito {
 // 'reservado' segue no payload mas e ignorado pelo frontend (sem coluna correspondente)
 type TransitoData = Record<EstagioTransito, LoteTransito[]> & { reservado?: LoteTransito[] };
 
+// Migration 0036 desligou transito_interno do refresh automatico:
+// agora porto_dta cobre tudo que tem NF emitida aguardando recebimento e o label vira "Nacionalização".
 const COLUNAS: Array<{ key: EstagioTransito; label: string; subtitle: string; accent: string }> = [
-  { key: 'transito_intl',    label: 'Trânsito Internacional', subtitle: 'Em águas',                accent: 'border-violet-300 bg-violet-50/50 dark:bg-violet-900/10' },
-  { key: 'porto_dta',        label: 'Porto / DTA',            subtitle: 'Nacionalização',          accent: 'border-orange-300 bg-orange-50/50 dark:bg-orange-900/10' },
-  { key: 'transito_interno', label: 'Trânsito Interno',       subtitle: 'Aguardando recebimento',  accent: 'border-teal-300 bg-teal-50/50 dark:bg-teal-900/10' },
+  { key: 'transito_intl', label: 'Trânsito Internacional', subtitle: 'Em águas',                accent: 'border-violet-300 bg-violet-50/50 dark:bg-violet-900/10' },
+  { key: 'porto_dta',     label: 'Nacionalização',         subtitle: 'NF emitida aguardando recebimento', accent: 'border-orange-300 bg-orange-50/50 dark:bg-orange-900/10' },
 ];
 
 function useApiFetch() {
@@ -122,7 +123,7 @@ export function TransitoPage() {
       {isLoading && <div className="p-6 text-sm text-atlas-muted">Carregando...</div>}
 
       {data && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {COLUNAS.map((col) => {
             const lotes = data[col.key] ?? [];
             const totalKg = lotes.reduce((acc, l) => acc + l.quantidadeFiscalKg, 0);
