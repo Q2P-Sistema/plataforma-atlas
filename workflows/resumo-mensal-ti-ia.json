@@ -1,0 +1,382 @@
+{
+  "name": "TI - Resumo Executivo Mensal IA (Schedule -> Jira -> Claude -> SendGrid)",
+  "nodes": [
+    {
+      "id": "n-sched",
+      "name": "Schedule Dia 01",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [
+        200,
+        400
+      ],
+      "typeVersion": 1.2,
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "7 8 1 * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n-jira-concluidas",
+      "name": "Jira Concluidas",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        440,
+        240
+      ],
+      "typeVersion": 4.2,
+      "parameters": {
+        "method": "GET",
+        "url": "https://livemind.atlassian.net/rest/api/3/search/jql",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "jql",
+              "value": "project = ACXEGDP AND assignee = currentUser() AND resolved >= startOfMonth(-1) AND resolved <= endOfMonth(-1) ORDER BY resolved DESC"
+            },
+            {
+              "name": "fields",
+              "value": "summary,status,issuetype,resolutiondate,created,updated"
+            },
+            {
+              "name": "maxResults",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "nextPageToken",
+                    "value": "={{ $response.body.nextPageToken }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ $response.body.isLast === true || !$response.body.nextPageToken }}",
+              "limitPagesFetched": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "REPLACE_JIRA_CRED",
+          "name": "Jira LiveMind (API token)"
+        }
+      }
+    },
+    {
+      "id": "n-jira-criadas",
+      "name": "Jira Criadas",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        440,
+        400
+      ],
+      "typeVersion": 4.2,
+      "parameters": {
+        "method": "GET",
+        "url": "https://livemind.atlassian.net/rest/api/3/search/jql",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "jql",
+              "value": "project = ACXEGDP AND assignee = currentUser() AND created >= startOfMonth(-1) AND created <= endOfMonth(-1) ORDER BY created DESC"
+            },
+            {
+              "name": "fields",
+              "value": "summary,status,issuetype,resolutiondate,created,updated"
+            },
+            {
+              "name": "maxResults",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "nextPageToken",
+                    "value": "={{ $response.body.nextPageToken }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ $response.body.isLast === true || !$response.body.nextPageToken }}",
+              "limitPagesFetched": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "REPLACE_JIRA_CRED",
+          "name": "Jira LiveMind (API token)"
+        }
+      }
+    },
+    {
+      "id": "n-jira-movimentadas",
+      "name": "Jira Movimentadas",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        440,
+        560
+      ],
+      "typeVersion": 4.2,
+      "parameters": {
+        "method": "GET",
+        "url": "https://livemind.atlassian.net/rest/api/3/search/jql",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "jql",
+              "value": "project = ACXEGDP AND assignee = currentUser() AND updated >= startOfMonth(-1) AND updated <= endOfMonth(-1) ORDER BY updated DESC"
+            },
+            {
+              "name": "fields",
+              "value": "summary,status,issuetype,resolutiondate,created,updated"
+            },
+            {
+              "name": "maxResults",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "nextPageToken",
+                    "value": "={{ $response.body.nextPageToken }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ $response.body.isLast === true || !$response.body.nextPageToken }}",
+              "limitPagesFetched": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "REPLACE_JIRA_CRED",
+          "name": "Jira LiveMind (API token)"
+        }
+      }
+    },
+    {
+      "id": "n-prep",
+      "name": "Preparar Dados",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        720,
+        400
+      ],
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "\nconst MES=['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];\nconst ref=$now.minus({months:1});\nconst periodo=(MES[ref.month-1].charAt(0).toUpperCase()+MES[ref.month-1].slice(1))+'/'+ref.year;\n\nfunction pages(name){ try{ return $(name).all().map(i=>i.json); }catch(e){ return []; } }\nfunction issuesOf(name){ return pages(name).flatMap(p=>(p&&p.issues)?p.issues:[]); }\nfunction truncated(name){ const ps=pages(name); const last=ps[ps.length-1]; return last? (last.isLast===false || (!!last.nextPageToken)) : false; }\n\nconst concluidas=issuesOf('Jira Concluidas');\nconst criadas=issuesOf('Jira Criadas');\nconst movimentadas=issuesOf('Jira Movimentadas');\nconst trunc = truncated('Jira Concluidas')||truncated('Jira Criadas')||truncated('Jira Movimentadas');\n\nconst cat=i=>((((i.fields||{}).status||{}).statusCategory||{}).key)||'new';\nconst nDone=criadas.filter(i=>cat(i)==='done').length;\nconst nProg=criadas.filter(i=>cat(i)==='indeterminate').length;\nconst nBack=criadas.filter(i=>cat(i)==='new').length;\nconst ddmm=iso=>{ if(!iso) return '—'; const d=String(iso).slice(0,10).split('-'); return d.length===3?d[2]+'/'+d[1]:iso; };\nconst esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\n\n// ---- payload p/ IA ----\nconst slim=i=>({key:i.key, status:(((i.fields||{}).status||{}).name)||'', cat:cat(i), tipo:(((i.fields||{}).issuetype||{}).name)||'', data:ddmm(i.fields&&i.fields.resolutiondate), resumo:(i.fields&&i.fields.summary)||''});\nconst aiUser=JSON.stringify({\n  periodo,\n  metricas:{concluidas:concluidas.length, abertas_no_mes:criadas.length, abertas_break:{concluidas:nDone, em_andamento:nProg, backlog:nBack}, movimentadas:movimentadas.length},\n  truncado:trunc,\n  concluidas:concluidas.map(slim),\n  criadas:criadas.map(slim)\n});\n\nconst aiSystem=[\n'Você é analista de TI. Gere um RESUMO EXECUTIVO MENSAL em HTML para e-mail (Gmail/Outlook).',\n'Entrada: JSON com período, métricas e listas de issues do Jira (projeto ACXEGDP, responsável Flavio Cicato Endo).',\n'REGRAS DE SAÍDA:',\n'- Responda APENAS com HTML. Sem markdown, sem cercas ```, sem texto antes ou depois.',\n'- 100% estilo inline (sem <style>, sem <head>/<body>). Use uma <div> container de max-width:720px, fonte Arial.',\n'- Comece com <h1> \"Resumo Executivo de TI — {periodo}\" e uma linha de responsável/área.',\n'- Tabela \"Números do mês\" (concluídas / abertas no mês com quebra / movimentadas).',\n'- Seção \"Principais entregas por frente\": AGRUPE as issues por frente temática inferida dos títulos (ex: PV à vista, Seguro de Crédito/Allianz, n8n/OMIE, Infraestrutura, Dados & Relatórios, ATLAS/StockBridge/CRM, Suporte/TI ops — adapte ao que existir no mês). Itemize cada frente em <ul>: 1 linha por issue com selo de status (badge <span> colorido: verde=CONCLUÍDA, âmbar=EM ANDAMENTO, cinza=BACKLOG) + <strong>chave</strong> + descrição curta.',\n'- Seção \"Em aberto para o próximo mês\": bullets das criadas ainda não concluídas mais relevantes.',\n'- Anexo: tabela (Data | Chave | Tarefa) com todas as concluídas.',\n'- Se truncado=true, inclua um aviso visível de que houve mais itens que o limite.',\n'- Abra com saudação curta e feche com assinatura \"Flavio — TI/Sistemas\". Tom executivo, PT-BR, factual (não invente issues).'\n].join('\\n');\n\n// ---- fallback HTML determinístico ----\nconst td='border:1px solid #dfe1e6;padding:6px 10px;';\nconst badge=c=>c==='done'?'<span style=\"display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;\">CONCLUÍDA</span>':c==='indeterminate'?'<span style=\"display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffae6;color:#974f00;\">EM ANDAMENTO</span>':'<span style=\"display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;\">BACKLOG</span>';\nlet rows=concluidas.map(i=>`<tr><td style=\"${td}\">${ddmm(i.fields&&i.fields.resolutiondate)}</td><td style=\"${td}\">${esc(i.key)}</td><td style=\"${td}\">${esc(i.fields&&i.fields.summary)}</td></tr>`).join('');\nif(!rows) rows=`<tr><td colspan=\"3\" style=\"${td}\">Nenhuma tarefa concluída no período.</td></tr>`;\nconst abertas=criadas.filter(i=>cat(i)!=='done');\nlet bl=abertas.map(i=>`<li style=\"margin-bottom:4px;\">${badge(cat(i))} <strong>${esc(i.key)}</strong> — ${esc(i.fields&&i.fields.summary)}</li>`).join('')||'<li>—</li>';\nconst warn=trunc?'<div style=\"margin:12px 0;padding:10px 14px;background:#ffebe6;border-left:4px solid #bf2600;color:#bf2600;\">⚠️ Houve mais itens do que o limite recuperado — relatório possivelmente incompleto.</div>':'';\nconst fallbackHtml=`<div style=\"max-width:720px;margin:0 auto;padding:24px;font-family:Arial,Helvetica,sans-serif;color:#172b4d;font-size:14px;line-height:1.55;\">\n<h1 style=\"font-size:22px;margin:0 0 4px;\">Resumo Executivo de TI — ${periodo}</h1>\n<p style=\"margin:0 0 12px;color:#6b778c;font-size:12px;\">Responsável: Flavio Cicato Endo · TI/Sistemas (Jira ACXEGDP) · gerado via n8n.</p>${warn}\n<table style=\"border-collapse:collapse;width:100%;\"><tr><th style=\"${td}text-align:left;background:#f4f5f7;\">Indicador</th><th style=\"${td}text-align:right;background:#f4f5f7;\">Valor</th></tr>\n<tr><td style=\"${td}\">Concluídas</td><td style=\"${td}text-align:right;\"><strong>${concluidas.length}</strong></td></tr>\n<tr><td style=\"${td}\">Abertas no mês</td><td style=\"${td}text-align:right;\"><strong>${criadas.length}</strong> <span style=\"color:#6b778c;font-size:12px;\">(${nDone}✓ · ${nProg}⟳ · ${nBack}⏳)</span></td></tr>\n<tr><td style=\"${td}\">Movimentadas</td><td style=\"${td}text-align:right;\">${movimentadas.length}</td></tr></table>\n<h2 style=\"font-size:16px;margin:20px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;\">Em aberto</h2><ul style=\"padding-left:20px;\">${bl}</ul>\n<h2 style=\"font-size:16px;margin:20px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;\">Concluídas no mês (${concluidas.length})</h2>\n<table style=\"border-collapse:collapse;width:100%;font-size:13px;\"><tr><th style=\"${td}text-align:left;background:#f4f5f7;\">Data</th><th style=\"${td}text-align:left;background:#f4f5f7;\">Chave</th><th style=\"${td}text-align:left;background:#f4f5f7;\">Tarefa</th></tr>${rows}</table>\n<p style=\"margin-top:16px;font-size:12px;color:#6b778c;\">Flavio — TI/Sistemas</p></div>`;\n\nreturn [{ json: { periodo, assunto:'Resumo Executivo de TI — '+periodo, aiSystem, aiUser, fallbackHtml } }];\n"
+      }
+    },
+    {
+      "id": "n-ia",
+      "name": "IA Sintese",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        960,
+        400
+      ],
+      "typeVersion": 4.2,
+      "onError": "continueRegularOutput",
+      "continueOnFail": true,
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model:'claude-opus-4-8', max_tokens:16000, system:$json.aiSystem, messages:[{role:'user', content:$json.aiUser}] }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ANTHROPIC_CRED",
+          "name": "Anthropic API (x-api-key)"
+        }
+      }
+    },
+    {
+      "id": "n-mail",
+      "name": "Montar Email",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1200,
+        400
+      ],
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "\nlet html;\ntry{\n  const ai=$('IA Sintese').first().json;\n  let t = ai && ai.content && ai.content[0] && ai.content[0].text;\n  if(t){ t=t.trim().replace(/^```html\\s*/i,'').replace(/^```\\s*/,'').replace(/```$/,'').trim(); }\n  html = (t && t.length>40) ? t : null;\n}catch(e){ html=null; }\nconst prep=$('Preparar Dados').first().json;\nif(!html) html=prep.fallbackHtml;\nreturn [{ json: { assunto: prep.assunto, html } }];\n"
+      }
+    },
+    {
+      "id": "n-send",
+      "name": "Envia (SendGrid)",
+      "type": "n8n-nodes-base.sendGrid",
+      "position": [
+        1440,
+        400
+      ],
+      "typeVersion": 1,
+      "parameters": {
+        "resource": "mail",
+        "fromEmail": "sistema@q2p.com.br",
+        "fromName": "Sistema Integrador Q2P",
+        "toEmail": "flavio@livemind.com.br,flavio.endo@acxe-polimeros.com.br",
+        "subject": "={{ $json.assunto }}",
+        "contentType": "text/html",
+        "contentValue": "={{ $json.html }}",
+        "additionalFields": {}
+      },
+      "credentials": {
+        "sendGridApi": {
+          "id": "O9rMcreokCx7iUv0",
+          "name": "SendGrid account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Dia 01": {
+      "main": [
+        [
+          {
+            "node": "Jira Concluidas",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Jira Criadas",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Jira Movimentadas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira Concluidas": {
+      "main": [
+        [
+          {
+            "node": "Preparar Dados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira Criadas": {
+      "main": [
+        [
+          {
+            "node": "Preparar Dados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira Movimentadas": {
+      "main": [
+        [
+          {
+            "node": "Preparar Dados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Dados": {
+      "main": [
+        [
+          {
+            "node": "IA Sintese",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IA Sintese": {
+      "main": [
+        [
+          {
+            "node": "Montar Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar Email": {
+      "main": [
+        [
+          {
+            "node": "Envia (SendGrid)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
