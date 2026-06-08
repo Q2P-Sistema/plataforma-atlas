@@ -18,9 +18,11 @@ beforeEach(() => {
 
 describe('getFamilias', () => {
   const baseRows = [
-    { codigo: 'SKU-001', descricao: 'Prod A 10kg', descricao_familia: 'FAMILIA_A', local_descricao: 'CD01', nsaldo: 5000, reservado: 500, npendente: 1000, ncmc: 12.5, lead_time: 45, marca: 'IMPACXE' },
-    { codigo: 'SKU-002', descricao: 'Prod A 25kg', descricao_familia: 'FAMILIA_A', local_descricao: 'CD01', nsaldo: 3000, reservado: 0, npendente: 0, ncmc: 11.0, lead_time: 60, marca: 'IMPACXE' },
-    { codigo: 'SKU-003', descricao: 'Prod B 10kg', descricao_familia: 'FAMILIA_B', local_descricao: 'CD01', nsaldo: 2000, reservado: 200, npendente: 500, ncmc: 8.0, lead_time: 30, marca: 'OUTRA' },
+    // FAMILIA_A: importada via modelo='IMPACXE' (marca é outra de propósito — prova que lemos modelo)
+    { codigo: 'SKU-001', descricao: 'Prod A 10kg', descricao_familia: 'FAMILIA_A', local_descricao: 'CD01', nsaldo: 5000, reservado: 500, npendente: 1000, ncmc: 12.5, lead_time: 45, marca: 'ADVANCENE', modelo: 'IMPACXE' },
+    { codigo: 'SKU-002', descricao: 'Prod A 25kg', descricao_familia: 'FAMILIA_A', local_descricao: 'CD01', nsaldo: 3000, reservado: 0, npendente: 0, ncmc: 11.0, lead_time: 60, marca: 'ADVANCENE', modelo: 'IMPACXE' },
+    // FAMILIA_B: marca='IMPACXE' mas modelo!='IMPACXE' → NÃO é internacional (regra é modelo)
+    { codigo: 'SKU-003', descricao: 'Prod B 10kg', descricao_familia: 'FAMILIA_B', local_descricao: 'CD01', nsaldo: 2000, reservado: 200, npendente: 500, ncmc: 8.0, lead_time: 30, marca: 'IMPACXE', modelo: 'NACIONAL' },
   ];
 
   it('groups SKUs into families by descricao_familia', async () => {
@@ -71,14 +73,14 @@ describe('getFamilias', () => {
     expect(famA.cmc_medio).toBe(12.0);
   });
 
-  it('detects is_internacional from marca IMPACXE', async () => {
+  it('detects is_internacional from modelo IMPACXE (não marca)', async () => {
     mockQuery.mockResolvedValue({ rows: baseRows });
     const familias = await getFamilias();
 
     const famA = familias.find((f) => f.familia_id === 'FAMILIA_A')!;
     const famB = familias.find((f) => f.familia_id === 'FAMILIA_B')!;
-    expect(famA.is_internacional).toBe(true);
-    expect(famB.is_internacional).toBe(false);
+    expect(famA.is_internacional).toBe(true); // modelo='IMPACXE'
+    expect(famB.is_internacional).toBe(false); // marca='IMPACXE' mas modelo!='IMPACXE'
   });
 
   it('uses minimum lead_time as lt_efetivo', async () => {

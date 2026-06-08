@@ -46,6 +46,7 @@ export async function getFamilias(): Promise<FamiliaEstoque[]> {
     ncmc: number;
     lead_time: number | null;
     marca: string | null;
+    modelo: string | null;
   }>(`
     SELECT
       p.codigo,
@@ -57,7 +58,8 @@ export async function getFamilias(): Promise<FamiliaEstoque[]> {
       COALESCE(e.npendente, 0) AS npendente,
       COALESCE(e.ncmc, 0) AS ncmc,
       p.lead_time,
-      p.marca
+      p.marca,
+      p.modelo
     FROM "tbl_produtos_Q2P" p
     LEFT JOIN "tbl_posicaoEstoque_Q2P" e ON e.ccodigo = p.codigo
     LEFT JOIN "tbl_locaisEstoques_Q2P" le ON le.codigo_local_estoque = e.codigo_local_estoque
@@ -89,7 +91,10 @@ export async function getFamilias(): Promise<FamiliaEstoque[]> {
       marca: r.marca ?? '',
     });
 
-    if (r.marca === 'IMPACXE') fam.hasImpacxe = true;
+    // Importado/internacional = produto com modelo 'IMPACXE' (NÃO marca — a marca
+    // está praticamente vazia no cadastro; modelo='IMPACXE' é o marcador real).
+    // Mesma regra usada no workflow n8n de CMC (nó Coleta_Estoque_PN).
+    if ((r.modelo ?? '').trim().toUpperCase() === 'IMPACXE') fam.hasImpacxe = true;
   }
 
   const familias: FamiliaEstoque[] = [];
