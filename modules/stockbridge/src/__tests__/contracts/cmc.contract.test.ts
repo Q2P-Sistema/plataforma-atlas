@@ -7,8 +7,28 @@ vi.mock('@atlas/core', () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getPool: () => ({
     query: vi.fn((sql: string) => {
-      if (String(sql).includes('MAX(data_snapshot)')) {
+      const s = String(sql);
+      if (s.includes('MIN(data_snapshot)')) {
+        return Promise.resolve({ rows: [{ de: '2026-06-01', ate: '2026-06-03' }] });
+      }
+      if (s.includes('WITH snap')) {
+        return Promise.resolve({
+          rows: [
+            { familia: 'PP HOMO 25', codigo_produto: 'PP-146', descricao_produto: 'PP A' },
+            { familia: 'PEAD FILME', codigo_produto: 'PE-1', descricao_produto: 'PE A' },
+          ],
+        });
+      }
+      if (s.includes('AS snap')) {
         return Promise.resolve({ rows: [{ snap: '2026-06-08', hoje: '2026-06-08' }] });
+      }
+      if (s.includes('BETWEEN')) {
+        return Promise.resolve({
+          rows: [
+            { data: '2026-06-01', chave: 'Total', label: 'Total', vol: '100', valor: '1000' },
+            { data: '2026-06-03', chave: 'Total', label: 'Total', vol: '200', valor: '1800' },
+          ],
+        });
       }
       return Promise.resolve({
         rows: [
@@ -66,7 +86,7 @@ describe('GET /api/v1/stockbridge/cmc/snapshot — contratos', () => {
     app = express();
     app.use(express.json());
     app.use(stockbridgeRouter);
-  });
+  }, 30_000); // import do grafo de rotas pode passar de 10s em cold-start
 
   it('200 retorna snapshot com resumo + famílias (gestor)', async () => {
     const res = await request(app).get('/api/v1/stockbridge/cmc/snapshot');
@@ -100,5 +120,27 @@ describe('GET /api/v1/stockbridge/cmc/snapshot — contratos', () => {
   it('400 quando data em formato inválido', async () => {
     const res = await request(app).get('/api/v1/stockbridge/cmc/snapshot?data=ontem');
     expect(res.status).toBe(400);
+  });
+
+  it('200 tendência com eixo de datas e lacuna em dia sem coleta', async () => {
+    const res = await request(app).get('/api/v1/stockbridge/cmc/tendencia');
+    expect(res.status).toBe(200);
+    expect(res.body.data.datas).toEqual(['2026-06-01', '2026-06-02', '2026-06-03']);
+    expect(res.body.data.series).toHaveLength(1);
+    expect(res.body.data.series[0].pontos[1]).toBeNull(); // 02 sem coleta
+  });
+
+  it('403 tendência quando operador', async () => {
+    const res = await request(app)
+      .get('/api/v1/stockbridge/cmc/tendencia')
+      .set('x-test-role', 'operador');
+    expect(res.status).toBe(403);
+  });
+
+  it('200 filtros retorna famílias e produtos', async () => {
+    const res = await request(app).get('/api/v1/stockbridge/cmc/filtros');
+    expect(res.status).toBe(200);
+    expect(res.body.data.familias).toEqual(['PEAD FILME', 'PP HOMO 25']);
+    expect(res.body.data.produtos).toHaveLength(2);
   });
 });

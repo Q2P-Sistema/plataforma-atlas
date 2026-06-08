@@ -7,7 +7,9 @@ vi.mock('@atlas/core', () => ({
   getPool: () => ({ query }),
 }));
 
-const { listarSnapshotCmc } = await import('../services/cmc.service.js');
+const { listarSnapshotCmc, listarTendenciaCmc, listarFiltrosCmc } = await import(
+  '../services/cmc.service.js'
+);
 
 // Família "PP HOMO": dois nacionais com CMC diferente (10 e 20) + um importado.
 // Ponderado nacional = (1000+6000)/(100+300) = 17.5 (≠ média aritmética 15).
@@ -84,5 +86,62 @@ describe('listarSnapshotCmc', () => {
     expect(r.dataSnapshot).toBeNull();
     expect(r.familias).toEqual([]);
     expect(r.resumo).toEqual({ volumeTotalKg: 0, valorTotal: 0 });
+  });
+});
+
+describe('listarTendenciaCmc', () => {
+  // range (MIN/MAX) + dados da série (BETWEEN). Dia 02 ausente → lacuna.
+  function mockTendencia(rows: unknown[], de = '2026-06-01', ate = '2026-06-03') {
+    query.mockImplementation((sql: string) => {
+      if (sql.includes('MIN(data_snapshot)')) return Promise.resolve({ rows: [{ de, ate }] });
+      if (sql.includes('BETWEEN')) return Promise.resolve({ rows });
+      return Promise.resolve({ rows: [] });
+    });
+  }
+
+  it('monta o eixo de datas por calendário e marca dia sem coleta como lacuna (null)', async () => {
+    mockTendencia([
+      { data: '2026-06-01', chave: 'Total', label: 'Total', vol: '100', valor: '1000' },
+      { data: '2026-06-03', chave: 'Total', label: 'Total', vol: '200', valor: '1800' },
+    ]);
+    const r = await listarTendenciaCmc();
+    expect(r.datas).toEqual(['2026-06-01', '2026-06-02', '2026-06-03']);
+    expect(r.series).toHaveLength(1);
+    const s = r.series[0]!;
+    expect(s.chave).toBe('Total');
+    expect(s.pontos[0]).toMatchObject({ cmcPonderado: 10, volumeKg: 100 });
+    expect(s.pontos[1]).toBeNull(); // 2026-06-02 sem coleta
+    expect(s.pontos[2]).toMatchObject({ cmcPonderado: 9 });
+  });
+
+  it('cria uma série por família quando famílias são filtradas', async () => {
+    mockTendencia([
+      { data: '2026-06-01', chave: 'PP HOMO', label: 'PP HOMO', vol: '100', valor: '1000' },
+      { data: '2026-06-03', chave: 'PP HOMO', label: 'PP HOMO', vol: '100', valor: '1200' },
+    ]);
+    const r = await listarTendenciaCmc({ familias: ['PP HOMO'] });
+    expect(r.series.map((s) => s.chave)).toEqual(['PP HOMO']);
+    expect(r.series[0]!.pontos.filter(Boolean)).toHaveLength(2);
+  });
+});
+
+describe('listarFiltrosCmc', () => {
+  function mockFiltros(rows: unknown[]) {
+    query.mockImplementation((sql: string) => {
+      if (sql.includes('WITH snap')) return Promise.resolve({ rows });
+      return Promise.resolve({ rows: [] });
+    });
+  }
+
+  it('retorna famílias distintas (ordenadas) e produtos únicos por código', async () => {
+    mockFiltros([
+      { familia: 'PP HOMO 25', codigo_produto: 'PP-146', descricao_produto: 'PP A' },
+      { familia: 'PP HOMO 25', codigo_produto: 'PP-024', descricao_produto: 'PP B' },
+      { familia: 'PEAD FILME', codigo_produto: 'PE-1', descricao_produto: 'PE A' },
+    ]);
+    const r = await listarFiltrosCmc();
+    expect(r.familias).toEqual(['PEAD FILME', 'PP HOMO 25']);
+    expect(r.produtos).toHaveLength(3);
+    expect(r.produtos[0]).toMatchObject({ codigo: 'PP-146', familia: 'PP HOMO 25' });
   });
 });

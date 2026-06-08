@@ -4,21 +4,26 @@ import { AlertTriangle } from 'lucide-react';
 import { useAuthStore } from '../../../../stores/auth.store.js';
 import { FamiliaTree } from './FamiliaTree.js';
 import { fmtKg, fmtBrl, fmtDataBr } from './format.js';
+import { cmcParams, type CmcUiFiltros } from './filtros.js';
 import type { CmcSnapshotResponse } from './types.js';
 
 /**
  * Aba "Snapshot diário" (US1): resumo global (volume + valor, sem CMC global —
- * FR-018) + árvore família→produto da posição mais recente. Read-only, gestor+.
+ * FR-018) + árvore família→produto da posição mais recente, respeitando os
+ * filtros compartilhados (US3). Read-only, gestor+.
  */
-export function CmcSnapshotTab() {
+export function CmcSnapshotTab({ filtros }: { filtros: CmcUiFiltros }) {
   const csrfToken = useAuthStore((s) => s.csrfToken);
 
   const { data, isLoading, error } = useQuery<CmcSnapshotResponse>({
-    queryKey: ['stockbridge', 'cmc', 'snapshot'],
+    queryKey: ['stockbridge', 'cmc', 'snapshot', filtros],
     queryFn: async () => {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (csrfToken) headers['x-csrf-token'] = csrfToken;
-      const res = await fetch('/api/v1/stockbridge/cmc/snapshot', { credentials: 'include', headers });
+      const res = await fetch(`/api/v1/stockbridge/cmc/snapshot${cmcParams(filtros)}`, {
+        credentials: 'include',
+        headers,
+      });
       const body = (await res.json()) as {
         data: CmcSnapshotResponse | null;
         error: { message?: string } | null;
@@ -68,7 +73,7 @@ export function CmcSnapshotTab() {
 
       {data && familias.length === 0 && !isLoading && (
         <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
-          Nenhum dado de custo encontrado para esta data. Verifique se a sincronização de estoque foi executada.
+          Nenhum dado de custo encontrado para os filtros selecionados.
         </div>
       )}
 

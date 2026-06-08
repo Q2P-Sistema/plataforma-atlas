@@ -237,3 +237,203 @@ export async function listarSnapshotCmc(
     familias,
   };
 }
+
+// ── US2: Tendência histórica ─────────────────────────────────────────────────
+
+export interface CmcTendenciaPonto {
+  data: string;
+  cmcPonderado: number | null;
+  volumeKg: number;
+  valor: number;
+}
+
+export interface CmcTendenciaSerie {
+  chave: string;
+  label: string;
+  /** Alinhado a `datas`; null = dia sem coleta (lacuna, sem interpolar — FR-011). */
+  pontos: (CmcTendenciaPonto | null)[];
+}
+
+export interface CmcTendenciaResponse {
+  datas: string[];
+  series: CmcTendenciaSerie[];
+}
+
+export interface CmcTendenciaFiltros {
+  de?: string;
+  ate?: string;
+  familias?: string[];
+  produtos?: string[];
+  origem?: CmcOrigem;
+}
+
+interface TendenciaRow {
+  data: string;
+  chave: string;
+  label: string | null;
+  vol: string | null;
+  valor: string | null;
+}
+
+// Todas as datas de calendário [de, ate] (YYYY-MM-DD), inclusive, sem fuso.
+// Dias sem snapshot ficam no eixo e viram lacuna (ponto null) na série.
+function rangeDatas(de: string, ate: string): string[] {
+  const start = Date.parse(`${de}T00:00:00Z`);
+  const end = Date.parse(`${ate}T00:00:00Z`);
+  if (Number.isNaN(start) || Number.isNaN(end) || start > end) return [];
+  const ONE_DAY = 86_400_000;
+  const MAX_DIAS = 1100; // guarda contra intervalo absurdo (~3 anos)
+  const out: string[] = [];
+  for (let t = start, i = 0; t <= end && i < MAX_DIAS; t += ONE_DAY, i += 1) {
+    out.push(new Date(t).toISOString().slice(0, 10));
+  }
+  return out;
+}
+
+/**
+ * US2 — Série diária do CMC ponderado no período. Agrupamento:
+ *  - produtos filtrados → uma série por produto;
+ *  - senão famílias filtradas → uma série por família;
+ *  - senão → série única "Total" (CMC ponderado de todo o estoque por dia).
+ * Dias sem snapshot aparecem como lacuna (ponto null), sem interpolar.
+ */
+export async function listarTendenciaCmc(
+  filtros: CmcTendenciaFiltros = {},
+): Promise<CmcTendenciaResponse> {
+  const pool = getPool();
+
+  // Intervalo default = todo o histórico disponível.
+  const rangeRes = await pool
+    .query<{ de: string | null; ate: string | null }>(
+      `SELECT MIN(data_snapshot)::text AS de, MAX(data_snapshot)::text AS ate
+         FROM public."tbl_historico_cmc_estoque"`,
+    )
+    .catch((err) => {
+      logger.warn({ err: err.message }, 'Query intervalo da tendência CMC falhou');
+      return { rows: [{ de: null, ate: null }] };
+    });
+
+  const de = filtros.de ?? rangeRes.rows[0]?.de ?? null;
+  const ate = filtros.ate ?? rangeRes.rows[0]?.ate ?? null;
+  if (!de || !ate) return { datas: [], series: [] };
+
+  const porProduto = (filtros.produtos?.length ?? 0) > 0;
+  const porFamilia = !porProduto && (filtros.familias?.length ?? 0) > 0;
+  const chaveExpr = porProduto
+    ? 'codigo_produto'
+    : porFamilia
+      ? `COALESCE(NULLIF(descricao_familia, ''), '${SEM_FAMILIA}')`
+      : `'Total'`;
+  const labelExpr = porProduto ? 'MAX(descricao_produto)' : chaveExpr;
+  // No caso "Total" a chave é constante — Postgres não aceita constante no GROUP BY,
+  // então agrupamos só por data (um grupo por dia).
+  const grupoChave = porProduto || porFamilia ? `, ${chaveExpr}` : '';
+
+  const params: unknown[] = [de, ate];
+  const filtrosSql = buildFiltrosSql(
+    { familias: filtros.familias, produtos: filtros.produtos, origem: filtros.origem },
+    params,
+  );
+
+  const sql = `
+    SELECT
+      data_snapshot::text AS data,
+      ${chaveExpr} AS chave,
+      ${labelExpr} AS label,
+      SUM(volume_total)    AS vol,
+      SUM(valor_total_cmc) AS valor
+    FROM public."tbl_historico_cmc_estoque"
+    WHERE data_snapshot BETWEEN $1::date AND $2::date
+      ${filtrosSql}
+    GROUP BY data_snapshot${grupoChave}
+    ORDER BY data_snapshot
+  `;
+
+  const res = await pool.query<TendenciaRow>(sql, params).catch((err) => {
+    logger.error({ err: err.message }, 'Query tendência CMC falhou');
+    throw new Error('CMC_FAIL');
+  });
+
+  const datas = rangeDatas(de, ate);
+  const agg = new Map<string, { vol: number; valor: number }>();
+  const labels = new Map<string, string>();
+  for (const r of res.rows) {
+    agg.set(`${r.data}|${r.chave}`, { vol: Number(r.vol ?? 0), valor: Number(r.valor ?? 0) });
+    if (!labels.has(r.chave)) labels.set(r.chave, String(r.label ?? r.chave));
+  }
+
+  const series: CmcTendenciaSerie[] = [...labels.keys()].map((chave) => ({
+    chave,
+    label: labels.get(chave) ?? chave,
+    pontos: datas.map((data) => {
+      const a = agg.get(`${data}|${chave}`);
+      if (!a) return null;
+      return { data, cmcPonderado: ponderado(a.valor, a.vol), volumeKg: a.vol, valor: a.valor };
+    }),
+  }));
+
+  return { datas, series };
+}
+
+// ── US3: Opções de filtro (combos) ───────────────────────────────────────────
+
+export interface CmcFiltrosResponse {
+  familias: string[];
+  produtos: { codigo: string; descricao: string; familia: string }[];
+}
+
+interface FiltroRow {
+  familia: string;
+  codigo_produto: string;
+  descricao_produto: string | null;
+}
+
+/**
+ * US3 — Opções dos combos (do snapshot mais recente). Se `familias` vier
+ * preenchido, restringe os produtos às famílias dadas.
+ */
+export async function listarFiltrosCmc(familias?: string[]): Promise<CmcFiltrosResponse> {
+  const pool = getPool();
+
+  const params: unknown[] = [];
+  let familiaClause = '';
+  if (familias && familias.length > 0) {
+    params.push(familias);
+    familiaClause = `AND COALESCE(NULLIF(descricao_familia, ''), '${SEM_FAMILIA}') = ANY($${params.length}::text[])`;
+  }
+
+  const sql = `
+    WITH snap AS (SELECT MAX(data_snapshot) AS d FROM public."tbl_historico_cmc_estoque")
+    SELECT DISTINCT
+      COALESCE(NULLIF(descricao_familia, ''), '${SEM_FAMILIA}') AS familia,
+      codigo_produto,
+      descricao_produto
+    FROM public."tbl_historico_cmc_estoque", snap
+    WHERE data_snapshot = snap.d
+      ${familiaClause}
+    ORDER BY familia, descricao_produto
+  `;
+
+  const res = await pool.query<FiltroRow>(sql, params).catch((err) => {
+    logger.error({ err: err.message }, 'Query filtros CMC falhou');
+    throw new Error('CMC_FAIL');
+  });
+
+  const familiasSet = new Set<string>();
+  const produtosMap = new Map<string, { codigo: string; descricao: string; familia: string }>();
+  for (const r of res.rows) {
+    familiasSet.add(r.familia);
+    if (!produtosMap.has(r.codigo_produto)) {
+      produtosMap.set(r.codigo_produto, {
+        codigo: r.codigo_produto,
+        descricao: r.descricao_produto ?? '',
+        familia: r.familia,
+      });
+    }
+  }
+
+  return {
+    familias: [...familiasSet].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    produtos: [...produtosMap.values()],
+  };
+}

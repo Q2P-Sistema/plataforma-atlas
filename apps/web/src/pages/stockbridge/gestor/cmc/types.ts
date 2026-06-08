@@ -38,3 +38,28 @@ export interface CmcSnapshotResponse {
   resumo: CmcResumo;
   familias: CmcFamiliaNode[];
 }
+
+// US2 — Tendência histórica
+export interface CmcTendenciaPonto {
+  data: string;
+  cmcPonderado: number | null;
+  volumeKg: number;
+  valor: number;
+}
+
+export interface CmcTendenciaSerie {
+  chave: string;
+  label: string;
+  pontos: (CmcTendenciaPonto | null)[]; // null = dia sem coleta (lacuna)
+}
+
+export interface CmcTendenciaResponse {
+  datas: string[];
+  series: CmcTendenciaSerie[];
+}
+
+// US3 — Opções de filtro (combos)
+export interface CmcFiltrosResponse {
+  familias: string[];
+  produtos: { codigo: string; descricao: string; familia: string }[];
+}

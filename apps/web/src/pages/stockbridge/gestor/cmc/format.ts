@@ -24,3 +24,9 @@ export function fmtDataBr(iso: string): string {
   const [y, m, d] = iso.split('-');
   return d && m && y ? `${d}/${m}/${y}` : iso;
 }
+
+/** ISO "YYYY-MM-DD" → "DD/MM" (eixo de gráfico). */
+export function fmtDataBrCurta(iso: string): string {
+  const [, m, d] = iso.split('-');
+  return d && m ? `${d}/${m}` : iso;
+}
