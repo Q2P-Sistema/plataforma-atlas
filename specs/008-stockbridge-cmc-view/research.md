@@ -33,6 +33,8 @@ Resolve as decisões abertas da spec e as escolhas de stack. Todos os pontos ver
 
 **Origem**: valores `IMPORTADO`/`NACIONAL` (maiúsculas, confirmado). Filtro de origem aceita `IMPORTADO`, `NACIONAL` ou ambos.
 
+> **Derivação de `origem` (upstream, no workflow n8n `Coleta_Estoque_PN`)** — verificado 2026-06-08: importado = `UPPER(TRIM(modelo))='IMPACXE'` (coluna **`modelo`**, não `marca`). O workflow original usava `marca='IMPACXE'`, que está vazio (0/531) → classificava ~tudo como NACIONAL (bug). Correção = trocar `marca`→`modelo` no `CASE`. O Atlas só LÊ `origem`; a correção é no workflow + re-run. Mesmo critério deve valer no `forecast/familia.service.ts` (hoje usa `marca`).
+
 **Sem família**: 3 linhas com `descricao_familia` NULL/'' no snapshot atual → agrupar em "Sem família" via `COALESCE(NULLIF(descricao_familia,''), 'Sem família')` (FR-006).
 
 ## D5 — Defasagem do dado (FR-007)
