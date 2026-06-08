@@ -30,6 +30,14 @@
 #                                                 0024 (one-shot INSERT em stockbridge.lote).
 #   - public."tbl_pedidosCompras_ACXE"           pedidos de compra ACXE. JOIN com FUP
 #                                                 pra rastrear lote ↔ pedido.
+#   - public."tbl_historico_cmc_estoque"         snapshot diario de CMC ponderado por
+#                                                 produto/familia/origem. Populado pelo
+#                                                 workflow n8n em prod (spec legado
+#                                                 002-historico-cmc-estoque) — NAO e uma
+#                                                 migration do Atlas. Fonte da visao
+#                                                 "Custos de Estoque" (CMC) do StockBridge.
+#                                                 Ja existe em prod e UAT (sync full);
+#                                                 so faltava no dev (sync curado).
 #   Obs: tbl_posicaoEstoque_Q2P_Filial NAO existe em prod — Filial nao opera estoque.
 #   Obs: tbl_staging_nf_header_* NAO sincronizadas — sao transientes do n8n.
 #
@@ -106,6 +114,7 @@ TABLES=(
   'tbl_nf_itens_Q2P_Filial'
   'tbl_dadosPlanilhaFUPComex'
   'tbl_pedidosCompras_ACXE'
+  'tbl_historico_cmc_estoque'
 )
 
 # ── Pre-checks ───────────────────────────────────────────────────────────────

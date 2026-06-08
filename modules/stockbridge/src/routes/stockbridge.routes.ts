@@ -19,6 +19,7 @@ import meuEstoqueRouter from './meu-estoque.routes.js';
 import adminUserGalpaoRouter from './admin-user-galpao.routes.js';
 import operacoesPendentesRouter from './operacoes-pendentes.routes.js';
 import adminCronRouter from './admin-cron.routes.js';
+import cmcRouter from './cmc.routes.js';
 
 const logger = createLogger('stockbridge:routes');
 const router: Router = Router();
@@ -64,6 +65,8 @@ router.use(adminUserGalpaoRouter);
 router.use(operacoesPendentesRouter);
 // Admin (gestor+) — disparo manual de crons (alerta comodato vencido, etc.)
 router.use(adminCronRouter);
+// Custos de Estoque (CMC por família/produto) — gestor+ (feature 008)
+router.use(cmcRouter);
 
 logger.info('StockBridge router inicializado (US1..US8 + Movimentacoes + OperacoesPendentes)');
 

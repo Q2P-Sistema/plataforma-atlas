@@ -18,6 +18,7 @@ import {
   Bell,
   Settings,
   AlertTriangle,
+  Coins,
 } from 'lucide-react';
 import { LoginPage } from './pages/LoginPage.js';
 import { TwoFactorPage } from './pages/TwoFactorPage.js';
@@ -51,6 +52,7 @@ import { FilaOmiePage } from './pages/stockbridge/operador/FilaOmiePage.js';
 import { MeuEstoquePage } from './pages/stockbridge/operador/MeuEstoquePage.js';
 import { UserGalpaoPage } from './pages/stockbridge/diretor/UserGalpaoPage.js';
 import { CockpitPage } from './pages/stockbridge/gestor/CockpitPage.js';
+import { CmcPage } from './pages/stockbridge/gestor/CmcPage.js';
 import { AprovacoesPage } from './pages/stockbridge/gestor/AprovacoesPage.js';
 import { TransitoPage } from './pages/stockbridge/gestor/TransitoPage.js';
 import { SaidaManualPage } from './pages/stockbridge/operador/SaidaManualPage.js';
@@ -91,6 +93,7 @@ const FORECAST_SUB_ITEMS: SidebarSubItem[] = [
 // Aqui e so visibilidade no menu pra evitar UX de clicar e levar 403.
 const STOCKBRIDGE_SUB_ITEMS: SidebarSubItem[] = [
   { id: 'sb-cockpit',          name: 'Cockpit',                 path: '/stockbridge/cockpit',           icon: LayoutDashboard, roles: ['gestor', 'diretor'] },
+  { id: 'sb-custos',           name: 'Custos de Estoque',       path: '/stockbridge/custos',            icon: Coins,           roles: ['gestor', 'diretor'] },
   { id: 'sb-fila',             name: 'Recebimento',             path: '/stockbridge/fila',              icon: FileText,        roles: ['operador', 'gestor', 'diretor'] },
   { id: 'sb-aprovacoes',       name: 'Aprovações',              path: '/stockbridge/aprovacoes',        icon: Bell,            roles: ['gestor', 'diretor'] },
   { id: 'sb-divergencias',     name: 'Divergências',            path: '/stockbridge/divergencias',      icon: AlertTriangle,   roles: ['gestor', 'diretor'] },
@@ -382,6 +385,7 @@ function ProtectedShell() {
             <Route index element={<SBIndexRedirect role={user.role} />} />
             <Route path="fila" element={<FilaOmiePage />} />
             <Route path="cockpit" element={<CockpitPage />} />
+            <Route path="custos" element={<CmcPage />} />
             <Route path="aprovacoes" element={<AprovacoesPage />} />
             <Route path="divergencias" element={<DivergenciasPage />} />
             <Route path="movimentacoes" element={<MovimentacoesPage />} />
