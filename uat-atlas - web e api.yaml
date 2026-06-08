@@ -17,14 +17,44 @@ services:
 
       N8N_HEALTH_URL: ${N8N_HEALTH_URL}
 
+      # URL base do frontend UAT — usada nos links dos e-mails (sem barra final)
+      APP_URL: ${APP_URL:-https://uat-atlas.q2p.com.br}
+
+      # ── E-mail transacional (SendGrid) ───────
+      # Sem chave, e-mails caem em log (console) em vez de enviar de verdade.
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      SENDGRID_FROM_EMAIL: ${SENDGRID_FROM_EMAIL}
+
+      # ── StockBridge — integração OMIE (dual-CNPJ) ───
+      # ATENÇÃO: OMIE_MODE=real GRAVA de verdade no ERP OMIE (ACXE e Q2P).
+      # Recomendado subir como 'mock' para o smoke test e só então flipar
+      # para 'real' no Portainer quando estiver pronto para o ensaio fiel.
+      OMIE_MODE: ${OMIE_MODE:-mock}
+      OMIE_API_URL: ${OMIE_API_URL:-https://app.omie.com.br/api/v1/}
+      OMIE_ACXE_KEY: ${OMIE_ACXE_KEY}
+      OMIE_ACXE_SECRET: ${OMIE_ACXE_SECRET}
+      OMIE_Q2P_KEY: ${OMIE_Q2P_KEY}
+      OMIE_Q2P_SECRET: ${OMIE_Q2P_SECRET}
+
+      # CC opcional do admin em e-mails operacionais do StockBridge
+      STOCKBRIDGE_ADMIN_CC_EMAIL: ${STOCKBRIDGE_ADMIN_CC_EMAIL}
+      # Data de corte (YYYY-MM-DD) para gap fiscal/físico no Cockpit
+      STOCKBRIDGE_FISCAL_CUTOFF_DATE: ${STOCKBRIDGE_FISCAL_CUTOFF_DATE}
+
+      # Shared secret n8n ↔ Atlas (endpoint de saídas automáticas).
+      # Sem isto, as saídas automáticas via n8n NÃO autenticam.
+      ATLAS_INTEGRATION_KEY: ${ATLAS_INTEGRATION_KEY}
+
       # ── Feature Flags ────────────────────────
-      MODULE_HEDGE_ENABLED: ${MODULE_HEDGE_ENABLED:-false}
-      MODULE_STOCKBRIDGE_ENABLED: ${MODULE_STOCKBRIDGE_ENABLED:-false}
-      MODULE_BREAKINGPOINT_ENABLED: ${MODULE_BREAKINGPOINT_ENABLED:-false}
+      # Defaults do UAT já ligam os 4 módulos do escopo deste ensaio;
+      # podem ser sobrescritos pelo env do Portainer.
+      MODULE_HEDGE_ENABLED: ${MODULE_HEDGE_ENABLED:-true}
+      MODULE_STOCKBRIDGE_ENABLED: ${MODULE_STOCKBRIDGE_ENABLED:-true}
+      MODULE_BREAKINGPOINT_ENABLED: ${MODULE_BREAKINGPOINT_ENABLED:-true}
       MODULE_CLEVEL_ENABLED: ${MODULE_CLEVEL_ENABLED:-false}
       MODULE_COMEXINSIGHT_ENABLED: ${MODULE_COMEXINSIGHT_ENABLED:-false}
       MODULE_COMEXFLOW_ENABLED: ${MODULE_COMEXFLOW_ENABLED:-false}
-      MODULE_FORECAST_ENABLED: ${MODULE_FORECAST_ENABLED:-false}
+      MODULE_FORECAST_ENABLED: ${MODULE_FORECAST_ENABLED:-true}
 
     deploy:
       mode: replicated
