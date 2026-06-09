@@ -13,7 +13,7 @@ export type StatusLote =
   | 'aguardando_aprovacao'
   | 'rejeitado';
 
-export type EstagioTransito = 'transito_intl' | 'porto_dta' | 'transito_interno' | 'reservado';
+export type EstagioTransito = 'aguardando_embarque' | 'transito_intl' | 'no_porto' | 'porto_dta' | 'transito_interno' | 'reservado';
 
 export type TipoMovimento =
   | 'entrada_nf'
@@ -136,7 +136,7 @@ export const NIVEL_APROVACAO_POR_SUBTIPO: Partial<Record<SubtipoMovimento, 'gest
  * O estagio 'reservado' permanece no enum por compatibilidade mas nao e usado mais.
  */
 export const ESTAGIOS_VISIVEIS_POR_PERFIL: Record<Perfil, readonly EstagioTransito[]> = {
-  operador: ['transito_intl', 'porto_dta', 'transito_interno'],
-  gestor: ['transito_intl', 'porto_dta', 'transito_interno'],
-  diretor: ['transito_intl', 'porto_dta', 'transito_interno'],
+  operador: ['transito_interno', 'reservado'],
+  gestor:   ['aguardando_embarque', 'transito_intl', 'no_porto', 'porto_dta', 'reservado'],
+  diretor:  ['aguardando_embarque', 'transito_intl', 'no_porto', 'porto_dta', 'reservado'],
 };
