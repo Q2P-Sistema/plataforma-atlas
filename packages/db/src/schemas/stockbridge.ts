@@ -292,6 +292,37 @@ export const familiaOmieAtlas = stockbridgeSchema.table(
   },
 );
 
+// ── Movimentacao Legado (histórico 1:1 do MySQL — migration 0038) ──
+// Recibos dual-CNPJ do sistema PHP legado. Audit + idempotência apenas:
+// não afeta saldo (OMIE já consolidou esses recebimentos). Importado por
+// modules/stockbridge/src/scripts/migrate-from-mysql.ts.
+export const movimentacaoLegado = stockbridgeSchema.table(
+  'movimentacao_legado',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    idLegado: integer('id_legado').notNull(), // tb_movimentacao.id_movimentacao (MySQL)
+    notaFiscal: varchar('nota_fiscal', { length: 50 }).notNull(),
+    // lado ACXE
+    mvAcxe: smallint('mv_acxe'),
+    dtAcxe: timestamp('dt_acxe', { withTimezone: true }),
+    idMovestAcxe: varchar('id_movest_acxe', { length: 100 }),
+    idAjusteAcxe: varchar('id_ajuste_acxe', { length: 100 }),
+    idUserAcxe: uuid('id_user_acxe').references(() => users.id),
+    // lado Q2P
+    mvQ2p: smallint('mv_q2p'),
+    dtQ2p: timestamp('dt_q2p', { withTimezone: true }),
+    idMovestQ2p: varchar('id_movest_q2p', { length: 100 }),
+    idAjusteQ2p: varchar('id_ajuste_q2p', { length: 100 }),
+    idUserQ2p: uuid('id_user_q2p').references(() => users.id),
+    // controle
+    ativo: boolean('ativo').notNull().default(true),
+    migradoEm: timestamp('migrado_em', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('movimentacao_legado_nota_fiscal_idx').on(t.notaFiscal),
+  ],
+);
+
 // ── Type exports ───────────────────────────────────────────
 export type Localidade = typeof localidade.$inferSelect;
 export type NewLocalidade = typeof localidade.$inferInsert;
@@ -313,3 +344,5 @@ export type ConfigProduto = typeof configProduto.$inferSelect;
 export type NewConfigProduto = typeof configProduto.$inferInsert;
 export type FamiliaOmieAtlas = typeof familiaOmieAtlas.$inferSelect;
 export type NewFamiliaOmieAtlas = typeof familiaOmieAtlas.$inferInsert;
+export type MovimentacaoLegado = typeof movimentacaoLegado.$inferSelect;
+export type NewMovimentacaoLegado = typeof movimentacaoLegado.$inferInsert;

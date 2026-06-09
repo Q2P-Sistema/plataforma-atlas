@@ -78,6 +78,7 @@ export {
   divergencia,
   fornecedorExclusao,
   configProduto,
+  movimentacaoLegado,
   type Localidade,
   type NewLocalidade,
   type LocalidadeCorrelacao,
@@ -96,4 +97,6 @@ export {
   type NewFornecedorExclusao,
   type ConfigProduto,
   type NewConfigProduto,
+  type MovimentacaoLegado,
+  type NewMovimentacaoLegado,
 } from './schemas/stockbridge.js';

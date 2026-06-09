@@ -105,6 +105,114 @@ Sub-etapas do `03 - Nacionalização`:
 
 ---
 
+## Posição Fiscal — rastreamento de gap fiscal vs físico
+
+> **Documentado em 2026-06-09** após validação detalhada do cálculo de posição fiscal no cockpit.
+
+**Objetivo:** Rastrear a divergência entre o que OMIE registrou **fiscalmente** (NF emitida) versus o que está **fisicamente confirmado** no galpão. Isso identifica "buracos" — material que foi faturado mas ainda não chegou/não foi recebido.
+
+**Fórmula por SKU:**
+
+```
+POSIÇÃO FISCAL (kg) = Saldo Físico (OMIE) + Pendência Nacional + Pendência Importação
+```
+
+### 1. Saldo Físico (OMIE)
+
+**Fonte:** `tbl_posicaoEstoque_ACXE` + `tbl_posicaoEstoque_Q2P` sincronizadas do OMIE
+
+**Cálculo** (linhas 145-199 em `cockpit.service.ts`):
+- Pega o snapshot **mais recente** por empresa (`MAX(ddataposicao)`)
+- Filtra **apenas galpões físicos operacionais**: `11.1, 11.2, 12.1, 12.2, 21.1, 21.2, 31.1`
+- **Anti-dupla-contagem**: Se um produto existe em ACXE E Q2P no **mesmo galpão**, prioriza Q2P (`COALESCE(MAX FILTER Q2P, MAX FILTER ACXE)`)
+- Soma de todos os saldos consolidados
+
+**Exemplo:**
+- Produto 1234 em 11.1: Q2P=500 kg, ACXE=500 kg → conta só Q2P=500 kg
+- Produto 1234 em 12.1: ACXE=300 kg (sem Q2P) → conta ACXE=300 kg
+- **Total físico**: 800 kg
+
+### 2. Pendência Nacional
+
+**Fonte:** `tbl_nf_header_ACXE/_Q2P/_Q2P_Filial` + `tbl_nf_itens_*` sincronizadas do OMIE
+
+**Critério** (linhas 248-291 em `cockpit.service.ts`):
+- **Tipo NF**: `tp_nf = 0` (entrada)
+- **CFOP**: `LEFT(cfop, 1) IN ('1','2')` — compras nacionais (CFOP 1.xxx) e devoluções (2.xxx)
+- **Estado de recebimento**: `n_id_receb = 0 OR n_id_receb IS NULL` — OMIE ainda não marcou como "recebido fisicamente"
+- **Cutoff temporal**: `d_emi >= CURRENT_DATE - 180` — últimos 180 dias (ignora histórico legado PHP)
+- **Correlação multi-empresa**: Q2P correlaciona com ACXE via `JOIN ... WHERE descricao = descricao` para padronizar código de produto
+
+**Cenário real:**
+- NF-2026-005678 de Compra Nacional, 50 kg, emitida há 5 dias
+- Motorista ainda não entrou no galpão: `n_id_receb = 0` em OMIE
+- **Aparece em Pendência Nacional**: +50 kg (existe no papel, não na prateleira ainda)
+
+### 3. Pendência Importação
+
+**Fonte:** `tbl_nf_header_ACXE` + `tbl_nf_itens_ACXE` (CFOP 3.xxx — só ACXE tem importação)
+
+**Critério** (linhas 293-309 em `cockpit.service.ts`):
+- **Tipo NF**: `tp_nf = 0` (entrada)
+- **CFOP**: `LEFT(cfop, 1) = '3'` — importação (CFOP 3.xxx)
+- **Cutoff temporal**: `d_emi >= CURRENT_DATE - 180`
+- **NÃO reconciliada em Atlas**: `NOT EXISTS (SELECT ... FROM stockbridge.movimentacao WHERE subtipo = 'importacao' AND nota_fiscal = h.n_nf)`
+
+**Por que dois critérios diferentes?**
+- **Nacional**: OMIE tem um campo (`n_id_receb`) que indica se foi recebido fisicamente → simples verificação
+- **Importação**: OMIE **não tem indicador** de "recebido". Atlas controla via `stockbridge.movimentacao` com `subtipo='importacao'` + match de NF — quando operador confirma recebimento, ele grava uma movimentação com a NF, e essa NF some da pendência
+
+**Cenário real:**
+- NF-2026-IMP-9876 de Importação da China, 100 kg
+- Atlas ainda não criou `movimentacao` pra essa importação (operador não confirmou recebimento)
+- **Aparece em Pendência Importação**: +100 kg (registro fiscal existe, reconciliação Atlas ainda não)
+
+### Agregação
+
+Na função `getResumoFromSkus()` (linhas 435-490):
+
+```javascript
+totalFiscalKg = SUM(
+    fisicaKg                      // Saldo físico por SKU
+  + fiscalPendenteNacionalKg      // Pendências nacionais
+  + fiscalPendenteImportacaoKg    // Pendências importação
+)
+```
+
+**Exemplo numérico completo (Produto 1234 — Açúcar):**
+
+| Categoria | Kg | Origem |
+|---|---|---|
+| Físico confirmado no galpão | 1.000 | `tbl_posicaoEstoque_ACXE[11.1]` sincronizado hoje |
+| Pendência Nacional | 500 | NF-2026-005678 Compra (n_id_receb=0, CFOP 1.xxx, d_emi=2026-06-01) |
+| Pendência Importação | 300 | NF-2026-IMP-9876 China (CFOP 3.xxx, não em movimentacao) |
+| **POSIÇÃO FISCAL TOTAL** | **1.800** | Soma dos 3 acima |
+
+**Interpretação:**
+- OMIE registrou 1.800 kg de Açúcar (fiscal)
+- Galpão só confirma 1.000 kg (físico)
+- **Gap = 800 kg** (pedidos a chegar)
+
+Se esses 800 kg não chegar ou se houver divergência no recebimento, o Atlas **gerará uma divergência automática** (tipo `fiscal_pendente`) ao consolidar o recebimento.
+
+### Regra do cutoff (180 dias)
+
+A variável de ambiente `STOCKBRIDGE_FISCAL_CUTOFF_DATE` controla qual é a data mínima de emissão considerada. Default: 180 dias atrás.
+
+**Por quê?** O legado PHP operou sem controle granular de NF pendente. Ignorar NFs antigas previne:
+- Dupla contagem: NFs do legado que já foram resolvidas fisicamente (não aparecem mais em OMIE como `n_id_receb=0`)
+- Números fantasmas: histórico inflado de pendências "zumbis" que nunca foram entregas
+
+### Impacto no Cockpit
+
+O card "Posição Fiscal" no cockpit mostra:
+- **Número principal**: `totalFiscalKg` (físico + pendências)
+- **Breakdown** (se houver pendências): `"+ X kg pendentes (Y kg nac · Z kg imp)"`
+
+Se `totalFiscalKg > totalFisicoKg`, significa que há NFs de entrada que ainda não foram recebidas — isso é **normal** durante o período entre emissão e entrega. O diretor/gestor monitora esse gap pra garantir que as mercadorias chegam conforme o prazo esperado.
+
+---
+
 ## Cockpit & Métricas — regras de consolidação
 
 Cockpit e Métricas devem mostrar uma **visão consolidada** que combina OMIE (saldo real) com camadas Atlas (estado intermediário). Vale ler como uma "soma de buckets" por SKU:
