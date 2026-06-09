@@ -58,6 +58,33 @@ for f in "${FILES[@]}"; do
     -d "$UAT_DB" -1 -v ON_ERROR_STOP=1 -q -f "$f"
 done
 
+# Concede leitura ao claude_ro (MCP pg-acxe-uat) nos schemas do Atlas.
+# Reaplicado aqui porque o sync (DROP+restore) apaga schemas e grants; e o
+# ALTER DEFAULT PRIVILEGES roda como postgres (quem cria as tabelas das
+# migrations), cobrindo tabelas/views futuras.
+echo
+echo "> concedendo SELECT ao claude_ro nos schemas Atlas"
+PGPASSWORD="$PGPASSWORD_UAT" psql -h "$UAT_HOST" -p "$UAT_PORT" -U "$UAT_USER" \
+  -d "$UAT_DB" -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE s text;
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'claude_ro') THEN
+    FOREACH s IN ARRAY ARRAY['stockbridge','shared','hedge','forecast','breakingpoint']
+    LOOP
+      EXECUTE format('GRANT USAGE ON SCHEMA %I TO claude_ro', s);
+      EXECUTE format('GRANT SELECT ON ALL TABLES IN SCHEMA %I TO claude_ro', s);
+      EXECUTE format('GRANT SELECT ON ALL SEQUENCES IN SCHEMA %I TO claude_ro', s);
+      EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT SELECT ON TABLES TO claude_ro', s);
+      EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT SELECT ON SEQUENCES TO claude_ro', s);
+    END LOOP;
+    RAISE NOTICE 'claude_ro: SELECT concedido nos schemas Atlas';
+  ELSE
+    RAISE NOTICE 'role claude_ro nao existe — pulando grant';
+  END IF;
+END$$;
+SQL
+
 echo
 echo "> validando schemas criados"
 PGPASSWORD="$PGPASSWORD_UAT" psql -h "$UAT_HOST" -p "$UAT_PORT" -U "$UAT_USER" \
