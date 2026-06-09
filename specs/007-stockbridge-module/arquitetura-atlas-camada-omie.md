@@ -54,7 +54,7 @@
 | **Movimento fiscal histórico** (NF, ajustes consolidados) | OMIE | `public.tbl_NFsEmitidas_*`, `tbl_movimentacaoEstoqueHistorico_*` | Atlas grava aqui via API quando faz operações |
 | **Pedido de compra** (rastro fiscal das importações) | OMIE | `public.tbl_pedidosCompras_ACXE` | Source da ligação `pedido_acxe_omie` ↔ items |
 | **Vendas faturadas** | OMIE | `public.tbl_pedidosVendas_*` + `_itens_*` | Usado por `calcular_consumo_medio_diario_kg` |
-| **Lote em trânsito marítimo** | **Atlas** (OMIE não tem o conceito) | `stockbridge.lote` status='transito' | Populado pela função `refresh_lotes_em_transito_se_stale` lendo FUP de Comex |
+| **Lote em trânsito** (5 estágios) | **Atlas** (OMIE não tem o conceito) | `stockbridge.lote` status='transito' | 100% FUP-driven (migration 0037). `refresh_lotes_em_transito_se_stale` lê FUP × pedidosCompras. Ver seção "Pipeline de trânsito — 5 estágios" |
 | **Recebimento provisório** | **Atlas** (transitório) | `stockbridge.lote` status='provisorio' | Vive até OMIE consolidar (`movimentacao.status_omie='concluida'`); depois deixa de contar no Cockpit pra evitar dupla contagem |
 | **Aprovação hierárquica** | **Atlas** | `stockbridge.aprovacao` | Workflow puro Atlas — OMIE não tem |
 | **Divergência aberta** (faltando, varredura) | **Atlas** | `stockbridge.divergencia` | Atlas-only; quando aprovada vira ajuste OMIE |
@@ -62,6 +62,46 @@
 | **Indicadores derivados** | **Atlas** (calculados em SQL) | Funções `calcular_consumo_medio_diario_kg`, `refresh_consumo_medio_se_stale`, `refresh_lotes_em_transito_se_stale` | Lê OMIE, escreve em Atlas |
 | **Auditoria detalhada** (quem/quando/por quê) | **Atlas** | `stockbridge.movimentacao` + `shared.audit_log` | Soft delete preserva histórico |
 | **PTAX** (cotação dólar) | **BCB** (via `@atlas/integration-bcb`) | Cache 30min em memória do Atlas | Stockbridge não depende do módulo Hedge |
+
+---
+
+## Pipeline de trânsito — 5 estágios FUP-driven (migration 0037, 2026-06-09)
+
+> **Mudança de 2026-06-09 (card ACXEGDP-155):** o trânsito passou a ser **100% derivado do FUP de Comex**. O rastreamento anterior por NF (Parte 2 NF da migration 0036, que alimentava o estágio `porto_dta`) foi **removido** — a `tbl_nf_header_ACXE` mistura **NF mãe** (pedido/container inteiro) com **NFs filhote** (uma por caminhão, para o transporte), indistinguíveis na tabela, o que dobrava o volume (inflava ~7×: 6.617 t por NF vs 895 t reais por FUP). O FUP é a fonte de verdade operacional do Comex e já cobre todas as etapas de trânsito.
+
+A função `refresh_lotes_em_transito_se_stale()` popula `stockbridge.lote` (status='transito') a partir de:
+
+```sql
+FROM public."tbl_dadosPlanilhaFUPComex" fup
+JOIN public."tbl_pedidosCompras_ACXE" pc ON pc.cnumero = fup.pedido_acxe_omie
+WHERE pc.ncodprod IS NOT NULL AND pc.nqtde > 0
+```
+
+- **Quantidade somada = `pc.nqtde`** (linha do pedido de compras), **não** o `volume_total_kg` do FUP. O FUP define só o **estágio** (via `etapa_global` + `etapa`) e o **custo** R$/kg (`valor_total_reais / volume_total_kg`).
+- **Um lote por `(pedido, produto)`** — `codigo = 'F-{pedido}-{ncodprod}'`. O `ON CONFLICT (pedido_compra_acxe, produto_codigo_acxe) DO UPDATE` trata as transições de estágio sem duplicar.
+- O cockpit soma `SUM(quantidade_fisica_kg) FILTER (WHERE estagio_transito = '<estágio>')` sobre `lote WHERE ativo AND status='transito'`.
+
+Critério de cada estágio (CASE no refresh):
+
+| Estágio (UI) | `estagio_transito` | Critério FUP | NF emitida? |
+|---|---|---|---|
+| Aguardando Embarque | `aguardando_embarque` | `etapa_global = '01 - Aguardando Booking'` | não |
+| Em Águas | `transito_intl` | `etapa_global = '02 - Em Águas'` | não |
+| No Porto | `no_porto` | `etapa_global = '03 - Nacionalização'` **E** `etapa LIKE ANY('20%','30%','31%')` | não |
+| Em Trânsito Local | `transito_local` | `etapa_global = '03 - Nacionalização'` **E** `etapa LIKE ANY('21%','22%')` | sim (mãe) |
+| Disponível | — (OMIE) | saldo físico OMIE — ver seção Cockpit abaixo | recebido |
+
+Sub-etapas do `03 - Nacionalização`:
+
+- **20** Registro DI · **30** Registro DTA/Remoção · **31** Porto Seco → `no_porto` (sem NF ainda)
+- **21** Exoneração ICMS · **22** Recebimento no Galpão → `transito_local` (NF mãe emitida, a caminho do galpão)
+- **23** Devolução Containers e `etapa_global` **04/05** → **não rastreados** (já entregue; OMIE tem o saldo físico)
+
+**Disponível** continua vindo do OMIE (CTE `fisico_omie` em `cockpit.service.ts`): soma de `tbl_posicaoEstoque_ACXE/_Q2P` no `MAX(ddataposicao)` por empresa, restrita à whitelist de galpões físicos (`11.1/11.2/12.1/12.2/21.1/21.2/31.1`), com `COALESCE(MAX FILTER Q2P, MAX FILTER ACXE)` por `(produto, galpão)` pra não dobrar o estoque espelhado.
+
+**Gotcha de schema:** `estagio_transito` é `varchar(30)` mas tem CHECK `lote_estagio_transito_check`. Adicionar um estágio novo exige `ALTER TABLE ... DROP/ADD CONSTRAINT` (a 0037 faz isso) — senão o INSERT falha com erro `23514`. `porto_dta` permanece no CHECK como valor **legado** (linhas históricas soft-deletadas ainda o carregam).
+
+**Ressalva tela × banco:** a soma crua de `stockbridge.lote` pode ser **maior** que a esteira do cockpit, porque o `WHERE` final do cockpit filtra `incluir_em_metricas = true` em `familia_omie_atlas` **e** `config_produto`. Produtos fora de métricas não somam na esteira.
 
 ---
 
@@ -135,7 +175,7 @@ Não é cutover único — é convivência:
 
 2. **Dupla contagem provisorio + OMIE consolidado** — se a regra de filtro `status_omie != 'concluida'` falhar, mesmo SKU é contado 2x. Mitigação: teste de unidade na função de consolidação + sanidade no checklist de validação.
 
-3. **Lote em trânsito que nunca vira recebimento** — se o operador esquece de receber e a planilha FUP marca como recebido, o lote fica "preso" em `transito_interno` no Atlas. Mitigação: o `refresh_lotes_em_transito_se_stale` faz soft-delete dos lotes que saíram da janela ativa do FUP (`etapa_global` em `02 - Em Águas` ou `03 - Nacionalização`).
+3. **Lote em trânsito que nunca vira recebimento** — quando o pedido avança no FUP além dos estágios rastreados, o lote precisa sumir do trânsito. Mitigação: o `refresh_lotes_em_transito_se_stale` faz soft-delete dos lotes cujo pedido saiu dos estágios rastreados — mantém ativos apenas `etapa_global` `01`/`02`, ou `03` nas etapas `20/21/22/30/31`. Pedidos em `03`/etapa `23` ou `etapa_global` `04`/`05` são soft-deletados, pois já estão entregues e o OMIE assume o saldo físico (Disponível).
 
 4. **Falha parcial OMIE durante recebimento** (ACXE OK + Q2P falha) — já coberto pela idempotência da migration 0016. `stockbridge.movimentacao.status_omie='pendente_q2p'` permite retry sem duplicar ajuste.
 
@@ -156,7 +196,7 @@ Ao adicionar nova feature ao StockBridge, decidir em qual camada vive:
 
 ## Próximos passos pra alinhar o módulo a essa arquitetura
 
-1. ✅ **Trânsito**: já lê FUP→lote. (Migration 0024)
+1. ✅ **Trânsito**: lê FUP→lote, 5 estágios FUP-driven. (Migration 0024 → 0036 → **0037**; ver seção "Pipeline de trânsito — 5 estágios")
 2. ✅ **Meu Estoque**: já lê OMIE direto. (Migration 0025)
 3. ✅ **Indicadores por Produto**: já lê OMIE+Atlas via função 0017→0023.
 4. ⏳ **Cockpit**: refatorar pra consumir saldo OMIE como base + camadas Atlas (provisório + trânsito) com regra anti-dupla-contagem.
