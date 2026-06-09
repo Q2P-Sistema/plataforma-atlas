@@ -65,7 +65,15 @@ let _config: Env | null = null;
 
 export function loadConfig(): Env {
   if (_config) return _config;
-  const result = envSchema.safeParse(process.env);
+  // Normaliza string vazia ("") -> undefined antes de validar. Necessario porque o
+  // Docker Compose/Swarm, ao resolver `KEY: ${KEY}` com a origem vazia, injeta a
+  // variavel no container como "" — e "" falha validadores de formato
+  // (.email()/.url()/.regex()) mesmo em campos .optional(). Tratar "" como ausente
+  // deixa os opcionais realmente opcionais e os defaults voltarem a valer.
+  const normalizedEnv = Object.fromEntries(
+    Object.entries(process.env).map(([k, v]) => [k, v === '' ? undefined : v]),
+  );
+  const result = envSchema.safeParse(normalizedEnv);
   if (!result.success) {
     const formatted = result.error.issues
       .map((i) => `  ${i.path.join('.')}: ${i.message}`)
