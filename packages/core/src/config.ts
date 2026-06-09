@@ -25,6 +25,11 @@ const boolString = z
 
 const envSchema = z.object({
   DATABASE_URL: z.string().url(),
+  // Timezone da sessao Postgres (IANA). Define o fuso usado por CURRENT_DATE,
+  // CURRENT_TIMESTAMP e comparacoes de data nas queries (ex: defasagem CMC,
+  // vencimentos breakingpoint/comodato). O container roda em UTC, entao sem isto
+  // o CURRENT_DATE "vira o dia" 3h antes da meia-noite local. Operacao e BR.
+  DB_TIMEZONE: z.string().default('America/Sao_Paulo'),
   REDIS_URL: z.string().url(),
   SESSION_SECRET: z.string().min(16),
   SEED_ADMIN_EMAIL: z.string().email().optional(),
