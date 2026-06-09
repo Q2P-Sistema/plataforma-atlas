@@ -8,6 +8,12 @@ services:
       NODE_ENV: production
       API_PORT: "3005"
 
+      # App é Brasil-only: roda o container em BRT para a lógica de datas locais
+      # (ex: "Data do Movimento" do ajuste OMIE, via getDate/getMonth). Sem isto o
+      # container fica em UTC e, após ~21h BRT, manda a data de amanhã -> OMIE rejeita.
+      # Node no alpine respeita TZ via ICU embutido (não precisa de tzdata).
+      TZ: America/Sao_Paulo
+
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
       SESSION_SECRET: ${SESSION_SECRET}
