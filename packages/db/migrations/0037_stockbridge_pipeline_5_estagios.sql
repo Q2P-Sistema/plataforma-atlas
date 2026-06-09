@@ -1,35 +1,59 @@
--- Migration: 0037 — StockBridge: pipeline 5 estágios
+-- Migration: 0037 — StockBridge: pipeline 5 estágios (100% FUP-driven)
 --
 -- Antes (migration 0036):
 --   FUP só em '02 - Em Águas' → transito_intl
---   NFs emitidas não recebidas → porto_dta
+--   NFs emitidas não recebidas → porto_dta  ← DESCARTADO (ver abaixo)
 --   Pipeline UI: 3 estágios (Trânsito Intl → Nacionalização → Disponível)
 --
--- Agora: 5 estágios operacionais mapeados diretamente da FUP:
---   01 - Aguardando Booking  → aguardando_embarque  (pedido feito, booking pendente)
---   02 - Em Águas            → transito_intl          (em rota marítima)
---   03 / etapa 20,30,31      → no_porto               (porto, DTA, sem NF ainda)
---   NF emitida + não recv    → porto_dta              (NF ok, aguardando recebimento)
+-- Agora: 5 estágios operacionais, TODOS derivados do FUP de Comex:
+--   01 - Aguardando Booking        → aguardando_embarque  (booking pendente)
+--   02 - Em Águas                  → transito_intl          (em rota marítima)
+--   03 / etapa 20,30,31            → no_porto               (porto/DTA, sem NF ainda)
+--   03 / etapa 21,22               → transito_local         (NF emitida, a caminho do galpão)
+--   OMIE galpões físicos           → Disponível             (saldo físico, fora desta função)
+--
+-- POR QUE FUP-ONLY (rastreamento via NF removido):
+--   tbl_nf_header_ACXE mistura NF MÃE (cobre o pedido/container todo) com NFs
+--   FILHOTES (uma por caminhão, para o transporte). As duas são indistinguíveis
+--   na tabela — somá-las dobra o volume. O FUP é a fonte de verdade operacional
+--   da equipe de Comex e já cobre todas as etapas de trânsito.
 --
 -- FUP 03 subdividido pela `etapa` (sub-estágio):
---   20 - Aguardando Registro DI          → no_porto    (sem NF ainda)
---   30 - Aguardando Registro DTA/Remoção → no_porto    (sem NF ainda)
---   31 - Material em Porto Seco          → no_porto    (sem NF ainda)
---   21 - Aguardando Exoneração de ICMS   → NÃO criar lote FUP (NF mãe emitida —
---                                          material já capturado como porto_dta via NF-tracking)
---   22 - Aguardando Recebimento no Galpão → idem (NF mãe + filhote emitidas)
---   23 - Aguardando Devolução Containers → NÃO criar lote (já entregue no galpão —
---                                          OMIE tem saldo físico)
---   04/05 → não rastrear (NF-tracking assume a partir da emissão da NF)
+--   20 - Aguardando Registro DI          → no_porto        (sem NF ainda)
+--   30 - Aguardando Registro DTA/Remoção → no_porto        (sem NF ainda)
+--   31 - Material em Porto Seco          → no_porto        (sem NF ainda)
+--   21 - Aguardando Exoneração de ICMS   → transito_local  (NF mãe emitida)
+--   22 - Aguardando Recebimento Galpão   → transito_local  (NF mãe + filhote)
+--   23 - Aguardando Devolução Containers → NÃO rastrear (já entregue — OMIE tem saldo)
+--   04/05 → não rastrear
 --
--- Transições automáticas (exemplo):
---   Pedido avança 01→02: ON CONFLICT DO UPDATE seta estagio_transito='transito_intl'
---   Pedido avança 03/etapa=20→03/etapa=21: soft-delete do lote no_porto;
---     o NF-tracking cria porto_dta automaticamente quando a NF aparecer.
+-- Transições automáticas (ON CONFLICT DO UPDATE seta estagio_transito):
+--   01→02:        aguardando_embarque → transito_intl
+--   02→03/et=20:  transito_intl → no_porto
+--   03/et=20→21:  no_porto → transito_local
+--   03/et=22→23:  soft-delete (saiu dos estágios rastreados; OMIE assume o saldo)
 --
--- Remove também: rastreamento OMIE 90.0.2 do cockpit (cockpit.service.ts):
---   transito_interno_kg passa a ser só lotes Atlas com estagio='transito_interno'
---   (vazio após esta migration — eliminando dupla contagem com porto_dta).
+-- Cleanup: lotes legados criados pela abordagem NF (nf_origem_id IS NOT NULL)
+--   são soft-deletados — não há mais Parte NF que os recrie.
+
+-- ── Ampliar CHECK constraint de estagio_transito ─────────────────────────────
+-- O valor é varchar(30) mas há um CHECK que restringe a lista. Os 3 novos
+-- estágios (aguardando_embarque, no_porto, transito_local) precisam ser
+-- permitidos antes do backfill. 'porto_dta' é MANTIDO na lista: vira valor
+-- legado (nunca mais produzido pelo código novo) mas continua válido para as
+-- linhas históricas soft-deletadas que ainda carregam esse estágio.
+-- Idempotente: DROP IF EXISTS + ADD.
+ALTER TABLE stockbridge.lote DROP CONSTRAINT IF EXISTS lote_estagio_transito_check;
+ALTER TABLE stockbridge.lote ADD CONSTRAINT lote_estagio_transito_check
+    CHECK ((estagio_transito)::text = ANY ((ARRAY[
+        'aguardando_embarque',
+        'transito_intl',
+        'no_porto',
+        'transito_local',
+        'porto_dta',
+        'transito_interno',
+        'reservado'
+    ])::text[]));
 
 -- ── Reescrever refresh_lotes_em_transito_se_stale ────────────────────────────
 CREATE OR REPLACE FUNCTION stockbridge.refresh_lotes_em_transito_se_stale(
@@ -42,13 +66,11 @@ DECLARE
     v_max_updated      timestamptz;
     v_loc_transito_id  uuid;
     v_count_fup        integer := 0;
-    v_count_nf         integer := 0;
     v_count_softdel    integer := 0;
-    v_count_softdel_nf integer := 0;
 BEGIN
     SELECT MAX(updated_at) INTO v_max_updated
     FROM stockbridge.lote
-    WHERE pedido_compra_acxe IS NOT NULL OR nf_origem_id IS NOT NULL;
+    WHERE pedido_compra_acxe IS NOT NULL;
 
     IF v_max_updated IS NOT NULL
        AND v_max_updated > now() - (p_ttl_minutes || ' minutes')::interval THEN
@@ -64,16 +86,10 @@ BEGIN
         RAISE EXCEPTION 'Localidade virtual 90.0.2 TRANSITO nao encontrada';
     END IF;
 
-    -- ── Parte 1: FUP — 3 estágios ativos em único UPSERT ────────────────────
-    -- CASE determina estagio_transito.
+    -- ── Parte 1: FUP — 4 estágios ativos em único UPSERT ────────────────────
+    -- CASE determina estagio_transito a partir de etapa_global + etapa.
     -- ON CONFLICT DO UPDATE seta estagio_transito = EXCLUDED tratando
-    -- transições (01→02, 02→03/etapa=20) sem criar duplicatas.
-    --
-    -- Incluídos:
-    --   etapa_global '01' e '02' completos
-    --   etapa_global '03' SOMENTE quando etapa LIKE '20%', '30%' ou '31%'
-    --     (sem NF emitida; etapa 21/22 já cobertos por porto_dta via NF-tracking;
-    --      etapa 23 já entregue no galpão)
+    -- transições (01→02, 02→03/et=20, 03/et=20→21) sem criar duplicatas.
     WITH upserted AS (
         INSERT INTO stockbridge.lote (
             codigo, produto_codigo_acxe, fornecedor_nome, pais_origem,
@@ -95,7 +111,10 @@ BEGIN
             CASE
                 WHEN fup.etapa_global = '01 - Aguardando Booking' THEN 'aguardando_embarque'
                 WHEN fup.etapa_global = '02 - Em Águas'           THEN 'transito_intl'
-                WHEN fup.etapa_global = '03 - Nacionalização'     THEN 'no_porto'
+                WHEN fup.etapa_global = '03 - Nacionalização'
+                     AND fup.etapa LIKE ANY(ARRAY['20%', '30%', '31%']) THEN 'no_porto'
+                WHEN fup.etapa_global = '03 - Nacionalização'
+                     AND fup.etapa LIKE ANY(ARRAY['21%', '22%'])        THEN 'transito_local'
             END                                                                          AS estagio_transito,
             v_loc_transito_id                                                            AS localidade_id,
             'acxe'                                                                       AS cnpj,
@@ -111,7 +130,7 @@ BEGIN
               fup.etapa_global IN ('01 - Aguardando Booking', '02 - Em Águas')
               OR (
                   fup.etapa_global = '03 - Nacionalização'
-                  AND fup.etapa LIKE ANY(ARRAY['20%', '30%', '31%'])
+                  AND fup.etapa LIKE ANY(ARRAY['20%', '21%', '22%', '30%', '31%'])
               )
           )
         ON CONFLICT (pedido_compra_acxe, produto_codigo_acxe)
@@ -132,76 +151,11 @@ BEGIN
     )
     SELECT COUNT(*) INTO v_count_fup FROM upserted;
 
-    -- ── Parte 2: Nacionalização via NF (emitidas + não recebidas) ───────────
-    -- Sem mudança em relação à migration 0036 — lotes porto_dta vêm de NFs de
-    -- entrada emitidas nos últimos 90 dias que ainda não aparecem em
-    -- tb_movimentacao_q2p_legado (mv_acxe=1 AND mv_q2p=1 AND ativo=1) nem em
-    -- stockbridge.movimentacao (entrada_nf/entrada_manual).
-    WITH nfs_em_aberto AS (
-        SELECT
-            h.n_id_nf,
-            h.n_nf,
-            h.dest_razao,
-            h.d_emi,
-            i.n_cod_prod,
-            i.q_com
-        FROM public."tbl_nf_header_ACXE" h
-        JOIN public."tbl_nf_itens_ACXE" i ON i.n_id_nf = h.n_id_nf
-        WHERE h.tp_nf = 0
-          AND h.deletada = false
-          AND h.d_emi > (now() - interval '90 days')::date
-          AND i.n_cod_prod IS NOT NULL
-          AND i.q_com > 0
-          AND NOT EXISTS (
-              SELECT 1 FROM public."tb_movimentacao_q2p_legado" mv
-              WHERE mv.nota_fiscal = h.n_nf::int
-                AND mv.mv_acxe = 1 AND mv.mv_q2p = 1 AND mv.ativo = 1
-          )
-          AND NOT EXISTS (
-              SELECT 1 FROM stockbridge.movimentacao m
-              WHERE m.nota_fiscal = h.n_nf
-                AND m.tipo_movimento IN ('entrada_nf', 'entrada_manual')
-                AND m.ativo = true
-          )
-    ),
-    upserted_nf AS (
-        INSERT INTO stockbridge.lote (
-            codigo, produto_codigo_acxe, fornecedor_nome,
-            quantidade_fisica_kg, quantidade_fiscal_kg,
-            status, estagio_transito, localidade_id, cnpj,
-            dt_entrada, nf_origem_id
-        )
-        SELECT
-            'N-' || n.n_nf || '-' || n.n_cod_prod                                        AS codigo,
-            n.n_cod_prod                                                                  AS produto_codigo_acxe,
-            COALESCE(n.dest_razao, 'sem fornecedor')                                      AS fornecedor_nome,
-            n.q_com                                                                       AS quantidade_fisica_kg,
-            n.q_com                                                                       AS quantidade_fiscal_kg,
-            'transito'                                                                    AS status,
-            'porto_dta'                                                                   AS estagio_transito,
-            v_loc_transito_id                                                             AS localidade_id,
-            'acxe'                                                                        AS cnpj,
-            COALESCE(n.d_emi::date, CURRENT_DATE)                                         AS dt_entrada,
-            n.n_id_nf                                                                     AS nf_origem_id
-        FROM nfs_em_aberto n
-        ON CONFLICT (nf_origem_id, produto_codigo_acxe)
-            WHERE nf_origem_id IS NOT NULL
-        DO UPDATE SET
-            quantidade_fisica_kg = EXCLUDED.quantidade_fisica_kg,
-            quantidade_fiscal_kg = EXCLUDED.quantidade_fiscal_kg,
-            fornecedor_nome      = EXCLUDED.fornecedor_nome,
-            ativo                = true,
-            updated_at           = now()
-        WHERE stockbridge.lote.status = 'transito'
-        RETURNING 1
-    )
-    SELECT COUNT(*) INTO v_count_nf FROM upserted_nf;
-
-    -- ── Parte 3a: Soft-delete lotes FUP que saíram dos estágios rastreados ───
-    -- Material soft-deletado quando:
-    --   - saiu de '01'/'02' (avançou para '03' com etapa=21/22/23 ou '04'/'+)
-    --   - OU estava em '03' / etapa=20/30/31 e avançou para etapa=21 (NF emitida):
-    --     nesse caso porto_dta NF-based assume automaticamente
+    -- ── Parte 2: Soft-delete lotes FUP que saíram dos estágios rastreados ───
+    -- Material soft-deletado quando o pedido avançou para:
+    --   - etapa_global '03' / etapa=23 (entregue no galpão — OMIE tem saldo)
+    --   - etapa_global '04'/'05' (pós-nacionalização)
+    --   - etapa_global NULL ou removido do FUP
     UPDATE stockbridge.lote l
     SET ativo = false, updated_at = now()
     WHERE l.pedido_compra_acxe IS NOT NULL
@@ -214,44 +168,25 @@ BEGIN
                 fup.etapa_global IN ('01 - Aguardando Booking', '02 - Em Águas')
                 OR (
                     fup.etapa_global = '03 - Nacionalização'
-                    AND fup.etapa LIKE ANY(ARRAY['20%', '30%', '31%'])
+                    AND fup.etapa LIKE ANY(ARRAY['20%', '21%', '22%', '30%', '31%'])
                 )
             )
       );
     GET DIAGNOSTICS v_count_softdel = ROW_COUNT;
 
-    -- ── Parte 3b: Soft-delete lotes NF que foram recebidos ──────────────────
-    -- Sem mudança em relação à migration 0036.
-    UPDATE stockbridge.lote l
-    SET ativo = false, updated_at = now()
-    WHERE l.nf_origem_id IS NOT NULL
-      AND l.ativo = true
-      AND l.status = 'transito'
-      AND EXISTS (
-          SELECT 1 FROM public."tbl_nf_header_ACXE" h
-          WHERE h.n_id_nf = l.nf_origem_id
-            AND (
-                EXISTS (
-                    SELECT 1 FROM public."tb_movimentacao_q2p_legado" mv
-                    WHERE mv.nota_fiscal = h.n_nf::int
-                      AND mv.mv_acxe = 1 AND mv.mv_q2p = 1 AND mv.ativo = 1
-                )
-                OR EXISTS (
-                    SELECT 1 FROM stockbridge.movimentacao m
-                    WHERE m.nota_fiscal = h.n_nf
-                      AND m.tipo_movimento IN ('entrada_nf', 'entrada_manual')
-                      AND m.ativo = true
-                )
-            )
-      );
-    GET DIAGNOSTICS v_count_softdel_nf = ROW_COUNT;
-
-    RETURN v_count_fup + v_count_nf + v_count_softdel + v_count_softdel_nf;
+    RETURN v_count_fup + v_count_softdel;
 END;
 $$;
 
 COMMENT ON FUNCTION stockbridge.refresh_lotes_em_transito_se_stale(integer) IS
-  'Pipeline 5 estágios: FUP 01→aguardando_embarque, 02→transito_intl, 03/etapa(20/30/31)→no_porto (único UPSERT CASE, ON CONFLICT trata transições). FUP 03/etapa(21/22/23) e 04/05 não rastreados (NF-tracking assume). NFs emitidas não recebidas→porto_dta. Soft-delete FUP quando sai dos estágios rastreados; soft-delete NF quando recebida. TTL: no-op se MAX(updated_at)>now()-ttl_minutes.';
+  'Pipeline 5 estágios 100% FUP-driven: 01→aguardando_embarque, 02→transito_intl, 03/etapa(20/30/31)→no_porto, 03/etapa(21/22)→transito_local (único UPSERT CASE, ON CONFLICT trata transições). FUP 03/etapa 23 e 04/05 não rastreados (OMIE assume o saldo físico). Rastreamento via NF removido (NF mãe+filhote indistinguíveis → dupla contagem). Soft-delete FUP quando sai dos estágios rastreados. TTL: no-op se MAX(updated_at)>now()-ttl_minutes.';
+
+-- ── Cleanup: lotes legados criados pela abordagem NF (migration 0036) ──────────
+-- Não há mais Parte NF que os recrie; soft-delete uma vez. O saldo correspondente
+-- está no OMIE (entrada já consolidada) ou volta a aparecer via FUP etapa 21/22.
+UPDATE stockbridge.lote
+SET ativo = false, updated_at = now()
+WHERE nf_origem_id IS NOT NULL AND ativo = true AND status = 'transito';
 
 -- ── Backfill imediato ─────────────────────────────────────────────────────────
 SELECT stockbridge.refresh_lotes_em_transito_se_stale(0) AS backfill_count;

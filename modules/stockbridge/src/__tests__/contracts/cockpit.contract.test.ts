@@ -15,7 +15,7 @@ vi.mock('@atlas/core', () => ({
           fisica_kg: 42_000,
           fiscal_kg: 42_000,
           transito_intl_kg: 15_000,
-          porto_dta_kg: 0,
+          transito_local_kg: 0,
           transito_interno_kg: 0,
           provisorio_kg: 0,
           consumo_medio_diario_kg: 1200,

@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '../../../stores/auth.store.js';
 
-type EstagioTransito = 'aguardando_embarque' | 'transito_intl' | 'no_porto' | 'porto_dta' | 'transito_interno';
+type EstagioTransito = 'aguardando_embarque' | 'transito_intl' | 'no_porto' | 'transito_local' | 'transito_interno';
 
 interface LoteTransito {
   id: string;
@@ -38,13 +38,14 @@ interface LoteTransito {
 // 'reservado' e 'transito_interno' seguem no payload mas ignorados (sem coluna correspondente)
 type TransitoData = Record<EstagioTransito, LoteTransito[]> & { reservado?: LoteTransito[]; transito_interno?: LoteTransito[] };
 
-// Pipeline 5 estágios (migration 0037):
-//   01 → aguardando_embarque  02 → transito_intl  03/etapa(20/30/31) → no_porto  NF → porto_dta
+// Pipeline 5 estágios (migration 0037) — 100% FUP-driven:
+//   01 → aguardando_embarque  02 → transito_intl
+//   03/etapa(20/30/31) → no_porto  03/etapa(21/22) → transito_local
 const COLUNAS: Array<{ key: EstagioTransito; label: string; subtitle: string; accent: string }> = [
-  { key: 'aguardando_embarque', label: 'Aguardando Embarque',    subtitle: 'Booking pendente',                   accent: 'border-slate-300 bg-slate-50/50 dark:bg-slate-900/10' },
-  { key: 'transito_intl',       label: 'Em Águas',               subtitle: 'Embarcado, em rota',                 accent: 'border-violet-300 bg-violet-50/50 dark:bg-violet-900/10' },
-  { key: 'no_porto',            label: 'No Porto',               subtitle: 'DTA aberta, NF pendente',            accent: 'border-amber-300 bg-amber-50/50 dark:bg-amber-900/10' },
-  { key: 'porto_dta',           label: 'Em Trânsito p/ Galpão',  subtitle: 'NF emitida, aguardando recebimento', accent: 'border-orange-300 bg-orange-50/50 dark:bg-orange-900/10' },
+  { key: 'aguardando_embarque', label: 'Aguardando Embarque', subtitle: 'Booking pendente',                accent: 'border-slate-300 bg-slate-50/50 dark:bg-slate-900/10' },
+  { key: 'transito_intl',       label: 'Em Águas',            subtitle: 'Embarcado, em rota',              accent: 'border-violet-300 bg-violet-50/50 dark:bg-violet-900/10' },
+  { key: 'no_porto',            label: 'No Porto',            subtitle: 'DTA aberta, NF pendente',         accent: 'border-amber-300 bg-amber-50/50 dark:bg-amber-900/10' },
+  { key: 'transito_local',      label: 'Em Trânsito Local',   subtitle: 'NF emitida, a caminho do galpão', accent: 'border-orange-300 bg-orange-50/50 dark:bg-orange-900/10' },
 ];
 
 function useApiFetch() {
@@ -70,9 +71,10 @@ const HOJE = new Date().toISOString().slice(0, 10);
 
 /**
  * Data limite por estagio:
- * - Transito Internacional: ETA (chegada no porto)
- * - Porto/DTA: data prevista de entrada no armazem
- * - Transito Interno: data prevista de entrada no armazem
+ * - Aguardando Embarque: ETD (saida prevista)
+ * - Em Aguas: ETA (chegada no porto)
+ * - No Porto: data de liberacao do transporte
+ * - Transito Local / Interno: data prevista de entrada no armazem
  *
  * Atrasado = data limite < hoje
  */
@@ -84,7 +86,7 @@ function getDataLimite(l: LoteTransito): { label: string; valor: string | null }
       return { label: 'ETA', valor: l.eta };
     case 'no_porto':
       return { label: 'Liber', valor: l.dataLiberacaoTransporte };
-    case 'porto_dta':
+    case 'transito_local':
     case 'transito_interno':
       return { label: 'Armaz', valor: l.dataEntradaArmazem };
   }

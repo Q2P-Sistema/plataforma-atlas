@@ -31,7 +31,7 @@ describe('metricas#calcularExposicaoCambial', () => {
   it('soma apenas lotes em transito_intl, retorna BRL (kg × BRL/kg)', () => {
     const lotes = [
       { estagioTransito: 'transito_intl', quantidadeFisicaKg: 10_000, custoBrlKg: 6, ativo: true },
-      { estagioTransito: 'porto_dta',     quantidadeFisicaKg: 5000,   custoBrlKg: 6, ativo: true },
+      { estagioTransito: 'transito_local', quantidadeFisicaKg: 5000,   custoBrlKg: 6, ativo: true },
       { estagioTransito: null,            quantidadeFisicaKg: 20_000, custoBrlKg: 6, ativo: true },
     ];
     // Apenas o primeiro conta: 10_000 kg × 6 BRL/kg = 60_000 BRL

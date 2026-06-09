@@ -17,7 +17,7 @@ interface CockpitSku {
   aguardandoEmbarqueKg: number;
   transitoIntlKg: number;
   noPortoKg: number;
-  portoDtaKg: number;
+  transitoLocalKg: number;
   transitoInternoKg: number;
   provisorioKg: number;
   comodatoKg: number;
@@ -37,7 +37,7 @@ interface CockpitResumo {
   aguardandoEmbarqueKg: number;
   transitoIntlKg: number;
   noPortoKg: number;
-  portoDtaKg: number;
+  transitoLocalKg: number;
   transitoInternoKg: number;
   provisorioKg: number;
   comodatoKg: number;
@@ -85,7 +85,7 @@ function useApiFetch() {
 }
 
 type PendenciaFilter = 'todas' | 'divergencia' | 'aprovacao' | 'provisorio';
-type EstagioFilter = 'todos' | 'aguardando_embarque' | 'transito_intl' | 'no_porto' | 'porto_dta';
+type EstagioFilter = 'todos' | 'aguardando_embarque' | 'transito_intl' | 'no_porto' | 'transito_local';
 type ViewMode = 'tabela' | 'cards';
 
 // Prioridade de ordenacao por criticidade (menor numero = aparece primeiro)
@@ -143,7 +143,7 @@ export function CockpitPage() {
     if (estagioFilter === 'aguardando_embarque') skus = skus.filter((s) => s.aguardandoEmbarqueKg > 0);
     if (estagioFilter === 'transito_intl') skus = skus.filter((s) => s.transitoIntlKg > 0);
     if (estagioFilter === 'no_porto') skus = skus.filter((s) => s.noPortoKg > 0);
-    if (estagioFilter === 'porto_dta') skus = skus.filter((s) => s.portoDtaKg > 0);
+    if (estagioFilter === 'transito_local') skus = skus.filter((s) => s.transitoLocalKg > 0);
     const ordenados = [...skus].sort((a, b) => {
       const pa = CRIT_PRIORIDADE[a.criticidade];
       const pb = CRIT_PRIORIDADE[b.criticidade];
@@ -171,9 +171,9 @@ export function CockpitPage() {
         .filter((s) => s.criticidade === 'excesso')
         .sort((a, b) => b.fisicaKg - a.fisicaKg)
         .slice(0, 5),
-      portoDta: [...skus]
-        .filter((s) => s.portoDtaKg > 0)
-        .sort((a, b) => b.portoDtaKg - a.portoDtaKg)
+      transitoLocal: [...skus]
+        .filter((s) => s.transitoLocalKg > 0)
+        .sort((a, b) => b.transitoLocalKg - a.transitoLocalKg)
         .slice(0, 5),
       pendencias: [...skus]
         .filter((s) => s.divergencias + s.aprovacoesPendentes > 0)
@@ -247,7 +247,7 @@ export function CockpitPage() {
       { label: 'Ag. Embarque',  value: r.aguardandoEmbarqueKg, color: 'text-slate-600',  bg: 'bg-slate-50 dark:bg-slate-900/20' },
       { label: 'Em Águas',      value: r.transitoIntlKg,       color: 'text-violet-700', bg: 'bg-violet-50 dark:bg-violet-900/20' },
       { label: 'No Porto',      value: r.noPortoKg,            color: 'text-amber-700',  bg: 'bg-amber-50 dark:bg-amber-900/20' },
-      { label: 'Tr. p/ Galpão', value: r.portoDtaKg,           color: 'text-orange-700', bg: 'bg-orange-50 dark:bg-orange-900/20' },
+      { label: 'Tr. p/ Galpão', value: r.transitoLocalKg,           color: 'text-orange-700', bg: 'bg-orange-50 dark:bg-orange-900/20' },
       { label: 'Disponível',    value: r.totalFisicoKg,         color: 'text-green-700',  bg: 'bg-green-50 dark:bg-green-900/20' },
     ];
   }, [data]);
@@ -346,7 +346,7 @@ export function CockpitPage() {
             { v: 'aguardando_embarque', label: 'Ag. Embarque',    title: 'SKUs aguardando booking de embarque' },
             { v: 'transito_intl',       label: 'Em Águas',        title: 'SKUs em rota marítima (FUP em águas)' },
             { v: 'no_porto',            label: 'No Porto',        title: 'SKUs no porto, DTA aberta, sem NF' },
-            { v: 'porto_dta',           label: 'Tr. p/ Galpão',   title: 'SKUs com NF emitida aguardando recebimento' },
+            { v: 'transito_local',           label: 'Tr. p/ Galpão',   title: 'SKUs com NF emitida aguardando recebimento' },
           ] as const).map(({ v, label, title }) => (
             <button
               key={v}
@@ -483,7 +483,7 @@ export function CockpitPage() {
                   <Cell label="Ag. Embarque" value={`${fmtKg(sku.aguardandoEmbarqueKg)} kg`} accent="text-slate-600" />
                   <Cell label="Em Águas" value={`${fmtKg(sku.transitoIntlKg)} kg`} accent="text-violet-700" />
                   <Cell label="No Porto" value={`${fmtKg(sku.noPortoKg)} kg`} accent="text-amber-700" />
-                  <Cell label="Tr. Galpão" value={`${fmtKg(sku.portoDtaKg)} kg`} accent="text-orange-700" />
+                  <Cell label="Tr. Galpão" value={`${fmtKg(sku.transitoLocalKg)} kg`} accent="text-orange-700" />
                 </div>
 
                 <div className="mb-2">
@@ -525,7 +525,7 @@ export function CockpitPage() {
   );
 }
 
-function TopRiscos({ topRiscos }: { topRiscos: { ruptura: CockpitSku[]; excesso: CockpitSku[]; portoDta: CockpitSku[]; pendencias: CockpitSku[]; comodato: CockpitSku[] } }) {
+function TopRiscos({ topRiscos }: { topRiscos: { ruptura: CockpitSku[]; excesso: CockpitSku[]; transitoLocal: CockpitSku[]; pendencias: CockpitSku[]; comodato: CockpitSku[] } }) {
   const blocos = [
     {
       titulo: 'Maior risco de ruptura',
@@ -546,10 +546,10 @@ function TopRiscos({ topRiscos }: { topRiscos: { ruptura: CockpitSku[]; excesso:
     {
       titulo: 'Aguardando recebimento',
       subtitulo: 'NF emitida sem baixa',
-      items: topRiscos.portoDta,
+      items: topRiscos.transitoLocal,
       color: 'text-orange-700',
       bg: 'bg-orange-50 dark:bg-orange-900/20',
-      fmtValor: (s: CockpitSku) => `${fmtKg(s.portoDtaKg)} kg`,
+      fmtValor: (s: CockpitSku) => `${fmtKg(s.transitoLocalKg)} kg`,
     },
     {
       titulo: 'Mais pendências',
@@ -639,7 +639,7 @@ function TabelaSkus({ skus }: { skus: CockpitSku[] }) {
                 <td className={`px-3 py-2 text-right font-mono ${s.aguardandoEmbarqueKg > 0 ? 'text-slate-600' : 'text-atlas-muted/50'}`}>{fmtKg(s.aguardandoEmbarqueKg)}</td>
                 <td className={`px-3 py-2 text-right font-mono ${s.transitoIntlKg > 0 ? 'text-violet-700' : 'text-atlas-muted/50'}`}>{fmtKg(s.transitoIntlKg)}</td>
                 <td className={`px-3 py-2 text-right font-mono ${s.noPortoKg > 0 ? 'text-amber-700' : 'text-atlas-muted/50'}`}>{fmtKg(s.noPortoKg)}</td>
-                <td className={`px-3 py-2 text-right font-mono ${s.portoDtaKg > 0 ? 'text-orange-700' : 'text-atlas-muted/50'}`}>{fmtKg(s.portoDtaKg)}</td>
+                <td className={`px-3 py-2 text-right font-mono ${s.transitoLocalKg > 0 ? 'text-orange-700' : 'text-atlas-muted/50'}`}>{fmtKg(s.transitoLocalKg)}</td>
                 <td className="px-3 py-2 text-right font-mono text-atlas-muted">{s.consumoMedioDiarioKg != null ? fmtKg(s.consumoMedioDiarioKg) : '—'}</td>
                 <td className={`px-3 py-2 text-right font-mono font-medium ${crit.text}`}>{s.coberturaDias != null ? `${s.coberturaDias}d` : '—'}</td>
                 <td className="px-3 py-2 text-right font-mono text-atlas-muted">{s.leadTimeDias != null ? `${s.leadTimeDias}d` : '—'}</td>

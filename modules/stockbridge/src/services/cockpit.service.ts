@@ -26,10 +26,10 @@ export interface CockpitSku {
   fiscalKg: number;                    // fisicaKg + pendentes (representa total fiscal)
   fiscalPendenteNacionalKg: number;    // NFs nacionais entrada com n_id_receb=0 (pos cutoff)
   fiscalPendenteImportacaoKg: number;  // NFs ACXE 3.xxx sem movimentacao subtipo=importacao
-  aguardandoEmbarqueKg: number;         // Atlas: lote status='transito' estagio='aguardando_embarque'
-  transitoIntlKg: number;              // Atlas: lote status='transito' estagio='transito_intl'
-  noPortoKg: number;                   // Atlas: lote status='transito' estagio='no_porto'
-  portoDtaKg: number;                  // Atlas: lote status='transito' estagio='porto_dta'
+  aguardandoEmbarqueKg: number;         // Atlas: lote status='transito' estagio='aguardando_embarque' (FUP 01)
+  transitoIntlKg: number;              // Atlas: lote status='transito' estagio='transito_intl' (FUP 02)
+  noPortoKg: number;                   // Atlas: lote status='transito' estagio='no_porto' (FUP 03 etapa 20/30/31)
+  transitoLocalKg: number;             // Atlas: lote status='transito' estagio='transito_local' (FUP 03 etapa 21/22, NF emitida)
   transitoInternoKg: number;           // Atlas: lote status='transito' estagio='transito_interno'
   provisorioKg: number;                // Atlas: lote provisorio AINDA NAO consolidado pelo OMIE
   comodatoKg: number;                  // OMIE 90.0.1 (TROCA): material emprestado a clientes
@@ -49,7 +49,7 @@ export interface CockpitResumo {
   aguardandoEmbarqueKg: number;
   transitoIntlKg: number;
   noPortoKg: number;
-  portoDtaKg: number;
+  transitoLocalKg: number;
   transitoInternoKg: number;
   provisorioKg: number;
   comodatoKg: number;
@@ -224,7 +224,7 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
         SUM(l.quantidade_fisica_kg) FILTER (WHERE l.estagio_transito = 'aguardando_embarque') AS aguardando_embarque_kg,
         SUM(l.quantidade_fisica_kg) FILTER (WHERE l.estagio_transito = 'transito_intl')       AS transito_intl_kg,
         SUM(l.quantidade_fisica_kg) FILTER (WHERE l.estagio_transito = 'no_porto')            AS no_porto_kg,
-        SUM(l.quantidade_fisica_kg) FILTER (WHERE l.estagio_transito = 'porto_dta')           AS porto_dta_kg,
+        SUM(l.quantidade_fisica_kg) FILTER (WHERE l.estagio_transito = 'transito_local')      AS transito_local_kg,
         SUM(l.quantidade_fisica_kg) FILTER (WHERE l.estagio_transito = 'transito_interno')    AS transito_interno_kg
       FROM stockbridge.lote l
       WHERE l.ativo = true AND l.status = 'transito'
@@ -344,7 +344,7 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
       COALESCE(ta.aguardando_embarque_kg, 0)       AS aguardando_embarque_kg,
       COALESCE(ta.transito_intl_kg, 0)             AS transito_intl_kg,
       COALESCE(ta.no_porto_kg, 0)                  AS no_porto_kg,
-      COALESCE(ta.porto_dta_kg, 0)                 AS porto_dta_kg,
+      COALESCE(ta.transito_local_kg, 0)            AS transito_local_kg,
       COALESCE(ta.transito_interno_kg, 0)          AS transito_interno_kg,
       COALESCE(pv.provisorio_kg, 0)            AS provisorio_kg,
       COALESCE(cm.comodato_kg, 0)              AS comodato_kg,
@@ -410,7 +410,7 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
       aguardandoEmbarqueKg: Number(r.aguardando_embarque_kg),
       transitoIntlKg: Number(r.transito_intl_kg),
       noPortoKg: Number(r.no_porto_kg),
-      portoDtaKg: Number(r.porto_dta_kg),
+      transitoLocalKg: Number(r.transito_local_kg),
       transitoInternoKg: Number(r.transito_interno_kg),
       provisorioKg: Number(r.provisorio_kg),
       comodatoKg: Number(r.comodato_kg),
@@ -440,7 +440,7 @@ export function getResumoFromSkus(skus: CockpitSku[]): CockpitResumo {
   let aguardandoEmbarqueKg = 0;
   let transitoIntlKg = 0;
   let noPortoKg = 0;
-  let portoDtaKg = 0;
+  let transitoLocalKg = 0;
   let transitoInternoKg = 0;
   let provisorioKg = 0;
   let comodatoKg = 0;
@@ -458,7 +458,7 @@ export function getResumoFromSkus(skus: CockpitSku[]): CockpitResumo {
     aguardandoEmbarqueKg += s.aguardandoEmbarqueKg;
     transitoIntlKg += s.transitoIntlKg;
     noPortoKg += s.noPortoKg;
-    portoDtaKg += s.portoDtaKg;
+    transitoLocalKg += s.transitoLocalKg;
     transitoInternoKg += s.transitoInternoKg;
     provisorioKg += s.provisorioKg;
     comodatoKg += s.comodatoKg;
@@ -477,7 +477,7 @@ export function getResumoFromSkus(skus: CockpitSku[]): CockpitResumo {
     aguardandoEmbarqueKg,
     transitoIntlKg,
     noPortoKg,
-    portoDtaKg,
+    transitoLocalKg,
     transitoInternoKg,
     provisorioKg,
     comodatoKg,
