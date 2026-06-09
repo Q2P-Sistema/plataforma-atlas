@@ -82,12 +82,12 @@ describe('Transito — contratos (read-only)', () => {
     app.use(stockbridgeRouter);
   });
 
-  it('GET /transito 200 para gestor com 3 estagios (sem reservado)', async () => {
+  it('GET /transito 200 para gestor com estagios FUP (sem reservado)', async () => {
     currentUser = { id: 'u-gestor', role: 'gestor' };
     const res = await request(app).get('/api/v1/stockbridge/transito');
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveProperty('transito_intl');
-    expect(res.body.data).toHaveProperty('porto_dta');
+    expect(res.body.data).toHaveProperty('transito_local');
     expect(res.body.data).toHaveProperty('transito_interno');
   });
 

@@ -78,7 +78,7 @@ export async function listarPorEstagio(perfil: Perfil): Promise<Record<EstagioTr
   const estagios = ESTAGIOS_VISIVEIS_POR_PERFIL[perfil];
 
   if (estagios.length === 0) {
-    return { transito_intl: [], porto_dta: [], transito_interno: [], reservado: [] };
+    return { aguardando_embarque: [], transito_intl: [], no_porto: [], transito_local: [], transito_interno: [], reservado: [] };
   }
   // 'reservado' segue no enum por compatibilidade mas nao e mais populado nem exposto.
 
@@ -120,8 +120,10 @@ export async function listarPorEstagio(perfil: Perfil): Promise<Record<EstagioTr
     });
 
   const agrupado: Record<EstagioTransito, LoteTransitoItem[]> = {
+    aguardando_embarque: [],
     transito_intl: [],
-    porto_dta: [],
+    no_porto: [],
+    transito_local: [],
     transito_interno: [],
     reservado: [],
   };

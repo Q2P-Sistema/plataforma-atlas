@@ -68,7 +68,7 @@ export const lote = stockbridgeSchema.table(
       .default('provisorio')
       .$type<'reconciliado' | 'divergencia' | 'transito' | 'provisorio' | 'aguardando_aprovacao' | 'rejeitado'>(),
     estagioTransito: varchar('estagio_transito', { length: 30 }).$type<
-      'transito_intl' | 'porto_dta' | 'transito_interno' | 'reservado' | null
+      'aguardando_embarque' | 'transito_intl' | 'no_porto' | 'transito_local' | 'transito_interno' | 'reservado' | null
     >(),
     localidadeId: uuid('localidade_id').references(() => localidade.id),
     cnpj: varchar('cnpj', { length: 50 }).notNull(),
