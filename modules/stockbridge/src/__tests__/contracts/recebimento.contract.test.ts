@@ -39,6 +39,7 @@ vi.mock('@atlas/auth', () => ({
 vi.mock('@atlas/db', () => ({
   lote: {},
   movimentacao: {},
+  movimentacaoLegado: {},
   aprovacao: {},
   localidade: {},
   localidadeCorrelacao: {},

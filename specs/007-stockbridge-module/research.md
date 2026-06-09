@@ -113,31 +113,56 @@ Ver `data-model.md` para detalhes. Colunas:
 
 ## 6. Migracao de Dados MySQL → PostgreSQL
 
-### Decisao
-Script one-shot `scripts/migrate-from-mysql.ts` que le do MySQL via `mysql2` e insere no Postgres via Drizzle. Executado manualmente no dia do cutover.
+> **⚠️ Atualizado 2026-06-09 (ACXEGDP-158).** O plano original assumia inserir o
+> `tb_movimentacao` na `stockbridge.movimentacao`. Ao implementar, descobriu-se
+> que isso é **inviável**: as linhas do legado são recibos dual-CNPJ puros (só NF
+> + IDs de ajuste OMIE de cada lado + user + ativo), SEM produto/quantidade/galpão.
+> Elas não passam no CHECK `movimentacao_chk_lote_ou_sku`, batem no índice UNIQUE
+> 1-por-NF, e recriá-las como `lote` duplicaria saldo que o OMIE já consolidou.
+> **Decisão final: tabela dedicada `stockbridge.movimentacao_legado` (migration
+> 0038), espelho 1:1, só auditoria + idempotência.** Ver memória do projeto
+> `stockbridge-migracao-mysql-legado`.
 
-### Escopo da migracao
+### Decisao
+Script one-shot `modules/stockbridge/src/scripts/migrate-from-mysql.ts` que le do
+MySQL via `mysql2` e insere em `stockbridge.movimentacao_legado` via `pg`.
+Idempotente (`ON CONFLICT (id_legado) DO NOTHING`) — pode rodar mais de uma vez,
+sempre captura linhas novas do legado sem duplicar. Executado manualmente no
+cutover (e re-executável a qualquer momento da validação paralela).
+
+### Escopo da migracao (revisado)
 
 **MIGRAR do MySQL:**
-- `tb_movimentacao` → `stockbridge.movimentacao` (731 rows ativas, mapear id_user legado → novo id_user Atlas por email)
-- `tb_estoque_local_acxe` → `stockbridge.localidade` (6 rows, convertidas para o modelo unificado)
-- `tb_estoque_local_q2p` → `stockbridge.localidade` (3 rows, mesma tabela)
-- `tb_converteCodigoLocalEstoque` → `stockbridge.localidade_correlacao` (10 rows)
-- `tb_tp_divergencia` → enum `stockbridge.tipo_divergencia` (2 valores: Varredura, Faltando)
-- `tb_tp_status_movimento` → enum `stockbridge.status_movimento` (1 valor: Sucesso)
+- `tb_movimentacao` → **`stockbridge.movimentacao_legado`** (866 rows em 2026-06-09;
+  mapeia id_user legado → `atlas.users` por email; NF zero-padded a 8 dígitos p/
+  casar com `tbl_nf_header_*.n_nf` do OMIE)
 
-**NAO migrar (ja no PG ou descarte):**
-- `tb_produtos_ACXE`, `tb_produtos_Q2P` → ja em `pg-acxe` public schema via sync OMIE
-- `tbl_cadastroFornecedoresClientes_*` → ja em `pg-acxe`
-- `tb_comex_controle_compra_venda` → de outro sistema, migracao futura
-- `tb_users` → nao migrar, users novos criados no Atlas auth (spec 001) com mesmo email
-- `tb_log` → log textual, sem valor de negocio
-- `refresh_tokens` → auth legado, Atlas usa seu proprio
-- Todas as tabelas `*_bkp*`, `*_old`, `*_v2` → descartar
+**NAO migrar (revisado — ja no Atlas/PG ou descartado):**
+- `tb_estoque_local_*` / `tb_converteCodigoLocalEstoque` → localidades **já estão**
+  no Atlas (seeds da migration 0008 + 0030); reimportar criaria duplicata. NÃO migrar.
+- `tb_tp_divergencia` / `tb_tp_status_movimento` → enums já no DDL Atlas.
+- `tb_produtos_*`, `tbl_cadastroFornecedoresClientes_*` → já em `public.*` via sync OMIE.
+- `tb_comex_controle_compra_venda` → de outro sistema, fora de escopo.
+- `tb_users` → users criados no Atlas auth (spec 001); só usados p/ mapear atribuição.
+- `tb_log`, `refresh_tokens`, `*_bkp*`/`*_old`/`*_v2` → descartar.
 
-### Estrategia
-1. Antes do cutover: rodar em staging, validar integridade dos dados, checar que `id_movest_*` retornados pelo OMIE podem ser encontrados via API (sanity check de consistencia).
-2. No cutover: (a) desabilitar escrita no sistema legado, (b) rodar script de migracao, (c) validar contagens, (d) habilitar `MODULE_STOCKBRIDGE_ENABLED=true`, (e) desabilitar Apache do legado.
+### Estrategia de execucao (DEV → UAT → PROD)
+
+Em **cada ambiente** a sequência é a mesma (já feita em DEV e UAT em 2026-06-09):
+
+1. Aplicar a migration **0038** no banco do ambiente (cria a tabela + trigger de auditoria):
+   `psql "$DATABASE_URL" -1 -v ON_ERROR_STOP=1 -f packages/db/migrations/0038_stockbridge_movimentacao_legado.sql`
+2. Rodar o import apontando para o banco do ambiente:
+   `DATABASE_URL="<url-do-ambiente>" pnpm --filter @atlas/stockbridge exec tsx src/scripts/migrate-from-mysql.ts`
+3. Validar contagem contra a origem: `SELECT count(*) FROM stockbridge.movimentacao_legado` == `SELECT count(*) FROM tb_movimentacao` (MySQL).
+
+**No cutover de PROD** especificamente: (a) desabilitar escrita no sistema legado,
+(b) **aplicar migration 0038 + rodar o import contra o `DATABASE_URL` de PROD** (NÃO
+copiar de DEV/UAT — a fonte é sempre o MySQL; rodar o import idempotente garante o
+snapshot final, incluindo linhas geradas durante as 2 semanas de validação paralela),
+(c) validar contagens, (d) conferir que a atribuição de user resolveu (em prod os
+emails do Atlas devem casar com os do legado — em dev/uat ficou NULL), (e) habilitar
+`MODULE_STOCKBRIDGE_ENABLED=true`, (f) desabilitar Apache do legado.
 
 ## 7. Usuarios e Permissionamento
 

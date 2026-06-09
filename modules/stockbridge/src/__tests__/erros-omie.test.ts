@@ -9,7 +9,7 @@ vi.mock('@atlas/core', () => ({
 }));
 
 vi.mock('@atlas/db', () => ({
-  lote: {}, movimentacao: {}, aprovacao: {}, localidade: {}, localidadeCorrelacao: {}, users: {},
+  lote: {}, movimentacao: {}, movimentacaoLegado: {}, aprovacao: {}, localidade: {}, localidadeCorrelacao: {}, users: {},
 }));
 
 vi.mock('@atlas/integration-omie', () => ({

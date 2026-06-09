@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { eq, and, sql } from 'drizzle-orm';
 import Decimal from 'decimal.js';
 import { getDb, createLogger } from '@atlas/core';
-import { lote, movimentacao, aprovacao, localidade, localidadeCorrelacao } from '@atlas/db';
+import { lote, movimentacao, movimentacaoLegado, aprovacao, localidade, localidadeCorrelacao } from '@atlas/db';
 import {
   consultarNF,
   isMockMode,
@@ -26,6 +26,48 @@ export class NotaFiscalJaProcessadaError extends Error {
     super(`NF ${notaFiscal} ja foi processada — idempotencia impede reprocessamento.`);
     this.name = 'NotaFiscalJaProcessadaError';
   }
+}
+
+/**
+ * Idempotencia de recebimento: a NF ja foi processada — no Atlas OU no legado PHP?
+ *
+ * Consulta duas fontes:
+ *  - `stockbridge.movimentacao` (entrada_nf ativa) — recebimentos nascidos no Atlas.
+ *  - `stockbridge.movimentacao_legado` (migration 0038) — historico importado do
+ *    MySQL legado. Sem isso, uma NF que o sistema PHP ja processou poderia ser
+ *    reprocessada no Atlas, gerando ajuste DUPLICADO no OMIE.
+ *
+ * `nfNormalizada` deve vir de `normalizarNumeroNf` (zero-padded 8 digitos) — e o
+ * formato em que ambas as tabelas gravam a NF.
+ */
+async function nfJaProcessada(
+  db: ReturnType<typeof getDb>,
+  nfNormalizada: string,
+): Promise<boolean> {
+  const [atlas, legado] = await Promise.all([
+    db
+      .select({ id: movimentacao.id })
+      .from(movimentacao)
+      .where(
+        and(
+          eq(movimentacao.notaFiscal, nfNormalizada),
+          eq(movimentacao.tipoMovimento, 'entrada_nf'),
+          eq(movimentacao.ativo, true),
+        ),
+      )
+      .limit(1),
+    db
+      .select({ id: movimentacaoLegado.id })
+      .from(movimentacaoLegado)
+      .where(
+        and(
+          eq(movimentacaoLegado.notaFiscal, nfNormalizada),
+          eq(movimentacaoLegado.ativo, true),
+        ),
+      )
+      .limit(1),
+  ]);
+  return atlas.length > 0 || legado.length > 0;
 }
 
 export interface OmieAjusteErrorContext {
@@ -100,21 +142,10 @@ export async function getFilaOmie(params: {
     }
     const nfNormalizada = normalizarNumeroNf(params.nf);
 
-    // Idempotencia: ja processada?
+    // Idempotencia: ja processada (Atlas ou legado)?
     // OMIE retorna nNF zero-padded (ex: "00000300") e e nesse formato que gravamos.
     // Operador tipicamente digita "300" — normalizamos antes de comparar.
-    const ja = await db
-      .select({ id: movimentacao.id })
-      .from(movimentacao)
-      .where(
-        and(
-          eq(movimentacao.notaFiscal, nfNormalizada),
-          eq(movimentacao.tipoMovimento, 'entrada_nf'),
-          eq(movimentacao.ativo, true),
-        ),
-      )
-      .limit(1);
-    if (ja.length > 0) {
+    if (await nfJaProcessada(db, nfNormalizada)) {
       return [];
     }
 
@@ -220,19 +251,8 @@ export async function processarRecebimento(
   // notificacao) use a forma canonica.
   input = { ...input, nf: normalizarNumeroNf(input.nf) };
 
-  // 1. Idempotencia
-  const ja = await db
-    .select({ id: movimentacao.id })
-    .from(movimentacao)
-    .where(
-      and(
-        eq(movimentacao.notaFiscal, input.nf),
-        eq(movimentacao.tipoMovimento, 'entrada_nf'),
-        eq(movimentacao.ativo, true),
-      ),
-    )
-    .limit(1);
-  if (ja.length > 0) {
+  // 1. Idempotencia (Atlas + legado PHP)
+  if (await nfJaProcessada(db, input.nf)) {
     throw new NotaFiscalJaProcessadaError(input.nf);
   }
 

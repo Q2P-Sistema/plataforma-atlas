@@ -48,10 +48,10 @@ TypeScript 5.5+ (strict mode, ES2022, bundler resolution) / Node.js 20 LTS: Foll
 - **Modulo funcionalmente completo** (8/8 user stories + movimentacoes). Ainda nao esta em producao — aguarda **validacao paralela** de 2 semanas com o legado PHP (Principio V).
 - **Feature flag**: `MODULE_STOCKBRIDGE_ENABLED`. Em prod deve subir em `false` ate paridade confirmada.
 - **OMIE em modo real exige**: `OMIE_ACXE_KEY/SECRET`, `OMIE_Q2P_KEY/SECRET`. Em dev, `OMIE_MODE=mock` retorna fixtures sinteticas (nao bate na API).
-- **Saidas automaticas via n8n**: requer `ATLAS_INTEGRATION_KEY` (shared secret com o workflow) + workflow importado de `workflows/stockbridge-saida-automatica.json`.
+- **Saidas automaticas via n8n**: requer `ATLAS_INTEGRATION_KEY` (shared secret com o workflow) + workflow importado de `workflows/stockbridge-saida-automatica.json`. Ver [docs/n8n-workflow-import.md](docs/n8n-workflow-import.md) para passo a passo de importação e testes.
 - **Excecao documentada ao Principio II**: escrita na API OMIE (`estoque/ajuste/`, `produtos/pedidocompra/`) e leitura de NF individual (`produtos/nfconsultar/`). Justificativa em `specs/007-stockbridge-module/research.md` secao 2 — unica alternativa viavel porque OMIE nao tem webhook de saida.
 - **Correlacao ACXE↔Q2P por match textual de descricao**: mantido do legado (clarificacao Q6). Produto sem correlato Q2P bloqueia recebimento + dispara email admin.
-- **Migracao MySQL → PG**: script em `modules/stockbridge/src/scripts/migrate-from-mysql.ts` (ainda nao escrito — Phase 12). Executar apenas no dia do cutover; dep `mysql2` instala on-demand via `pnpm add -D mysql2 --filter @atlas/stockbridge`.
+- **Migracao MySQL → PG**: script em `modules/stockbridge/src/scripts/migrate-from-mysql.ts` (Phase 12 — implementado 2026-06-09). Executa uma única vez no dia do cutover com idempotência, transação SERIALIZABLE e rollback automático; dep `mysql2` instala on-demand via `pnpm add -D mysql2 --filter @atlas/stockbridge`.
 - **Auditoria**: 8 triggers dedicados em `stockbridge.*` gravando em `shared.audit_log` (Principio IV). Soft delete em `movimentacao.ativo=false` preserva historico — nao ha hard delete.
 - **Idempotencia OMIE (migration 0016)**: toda chamada `IncluirAjusteEstoque` envia `cod_int_ajuste = ${op_id}:${sufixo}` (sufixos `acxe-trf`, `q2p-ent`, `acxe-faltando`). Se Q2P falhar apos ACXE ok, `movimentacao` e gravada com `status_omie='pendente_q2p'`. Painel admin em `GET /api/v1/stockbridge/operacoes-pendentes` (gestor+); retry idempotente em `POST /api/v1/stockbridge/operacoes-pendentes/:id/retentar` (operador limitado a 1x; gestor+ sem limite). Cobertura simetrica em `aprovacao.aprovar()`. Detalhes em `specs/007-stockbridge-module/tasks-idempotencia-omie.md`.
 
@@ -65,11 +65,13 @@ Fontes de verdade por dominio:
 |---|---|---|
 | Saldo fisico nos galpoes | **OMIE** | `public.vw_posicaoEstoqueUnificadaFamilia` |
 | Movimento fiscal (NF, ajustes) | **OMIE** (Atlas escreve via API) | `public.tbl_NFsEmitidas_*`, `public.tbl_movimentacaoEstoqueHistorico_*` |
-| Lote em transito (FUP de Comex) | **Atlas** (OMIE nao tem) | `stockbridge.lote` status=transito (populado via FUP migration 0024) |
+| Pipeline de transito em 5 estagios (FUP de Comex) | **Atlas** (OMIE nao tem o rastreamento) | `stockbridge.lote` com `estagio_transito` em (aguardando_embarque, transito_intl, no_porto, transito_local) — derivado 100% do FUP via migration 0037 |
 | Aprovacao hierarquica | **Atlas** | `stockbridge.aprovacao` |
 | Recebimento provisorio | **Atlas** | `stockbridge.lote` status=provisorio (transitorio ate OMIE consolidar) |
 | Configuracao de negocio (lead time, consumo, vinculos user-galpao) | **Atlas** | `stockbridge.config_produto`, `stockbridge.user_galpao`, etc |
 | Auditoria detalhada | **Atlas** | `stockbridge.movimentacao` + `shared.audit_log` |
+
+**⚠️  Mudança migration 0037 (2026-06-09)**: Rastreamento de transito agora é **100% FUP-driven** (5 estágios derivados de `tbl_dadosPlanilhaFUPComex`). Rastreamento por NF foi **removido** — `tbl_nf_header_ACXE` misturava NF mãe + filhotes indistinguivelmente, duplicando volumes (6.617t NF vs 895t FUP real). FUP é a fonte de verdade operacional. **Nota**: `specs/007-stockbridge-module/arquitetura-atlas-camada-omie.md` ainda menciona "Movimento fiscal (NF)" alimentando transito — esse doc ficou desatualizado e precisa correção.
 
 **Cockpit/Metricas devem consumir UNIAO OMIE + Atlas** (saldo fisico OMIE + camadas Atlas: transito, pendencias). Risco a vigiar: dupla contagem entre `lote provisorio` (ja gravou em OMIE via API) e `vw_posicaoEstoqueUnificadaFamilia` que reflete OMIE — provisorio so deve aparecer como "pendente Atlas" enquanto `status_omie != 'concluida'`. Apos consolidacao, ele esta no OMIE e nao deve ser somado de novo.
 

@@ -18,6 +18,7 @@ vi.mock('@atlas/core', () => ({
 vi.mock('@atlas/db', () => ({
   lote: { __id: 'lote' },
   movimentacao: { __id: 'movimentacao' },
+  movimentacaoLegado: { __id: 'movimentacaoLegado' },
   aprovacao: { __id: 'aprovacao' },
   localidade: { __id: 'localidade' },
   localidadeCorrelacao: { __id: 'localidadeCorrelacao' },
