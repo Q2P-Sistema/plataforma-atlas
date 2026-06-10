@@ -323,6 +323,41 @@ export const movimentacaoLegado = stockbridgeSchema.table(
   ],
 );
 
+// ── NF Pedido Mapa / Filhote (mapeamento NF mãe→filhotes — migration 0039) ──
+// Usados pelo cockpit para calcular posição fiscal pendente de importação.
+// NF mãe: 21.1 Extrema, não gera estoque, nunca n_id_receb > 0.
+// NF filhote: 90.0.2 TRANSITO, gera estoque, n_id_receb > 0 quando recebida.
+export const nfPedidoMapa = stockbridgeSchema.table(
+  'nf_pedido_mapa',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    pedidoAcxeOmie: varchar('pedido_acxe_omie', { length: 50 }).notNull(),
+    nfMae: varchar('nf_mae', { length: 50 }).notNull(),
+    ativo: boolean('ativo').notNull().default(true),
+    importadoEm: timestamp('importado_em', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('nf_pedido_mapa_nf_mae_idx').on(t.nfMae),
+  ],
+);
+
+export const nfPedidoFilhote = stockbridgeSchema.table(
+  'nf_pedido_filhote',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    mapaId: uuid('mapa_id').notNull().references(() => nfPedidoMapa.id),
+    nfFilhote: varchar('nf_filhote', { length: 50 }).notNull(),
+    posicao: smallint('posicao').notNull(),
+    ativo: boolean('ativo').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('nf_pedido_filhote_mapa_idx').on(t.mapaId),
+    index('nf_pedido_filhote_nf_idx').on(t.nfFilhote),
+  ],
+);
+
 // ── Type exports ───────────────────────────────────────────
 export type Localidade = typeof localidade.$inferSelect;
 export type NewLocalidade = typeof localidade.$inferInsert;
@@ -346,3 +381,7 @@ export type FamiliaOmieAtlas = typeof familiaOmieAtlas.$inferSelect;
 export type NewFamiliaOmieAtlas = typeof familiaOmieAtlas.$inferInsert;
 export type MovimentacaoLegado = typeof movimentacaoLegado.$inferSelect;
 export type NewMovimentacaoLegado = typeof movimentacaoLegado.$inferInsert;
+export type NfPedidoMapa = typeof nfPedidoMapa.$inferSelect;
+export type NewNfPedidoMapa = typeof nfPedidoMapa.$inferInsert;
+export type NfPedidoFilhote = typeof nfPedidoFilhote.$inferSelect;
+export type NewNfPedidoFilhote = typeof nfPedidoFilhote.$inferInsert;
