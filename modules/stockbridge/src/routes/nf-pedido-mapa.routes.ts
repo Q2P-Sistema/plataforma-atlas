@@ -1,7 +1,9 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { createLogger } from '@atlas/core';
+import { requireAuth, requireModule } from '@atlas/auth';
 import { requireGestor } from '../middleware/role.js';
+import { requireIntegrationKey } from '../middleware/integration-key.js';
 import { upsertNfPedidoMapa, listNfPedidoMapa } from '../services/nf-pedido-mapa.service.js';
 
 const logger = createLogger('stockbridge:nf-pedido-mapa');
@@ -15,10 +17,10 @@ const PostBodySchema = z.array(
   }),
 ).min(1, 'array deve ter ao menos 1 item').max(200, 'máximo 200 pedidos por envio');
 
-// POST /admin/nf-pedido-mapa — upsert idempotente do mapa NF mãe/filhotes (gestor+)
+// POST /admin/nf-pedido-mapa — consumido pelo n8n via integration key (sem sessão de usuário)
 router.post(
   '/api/v1/stockbridge/admin/nf-pedido-mapa',
-  requireGestor,
+  requireIntegrationKey,
   async (req: Request, res: Response) => {
     const parsed = PostBodySchema.safeParse(req.body);
     if (!parsed.success) {
@@ -45,9 +47,11 @@ router.post(
   },
 );
 
-// GET /admin/nf-pedido-mapa — lista mapas ativos para validação (gestor+)
+// GET /admin/nf-pedido-mapa — lista mapas ativos para validação (sesão gestor+; não usada por n8n)
 router.get(
   '/api/v1/stockbridge/admin/nf-pedido-mapa',
+  requireAuth,
+  requireModule('stockbridge'),
   requireGestor,
   async (_req: Request, res: Response) => {
     try {
