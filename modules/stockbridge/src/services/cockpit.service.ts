@@ -291,8 +291,37 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
       GROUP BY produto_codigo_acxe
     ),
     fiscal_pend_importacao AS (
-      -- Importacao ACXE (CFOP 3.xxx): NFs cujo n_nf NAO esta em movimentacao
-      -- Atlas com subtipo='importacao'. So existe se incluirAcxe.
+      -- Parte A: pedidos COM mapa NF mãe/filhote (ACXEGDP-159).
+      -- NF mãe nunca tem n_id_receb > 0 (flag "não gera estoque", estoque 21.1 Extrema).
+      -- Critério de pendência: alguma filhote ativa ainda não recebida no OMIE,
+      -- ou mapa sem filhotes cadastradas (mapa incompleto → tratar como pendente).
+      -- Quantidade via tbl_pedidosCompras_ACXE.nqtde (fonte estável, mesmo campo do FUP).
+      SELECT pc.ncodprod AS produto_codigo_acxe, SUM(pc.nqtde)::numeric AS pendente_importacao_kg
+      FROM stockbridge.nf_pedido_mapa mapa
+      JOIN public."tbl_pedidosCompras_ACXE" pc ON pc.cnumero = mapa.pedido_acxe_omie
+      WHERE mapa.ativo = true AND pc.nqtde > 0
+        AND $4::bool = true
+        AND (
+          -- Mapa sem filhotes = incompleto → sempre pendente
+          NOT EXISTS (
+            SELECT 1 FROM stockbridge.nf_pedido_filhote f
+            WHERE f.mapa_id = mapa.id AND f.ativo = true
+          )
+          OR
+          -- Alguma filhote não sincronizada (NULL) ou ainda não recebida (n_id_receb = 0)
+          EXISTS (
+            SELECT 1 FROM stockbridge.nf_pedido_filhote f
+            LEFT JOIN public."tbl_nf_header_ACXE" h ON h.n_nf = f.nf_filhote
+            WHERE f.mapa_id = mapa.id AND f.ativo = true
+              AND (h.n_id_nf IS NULL OR h.n_id_receb = 0 OR h.n_id_receb IS NULL)
+          )
+        )
+      GROUP BY pc.ncodprod
+
+      UNION ALL
+
+      -- Parte B: fallback CFOP 3.xxx para pedidos SEM mapa (retrocompatibilidade).
+      -- Excluídas NFs que já têm mapa ativo (nf_mae no mapa) para evitar dupla contagem.
       SELECT i.n_cod_prod AS produto_codigo_acxe, SUM(i.q_com)::numeric AS pendente_importacao_kg
       FROM public."tbl_nf_header_ACXE" h
       JOIN public."tbl_nf_itens_ACXE" i ON i.n_id_nf = h.n_id_nf
@@ -305,6 +334,10 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
           WHERE m.ativo = true
             AND m.subtipo = 'importacao'
             AND m.nota_fiscal = h.n_nf
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM stockbridge.nf_pedido_mapa mapa
+          WHERE mapa.nf_mae = h.n_nf AND mapa.ativo = true
         )
       GROUP BY i.n_cod_prod
     ),

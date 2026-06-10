@@ -20,6 +20,7 @@ import adminUserGalpaoRouter from './admin-user-galpao.routes.js';
 import operacoesPendentesRouter from './operacoes-pendentes.routes.js';
 import adminCronRouter from './admin-cron.routes.js';
 import cmcRouter from './cmc.routes.js';
+import nfPedidoMapaRouter from './nf-pedido-mapa.routes.js';
 
 const logger = createLogger('stockbridge:routes');
 const router: Router = Router();
@@ -67,6 +68,8 @@ router.use(operacoesPendentesRouter);
 router.use(adminCronRouter);
 // Custos de Estoque (CMC por família/produto) — gestor+ (feature 008)
 router.use(cmcRouter);
+// Mapa NF mãe/filhote — posição fiscal pendente de importação (feature 010)
+router.use(nfPedidoMapaRouter);
 
 logger.info('StockBridge router inicializado (US1..US8 + Movimentacoes + OperacoesPendentes)');
 
