@@ -25,7 +25,11 @@ import nfPedidoMapaRouter from './nf-pedido-mapa.routes.js';
 const logger = createLogger('stockbridge:routes');
 const router: Router = Router();
 
-// Todas as rotas do StockBridge exigem autenticacao + acesso ao modulo
+// Rotas consumidas por n8n via integration key — sem sessão de usuário, ANTES do requireAuth
+router.use(saidaAutomaticaRouter);
+router.use(nfPedidoMapaRouter);
+
+// Todas as demais rotas exigem sessão autenticada + acesso ao módulo
 router.use('/api/v1/stockbridge', requireAuth, requireModule('stockbridge'));
 
 // Health check
@@ -46,8 +50,6 @@ router.use(aprovacaoRouter);
 router.use(divergenciaRouter);
 // US4 — Pipeline de transito maritimo
 router.use(transitoRouter);
-// US5 — Saidas automaticas via OMIE (polling n8n)
-router.use(saidaAutomaticaRouter);
 // US6 — Saidas manuais com aprovacao
 router.use(saidaManualRouter);
 // US7 — Metricas (diretor) + fornecedores
@@ -68,8 +70,6 @@ router.use(operacoesPendentesRouter);
 router.use(adminCronRouter);
 // Custos de Estoque (CMC por família/produto) — gestor+ (feature 008)
 router.use(cmcRouter);
-// Mapa NF mãe/filhote — posição fiscal pendente de importação (feature 010)
-router.use(nfPedidoMapaRouter);
 
 logger.info('StockBridge router inicializado (US1..US8 + Movimentacoes + OperacoesPendentes)');
 
