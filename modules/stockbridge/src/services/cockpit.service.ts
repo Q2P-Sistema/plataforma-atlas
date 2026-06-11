@@ -312,7 +312,7 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
             OR
             EXISTS (
               SELECT 1 FROM stockbridge.nf_pedido_filhote f
-              LEFT JOIN public."tbl_nf_header_ACXE" h ON h.n_nf = f.nf_filhote
+              LEFT JOIN public."tbl_nf_header_ACXE" h ON h.n_nf = LPAD(f.nf_filhote, 8, '0')
               WHERE f.mapa_id = mapa.id AND f.ativo = true
                 AND (h.n_id_nf IS NULL OR h.n_id_receb = 0 OR h.n_id_receb IS NULL)
             )
@@ -343,7 +343,7 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
           )
           AND NOT EXISTS (
             SELECT 1 FROM stockbridge.nf_pedido_mapa mapa
-            WHERE mapa.nf_mae = h.n_nf AND mapa.ativo = true
+            WHERE LPAD(mapa.nf_mae, 8, '0') = h.n_nf AND mapa.ativo = true
           )
         GROUP BY i.n_cod_prod
       ) parts
