@@ -322,6 +322,8 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
         UNION ALL
 
         -- Parte B: fallback CFOP 3.xxx para pedidos SEM mapa (retrocompatibilidade).
+        -- Exclui NFs já reconciliadas em movimentacao (Atlas) OU em movimentacao_legado
+        -- (migration MySQL): sem o filtro legado, NFs históricas já recebidas inflariam a posição.
         SELECT i.n_cod_prod AS produto_codigo_acxe, SUM(i.q_com)::numeric AS pendente_importacao_kg
         FROM public."tbl_nf_header_ACXE" h
         JOIN public."tbl_nf_itens_ACXE" i ON i.n_id_nf = h.n_id_nf
@@ -334,6 +336,10 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
             WHERE m.ativo = true
               AND m.subtipo = 'importacao'
               AND m.nota_fiscal = h.n_nf
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM stockbridge.movimentacao_legado ml
+            WHERE ml.ativo = true AND ml.nota_fiscal = h.n_nf
           )
           AND NOT EXISTS (
             SELECT 1 FROM stockbridge.nf_pedido_mapa mapa
