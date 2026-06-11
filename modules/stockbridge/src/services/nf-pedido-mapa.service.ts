@@ -97,7 +97,7 @@ export async function upsertNfPedidoMapa(items: NfPedidoMapaInput[]): Promise<Up
           `SELECT EXISTS (
              SELECT 1
              FROM stockbridge.nf_pedido_filhote f
-             LEFT JOIN public."tbl_nf_header_ACXE" h ON h.n_nf = f.nf_filhote
+             LEFT JOIN public."tbl_nf_header_ACXE" h ON h.n_nf = LPAD(f.nf_filhote, 8, '0')
              WHERE f.mapa_id = $1
                AND f.ativo = true
                AND (h.n_id_nf IS NULL OR h.n_id_receb = 0 OR h.n_id_receb IS NULL)
