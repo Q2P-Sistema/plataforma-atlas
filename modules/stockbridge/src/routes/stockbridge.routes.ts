@@ -21,6 +21,7 @@ import operacoesPendentesRouter from './operacoes-pendentes.routes.js';
 import adminCronRouter from './admin-cron.routes.js';
 import cmcRouter from './cmc.routes.js';
 import nfPedidoMapaRouter from './nf-pedido-mapa.routes.js';
+import pendenciasFiscaisRouter from './pendencias-fiscais.routes.js';
 
 const logger = createLogger('stockbridge:routes');
 const router: Router = Router();
@@ -48,6 +49,8 @@ router.use(cockpitRouter);
 router.use(aprovacaoRouter);
 // Divergencias (drill-down do cockpit) — gestor+
 router.use(divergenciaRouter);
+// Pendencias Fiscais (drill-down de importação: recebido vs não recebido + aging) — gestor+ (ACXEGDP-183)
+router.use(pendenciasFiscaisRouter);
 // US4 — Pipeline de transito maritimo
 router.use(transitoRouter);
 // US6 — Saidas manuais com aprovacao

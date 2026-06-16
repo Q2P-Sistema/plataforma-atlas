@@ -149,6 +149,8 @@ Função `listNfPedidoMapa()` para validação (gestor+):
 
 ### Cockpit CTE — `modules/stockbridge/src/services/cockpit.service.ts`
 
+> ⚠️ **SUPERSEDED (2026-06-16 — ver § Amendment)**: o SQL abaixo é o desenho original e **não reflete** o estado atual. Foi corrigido por: LPAD nf_filhote/nf_mae (T026/T028), Fix 1 (recebida = 3 fontes), Fix 2 (fallback exclui filhote) e Fix 3 (Parte A conta saldo). Use a seção **Amendment 2026-06-16** como referência da lógica vigente.
+
 Substituir o CTE `fiscal_pend_importacao` (linhas 293-309) por:
 
 ```sql
@@ -241,3 +243,48 @@ A flag `mapa.ativo` é atualizada para `false` apenas quando `upsertNfPedidoMapa
 3. Consultar cockpit: `totalFiscalPendenteImportacaoKg` deve cair para pedidos com todas filhotes recebidas
 4. Re-enviar mesmo payload — contagem de registros deve permanecer igual (idempotência)
 5. Consultar audit log: `SELECT * FROM shared.audit_log WHERE table_name = 'nf_pedido_mapa' ORDER BY created_at DESC`
+
+---
+
+## Amendment 2026-06-16 — Correções de cálculo (Fix 1/2/3) + Aba "Pendências Fiscais" (ACXEGDP-183)
+
+US1–US3 + migration 0039 (acima) estão **implementadas e em UAT**. Esta emenda cobre as correções descobertas em UAT/prod e a nova aba de diagnóstico (US4). Escopo aprovado: **só importação**, aba **somente leitura**.
+
+### Resumo das mudanças
+- **Fix 1** *(em UAT — commits `d59cb77`→`917f7e1`)*: "filhote recebida" = `n_id_receb>0` **OU** `movimentacao`(subtipo=importacao) **OU** `movimentacao_legado`. **Supera a Decision 3** original do research.
+- **Fix 2** *(em UAT — commits `945ea8e`→`173f78c`)*: fallback CFOP 3.xxx exclui **mãe E filhote** de mapa ativo (anti dupla contagem A+B).
+- **Fix 3** *(a implementar)*: Parte A conta o **saldo** (`pc.nqtde − Σ q_com das filhotes já recebidas`, com piso 0), não o pedido inteiro. **Supera parcialmente a Decision 2**.
+- **Aba Pendências Fiscais** *(US4, a implementar)*: visão de detalhe read-only com aging (exoneração + filhotes) e sinal de inconsistência "chegou — NF aberta".
+
+### Technical Context (delta)
+- **Frontend agora em escopo**: nova página React em `apps/web` (a feature original era "zero frontend"; FR-008 revisado). Segue o padrão hand-rolled Tailwind de `DivergenciasPage.tsx` — `apps/web` não usa shadcn (desvio **pré-existente** do projeto vs. constituição; não introduzido aqui).
+- **Novo endpoint read-only**: `GET /api/v1/stockbridge/pendencias-fiscais` (gestor+).
+- **Sem nova tabela / sem migration**: a aba é visão derivada sobre tabelas existentes + `d_emi` das NFs (aging). Aging derivado, não persistido.
+
+### Constitution Check (re-avaliação pós-emenda)
+| Princípio | Status | Observação |
+|---|---|---|
+| I. Monólito Modular | ✅ PASS | Página em `apps/web`, endpoint em `modules/stockbridge`; sem import cross-módulo |
+| II. OMIE é fonte de verdade | ✅ PASS | Aba 100% leitura; nenhuma escrita OMIE; lê `d_emi`/`n_id_receb` do Postgres |
+| III. Dinheiro só em TS | ✅ PASS | Cálculo de saldo (Fix 3) e aging em services TS; n8n não envolvido |
+| IV. Audit log | ✅ N/A | Sem mutação (read-only) e sem nova tabela — nada a auditar |
+| V. Validação paralela | ✅ N/A | Entrega via UAT antes de prod; `main` não tocada nesta fase |
+
+### Phase 1 Design (delta)
+
+**Fix 3 — `modules/stockbridge/src/services/cockpit.service.ts` (Parte A)**: substituir a lógica binária por saldo —
+`GREATEST(pc.nqtde − COALESCE(Σ q_com das filhotes recebidas por (mapa_id, ncodprod), 0), 0)`. "Recebida" = OR de 3 fontes (Fix 1), idêntica em todos os pontos (FR-013). Parte B e GROUP BY externo intactos. Validado em UAT: Parte A 1.094.000 → **939.250 kg**.
+
+**Novo — `pendencias-fiscais.service.ts` + `pendencias-fiscais.routes.ts`** (`GET`, `requireGestor`; registrar em `stockbridge.routes.ts`). Retorno `PendenciasFiscaisData`:
+- `pedidos[]`: `pedidoAcxeOmie`, `nfMae`, produto(s), `qtdePedidoKg`, `recebidoKg`, `saldoPendenteKg`, `statusAgregado`; `filhotes[]` (`nfFilhote`, `posicao`, `qtdeKg`, `recebida`, `fonteRecebimento`, `nfEmitida`, `diasDesdeEmissao`); `exoneracao` (`dataEntrada` = `d_emi` da NF mãe, `diasEmExoneracao`); `estagioFup`, `loteEmTransito`, `inconsistencia` (FR-015: ≥1 filhote com NF emitida não recebida E pedido fora do trânsito).
+- `semMapa[]`: Parte B detalhada (NF, produto, kg, CFOP, `d_emi`).
+- `resumo`: totais.
+- 4 queries `getPool()` (detalhe por filhote; qtde pedido; FUP/lote; Parte B), montadas em TS; `Number()` em BIGINT. Aging = `hoje − d_emi`; faixas configuráveis (default lead time).
+
+**Frontend — `apps/web/src/pages/stockbridge/gestor/PendenciasFiscaisPage.tsx`**: molde `DivergenciasPage` (useApiFetch + useQuery, `fmtKg`/`fmtData`, filtros toggle); agrupado por pedido (expandível); badges status + **inconsistência** + faixas de **aging**; seções **exoneração** e **importação sem mapa**; toggle `incluir_metricas`. Registrar rota + item de menu em `apps/web/src/App.tsx` (roles `['gestor','diretor']`).
+
+### Verification (delta)
+1. Build `tsc` (`@atlas/stockbridge`) + build `apps/web`.
+2. UAT (`mcp pg-acxe-uat`): Parte A nova = 939.250; importação ~1.015.000; pedidos 455/485 com `inconsistencia=true`; exoneração lista pedidos com `diasEmExoneracao`; aging por filhote (`diasDesdeEmissao`).
+3. Coerência cockpit ↔ aba (Σ saldo + sem-mapa ≈ `fiscalPendenteImportacaoKg`).
+4. Entrega: commit na `010` + cherry-pick na `uat`. Tarefas detalhadas em `tasks-pendencias-fiscais.md` (T029+, geradas por `/speckit.tasks`).

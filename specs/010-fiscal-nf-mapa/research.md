@@ -56,3 +56,49 @@
 **Decision**: Remover toda referência a "desativação quando NF mãe é recebida"
 
 **Rationale**: Confirmado pelo time Comex (10/06/2026) — NF mãe tem flag "não gera estoque" e é designada para `21.1 Extrema (IMPORTADO)`. Nunca recebe `n_id_receb > 0`. Todo pedido sempre tem ≥1 filhote. Portanto o critério de desativação depende exclusivamente das filhotes.
+
+---
+
+## Amendment 2026-06-16 — decisões das correções + aba (ACXEGDP-183)
+
+### Decision 7: "Filhote recebida" — fonte única vs. três fontes — **SUPERA a Decision 3**
+
+**Decision**: recebida = `n_id_receb > 0` **OU** presença em `stockbridge.movimentacao` (subtipo='importacao') **OU** em `stockbridge.movimentacao_legado`. *(Fix 1)*
+
+**Rationale**: A Decision 3 (só `n_id_receb`) assumia que todo recebimento reflete no ERP. Falso para o histórico: filhotes recebidas no legado MySQL nunca tiveram `n_id_receb` preenchido no OMIE — ficavam pendentes para sempre. Medido em UAT: das 97 filhotes ativas, 0 tinham `n_id_receb>0`; 68 estavam em movimentacao/legado. A definição DEVE ser idêntica em cockpit, aba e auto-desativação (FR-013).
+
+**Alternatives**: manter só `n_id_receb` (rejeitado — inflava a posição fiscal permanentemente).
+
+### Decision 8: Recebimento parcial — pedido inteiro vs. saldo — **SUPERA parte da Decision 2**
+
+**Decision**: pendência da Parte A = `GREATEST(pc.nqtde − Σ q_com das filhotes já recebidas, 0)`, por (pedido, produto). *(Fix 3)*
+
+**Rationale**: A Decision 2 usava `nqtde` inteiro do pedido como quantidade — correto enquanto nada foi recebido, mas em recebimento parcial conta também as filhotes já recebidas (que já entraram no físico) → quase-dupla-contagem com o estoque. As filhotes são NFs com `q_com` conhecido, então o saldo é exato. Pedido sem filhote mantém `nqtde` cheio.
+
+**Alternatives**: somar `q_com` das filhotes pendentes (rejeitado — filhote pendente pode não ter NF emitida, sem `q_com`); manter pedido inteiro (rejeitado — dupla contagem).
+
+### Decision 9: Anti dupla contagem A+B no fallback — **Fix 2**
+
+**Decision**: o fallback CFOP 3.xxx (Parte B) exclui NFs que sejam **mãe OU filhote** de mapa ativo (antes só excluía a mãe).
+
+**Rationale**: filhote tem CFOP 3 e caía no fallback; como o pedido já é contado na Parte A, o mesmo volume contava 2×. Medido em UAT: 670.750 kg (25 filhotes) de dupla contagem.
+
+**Extensão (Fix 4, 2026-06-16)**: a exclusão passou de "mapa **ativo**" para "**qualquer** mapa (ativo ou inativo)". Quando um mapa é desativado (pedido totalmente recebido), sua NF mãe (CFOP 3, que nunca recebe `n_id_receb` e não entra em movimentacao/legado) deixava de ser excluída e **vazava** no fallback como falsa pendência. O sync PROD→UAT de 2026-06-16 desativou 240 mapas e expôs isso: ~298 t de falsa pendência. Princípio: o fallback é só para importações **sem mapa** — uma NF que pertence a qualquer mapa nunca deve cair nele.
+
+### Decision 10: Sinal de inconsistência "chegou — NF aberta" — **FR-015**
+
+**Decision**: sinaliza pedidos com ≥1 filhote de **NF emitida** (liberada p/ transporte) ainda não recebida **e** que não estão mais em trânsito no FUP.
+
+**Rationale**: pega o extravio (embarcou e sumiu) sem falso-positivo de pedido recém-mapeado (que ainda não emitiu filhotes, logo sem lote no FUP por ser recente, não por ter chegado). Critério "por NF emitida" é mais preciso que "recebido>0" (não pega só parcial) e que "qualquer saldo" (evita falso-positivo).
+
+### Decision 11: Dimensão temporal (exoneração + aging) — **FR-019..021**
+
+**Decision**: data de entrada em exoneração = **emissão da NF mãe** (NF mãe emitida ⟺ foi para exoneração de ICMS, confirmado 2026-06-15); dias em exoneração = hoje − essa data. Aging da filhote = hoje − `d_emi` da NF filhote. Faixas (dentro do prazo/atenção/crítico) configuráveis, default alinhado ao `config_produto.lead_time_dias`; dias sempre exibidos.
+
+**Rationale**: tudo derivável de `d_emi` das NFs já no Postgres — sem nova fonte/coluna. Se a FUP expuser uma data de estágio dedicada, ela substitui o proxy da NF mãe.
+
+### Decision 12: Base de convergência (SC-002) — reformulada
+
+**Decision**: convergência ≤5% contra `transito_local + saldo de filhotes pendentes de pedidos em recebimento + importações sem mapa` (não contra o "Trânsito para Galpão" puro).
+
+**Rationale**: a pendência fiscal legitimamente excede o `transito_local` (fiscal vê filhote-a-filhote; FUP vê o pedido). O alvo antigo reprovaria mesmo com cálculo correto.

@@ -297,46 +297,57 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
       -- E em NF legada sem mapa → duplicaria transito_atlas, fisico_omie, etc.).
       SELECT produto_codigo_acxe, SUM(pendente_importacao_kg)::numeric AS pendente_importacao_kg
       FROM (
-        -- Parte A: pedidos COM mapa NF mãe/filhote (ACXEGDP-159).
-        -- NF mãe nunca tem n_id_receb > 0 (flag "não gera estoque", estoque 21.1 Extrema).
-        SELECT pc.ncodprod AS produto_codigo_acxe, SUM(pc.nqtde)::numeric AS pendente_importacao_kg
-        FROM stockbridge.nf_pedido_mapa mapa
-        JOIN public."tbl_pedidosCompras_ACXE" pc ON pc.cnumero = mapa.pedido_acxe_omie
-        WHERE mapa.ativo = true AND pc.nqtde > 0
-          AND $4::bool = true
-          AND (
-            NOT EXISTS (
-              SELECT 1 FROM stockbridge.nf_pedido_filhote f
-              WHERE f.mapa_id = mapa.id AND f.ativo = true
-            )
-            OR
-            EXISTS (
-              SELECT 1 FROM stockbridge.nf_pedido_filhote f
-              LEFT JOIN public."tbl_nf_header_ACXE" h ON h.n_nf = LPAD(f.nf_filhote, 8, '0')
-              WHERE f.mapa_id = mapa.id AND f.ativo = true
-                AND (h.n_id_nf IS NULL OR h.n_id_receb = 0 OR h.n_id_receb IS NULL)
-                -- ACXEGDP-183: a filhote pode ter sido recebida fora do OMIE
-                -- (n_id_receb nunca preenchido em NFs antigas/legado) mas registrada
-                -- no Atlas ou no historico MySQL. Espelha as exclusoes da Parte B —
-                -- sem isso, filhotes ja recebidas inflam a posicao fiscal pra sempre.
-                AND NOT EXISTS (
+        -- Parte A (Fix 3 — ACXEGDP-183): pedidos COM mapa NF mãe/filhote. Conta o SALDO
+        -- ainda não recebido (qtde do pedido − filhotes já recebidas), não o pedido inteiro —
+        -- senão o material já recebido conta 2x (na pendência fiscal E no físico/Disponível).
+        -- "Filhote recebida" = n_id_receb>0 (OMIE) OU em movimentacao(importacao) OU em
+        -- movimentacao_legado (FR-011/FR-013 — mesmo critério da Parte B e da auto-desativação).
+        -- Pedido sem filhote recebida (LEFT JOIN sem match) conta a quantidade cheia.
+        SELECT pa.produto_codigo_acxe, SUM(pa.saldo_kg)::numeric AS pendente_importacao_kg
+        FROM (
+          SELECT
+            ped.produto_codigo_acxe,
+            GREATEST(ped.qtde_pedido - COALESCE(rec.recebido_kg, 0), 0) AS saldo_kg
+          FROM (
+            -- qtde do pedido por (mapa, produto), somando múltiplas linhas do mesmo produto
+            SELECT mapa.id AS mapa_id, pc.ncodprod AS produto_codigo_acxe,
+                   SUM(pc.nqtde)::numeric AS qtde_pedido
+            FROM stockbridge.nf_pedido_mapa mapa
+            JOIN public."tbl_pedidosCompras_ACXE" pc ON pc.cnumero = mapa.pedido_acxe_omie
+            WHERE mapa.ativo = true AND pc.nqtde > 0 AND $4::bool = true
+            GROUP BY mapa.id, pc.ncodprod
+          ) ped
+          LEFT JOIN (
+            -- Σ q_com das filhotes JÁ RECEBIDAS, por (mapa, produto)
+            SELECT f.mapa_id, i.n_cod_prod AS ncodprod, SUM(i.q_com)::numeric AS recebido_kg
+            FROM stockbridge.nf_pedido_filhote f
+            JOIN public."tbl_nf_header_ACXE" h ON h.n_nf = LPAD(f.nf_filhote, 8, '0')
+            JOIN public."tbl_nf_itens_ACXE" i  ON i.n_id_nf = h.n_id_nf
+            WHERE f.ativo = true
+              AND (
+                h.n_id_receb > 0
+                OR EXISTS (
                   SELECT 1 FROM stockbridge.movimentacao m
                   WHERE m.ativo = true AND m.subtipo = 'importacao'
                     AND m.nota_fiscal = LPAD(f.nf_filhote, 8, '0')
                 )
-                AND NOT EXISTS (
+                OR EXISTS (
                   SELECT 1 FROM stockbridge.movimentacao_legado ml
                   WHERE ml.ativo = true AND ml.nota_fiscal = LPAD(f.nf_filhote, 8, '0')
                 )
-            )
-          )
-        GROUP BY pc.ncodprod
+              )
+            GROUP BY f.mapa_id, i.n_cod_prod
+          ) rec ON rec.mapa_id = ped.mapa_id AND rec.ncodprod = ped.produto_codigo_acxe
+        ) pa
+        GROUP BY pa.produto_codigo_acxe
 
         UNION ALL
 
         -- Parte B: fallback CFOP 3.xxx para importacoes SEM mapa (retrocompatibilidade).
         -- Exclui NFs ja reconciliadas em movimentacao (Atlas) OU movimentacao_legado
-        -- (migration MySQL) E NFs que sao mae OU filhote de mapa ativo (ja contadas na Parte A).
+        -- (migration MySQL) E NFs que sao mae OU filhote de QUALQUER mapa (Fix 4): mapa ativo
+        -- = ja contado na Parte A; mapa inativo = pedido ja recebido — a NF mae (CFOP 3, que
+        -- nunca recebe) vazaria como falsa pendencia se excluissemos apenas mapas ativos.
         SELECT i.n_cod_prod AS produto_codigo_acxe, SUM(i.q_com)::numeric AS pendente_importacao_kg
         FROM public."tbl_nf_header_ACXE" h
         JOIN public."tbl_nf_itens_ACXE" i ON i.n_id_nf = h.n_id_nf
@@ -356,15 +367,12 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
           )
           AND NOT EXISTS (
             SELECT 1 FROM stockbridge.nf_pedido_mapa mapa
-            WHERE LPAD(mapa.nf_mae, 8, '0') = h.n_nf AND mapa.ativo = true
+            WHERE LPAD(mapa.nf_mae, 8, '0') = h.n_nf
           )
-          -- ACXEGDP-183: exclui tambem as FILHOTES de mapas ativos. A filhote tem CFOP 3
-          -- (cairia neste fallback) e o pedido dela ja e contado na Parte A via pc.nqtde —
-          -- sem esta clausula o mesmo volume conta 2x (Parte A + Parte B).
           AND NOT EXISTS (
             SELECT 1 FROM stockbridge.nf_pedido_mapa mapa
             JOIN stockbridge.nf_pedido_filhote f ON f.mapa_id = mapa.id AND f.ativo = true
-            WHERE mapa.ativo = true AND LPAD(f.nf_filhote, 8, '0') = h.n_nf
+            WHERE LPAD(f.nf_filhote, 8, '0') = h.n_nf
           )
         GROUP BY i.n_cod_prod
       ) parts

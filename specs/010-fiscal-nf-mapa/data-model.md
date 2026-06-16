@@ -105,3 +105,31 @@ Mapa: ativo=true
         │
         └── pedido cai para fallback CFOP 3.xxx se movimentacao Atlas não existe
 ```
+
+---
+
+## Amendment 2026-06-16 — correções + aba "Pendências Fiscais" (ACXEGDP-183)
+
+**Sem nova tabela e sem migration.** As correções (Fix 1/2/3) alteram apenas a lógica de cálculo em TS/SQL; a aba é uma **visão derivada** read-only sobre as entidades existentes. Nenhum campo novo é persistido.
+
+### Visão derivada: Pendência Fiscal de Importação (não-persistida)
+
+Calculada no endpoint `GET /pendencias-fiscais` e no card do cockpit. Atributos derivados:
+
+| Atributo | Origem (derivação) |
+|---|---|
+| `recebida` (por filhote) | `n_id_receb>0` OU em `movimentacao`(importacao) OU em `movimentacao_legado` *(Fix 1 — supera Decision 3)* |
+| `fonteRecebimento` | qual das 3 fontes reconheceu (prioridade omie → movimentacao → legado) |
+| `nfEmitida` (por filhote) | `tbl_nf_header_ACXE.n_id_nf IS NOT NULL` |
+| `saldoPendenteKg` (por pedido/produto) | `GREATEST(pc.nqtde − Σ q_com filhotes recebidas, 0)` *(Fix 3 — supera Decision 2)* |
+| `diasDesdeEmissao` (por filhote) | `hoje − tbl_nf_header_ACXE.d_emi` |
+| `exoneracao.dataEntrada` | `d_emi` da NF mãe (NF mãe emitida ⟺ foi p/ exoneração) |
+| `exoneracao.diasEmExoneracao` | `hoje − d_emi` da NF mãe |
+| `estagioFup` / `loteEmTransito` | `stockbridge.lote` por `pedido_compra_acxe` / `status='transito'` |
+| `inconsistencia` | ≥1 filhote com `nfEmitida` e não `recebida` **E** `NOT loteEmTransito` *(FR-015)* |
+
+### Campos adicionais lidos das entidades existentes
+- `public."tbl_nf_header_ACXE".d_emi` — agora também usado para **aging** (antes só no fallback CFOP).
+- `public."tbl_nf_itens_ACXE".q_com` — agora usado na Parte A (saldo das filhotes recebidas), não só no fallback.
+- `stockbridge.movimentacao` / `movimentacao_legado` (`nota_fiscal`, `ativo`, `subtipo`) — agora consultadas também na Parte A (critério de "recebida") e na aba.
+- `stockbridge.lote` (`estagio_transito`, `status`, `pedido_compra_acxe`) — usado para o sinal de inconsistência.

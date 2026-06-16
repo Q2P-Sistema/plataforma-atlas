@@ -18,6 +18,7 @@ import {
   Bell,
   Settings,
   AlertTriangle,
+  FileWarning,
   Coins,
 } from 'lucide-react';
 import { LoginPage } from './pages/LoginPage.js';
@@ -63,6 +64,7 @@ import { ConfigProdutosPage } from './pages/stockbridge/diretor/ConfigProdutosPa
 import { LocalidadesPage } from './pages/stockbridge/gestor/LocalidadesPage.js';
 import { MovimentacoesPage } from './pages/stockbridge/gestor/MovimentacoesPage.js';
 import { DivergenciasPage } from './pages/stockbridge/gestor/DivergenciasPage.js';
+import { PendenciasFiscaisPage } from './pages/stockbridge/gestor/PendenciasFiscaisPage.js';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage.js';
 import { ResetPasswordPage } from './pages/ResetPasswordPage.js';
 import { useAuth } from './hooks/useAuth.js';
@@ -97,6 +99,7 @@ const STOCKBRIDGE_SUB_ITEMS: SidebarSubItem[] = [
   { id: 'sb-fila',             name: 'Recebimento',             path: '/stockbridge/fila',              icon: FileText,        roles: ['operador', 'gestor', 'diretor'] },
   { id: 'sb-aprovacoes',       name: 'Aprovações',              path: '/stockbridge/aprovacoes',        icon: Bell,            roles: ['gestor', 'diretor'] },
   { id: 'sb-divergencias',     name: 'Divergências',            path: '/stockbridge/divergencias',      icon: AlertTriangle,   roles: ['gestor', 'diretor'] },
+  { id: 'sb-pendencias-fiscais', name: 'Pendências Fiscais',    path: '/stockbridge/pendencias-fiscais', icon: FileWarning,    roles: ['gestor', 'diretor'] },
   { id: 'sb-movimentacoes',    name: 'Movimentações',           path: '/stockbridge/movimentacoes',     icon: Table,           roles: ['operador', 'gestor', 'diretor'] },
   { id: 'sb-transito',         name: 'Trânsito',                path: '/stockbridge/transito',          icon: Activity,        roles: ['operador', 'gestor', 'diretor'] },
   { id: 'sb-saida-manual',     name: 'Saída Manual',            path: '/stockbridge/saida-manual',      icon: ShoppingCart,    roles: ['operador', 'gestor', 'diretor'] },
@@ -388,6 +391,7 @@ function ProtectedShell() {
             <Route path="custos" element={<CmcPage />} />
             <Route path="aprovacoes" element={<AprovacoesPage />} />
             <Route path="divergencias" element={<DivergenciasPage />} />
+            <Route path="pendencias-fiscais" element={<PendenciasFiscaisPage />} />
             <Route path="movimentacoes" element={<MovimentacoesPage />} />
             <Route path="transito" element={<TransitoPage />} />
             <Route path="saida-manual" element={<SaidaManualPage />} />

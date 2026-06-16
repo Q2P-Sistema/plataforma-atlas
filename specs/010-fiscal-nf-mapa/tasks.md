@@ -5,6 +5,8 @@
 **Jira**: ACXEGDP-159  
 **Branch**: `010-fiscal-nf-mapa`
 
+> **Continuação (2026-06-16 — ACXEGDP-183)**: as correções de cálculo (Fix 1/2/3) e a aba "Pendências Fiscais" (US4) têm tarefas próprias em [`tasks-pendencias-fiscais.md`](./tasks-pendencias-fiscais.md). Este arquivo cobre a feature original (US1–US3, T001–T028, concluída).
+
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel (different files, no dependencies)
