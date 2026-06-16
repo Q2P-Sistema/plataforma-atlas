@@ -77,11 +77,16 @@ function fmtData(iso: string | null) {
   }
 }
 
-// Faixas de aging (FR-021) — limite configurável no futuro; default fixo por ora.
+// Faixas de aging (FR-021 / T042) — limites PROVISÓRIOS em dias. O número de dias é sempre
+// exibido (o gestor julga); as faixas são só realce visual. Calibrar com a equipe de comex
+// (SLA real de transporte) ou vincular ao config_produto.lead_time_dias no futuro.
+const AGING_ATENCAO_DIAS = 30;
+const AGING_CRITICO_DIAS = 60;
+
 function agingClass(dias: number | null) {
   if (dias == null) return 'text-atlas-muted';
-  if (dias > 60) return 'text-red-700 dark:text-red-300';
-  if (dias > 30) return 'text-amber-700 dark:text-amber-300';
+  if (dias > AGING_CRITICO_DIAS) return 'text-red-700 dark:text-red-300';
+  if (dias > AGING_ATENCAO_DIAS) return 'text-amber-700 dark:text-amber-300';
   return 'text-green-700 dark:text-green-300';
 }
 

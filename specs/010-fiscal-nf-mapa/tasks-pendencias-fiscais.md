@@ -74,10 +74,10 @@
 **Purpose**: build, deploy UAT, rastreabilidade.
 
 - [x] T039 Build completo — `pnpm --filter @atlas/stockbridge run build` (tsc) + build de `apps/web` (tsc + vite)
-- [ ] T040 Commit na branch `010-fiscal-nf-mapa` + cherry-pick para `uat` (dispara build `:uat`); confirmar CI verde
-- [ ] T041 [P] Atualizar ACXEGDP-183 (comentário com o resultado do Fix 3 + aba) e a memória do projeto
-- [ ] T042 [P] Conferir faixas de aging (assumption): fixar limites (default = `config_produto.lead_time_dias`) ou manter só os dias exibidos
-- [ ] T043 [P] Garantir o predicado de "recebida" (FR-013) **idêntico** entre a Parte A do cockpit (`modules/stockbridge/src/services/cockpit.service.ts`), `modules/stockbridge/src/services/pendencias-fiscais.service.ts` e a auto-desativação (`modules/stockbridge/src/services/nf-pedido-mapa.service.ts`) — extrair para fragmento SQL/constante compartilhada ou checklist de paridade (anti-drift)
+- [x] T040 Commit `9c97d93` (010) + cherry-pick `407a53b` (uat) — pushados; CI :uat em verificação
+- [x] T041 [P] Atualizar ACXEGDP-183 (comentário com o resultado do Fix 3 + aba) e a memória do projeto
+- [x] T042 [P] Faixas de aging extraídas p/ constantes nomeadas (AGING_ATENCAO/CRITICO_DIAS, provisórias 30/60d, a calibrar c/ comex); dias sempre exibidos. PendenciasFiscaisPage.tsx
+- [x] T043 [P] Predicado 'recebida' (movimentacao/legado) extraído p/ fragmento compartilhado fiscal-recebida-sql.ts (FR-013), usado em cockpit (A+B), pendencias-fiscais e auto-desativação — anti-drift
 
 ---
 

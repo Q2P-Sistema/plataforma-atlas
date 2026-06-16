@@ -1,4 +1,5 @@
 import { getPool, createLogger, getConfig } from '@atlas/core';
+import { recebidaViaMovimentacaoSql, recebidaViaLegadoSql } from './fiscal-recebida-sql.js';
 
 const logger = createLogger('stockbridge:pendencias-fiscais');
 
@@ -166,11 +167,8 @@ export async function getPendenciasFiscais(
         CASE WHEN hf.d_emi IS NOT NULL THEN (CURRENT_DATE - hf.d_emi::date) END AS dias_desde_emissao,
         (hf.n_id_nf IS NOT NULL)                   AS nf_emitida,
         (hf.n_id_receb > 0)                        AS receb_omie,
-        EXISTS (SELECT 1 FROM stockbridge.movimentacao m
-                WHERE m.ativo = true AND m.subtipo = 'importacao'
-                  AND m.nota_fiscal = LPAD(f.nf_filhote, 8, '0')) AS in_mov,
-        EXISTS (SELECT 1 FROM stockbridge.movimentacao_legado ml
-                WHERE ml.ativo = true AND ml.nota_fiscal = LPAD(f.nf_filhote, 8, '0')) AS in_legado
+        ${recebidaViaMovimentacaoSql("LPAD(f.nf_filhote, 8, '0')")} AS in_mov,
+        ${recebidaViaLegadoSql("LPAD(f.nf_filhote, 8, '0')")} AS in_legado
       FROM stockbridge.nf_pedido_mapa mapa
       JOIN stockbridge.nf_pedido_filhote f ON f.mapa_id = mapa.id AND f.ativo = true
       LEFT JOIN public."tbl_nf_header_ACXE" hf ON hf.n_nf = LPAD(f.nf_filhote, 8, '0')
@@ -195,10 +193,8 @@ export async function getPendenciasFiscais(
       LEFT JOIN stockbridge.familia_omie_atlas fam ON fam.familia_omie = pa.descricao_familia
       LEFT JOIN stockbridge.config_produto cfg ON cfg.produto_codigo_acxe = i.n_cod_prod
       WHERE h.tp_nf = 0 AND LEFT(i.cfop, 1) = '3' AND h.d_emi >= $1::date
-        AND NOT EXISTS (SELECT 1 FROM stockbridge.movimentacao m
-                        WHERE m.ativo = true AND m.subtipo = 'importacao' AND m.nota_fiscal = h.n_nf)
-        AND NOT EXISTS (SELECT 1 FROM stockbridge.movimentacao_legado ml
-                        WHERE ml.ativo = true AND ml.nota_fiscal = h.n_nf)
+        AND NOT ${recebidaViaMovimentacaoSql('h.n_nf')}
+        AND NOT ${recebidaViaLegadoSql('h.n_nf')}
         AND NOT EXISTS (SELECT 1 FROM stockbridge.nf_pedido_mapa mapa
                         WHERE LPAD(mapa.nf_mae, 8, '0') = h.n_nf)
         AND NOT EXISTS (SELECT 1 FROM stockbridge.nf_pedido_mapa mapa

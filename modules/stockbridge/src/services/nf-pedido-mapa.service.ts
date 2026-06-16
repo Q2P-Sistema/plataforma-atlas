@@ -1,4 +1,5 @@
 import { getPool, createLogger } from '@atlas/core';
+import { recebidaViaMovimentacaoSql, recebidaViaLegadoSql } from './fiscal-recebida-sql.js';
 
 const logger = createLogger('stockbridge:nf-pedido-mapa');
 
@@ -104,15 +105,8 @@ export async function upsertNfPedidoMapa(items: NfPedidoMapaInput[]): Promise<Up
              WHERE f.mapa_id = $1
                AND f.ativo = true
                AND (h.n_id_nf IS NULL OR h.n_id_receb = 0 OR h.n_id_receb IS NULL)
-               AND NOT EXISTS (
-                 SELECT 1 FROM stockbridge.movimentacao m
-                 WHERE m.ativo = true AND m.subtipo = 'importacao'
-                   AND m.nota_fiscal = LPAD(f.nf_filhote, 8, '0')
-               )
-               AND NOT EXISTS (
-                 SELECT 1 FROM stockbridge.movimentacao_legado ml
-                 WHERE ml.ativo = true AND ml.nota_fiscal = LPAD(f.nf_filhote, 8, '0')
-               )
+               AND NOT ${recebidaViaMovimentacaoSql("LPAD(f.nf_filhote, 8, '0')")}
+               AND NOT ${recebidaViaLegadoSql("LPAD(f.nf_filhote, 8, '0')")}
            ) AS pendente`,
           [mapaId],
         );

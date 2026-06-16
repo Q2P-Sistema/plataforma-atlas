@@ -4,6 +4,7 @@ import {
   classificarCriticidade,
   type Criticidade,
 } from './motor.service.js';
+import { recebidaViaMovimentacaoSql, recebidaViaLegadoSql } from './fiscal-recebida-sql.js';
 
 const logger = createLogger('stockbridge:cockpit');
 
@@ -326,15 +327,8 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
             WHERE f.ativo = true
               AND (
                 h.n_id_receb > 0
-                OR EXISTS (
-                  SELECT 1 FROM stockbridge.movimentacao m
-                  WHERE m.ativo = true AND m.subtipo = 'importacao'
-                    AND m.nota_fiscal = LPAD(f.nf_filhote, 8, '0')
-                )
-                OR EXISTS (
-                  SELECT 1 FROM stockbridge.movimentacao_legado ml
-                  WHERE ml.ativo = true AND ml.nota_fiscal = LPAD(f.nf_filhote, 8, '0')
-                )
+                OR ${recebidaViaMovimentacaoSql("LPAD(f.nf_filhote, 8, '0')")}
+                OR ${recebidaViaLegadoSql("LPAD(f.nf_filhote, 8, '0')")}
               )
             GROUP BY f.mapa_id, i.n_cod_prod
           ) rec ON rec.mapa_id = ped.mapa_id AND rec.ncodprod = ped.produto_codigo_acxe
@@ -355,16 +349,8 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
           AND h.tp_nf = 0
           AND LEFT(i.cfop, 1) = '3'
           AND h.d_emi >= $3::date
-          AND NOT EXISTS (
-            SELECT 1 FROM stockbridge.movimentacao m
-            WHERE m.ativo = true
-              AND m.subtipo = 'importacao'
-              AND m.nota_fiscal = h.n_nf
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM stockbridge.movimentacao_legado ml
-            WHERE ml.ativo = true AND ml.nota_fiscal = h.n_nf
-          )
+          AND NOT ${recebidaViaMovimentacaoSql('h.n_nf')}
+          AND NOT ${recebidaViaLegadoSql('h.n_nf')}
           AND NOT EXISTS (
             SELECT 1 FROM stockbridge.nf_pedido_mapa mapa
             WHERE LPAD(mapa.nf_mae, 8, '0') = h.n_nf
