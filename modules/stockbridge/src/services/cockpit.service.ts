@@ -334,9 +334,9 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
 
         UNION ALL
 
-        -- Parte B: fallback CFOP 3.xxx para pedidos SEM mapa (retrocompatibilidade).
-        -- Exclui NFs já reconciliadas em movimentacao (Atlas) OU em movimentacao_legado
-        -- (migration MySQL): sem o filtro legado, NFs históricas já recebidas inflariam a posição.
+        -- Parte B: fallback CFOP 3.xxx para importacoes SEM mapa (retrocompatibilidade).
+        -- Exclui NFs ja reconciliadas em movimentacao (Atlas) OU movimentacao_legado
+        -- (migration MySQL) E NFs que sao mae OU filhote de mapa ativo (ja contadas na Parte A).
         SELECT i.n_cod_prod AS produto_codigo_acxe, SUM(i.q_com)::numeric AS pendente_importacao_kg
         FROM public."tbl_nf_header_ACXE" h
         JOIN public."tbl_nf_itens_ACXE" i ON i.n_id_nf = h.n_id_nf
@@ -357,6 +357,14 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
           AND NOT EXISTS (
             SELECT 1 FROM stockbridge.nf_pedido_mapa mapa
             WHERE LPAD(mapa.nf_mae, 8, '0') = h.n_nf AND mapa.ativo = true
+          )
+          -- ACXEGDP-183: exclui tambem as FILHOTES de mapas ativos. A filhote tem CFOP 3
+          -- (cairia neste fallback) e o pedido dela ja e contado na Parte A via pc.nqtde —
+          -- sem esta clausula o mesmo volume conta 2x (Parte A + Parte B).
+          AND NOT EXISTS (
+            SELECT 1 FROM stockbridge.nf_pedido_mapa mapa
+            JOIN stockbridge.nf_pedido_filhote f ON f.mapa_id = mapa.id AND f.ativo = true
+            WHERE mapa.ativo = true AND LPAD(f.nf_filhote, 8, '0') = h.n_nf
           )
         GROUP BY i.n_cod_prod
       ) parts
