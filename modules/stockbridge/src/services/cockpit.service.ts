@@ -315,6 +315,19 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
               LEFT JOIN public."tbl_nf_header_ACXE" h ON h.n_nf = LPAD(f.nf_filhote, 8, '0')
               WHERE f.mapa_id = mapa.id AND f.ativo = true
                 AND (h.n_id_nf IS NULL OR h.n_id_receb = 0 OR h.n_id_receb IS NULL)
+                -- ACXEGDP-183: a filhote pode ter sido recebida fora do OMIE
+                -- (n_id_receb nunca preenchido em NFs antigas/legado) mas registrada
+                -- no Atlas ou no historico MySQL. Espelha as exclusoes da Parte B —
+                -- sem isso, filhotes ja recebidas inflam a posicao fiscal pra sempre.
+                AND NOT EXISTS (
+                  SELECT 1 FROM stockbridge.movimentacao m
+                  WHERE m.ativo = true AND m.subtipo = 'importacao'
+                    AND m.nota_fiscal = LPAD(f.nf_filhote, 8, '0')
+                )
+                AND NOT EXISTS (
+                  SELECT 1 FROM stockbridge.movimentacao_legado ml
+                  WHERE ml.ativo = true AND ml.nota_fiscal = LPAD(f.nf_filhote, 8, '0')
+                )
             )
           )
         GROUP BY pc.ncodprod

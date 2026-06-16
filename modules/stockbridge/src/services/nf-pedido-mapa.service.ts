@@ -31,7 +31,8 @@ export interface NfPedidoMapaRow {
  *      → atualiza nf_mae + updated_at se já existe
  *   2. Soft-delete das filhotes anteriores (ativo = false)
  *   3. INSERT das novas filhotes com posição 1-N
- *   4. Verifica auto-desativação (se todas as filhotes já têm n_id_receb > 0)
+ *   4. Verifica auto-desativação (se todas as filhotes já foram recebidas —
+ *      n_id_receb > 0 no OMIE OU presença em movimentacao/movimentacao_legado)
  *
  * Não valida o pedido contra tbl_pedidosCompras_ACXE no momento do INSERT:
  * pedido inexistente no ERP é aceito silenciosamente (FR-001).
@@ -89,9 +90,11 @@ export async function upsertNfPedidoMapa(items: NfPedidoMapaInput[]): Promise<Up
         );
       }
 
-      // Auto-desativação: se todas as filhotes ativas já foram recebidas no OMIE,
-      // fechar o mapa (mapa.ativo = false).
-      // Nota: entre execuções do n8n o cockpit permanece correto (n_id_receb ao vivo).
+      // Auto-desativação: se todas as filhotes ativas já foram recebidas, fechar
+      // o mapa (mapa.ativo = false). "Recebida" = n_id_receb > 0 no OMIE OU
+      // registrada em movimentacao/movimentacao_legado (ACXEGDP-183) — NFs antigas
+      // recebidas no legado nunca tiveram n_id_receb preenchido no OMIE.
+      // Nota: entre execuções do n8n o cockpit permanece correto (lido ao vivo).
       if (nf_filhotes.length > 0) {
         const pendResult = await client.query<{ pendente: boolean }>(
           `SELECT EXISTS (
@@ -101,6 +104,15 @@ export async function upsertNfPedidoMapa(items: NfPedidoMapaInput[]): Promise<Up
              WHERE f.mapa_id = $1
                AND f.ativo = true
                AND (h.n_id_nf IS NULL OR h.n_id_receb = 0 OR h.n_id_receb IS NULL)
+               AND NOT EXISTS (
+                 SELECT 1 FROM stockbridge.movimentacao m
+                 WHERE m.ativo = true AND m.subtipo = 'importacao'
+                   AND m.nota_fiscal = LPAD(f.nf_filhote, 8, '0')
+               )
+               AND NOT EXISTS (
+                 SELECT 1 FROM stockbridge.movimentacao_legado ml
+                 WHERE ml.ativo = true AND ml.nota_fiscal = LPAD(f.nf_filhote, 8, '0')
+               )
            ) AS pendente`,
           [mapaId],
         );
