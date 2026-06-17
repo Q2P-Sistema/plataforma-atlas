@@ -1,5 +1,10 @@
 import { getPool, createLogger, getConfig } from '@atlas/core';
-import { recebidaViaMovimentacaoSql, recebidaViaLegadoSql } from './fiscal-recebida-sql.js';
+import {
+  recebidaViaMovimentacaoSql,
+  recebidaViaLegadoSql,
+  naoCanceladaSql,
+  colunaCanceladaExiste,
+} from './fiscal-recebida-sql.js';
 
 const logger = createLogger('stockbridge:pendencias-fiscais');
 
@@ -23,6 +28,7 @@ export interface FilhoteItem {
   recebida: boolean;
   fonteRecebimento: FonteRecebimento;
   nfEmitida: boolean;
+  cancelada: boolean;
   diasDesdeEmissao: number | null;
 }
 
@@ -90,6 +96,7 @@ interface FilhoteRow {
   receb_omie: boolean;
   in_mov: boolean;
   in_legado: boolean;
+  cancelada: boolean;
 }
 
 interface SemMapaRow {
@@ -109,6 +116,10 @@ export async function getPendenciasFiscais(
   const config = getConfig();
   const incluirMetricas = filtros.incluirMetricas ?? false;
   const statusFiltro = filtros.status ?? 'todas';
+
+  // Filtro "NF não cancelada" (ACXEGDP-183 / contrato com o sync n8n) — só aplicado
+  // se a coluna existir (inerte quando ausente; ver fiscal-recebida-sql.ts).
+  const canceladaExiste = await colunaCanceladaExiste(pool);
 
   // Cutoff fiscal — mesma regra do cockpit (env ou 180 dias atrás).
   const cutoffDate =
@@ -168,7 +179,8 @@ export async function getPendenciasFiscais(
         (hf.n_id_nf IS NOT NULL)                   AS nf_emitida,
         (hf.n_id_receb > 0)                        AS receb_omie,
         ${recebidaViaMovimentacaoSql("LPAD(f.nf_filhote, 8, '0')")} AS in_mov,
-        ${recebidaViaLegadoSql("LPAD(f.nf_filhote, 8, '0')")} AS in_legado
+        ${recebidaViaLegadoSql("LPAD(f.nf_filhote, 8, '0')")} AS in_legado,
+        ${canceladaExiste ? 'COALESCE(hf.cancelada, false)' : 'false'} AS cancelada
       FROM stockbridge.nf_pedido_mapa mapa
       JOIN stockbridge.nf_pedido_filhote f ON f.mapa_id = mapa.id AND f.ativo = true
       LEFT JOIN public."tbl_nf_header_ACXE" hf ON hf.n_nf = LPAD(f.nf_filhote, 8, '0')
@@ -193,6 +205,7 @@ export async function getPendenciasFiscais(
       LEFT JOIN stockbridge.familia_omie_atlas fam ON fam.familia_omie = pa.descricao_familia
       LEFT JOIN stockbridge.config_produto cfg ON cfg.produto_codigo_acxe = i.n_cod_prod
       WHERE h.tp_nf = 0 AND LEFT(i.cfop, 1) = '3' AND h.d_emi >= $1::date
+        ${naoCanceladaSql(canceladaExiste, 'h')}
         AND NOT ${recebidaViaMovimentacaoSql('h.n_nf')}
         AND NOT ${recebidaViaLegadoSql('h.n_nf')}
         AND NOT EXISTS (SELECT 1 FROM stockbridge.nf_pedido_mapa mapa
@@ -210,14 +223,18 @@ export async function getPendenciasFiscais(
     const filhotesByPedido = new Map<string, FilhoteItem[]>();
     const recebidoByPedido = new Map<string, number>();
     for (const r of filhotesRes.rows) {
-      const recebida = r.receb_omie || r.in_mov || r.in_legado;
-      const fonte: FonteRecebimento = r.receb_omie
-        ? 'omie'
-        : r.in_mov
-          ? 'movimentacao'
-          : r.in_legado
-            ? 'movimentacao_legado'
-            : null;
+      // NF cancelada não é recebimento válido — não conta como recebida nem soma ao recebido.
+      const cancelada = r.cancelada === true;
+      const recebida = !cancelada && (r.receb_omie || r.in_mov || r.in_legado);
+      const fonte: FonteRecebimento = !recebida
+        ? null
+        : r.receb_omie
+          ? 'omie'
+          : r.in_mov
+            ? 'movimentacao'
+            : r.in_legado
+              ? 'movimentacao_legado'
+              : null;
       const qtde = r.filhote_qtde_kg != null ? Number(r.filhote_qtde_kg) : 0;
       const item: FilhoteItem = {
         nfFilhote: r.nf_filhote,
@@ -226,6 +243,7 @@ export async function getPendenciasFiscais(
         recebida,
         fonteRecebimento: fonte,
         nfEmitida: r.nf_emitida,
+        cancelada,
         diasDesdeEmissao: r.dias_desde_emissao != null ? Number(r.dias_desde_emissao) : null,
       };
       const arr = filhotesByPedido.get(r.pedido_acxe_omie) ?? [];
@@ -246,7 +264,8 @@ export async function getPendenciasFiscais(
       // FR-015: inconsistência "chegou — NF aberta" = ≥1 filhote com NF emitida e não recebida,
       // e o pedido não está mais em trânsito no FUP.
       const inconsistencia =
-        !r.lote_em_transito && filhotes.some((f) => f.nfEmitida && !f.recebida);
+        !r.lote_em_transito &&
+        filhotes.some((f) => f.nfEmitida && !f.recebida && !f.cancelada);
       return {
         pedidoAcxeOmie: r.pedido_acxe_omie,
         nfMae: r.nf_mae,
