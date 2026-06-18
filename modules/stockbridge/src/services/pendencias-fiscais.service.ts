@@ -2,7 +2,7 @@ import { getPool, createLogger, getConfig } from '@atlas/core';
 import {
   recebidaViaMovimentacaoSql,
   recebidaViaLegadoSql,
-  naoCanceladaSql,
+  nfValidaSql,
   colunaCanceladaExiste,
 } from './fiscal-recebida-sql.js';
 
@@ -205,7 +205,7 @@ export async function getPendenciasFiscais(
       LEFT JOIN stockbridge.familia_omie_atlas fam ON fam.familia_omie = pa.descricao_familia
       LEFT JOIN stockbridge.config_produto cfg ON cfg.produto_codigo_acxe = i.n_cod_prod
       WHERE h.tp_nf = 0 AND LEFT(i.cfop, 1) = '3' AND h.d_emi >= $1::date
-        ${naoCanceladaSql(canceladaExiste, 'h')}
+        ${nfValidaSql(canceladaExiste, 'h')}
         AND NOT ${recebidaViaMovimentacaoSql('h.n_nf')}
         AND NOT ${recebidaViaLegadoSql('h.n_nf')}
         AND NOT EXISTS (SELECT 1 FROM stockbridge.nf_pedido_mapa mapa

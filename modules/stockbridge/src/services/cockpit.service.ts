@@ -7,7 +7,7 @@ import {
 import {
   recebidaViaMovimentacaoSql,
   recebidaViaLegadoSql,
-  naoCanceladaSql,
+  nfValidaSql,
   colunaCanceladaExiste,
 } from './fiscal-recebida-sql.js';
 
@@ -113,10 +113,11 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
       return d.toISOString().slice(0, 10);
     })();
 
-  // Filtro "NF não cancelada" (ACXEGDP-183) — só emitido se a coluna existir
-  // (o sync n8n a popula; o sync PROD→UAT pode dropá-la ao recriar public.*).
-  // Inerte e seguro quando ausente. Importação é ACXE-only, basta checar ACXE.
-  const naoCancelada = naoCanceladaSql(await colunaCanceladaExiste(pool), 'h');
+  // Filtro "NF fiscalmente válida" (ACXEGDP-183/184): não deletada E não cancelada.
+  // O predicado de `cancelada` só é emitido se a coluna existir (o sync n8n a
+  // popula; o sync PROD→UAT pode dropá-la ao recriar public.*). Inerte e seguro
+  // quando ausente. As 3 tabelas de header usam alias `h` onde isto é injetado.
+  const nfValida = nfValidaSql(await colunaCanceladaExiste(pool), 'h');
 
   // Whitelist de galpoes fisicos reais (entram em "Disponivel"). Tudo que
   // estiver fora desta lista e os codigos especiais 90.0.* nao soma como
@@ -335,7 +336,7 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
             JOIN public."tbl_nf_header_ACXE" h ON h.n_nf = LPAD(f.nf_filhote, 8, '0')
             JOIN public."tbl_nf_itens_ACXE" i  ON i.n_id_nf = h.n_id_nf
             WHERE f.ativo = true
-              ${naoCancelada}
+              ${nfValida}
               AND (
                 h.n_id_receb > 0
                 OR ${recebidaViaMovimentacaoSql("LPAD(f.nf_filhote, 8, '0')")}
@@ -358,7 +359,7 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
         JOIN public."tbl_nf_itens_ACXE" i ON i.n_id_nf = h.n_id_nf
         WHERE $4::bool = true
           AND h.tp_nf = 0
-          ${naoCancelada}
+          ${nfValida}
           AND LEFT(i.cfop, 1) = '3'
           AND h.d_emi >= $3::date
           AND NOT ${recebidaViaMovimentacaoSql('h.n_nf')}

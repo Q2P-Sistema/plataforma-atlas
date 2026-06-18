@@ -27,23 +27,31 @@ export function recebidaViaLegadoSql(nfExpr: string): string {
 }
 
 /**
- * Filtro "NF não cancelada" (ACXEGDP-183) — contrato com o sync n8n.
+ * Filtro "NF fiscalmente válida" (ACXEGDP-183/184) — contrato com o sync n8n.
  *
- * O sync de NF (workflows "FullSync NF Itens Semanal") passa a marcar
- * `tbl_nf_header_<EMP>.cancelada = true` para NFs canceladas no OMIE (que o
- * `ListarNF` continua devolvendo — não somem, então a reconciliação por
- * desaparecimento nunca as pegava). Sem este filtro, uma importação cancelada
- * (CFOP 3, sem mapa, sem recebimento) conta como Pendência de Importação para
- * sempre. Aplicado na Parte A (filhote recebida) e Parte B (fallback) do cockpit
- * e no serviço de pendências-fiscais.
+ * Exclui do cálculo de pendência fiscal NFs que não são documentos válidos:
+ *  - `deletada = true`  → NF que SUMIU do OMIE (reconciliação por desaparecimento);
+ *  - `cancelada = true` → NF que CONTINUA no OMIE mas está fiscalmente inválida
+ *    (cancelada/inutilizada/denegada, lida de ide.dCan/dInut/cDeneg). Coluna sticky,
+ *    SEPARADA de `deletada` (sync ACXEGDP-184, nas 3 empresas).
  *
- * A coluna pode NÃO existir (o sync PROD→UAT recria `public.*` e pode dropá-la,
- * como já acontece com os grants). Por isso o predicado só é emitido quando a
- * coluna existe — ver `colunaCanceladaExiste`. Inerte quando ausente: a query
- * roda igual e o cockpit não quebra (sem a guarda, o `catch` devolveria vazio).
+ * As duas são independentes; aplicamos ambas. Sem isto, uma NF inválida (ex.:
+ * importação cancelada CFOP 3 sem mapa) conta como Pendência para sempre. Usado
+ * na Parte A (filhote recebida), Parte B (fallback) e Pendência Nacional do
+ * cockpit, e no serviço de pendências-fiscais.
+ *
+ * `cancelada` é recente e pode NÃO existir (o sync PROD→UAT recria `public.*` e
+ * pode dropá-la, como já acontece com os grants). Por isso o predicado de
+ * `cancelada` só é emitido quando a coluna existe — ver `colunaCanceladaExiste`.
+ * `deletada` é coluna estável (sempre presente) e é sempre filtrada. Inerte
+ * quando `cancelada` ausente: a query roda igual e o cockpit não quebra (sem a
+ * guarda, o `catch` devolveria vazio).
  */
-export function naoCanceladaSql(existe: boolean, alias = 'h'): string {
-  return existe ? `AND COALESCE(${alias}.cancelada, false) = false` : '';
+export function nfValidaSql(canceladaExiste: boolean, alias = 'h'): string {
+  const naoDeletada = `AND COALESCE(${alias}.deletada, false) = false`;
+  return canceladaExiste
+    ? `${naoDeletada} AND COALESCE(${alias}.cancelada, false) = false`
+    : naoDeletada;
 }
 
 /** Pool mínimo (estrutural) — evita acoplar ao tipo concreto de `pg`. */
