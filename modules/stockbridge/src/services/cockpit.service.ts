@@ -119,6 +119,16 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
   // quando ausente. As 3 tabelas de header usam alias `h` onde isto é injetado.
   const nfValida = nfValidaSql(await colunaCanceladaExiste(pool), 'h');
 
+  // Fase 1 do StockBridge: a Pendência Nacional NÃO entra no número do cockpit.
+  // As NFs nacionais de entrada hoje são devoluções de venda (Q2P) cujo "recebida"
+  // é não-confiável: o `n_id_receb` fura em devolução (~42% nunca preenchem, mesmo
+  // já recebidas) — só o movimento de entrada (tbl_movimentacaoEstoqueHistorico)
+  // confirma. Reabilitar na Fase 2, junto do recebimento de devoluções (menu
+  // Recebimento › Nacional, distinguindo entrada manual completa vs entrada com NF),
+  // trocando o filtro abaixo para 'true' e adotando "recebida = n_id_receb>0 OU
+  // movimento de entrada". Ver memória posicao-fiscal-e-historico-legado / ACXEGDP-183.
+  const filtroNacional = 'false';
+
   // Whitelist de galpoes fisicos reais (entram em "Disponivel"). Tudo que
   // estiver fora desta lista e os codigos especiais 90.0.* nao soma como
   // estoque disponível — saldo de OPERACIONAIS (VARREDURA, FALTANDO, PROCESSO,
@@ -260,6 +270,8 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
     fiscal_pend_nacional AS (
       -- NFs de entrada nacional (CFOPs 1.xxx/2.xxx) sem recebimento OMIE,
       -- consolidadas por produto_codigo_acxe (3 empresas).
+      -- Fase 1: DESLIGADO no cockpit (filtroNacional='false') — ver comentário no
+      -- topo de getCockpit. As CTEs internas ficam para a Fase 2 reativar.
       SELECT produto_codigo_acxe, SUM(kg)::numeric AS pendente_nacional_kg
       FROM (
         -- ACXE nacional (link direto)
@@ -300,6 +312,7 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
           AND LEFT(i.cfop, 1) IN ('1','2')
           AND h.d_emi >= $3::date
       ) src
+      WHERE ${filtroNacional}
       GROUP BY produto_codigo_acxe
     ),
     fiscal_pend_importacao AS (
