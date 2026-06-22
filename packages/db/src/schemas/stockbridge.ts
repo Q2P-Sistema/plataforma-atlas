@@ -48,6 +48,33 @@ export const localidadeCorrelacao = stockbridgeSchema.table(
   },
 );
 
+// ── Conferência de Estoque — mapa De→Para de locais (ACXE×Q2P) ──
+// Espelho da aba tbl_locaisEstoque da planilha. tipo=ESPELHADO indica par
+// bilateral (mesmo `codigo` textual nas duas empresas). Vide migration 0040.
+export const conferenciaLocalMap = stockbridgeSchema.table(
+  'conferencia_local_map',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    codigoLocalEstoque: bigint('codigo_local_estoque', { mode: 'number' }).notNull().unique(),
+    codigo: varchar('codigo', { length: 50 }).notNull(),
+    descricao: varchar('descricao', { length: 255 }).notNull(),
+    nomeComparativo: varchar('nome_comparativo', { length: 255 }),
+    tipo: varchar('tipo', { length: 20 }).notNull().$type<'ESPELHADO' | 'INDIVIDUAL'>(),
+    empresa: varchar('empresa', { length: 20 }).notNull().$type<'ACXE' | 'Q2P'>(),
+    ativo: boolean('ativo').notNull().default(true),
+    updatedBy: uuid('updated_by').references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('conferencia_local_map_codigo_idx').on(t.codigo),
+    index('conferencia_local_map_tipo_idx').on(t.tipo),
+  ],
+);
+
+export type ConferenciaLocalMap = typeof conferenciaLocalMap.$inferSelect;
+export type NewConferenciaLocalMap = typeof conferenciaLocalMap.$inferInsert;
+
 // ── Lote ───────────────────────────────────────────────────
 export const lote = stockbridgeSchema.table(
   'lote',

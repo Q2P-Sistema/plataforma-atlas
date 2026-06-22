@@ -64,6 +64,7 @@ import { ConfigProdutosPage } from './pages/stockbridge/diretor/ConfigProdutosPa
 import { LocalidadesPage } from './pages/stockbridge/gestor/LocalidadesPage.js';
 import { MovimentacoesPage } from './pages/stockbridge/gestor/MovimentacoesPage.js';
 import { DivergenciasPage } from './pages/stockbridge/gestor/DivergenciasPage.js';
+import { ConferenciaEstoquePage } from './pages/stockbridge/gestor/ConferenciaEstoquePage.js';
 import { PendenciasFiscaisPage } from './pages/stockbridge/gestor/PendenciasFiscaisPage.js';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage.js';
 import { ResetPasswordPage } from './pages/ResetPasswordPage.js';
@@ -79,6 +80,7 @@ import {
   Landmark,
   Table,
   Users,
+  Scale,
 } from 'lucide-react';
 
 const FORECAST_SUB_ITEMS: SidebarSubItem[] = [
@@ -99,6 +101,7 @@ const STOCKBRIDGE_SUB_ITEMS: SidebarSubItem[] = [
   { id: 'sb-fila',             name: 'Recebimento',             path: '/stockbridge/fila',              icon: FileText,        roles: ['operador', 'gestor', 'diretor'] },
   { id: 'sb-aprovacoes',       name: 'Aprovações',              path: '/stockbridge/aprovacoes',        icon: Bell,            roles: ['gestor', 'diretor'] },
   { id: 'sb-divergencias',     name: 'Divergências',            path: '/stockbridge/divergencias',      icon: AlertTriangle,   roles: ['gestor', 'diretor'] },
+  { id: 'sb-conferencia',      name: 'Conferência de Estoque',  path: '/stockbridge/conferencia',       icon: Scale,           roles: ['gestor', 'diretor'] },
   { id: 'sb-pendencias-fiscais', name: 'Pendências Fiscais',    path: '/stockbridge/pendencias-fiscais', icon: FileWarning,    roles: ['gestor', 'diretor'] },
   { id: 'sb-movimentacoes',    name: 'Movimentações',           path: '/stockbridge/movimentacoes',     icon: Table,           roles: ['operador', 'gestor', 'diretor'] },
   { id: 'sb-transito',         name: 'Trânsito',                path: '/stockbridge/transito',          icon: Activity,        roles: ['operador', 'gestor', 'diretor'] },
@@ -211,6 +214,21 @@ function ProtectedShell() {
     },
   });
 
+  // Contador da Conferência de Estoque (itens com Status Geral != OK) — badge no menu.
+  const { data: conferenciaCount = 0 } = useQuery<number>({
+    queryKey: ['stockbridge', 'conferencia', 'contagem'],
+    enabled: !!user && podeAprovar,
+    refetchInterval: 30_000,
+    queryFn: async () => {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (csrfToken) headers['x-csrf-token'] = csrfToken;
+      const res = await fetch('/api/v1/stockbridge/conferencia/contagem', { credentials: 'include', headers });
+      if (!res.ok) return 0;
+      const body = (await res.json()) as { data: { contagem?: number } | null };
+      return body.data?.contagem ?? 0;
+    },
+  });
+
   // Contador de rejeicoes pendentes do operador — quebrado entre recebimento (tem
   // loteId) e saida manual (nao tem). Cada badge aparece no item da sidebar
   // correspondente: o operador ve um sino vermelho quando tem coisa esperando dele.
@@ -296,6 +314,7 @@ function ProtectedShell() {
     .map((s) => {
       if (s.id === 'sb-aprovacoes') return { ...s, badge: aprovacoesCount };
       if (s.id === 'sb-divergencias') return { ...s, badge: divergenciasCount };
+      if (s.id === 'sb-conferencia') return { ...s, badge: conferenciaCount };
       if (s.id === 'sb-fila') return { ...s, badge: minhasRejeicoes.recebimento };
       if (s.id === 'sb-saida-manual') return { ...s, badge: minhasRejeicoes.saidaManual };
       if (s.id === 'sb-comodato-retorno') {
@@ -391,6 +410,7 @@ function ProtectedShell() {
             <Route path="custos" element={<CmcPage />} />
             <Route path="aprovacoes" element={<AprovacoesPage />} />
             <Route path="divergencias" element={<DivergenciasPage />} />
+            <Route path="conferencia" element={<ConferenciaEstoquePage />} />
             <Route path="pendencias-fiscais" element={<PendenciasFiscaisPage />} />
             <Route path="movimentacoes" element={<MovimentacoesPage />} />
             <Route path="transito" element={<TransitoPage />} />

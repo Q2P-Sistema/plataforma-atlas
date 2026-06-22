@@ -20,6 +20,7 @@ import adminUserGalpaoRouter from './admin-user-galpao.routes.js';
 import operacoesPendentesRouter from './operacoes-pendentes.routes.js';
 import adminCronRouter from './admin-cron.routes.js';
 import cmcRouter from './cmc.routes.js';
+import conferenciaRouter from './conferencia.routes.js';
 import nfPedidoMapaRouter from './nf-pedido-mapa.routes.js';
 import pendenciasFiscaisRouter from './pendencias-fiscais.routes.js';
 
@@ -73,6 +74,8 @@ router.use(operacoesPendentesRouter);
 router.use(adminCronRouter);
 // Custos de Estoque (CMC por família/produto) — gestor+ (feature 008)
 router.use(cmcRouter);
+// Conferência de Estoque (ACXE × Q2P, substitui planilha) — gestor+ (feature 011)
+router.use(conferenciaRouter);
 
 logger.info('StockBridge router inicializado (US1..US8 + Movimentacoes + OperacoesPendentes)');
 
