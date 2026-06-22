@@ -1,6 +1,6 @@
 # plataforma-atlas Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-06-08
+Auto-generated from all feature plans. Last updated: 2026-06-22
 
 ## Active Technologies
 - TypeScript 5.5+ (strict mode) / Node.js 20 LTS + Express 4 (API), React 18 + Vite (frontend), Drizzle ORM (queries), decimal.js (aritmetica financeira), recharts (graficos), Zod (validacao) (002-hedge-engine)
@@ -16,6 +16,10 @@ Auto-generated from all feature plans. Last updated: 2026-06-08
 - PostgreSQL 16 — leitura em `public.*` (tabelas OMIE sincronizadas), escrita em `stockbridge.*` (schema proprio do modulo); MySQL legado acessado apenas no script one-shot de migracao (007-stockbridge-module)
 - TypeScript 5.5+ strict, Node.js 20 LTS + Backend — Express 4, `@atlas/core` (`getPool`, `createLogger`), Zod. Frontend — React 18 + Vite, TanStack Query, **recharts ^3.8.1** (tendência), Tailwind (componentes hand-rolled — não há lib shadcn em `apps/web`), lucide-react (ícones), `@atlas/ui` (`ShellLayout`). (008-stockbridge-cmc-view)
 - PostgreSQL 16 — **leitura apenas** de `public."tbl_historico_cmc_estoque"` (banco `acxe_q2p`). Sem novas tabelas, sem migration, sem escrita. (008-stockbridge-cmc-view)
+- TypeScript 5.5+ strict, Node.js 20 LTS + Express 4, Drizzle ORM, Zod, `@atlas/core` (getPool, createLogger) (010-fiscal-nf-mapa)
+- PostgreSQL 16 — novas tabelas em `stockbridge.*`; leitura de `public."tbl_nf_header_ACXE"`, `public."tbl_pedidosCompras_ACXE"` (010-fiscal-nf-mapa)
+- TypeScript 5.5+ (strict), Node.js 20 LTS + Backend — Express 4, Drizzle ORM (tabela de config + migration), raw SQL via `getPool()` (@atlas/core) para a agregação, Zod (validação). Frontend — React 18 + Vite, TanStack Query, Tailwind (componentes hand-rolled), lucide-react, `@atlas/ui` (`ShellLayout`, `SidebarSubItem`) (011-conferencia-estoque)
+- PostgreSQL 16 — **leitura** de `public."tbl_posicaoEstoque_ACXE"`, `public."tbl_posicaoEstoque_Q2P"`, `public."tbl_locaisEstoques_ACXE"`, `public."tbl_locaisEstoques_Q2P"`; **escrita** apenas na nova tabela de config `stockbridge.conferencia_local_map` (seed + edição futura). Sem escrita em OMIE. (011-conferencia-estoque)
 
 - TypeScript 5.5+ (strict mode, ES2022, bundler resolution) / Node.js 20 LTS + Express 4.x (backend), React 18 (frontend), Vite 5 (build), Drizzle ORM (query builder + migrations), shadcn/ui + Tailwind CSS (design system), Zustand (client state), TanStack Query (server state), Zod (validação runtime), Pino (logs estruturados), argon2 (hash senhas), otplib (TOTP 2FA) (001-atlas-infra-base)
 
@@ -36,9 +40,9 @@ npm test && npm run lint
 TypeScript 5.5+ (strict mode, ES2022, bundler resolution) / Node.js 20 LTS: Follow standard conventions
 
 ## Recent Changes
+- 011-conferencia-estoque: Added TypeScript 5.5+ (strict), Node.js 20 LTS + Backend — Express 4, Drizzle ORM (tabela de config + migration), raw SQL via `getPool()` (@atlas/core) para a agregação, Zod (validação). Frontend — React 18 + Vite, TanStack Query, Tailwind (componentes hand-rolled), lucide-react, `@atlas/ui` (`ShellLayout`, `SidebarSubItem`)
+- 010-fiscal-nf-mapa: Added TypeScript 5.5+ strict, Node.js 20 LTS + Express 4, Drizzle ORM, Zod, `@atlas/core` (getPool, createLogger)
 - 008-stockbridge-cmc-view: Added TypeScript 5.5+ strict, Node.js 20 LTS + Backend — Express 4, `@atlas/core` (`getPool`, `createLogger`), Zod. Frontend — React 18 + Vite, TanStack Query, **recharts ^3.8.1** (tendência), Tailwind (componentes hand-rolled — não há lib shadcn em `apps/web`), lucide-react (ícones), `@atlas/ui` (`ShellLayout`).
-- 007-stockbridge-module: Added TypeScript 5.5+ strict, Node.js 20 LTS + Express 4 (API), React 18 + Vite (frontend), Drizzle ORM (schema + migrations), raw SQL via getPool() (queries OMIE), mysql2 (migracao one-shot do legado), axios (cliente OMIE), decimal.js (aritmetica financeira), Recharts (graficos), Zod (validacao), shadcn/ui + Tailwind (UI)
-- 006-breaking-point-module: Added TypeScript 5.5+ strict, Node.js 20 LTS + Express 4 (API), React 18 + Vite (frontend), Drizzle ORM (schema + migrations), raw SQL via getPool() (queries OMIE), Recharts (gráficos), Zod (validação), shadcn/ui + Tailwind (UI)
 
 
 <!-- MANUAL ADDITIONS START -->
@@ -54,6 +58,7 @@ TypeScript 5.5+ (strict mode, ES2022, bundler resolution) / Node.js 20 LTS: Foll
 - **Migracao MySQL → PG**: script em `modules/stockbridge/src/scripts/migrate-from-mysql.ts` (Phase 12 — implementado 2026-06-09). Executa uma única vez no dia do cutover com idempotência, transação SERIALIZABLE e rollback automático; dep `mysql2` instala on-demand via `pnpm add -D mysql2 --filter @atlas/stockbridge`.
 - **Auditoria**: 8 triggers dedicados em `stockbridge.*` gravando em `shared.audit_log` (Principio IV). Soft delete em `movimentacao.ativo=false` preserva historico — nao ha hard delete.
 - **Idempotencia OMIE (migration 0016)**: toda chamada `IncluirAjusteEstoque` envia `cod_int_ajuste = ${op_id}:${sufixo}` (sufixos `acxe-trf`, `q2p-ent`, `acxe-faltando`). Se Q2P falhar apos ACXE ok, `movimentacao` e gravada com `status_omie='pendente_q2p'`. Painel admin em `GET /api/v1/stockbridge/operacoes-pendentes` (gestor+); retry idempotente em `POST /api/v1/stockbridge/operacoes-pendentes/:id/retentar` (operador limitado a 1x; gestor+ sem limite). Cobertura simetrica em `aprovacao.aprovar()`. Detalhes em `specs/007-stockbridge-module/tasks-idempotencia-omie.md`.
+- **Conferência de Estoque ACXE×Q2P (feature 011, ACXEGDP-198)**: substitui a planilha de conferência. Tela gestor+ em `/stockbridge/conferencia` + badge de itens `Status Geral != OK` (estilo aprovações). Lê **direto** `public."tbl_posicaoEstoque_ACXE"/"_Q2P"` (NÃO a `vw_posicaoEstoqueUnificada`, que filtra `fisico>=0` e some com os negativos). Mapa De→Para `ESPELHADO`/`INDIVIDUAL` em `stockbridge.conferencia_local_map` (migration 0040, seed das 23 linhas — não existe no OMIE). Pivot/soma em SQL; engine `Status Geral` em TS (`conferencia.service.ts`, coberta por Vitest). Junção ACXE↔Q2P pelo `codigo` textual do local + descrição normalizada. **Atenção**: o banco DEV (`pg-atlas-dev`) é sanitizado e tem OMIE defasado — paridade com a planilha valida-se contra PROD.
 
 ### Arquitetura: Atlas como camada sobre OMIE
 
