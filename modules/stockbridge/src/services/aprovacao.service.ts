@@ -563,12 +563,15 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
     });
   }
 
-  // Notifica operador fora da transacao (email nao bloqueia)
+  // Notifica operador fora da transacao (email nao bloqueia).
+  // Comex entra em copia so quando e recebimento divergente concluido COM SUCESSO
+  // (sem pendencia OMIE) — o estoque efetivamente entrou.
   await enviarNotificacaoAprovacaoOperador({
     operadorUserId: resultado.operadorId,
     aprovacaoId: input.id,
     tipoAprovacao: resultado.tipoAprovacao,
     loteId: resultado.loteId,
+    incluirComex: resultado.tipoAprovacao === 'recebimento_divergencia' && !pendencia,
   });
 
   return {

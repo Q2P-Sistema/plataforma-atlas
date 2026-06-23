@@ -182,6 +182,16 @@ describe('aprovacao.service#aprovar', () => {
       codigoLocalEstoqueDestino: '4506855468', // ACXE-COMEX-FALTANDO
       valor: 1.25,
     }));
+
+    // Recebimento divergente concluido COM SUCESSO → Comex em copia no email "aprovado"
+    const { sendEmail } = await import('@atlas/core');
+    const aprovadoCall = vi.mocked(sendEmail).mock.calls.find((c) =>
+      (c[0] as { subject: string }).subject.includes('aprovado'),
+    );
+    expect(aprovadoCall).toBeDefined();
+    const cc = (aprovadoCall![0] as { cc?: string | string[] }).cc;
+    const ccArr = Array.isArray(cc) ? cc : cc ? [cc] : [];
+    expect(ccArr).toContain('comex_acxe@acxe-polimeros.com.br');
   });
 
   it('aprovar recebimento_divergencia varredura → diferenca vai pra estoque varredura nao-extrema', async () => {
@@ -268,6 +278,16 @@ describe('aprovacao.service#aprovar', () => {
 
     // 3) Apenas 2 chamadas OMIE (transferirDiferencaAcxe nao roda quando ja ha pendente_q2p)
     expect(omieMod.incluirAjusteEstoque).toHaveBeenCalledTimes(2);
+
+    // 4) Insucesso (pendencia OMIE) → Comex NAO entra em copia no email "aprovado"
+    const { sendEmail } = await import('@atlas/core');
+    const aprovadoCall = vi.mocked(sendEmail).mock.calls.find((c) =>
+      (c[0] as { subject: string }).subject.includes('aprovado'),
+    );
+    expect(aprovadoCall).toBeDefined();
+    const cc = (aprovadoCall![0] as { cc?: string | string[] }).cc;
+    const ccArr = Array.isArray(cc) ? cc : cc ? [cc] : [];
+    expect(ccArr).not.toContain('comex_acxe@acxe-polimeros.com.br');
   });
 
   // US4: transferirDiferencaAcxe falha → pendente_acxe_faltando

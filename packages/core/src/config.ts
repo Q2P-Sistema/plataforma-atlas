@@ -40,6 +40,10 @@ const envSchema = z.object({
   // CC opcional em todos os emails operacionais do StockBridge (rejeicao,
   // aprovacao, alertas). Usar para que o admin/responsavel monitore por copia.
   STOCKBRIDGE_ADMIN_CC_EMAIL: z.string().email().optional(),
+  // Caixa de Comex da ACXE — recebe confirmacao de TODO recebimento concluido
+  // com sucesso (limpo direto, ou divergente apos aprovacao). Nao recebe os emails
+  // de aprovacao pendente nem os alertas de pendencia OMIE (insucesso).
+  STOCKBRIDGE_COMEX_EMAIL: z.string().email().default('comex_acxe@acxe-polimeros.com.br'),
   // Data de corte para deteccao de gap fiscal/fisico no Cockpit (formato YYYY-MM-DD).
   // NFs emitidas antes dessa data sao ignoradas no calculo de "Posicao Fiscal Pendente"
   // (ja foram tratadas pelo legado PHP / nao fazem parte do periodo Atlas).

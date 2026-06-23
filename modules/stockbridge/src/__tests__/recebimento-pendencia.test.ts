@@ -268,3 +268,70 @@ describe('processarRecebimento — falha ACXE (US2)', () => {
     expect(ajErr.recoverable).toBeUndefined();
   });
 });
+
+describe('processarRecebimento — recebimento limpo notifica operador + Comex', () => {
+  beforeEach(() => {
+    incluirSpy.mockReset();
+    listarSpy.mockReset();
+    consultarNFSpy.mockReset();
+    poolQuerySpy.mockReset();
+  });
+
+  it('sem divergencia e OMIE ok: dispara email "Recebimento concluido" incluindo o Comex', async () => {
+    // OMIE: ACXE ok + Q2P ok (sucesso total → lote provisorio)
+    incluirSpy
+      .mockResolvedValueOnce({ idMovest: 'M-ACXE', idAjuste: 'A-ACXE', descricaoStatus: 'ok' })
+      .mockResolvedValueOnce({ idMovest: 'M-Q2P', idAjuste: 'A-Q2P', descricaoStatus: 'ok' });
+
+    // qCom == quantidadeInput (25_000 kg) → delta 0 → sem divergencia
+    consultarNFSpy.mockResolvedValue({
+      nNF: '00000400', cChaveNFe: 'C', dEmi: '15/04/2026',
+      nCodProd: 1001, codigoLocalEstoque: '999',
+      qCom: 25_000, uCom: 'KG', xProd: 'PEAD',
+      vUnCom: 1.2, vNF: 30_000,
+      nCodCli: 1, cRazao: 'FORN MOCK',
+    });
+
+    poolQuerySpy.mockResolvedValue({
+      rows: [{
+        codigo_produto_acxe: 1001, codigo_produto_q2p: 2001, descricao: 'PEAD',
+        codigo_local_estoque_acxe: 111, codigo_local_estoque_q2p: 222,
+      }],
+    });
+
+    const dbMod = await import('@atlas/db');
+    const rows = new Map<{ __id: string }, unknown[]>([
+      [dbMod.movimentacao as never, []], // idempotencia: nao processada
+      [dbMod.localidade as never, [{ id: inputBase.localidadeId, codigo: 'EXT', nome: 'Extrema', ativo: true }]],
+      [dbMod.localidadeCorrelacao as never, [{
+        localidadeId: inputBase.localidadeId,
+        codigoLocalEstoqueAcxe: 111,
+        codigoLocalEstoqueQ2p: 222,
+      }]],
+      // resolverEmailOperador: email do operador que lancou
+      [dbMod.users as never, [{ email: 'operador@acxe.local' }]],
+    ]);
+    const chain = criarChain(rows);
+    chain.returning
+      .mockResolvedValueOnce([{ id: 'lote-9', codigo: 'L100' }])
+      .mockResolvedValueOnce([{ id: 'mov-9' }]);
+
+    const core = await import('@atlas/core');
+    vi.mocked(core.getDb).mockReturnValue(chain as never);
+    vi.mocked(core.sendEmail).mockClear(); // mock compartilhado no arquivo
+
+    const res = await processarRecebimento({ ...inputBase, nf: '400' });
+    expect(res.status).toBe('provisorio');
+
+    // Email e fire-and-forget (void) — aguarda flush dos microtasks
+    await vi.waitFor(() => expect(core.sendEmail).toHaveBeenCalled());
+
+    const sendEmailMock = vi.mocked(core.sendEmail);
+    const destinos = sendEmailMock.mock.calls.map((c) => (c[0] as { to: string; subject: string }));
+    // Todos os emails desse fluxo sao "Recebimento concluido"
+    expect(destinos.every((d) => d.subject.includes('Recebimento concluido'))).toBe(true);
+    const tos = destinos.map((d) => d.to);
+    expect(tos).toContain('operador@acxe.local');
+    expect(tos).toContain('comex_acxe@acxe-polimeros.com.br');
+  });
+});

@@ -5,10 +5,16 @@ import { eq, inArray, and, isNull } from 'drizzle-orm';
 const logger = createLogger('stockbridge:notificacao');
 
 const ADMIN_FALLBACK_EMAIL = 'admin@atlas.local';
+const COMEX_FALLBACK_EMAIL = 'comex_acxe@acxe-polimeros.com.br';
 
 function getAdminEmail(): string {
   const config = getConfig();
   return config.SEED_ADMIN_EMAIL ?? ADMIN_FALLBACK_EMAIL;
+}
+
+/** Caixa de Comex da ACXE — copiada em todo recebimento concluido com sucesso. */
+function getComexEmail(): string {
+  return getConfig().STOCKBRIDGE_COMEX_EMAIL ?? COMEX_FALLBACK_EMAIL;
 }
 
 /**
@@ -286,6 +292,12 @@ export async function enviarNotificacaoAprovacaoOperador(args: {
   aprovacaoId: string;
   tipoAprovacao: string;
   loteId: string;
+  /**
+   * True quando se trata de um recebimento divergente concluido com SUCESSO (gestor
+   * aprovou + ambos os lados OMIE ok). Nesse caso a caixa de Comex entra em copia —
+   * o estoque efetivamente entrou. Nao usar em saidas nem quando ha pendencia OMIE.
+   */
+  incluirComex?: boolean;
 }): Promise<void> {
   const to = await resolverEmailOperador(args.operadorUserId);
   if (!to) {
@@ -306,10 +318,67 @@ export async function enviarNotificacaoAprovacaoOperador(args: {
     <p style="color:#888;font-size:11px;">Sistema Atlas — StockBridge</p>
   `;
   try {
-    const cc = getConfig().STOCKBRIDGE_ADMIN_CC_EMAIL;
-    await sendEmail({ to, cc: cc || undefined, subject, html });
+    const ccList = [
+      ...new Set(
+        [getConfig().STOCKBRIDGE_ADMIN_CC_EMAIL, args.incluirComex ? getComexEmail() : null].filter(
+          (e): e is string => !!e,
+        ),
+      ),
+    ];
+    await sendEmail({ to, cc: ccList.length > 0 ? ccList : undefined, subject, html });
   } catch (err) {
     logger.error({ err, args }, 'Falha ao enviar email de aprovacao ao operador');
+  }
+}
+
+/**
+ * Notifica que um recebimento de NF foi concluido com SUCESSO e sem divergencia
+ * (ambos os lados OMIE ok, lote provisorio gravado). Destinatarios: operador que
+ * lancou + gestores do modulo + caixa de Comex da ACXE. Um email por destinatario
+ * (evita vazar a lista no campo To). Caso haja divergencia ou pendencia OMIE, este
+ * email NAO e disparado — esses fluxos tem notificacoes proprias.
+ */
+export async function enviarNotificacaoRecebimentoConcluido(args: {
+  operadorUserId: string;
+  loteCodigo: string;
+  notaFiscal: string;
+  produto: string;
+  quantidadeKg: number;
+  fornecedor: string | null;
+  localidade: string;
+}): Promise<void> {
+  const [emailOperador, gestores] = await Promise.all([
+    resolverEmailOperador(args.operadorUserId),
+    resolverEmailsAprovadores('gestor'),
+  ]);
+  const destinatarios = [
+    ...new Set([emailOperador, ...gestores, getComexEmail()].filter((e): e is string => !!e)),
+  ];
+  if (destinatarios.length === 0) {
+    logger.warn({ notaFiscal: args.notaFiscal }, 'Nenhum destinatario para confirmacao de recebimento');
+    return;
+  }
+  const subject = `StockBridge — Recebimento concluido (NF ${args.notaFiscal})`;
+  const html = `
+    <h2 style="color: #198754;">Recebimento concluido</h2>
+    <p>O recebimento da <strong>NF ${args.notaFiscal}</strong> foi registrado no StockBridge sem divergencias. O ajuste de estoque ja foi aplicado na OMIE (ACXE + Q2P).</p>
+    <ul>
+      <li><strong>Lote:</strong> ${args.loteCodigo}</li>
+      <li><strong>Produto:</strong> ${args.produto}</li>
+      <li><strong>Quantidade recebida:</strong> ${args.quantidadeKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg</li>
+      <li><strong>Fornecedor:</strong> ${args.fornecedor ?? '—'}</li>
+      <li><strong>Local de destino:</strong> ${args.localidade}</li>
+    </ul>
+    <p style="color:#888;font-size:11px;">Sistema Atlas — StockBridge</p>
+  `;
+  try {
+    await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html })));
+    logger.info(
+      { notaFiscal: args.notaFiscal, destinatarios: destinatarios.length },
+      'Confirmacao de recebimento concluido enviada',
+    );
+  } catch (err) {
+    logger.error({ err, args }, 'Falha ao enviar confirmacao de recebimento concluido');
   }
 }
 

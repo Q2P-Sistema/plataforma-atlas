@@ -14,6 +14,7 @@ import {
   enviarAlertaProdutoSemCorrelato,
   enviarAlertaAprovacaoPendente,
   enviarAlertaPendenciaOmie,
+  enviarNotificacaoRecebimentoConcluido,
 } from './notificacao.service.js';
 import { incluirAjusteIdempotente } from './omie-idempotente.js';
 import { COD_INT_AJUSTE_SUFIXO, buildCodIntAjuste } from '../types.js';
@@ -445,6 +446,18 @@ export async function processarRecebimento(
       tentativasRestantes: 1,
     });
   }
+
+  // Recebimento limpo (sem divergencia, ambos os lados OMIE ok): confirma para
+  // operador + gestores + Comex fora do caminho critico (fire-and-forget).
+  void enviarNotificacaoRecebimentoConcluido({
+    operadorUserId: input.userId,
+    loteCodigo: resultado.loteCodigo,
+    notaFiscal: input.nf,
+    produto: correlacao.descricao,
+    quantidadeKg: qtdFisicaKg,
+    fornecedor: omieData.cRazao ?? null,
+    localidade: loc.nome,
+  });
 
   return {
     loteId: resultado.loteId,
