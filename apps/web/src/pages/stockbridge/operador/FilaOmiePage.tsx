@@ -48,8 +48,9 @@ function useApiFetch() {
     const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(opts.headers as Record<string, string>) };
     if (csrfToken) headers['x-csrf-token'] = csrfToken;
     const res = await fetch(url, { credentials: 'include', ...opts, headers });
-    const body = (await res.json()) as { data: unknown; error: { code?: string; message?: string } | null };
-    if (!res.ok) throw new Error(body.error?.message ?? 'Erro');
+    const body = (await res.json()) as { data: unknown; error: { code?: string; userMessage?: string; message?: string } | null };
+    // Prefere userMessage (pt-BR p/ operador) — ex.: bloqueio de NF cancelada / não-ACXE (feature 012).
+    if (!res.ok) throw new Error(body.error?.userMessage ?? body.error?.message ?? 'Erro');
     return body;
   };
 }

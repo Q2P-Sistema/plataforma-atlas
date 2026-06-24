@@ -10,11 +10,13 @@ import {
 } from '@atlas/integration-omie';
 import { getCorrelacao, CorrelacaoNaoEncontradaError } from './correlacao.service.js';
 import { converterParaKg, normalizarNumeroNf } from './motor.service.js';
+import { validarNfRecebivel } from './nf-validacao.service.js';
 import {
   enviarAlertaProdutoSemCorrelato,
   enviarAlertaAprovacaoPendente,
   enviarAlertaPendenciaOmie,
   enviarNotificacaoRecebimentoConcluido,
+  enviarAlertaNfIndeterminada,
 } from './notificacao.service.js';
 import { incluirAjusteIdempotente } from './omie-idempotente.js';
 import { COD_INT_AJUSTE_SUFIXO, buildCodIntAjuste } from '../types.js';
@@ -26,6 +28,52 @@ export class NotaFiscalJaProcessadaError extends Error {
   constructor(public readonly notaFiscal: string) {
     super(`NF ${notaFiscal} ja foi processada — idempotencia impede reprocessamento.`);
     this.name = 'NotaFiscalJaProcessadaError';
+  }
+}
+
+/** Feature 012 (ACXEGDP-204): NF cancelada/inutilizada/denegada não pode ser recebida. */
+export class NotaFiscalCanceladaError extends Error {
+  constructor(public readonly notaFiscal: string) {
+    super(`A NF ${notaFiscal} esta cancelada no OMIE e nao pode ser recebida.`);
+    this.name = 'NotaFiscalCanceladaError';
+  }
+}
+
+/** Feature 012 (ACXEGDP-205): no contexto ACXE, só NF emitida pela ACXE é recebível. */
+export class NotaFiscalNaoEmitidaPelaAcxeError extends Error {
+  constructor(public readonly notaFiscal: string) {
+    super(
+      `A NF ${notaFiscal} nao foi emitida pela ACXE (consta como nota de entrada de outro fornecedor). Verifique o numero.`,
+    );
+    this.name = 'NotaFiscalNaoEmitidaPelaAcxeError';
+  }
+}
+
+/**
+ * Feature 012 — aplica a validação de NF (cancelamento + emitente) sobre o retorno
+ * ao vivo de `consultarNF`. Chamada nos DOIS pontos (busca e confirmação) para não
+ * deixar janela (FR-008). A leitura dos sinais reaproveita a chamada `consultarNF`
+ * já existente — exceção ao Princípio II já documentada (007 §2 / research.md §3).
+ *
+ *  - bloqueada   → lança erro tipado (rota mapeia para HTTP 422)
+ *  - indeterminada → fail-open: segue o recebimento, alerta o admin + log (FR-010)
+ *  - ok          → não faz nada (segue o fluxo)
+ */
+function aplicarValidacaoNf(omieData: ConsultarNFResponse, cnpj: 'acxe' | 'q2p'): void {
+  const resultado = validarNfRecebivel(omieData, { cnpj });
+  if (resultado.status === 'bloqueada') {
+    if (resultado.motivo === 'cancelada') {
+      throw new NotaFiscalCanceladaError(String(omieData.nNF));
+    }
+    throw new NotaFiscalNaoEmitidaPelaAcxeError(String(omieData.nNF));
+  }
+  if (resultado.status === 'indeterminada') {
+    logger.warn(
+      { nf: omieData.nNF, cnpj, motivo: resultado.motivo },
+      'NF indeterminada no recebimento — fail-open + alerta admin',
+    );
+    // Fail-open: não bloqueia o recebimento; dispara o alerta sem aguardar.
+    void enviarAlertaNfIndeterminada({ nf: String(omieData.nNF), cnpj, motivo: resultado.motivo });
   }
 }
 
@@ -151,6 +199,8 @@ export async function getFilaOmie(params: {
     }
 
     const omieData = await consultarNF(params.cnpj, numero);
+    // Feature 012: bloqueia NF cancelada / não-emitida-pela-ACXE (fail-open se indeterminado).
+    aplicarValidacaoNf(omieData, params.cnpj);
     const unidadeNormalizada = normalizarUnidade(omieData.uCom);
     const qtdKg = Number(new Decimal(converterParaKg(omieData.qCom, unidadeNormalizada)).toFixed(3));
     const tipo = inferirSubtipoEntrada(omieData);
@@ -259,6 +309,9 @@ export async function processarRecebimento(
 
   // 2. Consulta NF no OMIE (lado do CNPJ emissor)
   const omieData = await consultarNF(input.cnpj, Number(input.nf) || 0);
+  // Feature 012: valida cancelamento/emitente ANTES de qualquer escrita (lote/mov/ajuste).
+  // Bloqueio aqui garante zero efeito colateral (FR-002/FR-008).
+  aplicarValidacaoNf(omieData, input.cnpj);
   const qtdNfKg = Number(new Decimal(converterParaKg(omieData.qCom, normalizarUnidade(omieData.uCom))).toFixed(3));
   const qtdFisicaKg = Number(new Decimal(converterParaKg(input.quantidadeInput, input.unidadeInput)).toFixed(3));
   const deltaKg = Number(new Decimal(qtdFisicaKg).minus(qtdNfKg).toFixed(3));
