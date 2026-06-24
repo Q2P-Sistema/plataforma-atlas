@@ -3,7 +3,11 @@ import { z } from 'zod';
 import { createLogger } from '@atlas/core';
 import { requireOperador } from '../middleware/role.js';
 import { requireArmazemVinculado } from '../middleware/armazem-vinculado.js';
-import { getFilaOmie } from '../services/recebimento.service.js';
+import {
+  getFilaOmie,
+  NotaFiscalCanceladaError,
+  NotaFiscalNaoEmitidaPelaAcxeError,
+} from '../services/recebimento.service.js';
 
 const logger = createLogger('stockbridge:fila');
 const router: Router = Router();
@@ -26,6 +30,14 @@ router.get('/api/v1/stockbridge/fila', requireOperador, requireArmazemVinculado,
     });
     res.json({ data: items, error: null });
   } catch (err) {
+    if (err instanceof NotaFiscalCanceladaError) {
+      res.status(422).json({ data: null, error: { code: 'NF_CANCELADA', userMessage: err.message, message: err.message } });
+      return;
+    }
+    if (err instanceof NotaFiscalNaoEmitidaPelaAcxeError) {
+      res.status(422).json({ data: null, error: { code: 'NF_NAO_EMITIDA_ACXE', userMessage: err.message, message: err.message } });
+      return;
+    }
     logger.error({ err }, 'Erro ao consultar fila OMIE');
     res.status(500).json({
       data: null,

@@ -98,6 +98,39 @@ export async function enviarAlertaProdutoSemCorrelato(args: {
 }
 
 /**
+ * Feature 012 (FR-010): no recebimento, quando o cancelamento/emitente da NF não
+ * pôde ser determinado a partir do retorno do OMIE, o sistema LIBERA o recebimento
+ * (fail-open) e alerta o admin para revisão posterior. Espelha o padrão de
+ * `enviarAlertaProdutoSemCorrelato` — fora de transação, não bloqueia, try/catch logado.
+ */
+export async function enviarAlertaNfIndeterminada(args: {
+  nf: string;
+  cnpj: 'acxe' | 'q2p';
+  motivo: string;
+}): Promise<void> {
+  const to = getAdminEmail();
+  const subject = `StockBridge — NF ${args.nf} recebida com dado indeterminado (${args.cnpj.toUpperCase()})`;
+  const html = `
+    <h2 style="color: #f0ad4e;">Revisao Necessaria: NF recebida sem validacao completa</h2>
+    <p>O recebimento da <strong>NF ${args.nf}</strong> (${args.cnpj.toUpperCase()}) foi <strong>liberado</strong>, mas o sistema nao conseguiu determinar com seguranca um dos sinais da NF no OMIE.</p>
+    <ul>
+      <li><strong>Motivo:</strong> ${args.motivo}</li>
+    </ul>
+    <p>Acoes esperadas:</p>
+    <ol>
+      <li>Conferir no OMIE se a NF ${args.nf} esta valida e foi emitida pela empresa correta.</li>
+      <li>Se houver irregularidade (cancelada ou emitente errado), estornar o recebimento no StockBridge.</li>
+    </ol>
+    <p style="color:#888;font-size:11px;">Sistema Atlas — StockBridge</p>
+  `;
+  try {
+    await sendEmail({ to, subject, html });
+  } catch (err) {
+    logger.error({ err, args }, 'Falha ao enviar email de alerta de NF indeterminada');
+  }
+}
+
+/**
  * T077b: Notifica gestor+diretor quando uma NF de saida tem debito cruzado
  * (CNPJ emissor != CNPJ fisico). Regra do legado — requer atencao do setor contabil
  * para emitir NF de transferencia de regularizacao.

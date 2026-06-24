@@ -6,6 +6,8 @@ import { requireArmazemVinculado } from '../middleware/armazem-vinculado.js';
 import {
   processarRecebimento,
   NotaFiscalJaProcessadaError,
+  NotaFiscalCanceladaError,
+  NotaFiscalNaoEmitidaPelaAcxeError,
   OmieAjusteError,
 } from '../services/recebimento.service.js';
 import { CorrelacaoNaoEncontradaError } from '../services/correlacao.service.js';
@@ -56,6 +58,14 @@ router.post('/api/v1/stockbridge/recebimento', requireOperador, requireArmazemVi
   } catch (err) {
     if (err instanceof NotaFiscalJaProcessadaError) {
       res.status(409).json({ data: null, error: { code: 'NF_JA_PROCESSADA', message: err.message } });
+      return;
+    }
+    if (err instanceof NotaFiscalCanceladaError) {
+      res.status(422).json({ data: null, error: { code: 'NF_CANCELADA', userMessage: err.message, message: err.message } });
+      return;
+    }
+    if (err instanceof NotaFiscalNaoEmitidaPelaAcxeError) {
+      res.status(422).json({ data: null, error: { code: 'NF_NAO_EMITIDA_ACXE', userMessage: err.message, message: err.message } });
       return;
     }
     if (err instanceof CorrelacaoNaoEncontradaError) {
