@@ -102,3 +102,15 @@
 **Decision**: convergência ≤5% contra `transito_local + saldo de filhotes pendentes de pedidos em recebimento + importações sem mapa` (não contra o "Trânsito para Galpão" puro).
 
 **Rationale**: a pendência fiscal legitimamente excede o `transito_local` (fiscal vê filhote-a-filhote; FUP vê o pedido). O alvo antigo reprovaria mesmo com cálculo correto.
+
+### Decision 13: Recebimento manual não lançado (reconciliação) — 2026-06-17
+
+**Decision**: NFs recebidas fisicamente / manual no OMIE mas nunca lançadas em sistema (n_id_receb=0, ausentes de movimentacao/legado/MySQL) são reconciliadas inserindo direto em `stockbridge.movimentacao_legado`, marcadas `id_movest_*='MANUAL-ACXEGDP-183'`. **Não** receber via Atlas.
+
+**Rationale**: receber via Atlas dispararia escrita no OMIE (`IncluirAjusteEstoque`) → duplicaria o recebimento manual já feito lá. A tabela de legado é só referência de leitura do cálculo — inserir nela reconhece o recebimento sem tocar no OMIE. Caso aplicado: 4 filhotes dos pedidos 455/485 (100.500 kg). Reversível pelo marcador.
+
+### Decision 14: Fonte da `movimentacao_legado` em PROD — copiar da UAT (MySQL desativado)
+
+**Decision**: no go-live, popular `stockbridge.movimentacao_legado` em prod **copiando da UAT** (não recriar do MySQL).
+
+**Rationale**: o **MySQL legado foi desativado** — "recriar do MySQL" deixou de existir. A `movimentacao_legado` da UAT é a única cópia sobrevivente (auditada limpa: 866 one-shot + 4 manuais marcadas). O espelho vivo `tb_movimentacao_q2p_legado` nunca será populado (sem fonte) → fonte permanente é a tabela congelada; `migrate-from-mysql.ts` fica obsoleto. **Supera** a recomendação anterior (recriar do MySQL), que assumia o MySQL ativo.
