@@ -3,8 +3,11 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import request from 'supertest';
 import type { ConsultarNFResponse } from '@atlas/integration-omie';
 
-// Mocks — @atlas/core, @atlas/auth, @atlas/db, @atlas/integration-omie.
-// consultarNF é mockado direto: a validação roda sobre o retorno que injetamos.
+// A validação (feature 012) lê da tabela sincronizada tbl_nf_header via getPool().query.
+// `state` controla por teste o que a query do header devolve (linhas / erro). As demais
+// queries do fluxo (ex.: middleware requireArmazemVinculado) recebem o default count:1.
+const state = vi.hoisted(() => ({ headerRows: [] as Array<{ cancelada: boolean; emitente_acxe: boolean }>, headerReject: null as Error | null }));
+
 vi.mock('@atlas/core', () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getDb: () => ({
@@ -12,7 +15,14 @@ vi.mock('@atlas/core', () => ({
     insert: () => ({ values: () => ({ returning: () => Promise.resolve([]) }) }),
     transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn({}),
   }),
-  getPool: () => ({ query: vi.fn().mockResolvedValue({ rows: [{ count: '1' }] }) }),
+  getPool: () => ({
+    query: (sql: string) => {
+      if (typeof sql === 'string' && sql.includes('tbl_nf_header')) {
+        return state.headerReject ? Promise.reject(state.headerReject) : Promise.resolve({ rows: state.headerRows });
+      }
+      return Promise.resolve({ rows: [{ count: '1' }] });
+    },
+  }),
   getConfig: () => ({ SEED_ADMIN_EMAIL: 'admin@atlas.local', MODULE_STOCKBRIDGE_ENABLED: true }),
   sendEmail: vi.fn().mockResolvedValue(undefined),
 }));
@@ -49,8 +59,8 @@ vi.mock('@atlas/integration-omie', () => ({
   isMockMode: () => true,
 }));
 
-/** NF base válida (ACXE, saída, não cancelada). */
-function nf(overrides: Partial<ConsultarNFResponse> = {}): ConsultarNFResponse {
+/** Produto/qtd vindos da consulta OMIE ao vivo (a validação NÃO depende disto). */
+function nfProduto(): ConsultarNFResponse {
   return {
     nNF: 300,
     cChaveNFe: 'CHAVE',
@@ -64,12 +74,13 @@ function nf(overrides: Partial<ConsultarNFResponse> = {}): ConsultarNFResponse {
     vNF: 30_000,
     nCodCli: 12345,
     cRazao: 'FORNECEDOR',
-    cancelada: false,
-    sinaisCancelamento: {},
-    tpNF: 1,
-    cnpjEmitente: 'Acxe Matriz',
-    ...overrides,
   };
+}
+
+/** Resposta do espelho tbl_nf_header (o que a validação realmente consulta). */
+function header(rows: Array<{ cancelada: boolean; emitente_acxe: boolean }>) {
+  state.headerRows = rows;
+  state.headerReject = null;
 }
 
 describe('Validação de NF no recebimento — contratos (feature 012)', () => {
@@ -92,24 +103,25 @@ describe('Validação de NF no recebimento — contratos (feature 012)', () => {
   });
 
   beforeEach(() => {
-    consultarNF.mockReset();
+    consultarNF.mockReset().mockResolvedValue(nfProduto());
     incluirAjusteEstoque.mockReset();
+    state.headerRows = [];
+    state.headerReject = null;
     sendEmail.mockClear();
   });
 
-  // US1 — cancelada
-  it('GET /fila com NF cancelada → 422 NF_CANCELADA', async () => {
-    consultarNF.mockResolvedValue(nf({ cancelada: true }));
-    const res = await request(app).get('/api/v1/stockbridge/fila?nf=300&cnpj=acxe');
+  // US1 — cancelada (flag autoritativo do espelho)
+  it('GET /fila com NF da ACXE cancelada → 422 NF_CANCELADA', async () => {
+    header([{ cancelada: true, emitente_acxe: true }]);
+    const res = await request(app).get('/api/v1/stockbridge/fila?nf=5212&cnpj=acxe');
     expect(res.status).toBe(422);
     expect(res.body.error.code).toBe('NF_CANCELADA');
-    expect(res.body.data).toBeNull();
   });
 
   it('POST /recebimento de NF cancelada → 422 e nenhuma escrita no OMIE', async () => {
-    consultarNF.mockResolvedValue(nf({ cancelada: true }));
+    header([{ cancelada: true, emitente_acxe: true }]);
     const res = await request(app).post('/api/v1/stockbridge/recebimento').send({
-      nf: '300',
+      nf: '5212',
       cnpj: 'acxe',
       quantidade_input: 25_000,
       unidade_input: 'kg',
@@ -121,43 +133,52 @@ describe('Validação de NF no recebimento — contratos (feature 012)', () => {
   });
 
   // US2 — emitente ACXE
-  it('GET /fila (acxe) com NF de entrada de terceiro → 422 NF_NAO_EMITIDA_ACXE', async () => {
-    consultarNF.mockResolvedValue(nf({ tpNF: 0, cnpjEmitente: 'Fornecedor Terceiro' }));
-    const res = await request(app).get('/api/v1/stockbridge/fila?nf=300&cnpj=acxe');
+  it('GET /fila (acxe) número só de terceiro → 422 NF_NAO_EMITIDA_ACXE', async () => {
+    header([{ cancelada: false, emitente_acxe: false }]);
+    const res = await request(app).get('/api/v1/stockbridge/fila?nf=556&cnpj=acxe');
     expect(res.status).toBe(422);
     expect(res.body.error.code).toBe('NF_NAO_EMITIDA_ACXE');
   });
 
-  it('GET /fila (q2p) com tpNF=0 → NÃO bloqueia por emitente (200)', async () => {
-    consultarNF.mockResolvedValue(nf({ tpNF: 0, cnpjEmitente: 'Fornecedor Terceiro' }));
-    const res = await request(app).get('/api/v1/stockbridge/fila?nf=300&cnpj=q2p');
+  it('GET /fila (acxe) colisão terceiro+ACXE → 200 (escolhe a da ACXE)', async () => {
+    header([
+      { cancelada: false, emitente_acxe: false },
+      { cancelada: false, emitente_acxe: false },
+      { cancelada: false, emitente_acxe: true },
+    ]);
+    const res = await request(app).get('/api/v1/stockbridge/fila?nf=556&cnpj=acxe');
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body.data)).toBe(true);
     expect(res.body.data.length).toBe(1);
   });
 
-  it('GET /fila com NF da ACXE cancelada → 422 NF_CANCELADA (cancelamento antes de emitente)', async () => {
-    consultarNF.mockResolvedValue(nf({ cancelada: true, tpNF: 0 }));
-    const res = await request(app).get('/api/v1/stockbridge/fila?nf=300&cnpj=acxe');
-    expect(res.status).toBe(422);
-    expect(res.body.error.code).toBe('NF_CANCELADA');
+  it('GET /fila (q2p) número de terceiro NÃO bloqueia por emitente → 200', async () => {
+    header([{ cancelada: false, emitente_acxe: false }]);
+    const res = await request(app).get('/api/v1/stockbridge/fila?nf=556&cnpj=q2p');
+    expect(res.status).toBe(200);
+    expect(res.body.data.length).toBe(1);
   });
 
   // US3 — sem regressão
-  it('GET /fila com NF válida ACXE → 200 com item (sem falso bloqueio)', async () => {
-    consultarNF.mockResolvedValue(nf());
-    const res = await request(app).get('/api/v1/stockbridge/fila?nf=300&cnpj=acxe');
+  it('GET /fila com NF válida da ACXE → 200 com item (sem falso bloqueio)', async () => {
+    header([{ cancelada: false, emitente_acxe: true }]);
+    const res = await request(app).get('/api/v1/stockbridge/fila?nf=5218&cnpj=acxe');
     expect(res.status).toBe(200);
     expect(res.body.data.length).toBe(1);
-    expect(res.body.data[0].nf).toBe('300');
   });
 
   // US4 — indeterminado → fail-open + alerta admin
-  it('GET /fila com NF indeterminada (acxe) → 200 (fail-open) + alerta ao admin', async () => {
-    consultarNF.mockResolvedValue(nf({ tpNF: undefined, cnpjEmitente: undefined }));
-    const res = await request(app).get('/api/v1/stockbridge/fila?nf=300&cnpj=acxe');
+  it('GET /fila com NF ausente no espelho → 200 (fail-open) + alerta ao admin', async () => {
+    header([]);
+    const res = await request(app).get('/api/v1/stockbridge/fila?nf=99999&cnpj=acxe');
     expect(res.status).toBe(200);
     expect(res.body.data.length).toBe(1);
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it('GET /fila quando o espelho falha (erro SQL) → 200 (fail-open) + alerta', async () => {
+    state.headerReject = new Error('coluna cancelada ausente');
+    const res = await request(app).get('/api/v1/stockbridge/fila?nf=5218&cnpj=acxe');
+    expect(res.status).toBe(200);
     expect(sendEmail).toHaveBeenCalledTimes(1);
   });
 });

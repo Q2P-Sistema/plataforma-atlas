@@ -10,7 +10,14 @@ const poolQuerySpy = vi.fn();
 vi.mock('@atlas/core', () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getDb: vi.fn(),
-  getPool: () => ({ query: poolQuerySpy }),
+  getPool: () => ({
+    // Feature 012: a validação consulta tbl_nf_header — devolve NF válida da ACXE aqui;
+    // demais queries (correlação) seguem pelo poolQuerySpy controlado por teste.
+    query: (sql: string, params?: unknown[]) =>
+      typeof sql === 'string' && sql.includes('tbl_nf_header')
+        ? Promise.resolve({ rows: [{ cancelada: false, emitente_acxe: true }] })
+        : poolQuerySpy(sql, params),
+  }),
   getConfig: () => ({ SEED_ADMIN_EMAIL: 'admin@atlas.local' }),
   sendEmail: vi.fn().mockResolvedValue(undefined),
 }));
@@ -96,7 +103,6 @@ describe('processarRecebimento — falha Q2P apos ACXE ok (US2)', () => {
       qCom: 25_000, uCom: 'KG', xProd: 'PEAD',
       vUnCom: 1.2, vNF: 30_000,
       nCodCli: 1, cRazao: 'FORN MOCK',
-      cancelada: false, tpNF: 1, cnpjEmitente: 'Acxe Matriz',
     });
 
     poolQuerySpy.mockResolvedValue({
@@ -186,7 +192,6 @@ describe('processarRecebimento — falha ACXE (US2)', () => {
       qCom: 25_000, uCom: 'KG', xProd: 'PEAD',
       vUnCom: 1.2, vNF: 30_000,
       nCodCli: 1, cRazao: 'FORN MOCK',
-      cancelada: false, tpNF: 1, cnpjEmitente: 'Acxe Matriz',
     });
 
     poolQuerySpy.mockResolvedValue({
@@ -233,7 +238,6 @@ describe('processarRecebimento — falha ACXE (US2)', () => {
       qCom: 25_000, uCom: 'KG', xProd: 'PEAD',
       vUnCom: 1.2, vNF: 30_000,
       nCodCli: 1, cRazao: 'FORN MOCK',
-      cancelada: false, tpNF: 1, cnpjEmitente: 'Acxe Matriz',
     });
     poolQuerySpy.mockResolvedValue({
       rows: [{
@@ -293,7 +297,6 @@ describe('processarRecebimento — recebimento limpo notifica operador + Comex',
       qCom: 25_000, uCom: 'KG', xProd: 'PEAD',
       vUnCom: 1.2, vNF: 30_000,
       nCodCli: 1, cRazao: 'FORN MOCK',
-      cancelada: false, tpNF: 1, cnpjEmitente: 'Acxe Matriz',
     });
 
     poolQuerySpy.mockResolvedValue({

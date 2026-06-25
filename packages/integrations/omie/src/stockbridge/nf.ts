@@ -14,17 +14,6 @@ export interface ConsultarNFResponse {
   vNF: number;
   nCodCli: number;
   cRazao: string;
-  /**
-   * `true` quando a NF está fiscalmente inválida (cancelada/inutilizada/denegada).
-   * Derivado do OR dos sinais em `sinaisCancelamento`. Feature 012 (ACXEGDP-204).
-   */
-  cancelada: boolean;
-  /** Sinais brutos de invalidade preservados para log/diagnóstico/alerta. */
-  sinaisCancelamento: { dCan?: string; dInut?: string; cDeneg?: string };
-  /** Tipo de operação: 0=entrada, 1=saída. `undefined` se ausente → indeterminado. */
-  tpNF?: number;
-  /** Emitente da NF (CNPJ ou razão). `undefined` se ausente → indeterminado. Feature 012 (ACXEGDP-205). */
-  cnpjEmitente?: string;
 }
 
 /**
@@ -47,13 +36,6 @@ export async function consultarNF(cnpj: OmieCnpj, numeroNota: number): Promise<C
     throw new Error(`NF ${numeroNota} nao possui itens ou estrutura invalida no OMIE`);
   }
 
-  // Sinais de invalidade fiscal (feature 012 / ACXEGDP-184): dCan (cancelamento),
-  // dInut (inutilizacao), cDeneg (denegacao). Lidos do mesmo retorno ao vivo.
-  const dCan = raw.ide.dCan;
-  const dInut = raw.ide.dInut;
-  const cDeneg = raw.ide.cDeneg ?? raw.compl.cDeneg;
-  const cancelada = Boolean(dCan || dInut || cDeneg);
-
   return {
     nNF: raw.ide.nNF,
     cChaveNFe: raw.compl.cChaveNFe,
@@ -67,16 +49,12 @@ export async function consultarNF(cnpj: OmieCnpj, numeroNota: number): Promise<C
     vNF: raw.total.ICMSTot.vNF,
     nCodCli: raw.nfDestInt.nCodCli,
     cRazao: raw.nfDestInt.cRazao,
-    cancelada,
-    sinaisCancelamento: { dCan, dInut, cDeneg },
-    tpNF: raw.ide.tpNF,
-    cnpjEmitente: raw.nfEmitInt?.cnpj ?? raw.nfEmitInt?.cRazao,
   };
 }
 
 interface RawConsultarNF {
-  ide: { nNF: number; dEmi: string; dCan?: string; dInut?: string; cDeneg?: string; tpNF?: number };
-  compl: { cChaveNFe: string; cDeneg?: string };
+  ide: { nNF: number; dEmi: string };
+  compl: { cChaveNFe: string };
   det: Array<{
     prod: {
       codigo_local_estoque: string;
@@ -88,6 +66,5 @@ interface RawConsultarNF {
     nfProdInt: { nCodProd: number };
   }>;
   total: { ICMSTot: { vNF: number } };
-  nfEmitInt?: { cnpj?: string; cRazao?: string };
   nfDestInt: { nCodCli: number; cRazao: string };
 }

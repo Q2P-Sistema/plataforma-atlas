@@ -50,30 +50,31 @@ export class NotaFiscalNaoEmitidaPelaAcxeError extends Error {
 }
 
 /**
- * Feature 012 — aplica a validação de NF (cancelamento + emitente) sobre o retorno
- * ao vivo de `consultarNF`. Chamada nos DOIS pontos (busca e confirmação) para não
- * deixar janela (FR-008). A leitura dos sinais reaproveita a chamada `consultarNF`
- * já existente — exceção ao Princípio II já documentada (007 §2 / research.md §3).
+ * Feature 012 — aplica a validação de NF (cancelamento + emitente) no recebimento.
+ * Lê da tabela sincronizada `tbl_nf_header_*` (Princípio II — Atlas lê do Postgres),
+ * NÃO da resposta ao vivo de `consultarNF` (que dava falso-positivo de cancelamento e
+ * usava `tpNF` errado para importação). Chamada nos DOIS pontos (busca e confirmação)
+ * para não deixar janela (FR-008).
  *
  *  - bloqueada   → lança erro tipado (rota mapeia para HTTP 422)
  *  - indeterminada → fail-open: segue o recebimento, alerta o admin + log (FR-010)
  *  - ok          → não faz nada (segue o fluxo)
  */
-function aplicarValidacaoNf(omieData: ConsultarNFResponse, cnpj: 'acxe' | 'q2p'): void {
-  const resultado = validarNfRecebivel(omieData, { cnpj });
+async function aplicarValidacaoNf(numero: number, cnpj: 'acxe' | 'q2p'): Promise<void> {
+  const resultado = await validarNfRecebivel(numero, { cnpj });
   if (resultado.status === 'bloqueada') {
     if (resultado.motivo === 'cancelada') {
-      throw new NotaFiscalCanceladaError(String(omieData.nNF));
+      throw new NotaFiscalCanceladaError(String(numero));
     }
-    throw new NotaFiscalNaoEmitidaPelaAcxeError(String(omieData.nNF));
+    throw new NotaFiscalNaoEmitidaPelaAcxeError(String(numero));
   }
   if (resultado.status === 'indeterminada') {
     logger.warn(
-      { nf: omieData.nNF, cnpj, motivo: resultado.motivo },
+      { nf: numero, cnpj, motivo: resultado.motivo },
       'NF indeterminada no recebimento — fail-open + alerta admin',
     );
     // Fail-open: não bloqueia o recebimento; dispara o alerta sem aguardar.
-    void enviarAlertaNfIndeterminada({ nf: String(omieData.nNF), cnpj, motivo: resultado.motivo });
+    void enviarAlertaNfIndeterminada({ nf: String(numero), cnpj, motivo: resultado.motivo });
   }
 }
 
@@ -200,7 +201,8 @@ export async function getFilaOmie(params: {
 
     const omieData = await consultarNF(params.cnpj, numero);
     // Feature 012: bloqueia NF cancelada / não-emitida-pela-ACXE (fail-open se indeterminado).
-    aplicarValidacaoNf(omieData, params.cnpj);
+    // Lê da tbl_nf_header sincronizada (flag cancelada + CNPJ do emitente), não do retorno ao vivo.
+    await aplicarValidacaoNf(numero, params.cnpj);
     const unidadeNormalizada = normalizarUnidade(omieData.uCom);
     const qtdKg = Number(new Decimal(converterParaKg(omieData.qCom, unidadeNormalizada)).toFixed(3));
     const tipo = inferirSubtipoEntrada(omieData);
@@ -310,8 +312,8 @@ export async function processarRecebimento(
   // 2. Consulta NF no OMIE (lado do CNPJ emissor)
   const omieData = await consultarNF(input.cnpj, Number(input.nf) || 0);
   // Feature 012: valida cancelamento/emitente ANTES de qualquer escrita (lote/mov/ajuste).
-  // Bloqueio aqui garante zero efeito colateral (FR-002/FR-008).
-  aplicarValidacaoNf(omieData, input.cnpj);
+  // Bloqueio aqui garante zero efeito colateral (FR-002/FR-008). Lê da tbl_nf_header sincronizada.
+  await aplicarValidacaoNf(Number(input.nf) || 0, input.cnpj);
   const qtdNfKg = Number(new Decimal(converterParaKg(omieData.qCom, normalizarUnidade(omieData.uCom))).toFixed(3));
   const qtdFisicaKg = Number(new Decimal(converterParaKg(input.quantidadeInput, input.unidadeInput)).toFixed(3));
   const deltaKg = Number(new Decimal(qtdFisicaKg).minus(qtdNfKg).toFixed(3));

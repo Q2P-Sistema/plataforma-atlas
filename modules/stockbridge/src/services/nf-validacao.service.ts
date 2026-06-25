@@ -1,25 +1,27 @@
-import type { ConsultarNFResponse } from '@atlas/integration-omie';
-import { CNPJ_ACXE } from '../types.js';
+import { getPool, createLogger } from '@atlas/core';
+import { CNPJ_ACXE_NUMERICO } from '../types.js';
+
+const logger = createLogger('stockbridge:nf-validacao');
 
 /**
- * Engine pura de validação da NF no recebimento (feature 012 — ACXEGDP-204 + 205).
+ * Validação da NF no recebimento (feature 012 — ACXEGDP-204 + 205).
  *
- * Decide se uma NF retornada pela consulta OMIE ao vivo pode ser recebida:
- *  - cancelada/inutilizada/denegada  → bloqueada (ACXEGDP-204)
- *  - no contexto ACXE, NF de entrada de terceiro (numeração coincidente)
- *    → bloqueada (ACXEGDP-205); o contexto Q2P não aplica esse filtro
- *  - sinal necessário ausente → indeterminada (fail-open + alerta no call-site, FR-010)
+ * **Fonte de verdade: a tabela sincronizada `public."tbl_nf_header_*"`** (Princípio II
+ * — Atlas lê do Postgres), NÃO a resposta ao vivo de `consultarNF`. A v1 parseava
+ * `dCan/dInut/cDeneg` do retorno ao vivo e dava falso-positivo de cancelamento, além de
+ * usar `tpNF` (errado: NF de importação é entrada/`tp_nf=0`). O sync (ACXEGDP-184) já
+ * resolve o `cancelada` corretamente, e a chave NFe carrega o CNPJ do emitente.
  *
- * Função SEM I/O — toda a regra de negócio vive aqui, coberta por Vitest
- * (Princípio III). Os call-sites (getFilaOmie / processarRecebimento) traduzem
- * o resultado em erro tipado (bloqueada) ou fail-open (indeterminada).
- *
- * A leitura dos campos vem do MESMO retorno ao vivo de `consultarNF`
- * (`produtos/nfconsultar/`) — exceção ao Princípio II já documentada (007 §2).
+ * Regras:
+ *  - cancelada (no flag autoritativo) → bloqueada (ACXEGDP-204)
+ *  - contexto ACXE: número existe SÓ com emitente terceiro (não ACXE) → bloqueada
+ *    (ACXEGDP-205); resolve colisão de numeração escolhendo a NF emitida pela ACXE
+ *  - número não encontrado no espelho → indeterminada → fail-open + alerta (FR-010)
+ *  - contexto Q2P: aplica só o cancelamento (filtro de emitente não se aplica)
  */
 
 export type MotivoBloqueio = 'cancelada' | 'nao_emitida_acxe';
-export type MotivoIndeterminado = 'cancelamento_desconhecido' | 'emitente_desconhecido';
+export type MotivoIndeterminado = 'nao_encontrada_no_espelho';
 
 export type ResultadoValidacaoNf =
   | { status: 'ok' }
@@ -30,29 +32,73 @@ export interface ContextoValidacao {
   cnpj: 'acxe' | 'q2p';
 }
 
-export function validarNfRecebivel(
-  nf: ConsultarNFResponse,
-  contexto: ContextoValidacao,
-): ResultadoValidacaoNf {
-  // 1) Cancelamento — vale para qualquer contexto e é avaliado PRIMEIRO, de modo
-  //    que uma NF da ACXE porém cancelada seja bloqueada por cancelamento.
-  if (nf.cancelada === true) {
-    return { status: 'bloqueada', motivo: 'cancelada' };
-  }
+/** Uma linha da `tbl_nf_header_*` relevante para a decisão. */
+export interface NfHeaderRow {
+  cancelada: boolean;
+  /** Emitente da NF é a ACXE (CNPJ da chave === CNPJ_ACXE_NUMERICO). */
+  emitenteAcxe: boolean;
+}
 
-  // 2) Emitente — restrito ao contexto ACXE (clarify). Discriminador primário é
-  //    tpNF (1=saída/emissão própria; 0=entrada de terceiro). Fallback: emitente
-  //    textual vs. CNPJ_ACXE. Sem nenhum sinal → indeterminado (fail-open).
+/**
+ * Núcleo PURO da decisão (sem I/O) — coberto por Vitest. Recebe as linhas do espelho
+ * para o número da NF e o contexto, e devolve o veredito.
+ */
+export function decidirValidacaoNf(rows: NfHeaderRow[], contexto: ContextoValidacao): ResultadoValidacaoNf {
   if (contexto.cnpj === 'acxe') {
-    if (nf.tpNF === 1) return { status: 'ok' };
-    if (nf.tpNF === 0) return { status: 'bloqueada', motivo: 'nao_emitida_acxe' };
-    if (nf.cnpjEmitente != null && nf.cnpjEmitente !== '') {
-      return nf.cnpjEmitente === CNPJ_ACXE
-        ? { status: 'ok' }
-        : { status: 'bloqueada', motivo: 'nao_emitida_acxe' };
-    }
-    return { status: 'indeterminada', motivo: 'emitente_desconhecido' };
+    const acxe = rows.filter((r) => r.emitenteAcxe);
+    if (acxe.some((r) => !r.cancelada)) return { status: 'ok' };
+    if (acxe.some((r) => r.cancelada)) return { status: 'bloqueada', motivo: 'cancelada' };
+    // Nenhuma linha da ACXE para esse número: ou só existe de terceiro (colisão), ou nada.
+    if (rows.length > 0) return { status: 'bloqueada', motivo: 'nao_emitida_acxe' };
+    return { status: 'indeterminada', motivo: 'nao_encontrada_no_espelho' };
   }
 
-  return { status: 'ok' };
+  // Contexto Q2P: sem filtro de emitente — só cancelamento.
+  if (rows.some((r) => !r.cancelada)) return { status: 'ok' };
+  if (rows.some((r) => r.cancelada)) return { status: 'bloqueada', motivo: 'cancelada' };
+  return { status: 'indeterminada', motivo: 'nao_encontrada_no_espelho' };
+}
+
+/**
+ * Busca as linhas do espelho `tbl_nf_header_*` para o número da NF (casa por valor
+ * numérico, ignorando o zero-padding) e marca quais são emitidas pela ACXE.
+ * Em qualquer erro (coluna/tabela ausente em algum ambiente), devolve `null` →
+ * o caller trata como indeterminado (fail-open). Não lança.
+ */
+export async function buscarRowsNfHeader(
+  numero: number,
+  cnpj: 'acxe' | 'q2p',
+): Promise<NfHeaderRow[] | null> {
+  if (!Number.isFinite(numero) || numero <= 0) return [];
+  const tabela = cnpj === 'acxe' ? 'tbl_nf_header_ACXE' : 'tbl_nf_header_Q2P';
+  try {
+    const r = await getPool().query(
+      `SELECT COALESCE(cancelada, false) AS cancelada,
+              (substring(c_chave_nfe FROM 7 FOR 14) = $2) AS emitente_acxe
+       FROM public."${tabela}"
+       WHERE regexp_replace(COALESCE(n_nf,''), '[^0-9]', '', 'g') ~ '^[0-9]+$'
+         AND regexp_replace(n_nf, '[^0-9]', '', 'g')::bigint = $1`,
+      [numero, CNPJ_ACXE_NUMERICO],
+    );
+    return (r.rows as Array<{ cancelada: boolean; emitente_acxe: boolean }>).map((row) => ({
+      cancelada: row.cancelada === true,
+      emitenteAcxe: row.emitente_acxe === true,
+    }));
+  } catch (err) {
+    logger.warn({ err, numero, cnpj }, 'Falha ao consultar tbl_nf_header — validação fica indeterminada (fail-open)');
+    return null;
+  }
+}
+
+/**
+ * Validação completa (I/O + decisão). Retorna o veredito; se o espelho não pôde ser
+ * lido, devolve indeterminada (fail-open).
+ */
+export async function validarNfRecebivel(
+  numero: number,
+  contexto: ContextoValidacao,
+): Promise<ResultadoValidacaoNf> {
+  const rows = await buscarRowsNfHeader(numero, contexto.cnpj);
+  if (rows === null) return { status: 'indeterminada', motivo: 'nao_encontrada_no_espelho' };
+  return decidirValidacaoNf(rows, contexto);
 }

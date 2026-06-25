@@ -112,6 +112,13 @@ export const CNPJ_ACXE = 'Acxe Matriz';
 export const CNPJ_Q2P_MATRIZ = 'Q2P Matriz';
 export const CNPJ_Q2P_FILIAL = 'Q2P Filial';
 
+/**
+ * CNPJ numérico (14 díg, sem máscara) da ACXE — usado para identificar o emitente
+ * de uma NF a partir da chave NFe (`tbl_nf_header_ACXE.c_chave_nfe`, posições 7-20)
+ * na validação do recebimento (feature 012 / ACXEGDP-205). ACXE IMPORTACAO...
+ */
+export const CNPJ_ACXE_NUMERICO = '42672052000154';
+
 export type CnpjValor = typeof CNPJ_ACXE | typeof CNPJ_Q2P_MATRIZ | typeof CNPJ_Q2P_FILIAL;
 
 /**
