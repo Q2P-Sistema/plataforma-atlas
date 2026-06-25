@@ -1,83 +1,74 @@
-import { describe, it, expect } from 'vitest';
-import type { ConsultarNFResponse } from '@atlas/integration-omie';
-import { validarNfRecebivel } from '../services/nf-validacao.service.js';
+import { describe, it, expect, vi } from 'vitest';
 
-/** NF base válida, emitida pela ACXE (saída), não cancelada. */
-function nf(overrides: Partial<ConsultarNFResponse> = {}): ConsultarNFResponse {
-  return {
-    nNF: 300,
-    cChaveNFe: 'CHAVE',
-    dEmi: '15/04/2026',
-    nCodProd: 4_452_881_285,
-    codigoLocalEstoque: '4498926337',
-    qCom: 25_000,
-    uCom: 'KG',
-    xProd: 'PEAD 5502',
-    vUnCom: 1.2,
-    vNF: 30_000,
-    nCodCli: 12345,
-    cRazao: 'FORNECEDOR',
-    cancelada: false,
-    sinaisCancelamento: {},
-    tpNF: 1,
-    cnpjEmitente: 'Acxe Matriz',
-    ...overrides,
-  };
-}
+// decidirValidacaoNf é puro, mas o módulo importa getPool/createLogger do @atlas/core
+// (usados só pela parte de I/O). Mockamos para o teste puro não carregar a config real.
+vi.mock('@atlas/core', () => ({
+  createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
+  getPool: () => ({ query: async () => ({ rows: [] }) }),
+}));
 
-describe('validarNfRecebivel — matriz de decisão (feature 012)', () => {
-  it('NF cancelada → bloqueada/cancelada (qualquer contexto)', () => {
-    expect(validarNfRecebivel(nf({ cancelada: true }), { cnpj: 'acxe' })).toEqual({
-      status: 'bloqueada',
-      motivo: 'cancelada',
-    });
-    expect(validarNfRecebivel(nf({ cancelada: true }), { cnpj: 'q2p' })).toEqual({
+import { decidirValidacaoNf, type NfHeaderRow } from '../services/nf-validacao.service.js';
+
+const acxe = (cancelada: boolean): NfHeaderRow => ({ cancelada, emitenteAcxe: true });
+const terceiro = (cancelada: boolean): NfHeaderRow => ({ cancelada, emitenteAcxe: false });
+
+describe('decidirValidacaoNf — decisão pura sobre as linhas do espelho (feature 012)', () => {
+  // Contexto ACXE
+  it('ACXE: NF emitida pela ACXE e não cancelada → ok', () => {
+    expect(decidirValidacaoNf([acxe(false)], { cnpj: 'acxe' })).toEqual({ status: 'ok' });
+  });
+
+  it('ACXE: NF da ACXE cancelada → bloqueada/cancelada', () => {
+    expect(decidirValidacaoNf([acxe(true)], { cnpj: 'acxe' })).toEqual({
       status: 'bloqueada',
       motivo: 'cancelada',
     });
   });
 
-  it('contexto ACXE: NF de entrada de terceiro (tpNF=0) → bloqueada/nao_emitida_acxe', () => {
-    expect(validarNfRecebivel(nf({ tpNF: 0, cnpjEmitente: 'Fornecedor Terceiro' }), { cnpj: 'acxe' })).toEqual({
+  it('ACXE: número existe só como NF de terceiro → bloqueada/nao_emitida_acxe', () => {
+    expect(decidirValidacaoNf([terceiro(false)], { cnpj: 'acxe' })).toEqual({
       status: 'bloqueada',
       motivo: 'nao_emitida_acxe',
     });
   });
 
-  it('contexto ACXE: NF emitida pela ACXE (tpNF=1) → ok', () => {
-    expect(validarNfRecebivel(nf({ tpNF: 1 }), { cnpj: 'acxe' })).toEqual({ status: 'ok' });
+  it('ACXE: colisão (terceiros + ACXE válida) → ok (escolhe a da ACXE)', () => {
+    // Caso real NF 000000556: 2 emitentes terceiros + 1 ACXE.
+    expect(
+      decidirValidacaoNf([terceiro(false), terceiro(false), acxe(false)], { cnpj: 'acxe' }),
+    ).toEqual({ status: 'ok' });
   });
 
-  it('contexto Q2P: NÃO bloqueia por emitente (mesmo tpNF=0)', () => {
-    expect(validarNfRecebivel(nf({ tpNF: 0, cnpjEmitente: 'Fornecedor Terceiro' }), { cnpj: 'q2p' })).toEqual({
-      status: 'ok',
-    });
-  });
-
-  it('NF da ACXE porém cancelada → cancelada (cancelamento avaliado antes de emitente)', () => {
-    expect(validarNfRecebivel(nf({ cancelada: true, tpNF: 1 }), { cnpj: 'acxe' })).toEqual({
+  it('ACXE: ACXE cancelada + terceiro presente → cancelada (cancelamento da ACXE prevalece)', () => {
+    expect(decidirValidacaoNf([acxe(true), terceiro(false)], { cnpj: 'acxe' })).toEqual({
       status: 'bloqueada',
       motivo: 'cancelada',
     });
   });
 
-  it('contexto ACXE: sem tpNF e sem emitente → indeterminada (fail-open)', () => {
-    expect(validarNfRecebivel(nf({ tpNF: undefined, cnpjEmitente: undefined }), { cnpj: 'acxe' })).toEqual({
+  it('ACXE: número não encontrado no espelho → indeterminada (fail-open)', () => {
+    expect(decidirValidacaoNf([], { cnpj: 'acxe' })).toEqual({
       status: 'indeterminada',
-      motivo: 'emitente_desconhecido',
+      motivo: 'nao_encontrada_no_espelho',
     });
   });
 
-  it('contexto ACXE: sem tpNF mas emitente textual = ACXE → ok (fallback)', () => {
-    expect(validarNfRecebivel(nf({ tpNF: undefined, cnpjEmitente: 'Acxe Matriz' }), { cnpj: 'acxe' })).toEqual({
-      status: 'ok',
-    });
+  // Contexto Q2P — sem filtro de emitente
+  it('Q2P: não cancelada → ok (ignora emitente)', () => {
+    expect(decidirValidacaoNf([terceiro(false)], { cnpj: 'q2p' })).toEqual({ status: 'ok' });
   });
 
-  it('contexto ACXE: sem tpNF e emitente textual ≠ ACXE → bloqueada/nao_emitida_acxe (fallback)', () => {
-    expect(validarNfRecebivel(nf({ tpNF: undefined, cnpjEmitente: 'Outro' }), { cnpj: 'acxe' })).toEqual({
+  it('Q2P: cancelada → bloqueada/cancelada', () => {
+    expect(decidirValidacaoNf([terceiro(true)], { cnpj: 'q2p' })).toEqual({
       status: 'bloqueada',
-      motivo: 'nao_emitida_acxe',
+      motivo: 'cancelada',
+    });
+  });
+
+  it('Q2P: não encontrada → indeterminada (fail-open)', () => {
+    expect(decidirValidacaoNf([], { cnpj: 'q2p' })).toEqual({
+      status: 'indeterminada',
+      motivo: 'nao_encontrada_no_espelho',
     });
   });
 });

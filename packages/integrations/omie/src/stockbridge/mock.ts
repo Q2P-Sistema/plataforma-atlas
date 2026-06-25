@@ -41,16 +41,6 @@ export function __injectMockAjuste(cnpj: OmieCnpj, ajuste: AjusteEstoqueListado)
 export function mockConsultarNF(cnpj: OmieCnpj, numeroNota: number): ConsultarNFResponse {
   // Produto real com correlato ACXE↔Q2P (match por descricao "PEAD 5502").
   // Permite testar o fluxo completo de recebimento em dev sem bater em API real.
-  //
-  // Feature 012: convencao por terminacao do numero da NF para exercitar a
-  // validacao (cancelada / emitente / indeterminada) sem bater na API real:
-  //   ...90 -> cancelada    ...91 -> entrada de terceiro (nao-ACXE)
-  //   ...92 -> indeterminada (sem tpNF/emitente)   demais -> valida ACXE (saida)
-  const term = numeroNota % 100;
-  const cancelada = term === 90;
-  const tpNF = term === 92 ? undefined : term === 91 ? 0 : 1;
-  const cnpjEmitente = term === 92 ? undefined : term === 91 ? 'Fornecedor Terceiro' : 'Acxe Matriz';
-
   return {
     nNF: numeroNota,
     cChaveNFe: `MOCK-CHAVE-${cnpj}-${numeroNota}`,
@@ -64,10 +54,6 @@ export function mockConsultarNF(cnpj: OmieCnpj, numeroNota: number): ConsultarNF
     vNF: 30_000,
     nCodCli: 12345,
     cRazao: 'FORNECEDOR MOCK',
-    cancelada,
-    sinaisCancelamento: cancelada ? { dCan: '20/04/2026' } : {},
-    tpNF,
-    cnpjEmitente,
   };
 }
 

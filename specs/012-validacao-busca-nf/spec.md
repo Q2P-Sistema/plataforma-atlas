@@ -25,6 +25,14 @@ Ambos os problemas vivem no **mesmo ponto**: o momento em que o sistema resolve 
 - Q: Comportamento quando cancelamento/emitente não puder ser determinado (FR-010)? → A: **Fail-open com alerta** — liberar o recebimento e notificar o admin/gestor para revisão posterior; não bloquear a operação por falta de dado.
 - Q: Abrangência do filtro "somente NF emitida pela ACXE"? → A: **Somente o contexto de recebimento ACXE**; o contexto Q2P permanece como hoje.
 
+### Correção 2026-06-25 (pós-UAT — NFs 5212/5218)
+
+A primeira implementação (ler cancelamento/emitente do retorno **ao vivo** de `consultarNF`) deu **falso-positivo de cancelamento** (parsing de `dCan/dInut/cDeneg` interpretava placeholders como cancelada) e usou **`tpNF` como discriminador de emitente** — errado, pois NF de importação é entrada (`tp_nf=0`). Decisão revista, com base em dados reais de produção:
+
+- **Fonte da verdade passou a ser a tabela sincronizada** `public."tbl_nf_header_*"` (flag `cancelada` do sync ACXEGDP-184 + CNPJ do emitente extraído da chave NFe), **não** o retorno ao vivo. Isso fica **mais** aderente ao Princípio II ("Atlas lê do Postgres"), revertendo a escolha "ao vivo" do clarify de 2026-06-24.
+- **Emitente = CNPJ** (`42672052000154` = ACXE) extraído de `c_chave_nfe`, não `tpNF`. Resolve colisão de numeração escolhendo a linha emitida pela ACXE.
+- Mantidos: bloqueio 422, fail-open + alerta quando a NF não está no espelho, filtro de emitente só no contexto ACXE.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Bloquear recebimento de NF cancelada (Priority: P1) — ACXEGDP-204
