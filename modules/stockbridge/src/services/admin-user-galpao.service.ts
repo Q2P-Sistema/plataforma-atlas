@@ -72,7 +72,7 @@ export async function setGalpoesDoUsuario(userId: string, galpoes: string[]): Pr
       );
     }
     await client.query('COMMIT');
-    logger.info({ userId, galpoes }, 'Galpoes do usuario atualizados');
+    logger.info({ userId, galpoes }, 'Galpões do usuário atualizados');
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;

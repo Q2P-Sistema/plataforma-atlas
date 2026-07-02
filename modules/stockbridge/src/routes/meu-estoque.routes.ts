@@ -51,7 +51,7 @@ router.get('/api/v1/stockbridge/meu-estoque', requireOperador, async (req: Reque
         data: null,
         error: {
           code: 'SEM_GALPAO_VINCULADO',
-          message: 'Operador sem galpao vinculado. Solicite atribuicao ao gestor.',
+          message: 'Operador sem galpão vinculado. Solicite atribuição ao gestor.',
         },
       });
       return;

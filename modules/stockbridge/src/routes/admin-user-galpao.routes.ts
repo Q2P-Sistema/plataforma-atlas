@@ -20,7 +20,7 @@ router.get(
       const data = await listarUsuariosComGalpoes();
       res.json({ data, error: null });
     } catch (err) {
-      logger.error({ err }, 'Erro ao listar user-galpao');
+      logger.error({ err }, 'Erro ao listar user-galpão');
       res.status(500).json({
         data: null,
         error: { code: 'USER_GALPAO_LIST_FAIL', message: (err as Error).message },
@@ -40,7 +40,7 @@ router.get(
       const data = await listarGalpoesDisponiveis();
       res.json({ data, error: null });
     } catch (err) {
-      logger.error({ err }, 'Erro ao listar galpoes disponiveis');
+      logger.error({ err }, 'Erro ao listar galpões disponíveis');
       res.status(500).json({
         data: null,
         error: { code: 'GALPOES_LIST_FAIL', message: (err as Error).message },
@@ -62,7 +62,7 @@ router.put(
     if (!userId) {
       res.status(400).json({
         data: null,
-        error: { code: 'INVALID_INPUT', message: 'user_id obrigatorio' },
+        error: { code: 'INVALID_INPUT', message: 'user_id obrigatório' },
       });
       return;
     }
@@ -82,7 +82,7 @@ router.put(
       await setGalpoesDoUsuario(userId, parsed.data.galpoes);
       res.json({ data: { userId, galpoes: parsed.data.galpoes }, error: null });
     } catch (err) {
-      logger.error({ err, userId }, 'Erro ao atualizar galpoes do usuario');
+      logger.error({ err, userId }, 'Erro ao atualizar galpões do usuário');
       res.status(500).json({
         data: null,
         error: { code: 'USER_GALPAO_UPDATE_FAIL', message: (err as Error).message },

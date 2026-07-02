@@ -7,14 +7,14 @@ const logger = createLogger('stockbridge:localidade');
 
 export class CodigoLocalidadeDuplicadoError extends Error {
   constructor(public readonly codigo: string) {
-    super(`Ja existe localidade com codigo ${codigo}`);
+    super(`Ja existe localidade com código ${codigo}`);
     this.name = 'CodigoLocalidadeDuplicadoError';
   }
 }
 
 export class LocalidadeNaoEncontradaError extends Error {
   constructor(public readonly id: string) {
-    super(`Localidade ${id} nao encontrada`);
+    super(`Localidade ${id} não encontrada`);
     this.name = 'LocalidadeNaoEncontradaError';
   }
 }
@@ -35,7 +35,7 @@ export interface LocalidadeInput {
 function validar(input: LocalidadeInput): void {
   if (input.tipo === 'virtual_transito' || input.tipo === 'virtual_ajuste') {
     if (input.cnpj && input.cnpj.trim().length > 0) {
-      throw new LocalidadeInvalidaError(`Localidade virtual (${input.tipo}) nao pode ter CNPJ vinculado`);
+      throw new LocalidadeInvalidaError(`Localidade virtual (${input.tipo}) não pode ter CNPJ vinculado`);
     }
   }
 }

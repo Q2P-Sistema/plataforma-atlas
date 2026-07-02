@@ -101,7 +101,7 @@ describe('marcarComoFalhaDefinitiva (US3)', () => {
         motivo: '   ',
         ator: { userId: 'u1', role: 'gestor' },
       }),
-    ).rejects.toThrow(/Motivo obrigatorio/);
+    ).rejects.toThrow(/Motivo obrigat[óo]rio/);
   });
 
   it('lanca OperacaoPendenteNaoEncontradaError quando movimentacao nao existe', async () => {

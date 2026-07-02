@@ -25,14 +25,14 @@ const router: Router = Router();
 router.get('/api/v1/stockbridge/aprovacoes/minhas-rejeicoes', requireOperador, async (req: Request, res: Response) => {
   const userId = req.user?.id;
   if (!userId) {
-    res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessao invalida' } });
+    res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessão inválida' } });
     return;
   }
   try {
     const data = await listarMinhasRejeicoes(userId);
     res.json({ data, error: null });
   } catch (err) {
-    logger.error({ err, userId }, 'Erro ao listar minhas rejeicoes');
+    logger.error({ err, userId }, 'Erro ao listar minhas rejeições');
     res.status(500).json({ data: null, error: { code: 'LISTAR_REJEICOES_FAIL', message: (err as Error).message } });
   }
 });
@@ -44,7 +44,7 @@ router.get('/api/v1/stockbridge/aprovacoes', requireGestor, async (req: Request,
     const data = await listarPendencias(perfil);
     res.json({ data, error: null });
   } catch (err) {
-    logger.error({ err }, 'Erro ao listar aprovacoes');
+    logger.error({ err }, 'Erro ao listar aprovações');
     res.status(500).json({ data: null, error: { code: 'LISTAR_FAIL', message: (err as Error).message } });
   }
 });
@@ -55,7 +55,7 @@ router.post('/api/v1/stockbridge/aprovacoes/:id/aprovar', requireGestor, async (
   const userId = req.user?.id;
   const perfil = (req.user?.role ?? 'gestor') as Perfil;
   if (!userId || !id) {
-    res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessao invalida' } });
+    res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessão inválida' } });
     return;
   }
   try {
@@ -73,12 +73,12 @@ router.post('/api/v1/stockbridge/aprovacoes/:id/rejeitar', requireGestor, async 
   const userId = req.user?.id;
   const perfil = (req.user?.role ?? 'gestor') as Perfil;
   if (!userId || !id) {
-    res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessao invalida' } });
+    res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessão inválida' } });
     return;
   }
   const parsed = RejeitarSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', message: 'motivo e obrigatorio' } });
+    res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', message: 'motivo é obrigatório' } });
     return;
   }
   try {
@@ -98,7 +98,7 @@ router.post('/api/v1/stockbridge/aprovacoes/:id/resubmeter', requireOperador, as
   const id = req.params.id as string | undefined;
   const userId = req.user?.id;
   if (!userId || !id) {
-    res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessao invalida' } });
+    res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessão inválida' } });
     return;
   }
   const parsed = ResubmeterSchema.safeParse(req.body);
@@ -128,7 +128,7 @@ router.post('/api/v1/stockbridge/aprovacoes/:id/dispensar', requireOperador, asy
   const id = req.params.id as string | undefined;
   const userId = req.user?.id;
   if (!userId || !id) {
-    res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessao invalida' } });
+    res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessão inválida' } });
     return;
   }
   try {
@@ -158,7 +158,7 @@ function tratarErro(res: Response, err: unknown, ator?: { role: Perfil }) {
     res.status(httpStatus).json({ data: null, error: body });
     return;
   }
-  logger.error({ err }, 'Erro inesperado em aprovacao');
+  logger.error({ err }, 'Erro inesperado em aprovação');
   res.status(500).json({ data: null, error: { code: 'APROVACAO_FAIL', message: (err as Error).message } });
 }
 

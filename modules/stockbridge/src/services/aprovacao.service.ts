@@ -34,7 +34,7 @@ const logger = createLogger('stockbridge:aprovacao');
 
 export class AprovacaoNaoEncontradaError extends Error {
   constructor(public readonly id: string) {
-    super(`Aprovacao ${id} nao encontrada ou ja finalizada`);
+    super(`Aprovação ${id} não encontrada ou já finalizada`);
     this.name = 'AprovacaoNaoEncontradaError';
   }
 }
@@ -44,14 +44,14 @@ export class AprovacaoNivelInsuficienteError extends Error {
     public readonly perfilUsuario: Perfil,
     public readonly nivelRequerido: 'gestor' | 'diretor',
   ) {
-    super(`Perfil ${perfilUsuario} nao pode aprovar pendencia que exige ${nivelRequerido}`);
+    super(`Perfil ${perfilUsuario} não pode aprovar pendência que exige ${nivelRequerido}`);
     this.name = 'AprovacaoNivelInsuficienteError';
   }
 }
 
 export class AprovacaoStatusInvalidoError extends Error {
   constructor(public readonly id: string, public readonly statusAtual: string) {
-    super(`Aprovacao ${id} ja foi ${statusAtual} — nao e possivel alterar`);
+    super(`Aprovação ${id} já foi ${statusAtual} — não é possível alterar`);
     this.name = 'AprovacaoStatusInvalidoError';
   }
 }
@@ -356,15 +356,15 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
   let pendencia: { tipo: 'pendente_q2p' | 'pendente_acxe_faltando'; mensagemErro: string } | null = null;
   let notaFiscalParaEmail = apPre.id;
   if (apPre.tipoAprovacao === 'recebimento_divergencia') {
-    if (!apPre.loteId) throw new Error(`Aprovacao ${apPre.id} sem loteId — recebimento_divergencia exige lote`);
+    if (!apPre.loteId) throw new Error(`Aprovação ${apPre.id} sem loteId — recebimento_divergencia exige lote`);
     opId = randomUUID();
     const [loteRow] = await db.select().from(lote).where(eq(lote.id, apPre.loteId)).limit(1);
-    if (!loteRow) throw new Error(`Lote ${apPre.loteId} nao encontrado ao aprovar divergencia`);
+    if (!loteRow) throw new Error(`Lote ${apPre.loteId} não encontrado ao aprovar divergência`);
     if (!loteRow.produtoCodigoQ2p) {
-      throw new Error(`Lote ${loteRow.codigo} sem correlato Q2P — nao e possivel ajustar OMIE`);
+      throw new Error(`Lote ${loteRow.codigo} sem correlato Q2P — não é possível ajustar OMIE`);
     }
     if (!loteRow.localidadeId) {
-      throw new Error(`Lote ${loteRow.codigo} sem localidade destino — nao e possivel ajustar OMIE`);
+      throw new Error(`Lote ${loteRow.codigo} sem localidade destino — não é possível ajustar OMIE`);
     }
     const [corr] = await db
       .select()
@@ -372,16 +372,16 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
       .where(eq(localidadeCorrelacao.localidadeId, loteRow.localidadeId))
       .limit(1);
     if (!corr?.codigoLocalEstoqueAcxe || !corr?.codigoLocalEstoqueQ2p) {
-      throw new Error(`Localidade do lote ${loteRow.codigo} sem correlacao ACXE/Q2P completa`);
+      throw new Error(`Localidade do lote ${loteRow.codigo} sem correlação ACXE/Q2P completa`);
     }
     const qtdAprovadaKg = Number(apPre.quantidadeRecebidaKg ?? loteRow.quantidadeFisicaKg);
     if (!loteRow.notaFiscal) {
-      throw new Error(`Lote ${loteRow.codigo} sem notaFiscal — nao e possivel ajustar OMIE`);
+      throw new Error(`Lote ${loteRow.codigo} sem notaFiscal — não é possível ajustar OMIE`);
     }
     if (!loteRow.codigoLocalEstoqueOrigemAcxe || !loteRow.valorTotalNfBrl) {
       throw new Error(
         `Lote ${loteRow.codigo} sem dados da NF persistidos (origem ACXE / vNF). ` +
-          'Lote criado em versao anterior — re-consulte OMIE manualmente ou re-submeta o recebimento.',
+          'Lote criado em versão anterior — re-consulte OMIE manualmente ou re-submeta o recebimento.',
       );
     }
     notaFiscalParaEmail = loteRow.notaFiscal;
@@ -390,7 +390,7 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
 
     const valorUnitAcxe = calcularValorUnitarioAcxe(vNF, qtdNfKg);
     const motivoOperador = apPre.observacoes?.trim()
-      ? `\nMotivo da divergencia: ${apPre.observacoes.trim()}`
+      ? `\nMotivo da divergência: ${apPre.observacoes.trim()}`
       : '';
 
     try {
@@ -405,7 +405,7 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
         valorUnitarioAcxe: valorUnitAcxe,
         valorUnitarioQ2p: calcularValorUnitarioQ2p(vNF, qtdNfKg),
         notaFiscal: loteRow.notaFiscal,
-        observacaoSufixo: `com divergencia aprovada por gestor (${apPre.tipoDivergencia ?? 'n/a'})${motivoOperador}`,
+        observacaoSufixo: `com divergência aprovada por gestor (${apPre.tipoDivergencia ?? 'n/a'})${motivoOperador}`,
       });
     } catch (err) {
       // Q2P falhou apos ACXE ok: persistiremos movimentacao parcial mas seguiremos
@@ -447,17 +447,17 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
           quantidadeKg: qtdDiferencaKg,
           valorUnitarioAcxe: valorUnitAcxe,
           notaFiscal: loteRow.notaFiscal,
-          observacaoSufixo: `divergencia ${apPre.tipoDivergencia} de ${qtdDiferencaKg} kg${motivoOperador}`,
+          observacaoSufixo: `divergência ${apPre.tipoDivergencia} de ${qtdDiferencaKg} kg${motivoOperador}`,
         });
         logger.info(
           { idDiferenca, qtdDiferencaKg, tipo: apPre.tipoDivergencia, dest: codigoLocalEstoqueDiferenca },
-          'Diferenca transferida para estoque especial',
+          'Diferença transferida para estoque especial',
         );
       } catch (err) {
         // Dual call ja sucedeu (ACXE+Q2P principais); marca pendencia da 2a chamada ACXE.
         logger.error(
           { err, idACXE: omieIds!.idACXE, idQ2P: omieIds!.idQ2P, qtdDiferencaKg, opId },
-          'ALERTA: ajuste principal ok mas transferencia da diferenca falhou. Persistira movimentacao com pendente_acxe_faltando.',
+          'ALERTA: ajuste principal ok mas transferência da diferença falhou. Persistirá movimentação com pendente_acxe_faltando.',
         );
         pendencia = {
           tipo: 'pendente_acxe_faltando',
@@ -491,7 +491,7 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
     if (!ap.loteId) {
       // Aprovacoes sem lote sao todas tratadas em aprovarSaidaManual via early return.
       // Se chegou aqui sem loteId, e bug.
-      throw new Error(`Aprovacao ${ap.id} (${ap.tipoAprovacao}) sem lote — caminho inesperado`);
+      throw new Error(`Aprovação ${ap.id} (${ap.tipoAprovacao}) sem lote — caminho inesperado`);
     }
     const loteIdNotNull: string = ap.loteId;
     await tx.update(lote).set({ status: statusLote, updatedAt: new Date() }).where(eq(lote.id, loteIdNotNull));
@@ -525,7 +525,7 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
           idMovestQ2p: isPendenteQ2p ? null : omieIds.idQ2P.idMovest,
           idAjusteQ2p: isPendenteQ2p ? null : omieIds.idQ2P.idAjuste,
           idUserQ2p: isPendenteQ2p ? null : input.usuarioId,
-          observacoes: `Aprovada divergencia ${ap.tipoDivergencia ?? ''} — qtd final ${ap.quantidadeRecebidaKg ?? loteRow!.quantidadeFisicaKg} kg`,
+          observacoes: `Aprovada divergência ${ap.tipoDivergencia ?? ''} — qtd final ${ap.quantidadeRecebidaKg ?? loteRow!.quantidadeFisicaKg} kg`,
           opId: opId!,
           statusOmie: statusOmieMov,
           tentativasQ2p: isPendenteQ2p ? 1 : 0,
@@ -553,7 +553,7 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
 
   logger.info(
     { aprovacaoId: input.id, perfilUsuario: input.perfilUsuario, loteStatus: resultado.statusLote, omieIds, pendencia },
-    'Aprovacao confirmada',
+    'Aprovação confirmada',
   );
 
   // Se ha pendencia OMIE residual, notifica admin/gestor (fire-and-forget)
@@ -603,7 +603,7 @@ export interface RejeitarInput {
 
 export async function rejeitar(input: RejeitarInput): Promise<{ id: string }> {
   if (!input.motivo || input.motivo.trim().length === 0) {
-    throw new Error('Motivo obrigatorio para rejeitar aprovacao');
+    throw new Error('Motivo obrigatório para rejeitar aprovação');
   }
   const db = getDb();
 
@@ -668,7 +668,7 @@ export async function rejeitar(input: RejeitarInput): Promise<{ id: string }> {
     };
   });
 
-  logger.info({ aprovacaoId: input.id, perfilUsuario: input.perfilUsuario }, 'Aprovacao rejeitada');
+  logger.info({ aprovacaoId: input.id, perfilUsuario: input.perfilUsuario }, 'Aprovação rejeitada');
 
   // Notifica o operador que lancou a divergencia/saida (fora da transacao)
   await enviarNotificacaoRejeicaoOperador({
@@ -701,7 +701,7 @@ export interface ResubmeterInput {
  */
 export async function resubmeter(input: ResubmeterInput): Promise<{ id: string; novaAprovacaoId: string }> {
   if (!input.observacoes || input.observacoes.trim().length === 0) {
-    throw new Error('Motivo obrigatorio ao re-submeter aprovacao rejeitada');
+    throw new Error('Motivo obrigatório ao re-submeter aprovação rejeitada');
   }
   const db = getDb();
   const resultado = await db.transaction(async (tx) => {
@@ -725,7 +725,7 @@ export async function resubmeter(input: ResubmeterInput): Promise<{ id: string; 
       })
       .returning();
 
-    if (!ap.loteId) throw new Error(`Aprovacao ${ap.id} sem lote nao pode ser re-submetida`);
+    if (!ap.loteId) throw new Error(`Aprovação ${ap.id} sem lote não pode ser re-submetida`);
     const [loteRow] = await tx
       .update(lote)
       .set({
@@ -738,7 +738,7 @@ export async function resubmeter(input: ResubmeterInput): Promise<{ id: string; 
 
     logger.info(
       { aprovacaoRejeitadaId: input.id, novaAprovacaoId: nova!.id, usuarioId: input.usuarioId },
-      'Aprovacao re-submetida',
+      'Aprovação re-submetida',
     );
     return {
       id: input.id,
@@ -755,7 +755,7 @@ export async function resubmeter(input: ResubmeterInput): Promise<{ id: string; 
     loteCodigo: resultado.lote.codigo,
     produto: resultado.lote.fornecedorNome,
     quantidadeKg: input.quantidadeRecebidaKg,
-    detalhes: `Re-submetida pelo operador apos rejeicao. Motivo: ${input.observacoes}`,
+    detalhes: `Re-submetida pelo operador após rejeição. Motivo: ${input.observacoes}`,
   });
 
   return { id: resultado.id, novaAprovacaoId: resultado.novaAprovacao.id };
@@ -780,7 +780,7 @@ export async function dispensarRejeicao(input: {
   const [ap] = await db.select().from(aprovacao).where(eq(aprovacao.id, input.id)).limit(1);
   if (!ap) throw new AprovacaoNaoEncontradaError(input.id);
   if (ap.lancadoPor !== input.usuarioId) {
-    throw new Error(`Apenas o operador que lancou pode dispensar a rejeicao ${input.id}`);
+    throw new Error(`Apenas o operador que lançou pode dispensar a rejeição ${input.id}`);
   }
   if (ap.status !== 'rejeitada') {
     throw new AprovacaoStatusInvalidoError(input.id, ap.status);
@@ -792,7 +792,7 @@ export async function dispensarRejeicao(input: {
     .update(aprovacao)
     .set({ dispensadaEm: new Date() })
     .where(eq(aprovacao.id, input.id));
-  logger.info({ aprovacaoId: input.id, usuarioId: input.usuarioId }, 'Rejeicao dispensada pelo operador');
+  logger.info({ aprovacaoId: input.id, usuarioId: input.usuarioId }, 'Rejeição dispensada pelo operador');
   return { id: input.id, jaEstavaDispensada: false };
 }
 
@@ -816,17 +816,17 @@ async function aprovarEntradaNacional(
 
   const temProduto = ap.produtoCodigoAcxe != null || ap.produtoCodigoQ2p != null;
   if (!temProduto || !ap.galpao || !ap.empresa) {
-    throw new Error(`Aprovacao ${ap.id} sem produto/galpao/empresa — registro inconsistente`);
+    throw new Error(`Aprovação ${ap.id} sem produto/galpão/empresa — registro inconsistente`);
   }
   if (!ap.movimentacaoId) {
-    throw new Error(`Aprovacao ${ap.id} sem movimentacao linkada — registro inconsistente`);
+    throw new Error(`Aprovação ${ap.id} sem movimentação linkada — registro inconsistente`);
   }
 
   const [mov] = await db.select().from(movimentacao).where(eq(movimentacao.id, ap.movimentacaoId)).limit(1);
-  if (!mov) throw new Error(`Movimentacao ${ap.movimentacaoId} nao encontrada`);
+  if (!mov) throw new Error(`Movimentação ${ap.movimentacaoId} não encontrada`);
 
   const quantidadeKg = Number(ap.quantidadeRecebidaKg ?? 0);
-  if (quantidadeKg <= 0) throw new Error(`Aprovacao ${ap.id} sem quantidade valida`);
+  if (quantidadeKg <= 0) throw new Error(`Aprovação ${ap.id} sem quantidade válida`);
 
   const empresa = ap.empresa as 'acxe' | 'q2p';
 
@@ -843,7 +843,7 @@ async function aprovarEntradaNacional(
   const codigoLocalEstoque = localRes.rows[0]?.codigo;
   if (!codigoLocalEstoque) {
     throw new Error(
-      `Aprovacao ${ap.id}: localidade '${ap.galpao}' sem codigo OMIE para empresa ${empresa}`,
+      `Aprovação ${ap.id}: localidade '${ap.galpao}' sem código OMIE para empresa ${empresa}`,
     );
   }
 
@@ -874,7 +874,7 @@ async function aprovarEntradaNacional(
     } else {
       logger.warn(
         { aprovacaoId: ap.id, sku: ap.produtoCodigoAcxe, empresa },
-        'Sem custo NF e sem custo medio — usando 0.01 como placeholder pra OMIE aceitar ajuste',
+        'Sem custo NF e sem custo médio — usando 0.01 como placeholder pra OMIE aceitar ajuste',
       );
       valorUnitario = 0.01;
     }
@@ -972,17 +972,17 @@ async function aprovarSaidaManual(
   const db = getDb();
 
   if (!ap.produtoCodigoAcxe || !ap.galpao || !ap.empresa) {
-    throw new Error(`Aprovacao ${ap.id} sem produto/galpao/empresa — registro inconsistente`);
+    throw new Error(`Aprovação ${ap.id} sem produto/galpão/empresa — registro inconsistente`);
   }
   if (!ap.movimentacaoId) {
-    throw new Error(`Aprovacao ${ap.id} sem movimentacao linkada — registro inconsistente`);
+    throw new Error(`Aprovação ${ap.id} sem movimentação linkada — registro inconsistente`);
   }
 
   const [mov] = await db.select().from(movimentacao).where(eq(movimentacao.id, ap.movimentacaoId)).limit(1);
-  if (!mov) throw new Error(`Movimentacao ${ap.movimentacaoId} nao encontrada`);
+  if (!mov) throw new Error(`Movimentação ${ap.movimentacaoId} não encontrada`);
 
   const quantidadeKg = Math.abs(Number(ap.quantidadeRecebidaKg ?? 0));
-  if (quantidadeKg <= 0) throw new Error(`Aprovacao ${ap.id} sem quantidade valida`);
+  if (quantidadeKg <= 0) throw new Error(`Aprovação ${ap.id} sem quantidade válida`);
 
   const valorUnitario = await consultarValorUnitarioProduto(
     Number(ap.produtoCodigoAcxe),
@@ -990,7 +990,7 @@ async function aprovarSaidaManual(
     ap.empresa as 'acxe' | 'q2p',
   );
 
-  const observacaoOmie = (ap.observacoes ?? `Saida manual ${ap.tipoAprovacao}`).slice(0, 240);
+  const observacaoOmie = (ap.observacoes ?? `Saída manual ${ap.tipoAprovacao}`).slice(0, 240);
 
   // Roteamento OMIE por tipoAprovacao
   //   - Saidas definitivas + transf_intra: dual call (ACXE+Q2P) quando galpao espelhado
@@ -1043,7 +1043,7 @@ async function aprovarSaidaManual(
       }
       case 'saida_transf_intra': {
         if (!mov.galpaoDestino) {
-          throw new Error(`Movimentacao ${mov.id} de transf_intra_cnpj sem galpao_destino`);
+          throw new Error(`Movimentação ${mov.id} de transf_intra_cnpj sem galpao_destino`);
         }
         const r = await executarTransferenciaIntraDual(
           {
@@ -1078,14 +1078,14 @@ async function aprovarSaidaManual(
       case 'retorno_comodato': {
         // movimentacao linkada e a ENTRADA destino. Buscar BAIXA TROCA via origem.
         if (!mov.movimentacaoOrigemId) {
-          throw new Error(`Movimentacao retorno ${mov.id} sem movimentacao_origem_id`);
+          throw new Error(`Movimentação retorno ${mov.id} sem movimentacao_origem_id`);
         }
         const [movOrigem] = await db
           .select()
           .from(movimentacao)
           .where(eq(movimentacao.id, mov.movimentacaoOrigemId))
           .limit(1);
-        if (!movOrigem) throw new Error(`Comodato origem ${mov.movimentacaoOrigemId} nao encontrado`);
+        if (!movOrigem) throw new Error(`Comodato origem ${mov.movimentacaoOrigemId} não encontrado`);
         const [movBaixa] = await db
           .select()
           .from(movimentacao)
@@ -1097,7 +1097,7 @@ async function aprovarSaidaManual(
             ),
           )
           .limit(1);
-        if (!movBaixa) throw new Error(`Movimentacao de baixa do TROCA nao encontrada para origem ${movOrigem.id}`);
+        if (!movBaixa) throw new Error(`Movimentação de baixa do TROCA não encontrada para origem ${movOrigem.id}`);
 
         const valorOriginal = await consultarValorUnitarioProduto(
           Number(movOrigem.produtoCodigoAcxe ?? 0),
@@ -1111,7 +1111,7 @@ async function aprovarSaidaManual(
         const valorRecebido = valorUnitario > 0 ? valorUnitario : valorOriginal;
         if (valorRecebido <= 0) {
           throw new Error(
-            `Sem valor unitario disponivel pro retorno: produto recebido ${ap.produtoCodigoAcxe} e original ${movOrigem.produtoCodigoAcxe} ambos sem saldo OMIE`,
+            `Sem valor unitario disponível pro retorno: produto recebido ${ap.produtoCodigoAcxe} e original ${movOrigem.produtoCodigoAcxe} ambos sem saldo OMIE`,
           );
         }
 
@@ -1148,10 +1148,10 @@ async function aprovarSaidaManual(
         break;
       }
       default:
-        throw new Error(`Tipo ${ap.tipoAprovacao} nao implementado em aprovarSaidaManual`);
+        throw new Error(`Tipo ${ap.tipoAprovacao} não implementado em aprovarSaidaManual`);
     }
   } catch (err) {
-    logger.error({ err, aprovacaoId: ap.id, tipo: ap.tipoAprovacao }, 'OMIE falhou ao aprovar saida manual');
+    logger.error({ err, aprovacaoId: ap.id, tipo: ap.tipoAprovacao }, 'OMIE falhou ao aprovar saída manual');
     throw err;
   }
 
@@ -1233,7 +1233,7 @@ async function aprovarSaidaManual(
 
   logger.info(
     { aprovacaoId: ap.id, tipo: ap.tipoAprovacao, resultadoOmie },
-    'Saida manual aprovada e baixada no OMIE',
+    'Saída manual aprovada e baixada no OMIE',
   );
 
   // Notifica operador (fora da tx)
@@ -1242,7 +1242,7 @@ async function aprovarSaidaManual(
     aprovacaoId: ap.id,
     tipoAprovacao: ap.tipoAprovacao,
     loteId: ap.loteId ?? ap.movimentacaoId!,
-  }).catch((err) => logger.error({ err }, 'Falha ao notificar aprovacao saida manual'));
+  }).catch((err) => logger.error({ err }, 'Falha ao notificar aprovação saída manual'));
 
   return { id: ap.id, loteStatus: 'reconciliado' };
 }

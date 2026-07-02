@@ -97,7 +97,7 @@ export async function listarDivergencias(
   } catch (err) {
     logger.warn(
       { err: (err as Error).message },
-      'Listagem de divergencias falhou — retornando vazio',
+      'Listagem de divergências falhou — retornando vazio',
     );
     return [];
   }

@@ -39,7 +39,7 @@ router.post('/api/v1/stockbridge/recebimento', requireOperador, requireArmazemVi
 
   const userId = req.user?.id;
   if (!userId) {
-    res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessao sem usuario' } });
+    res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessão sem usuário' } });
     return;
   }
 

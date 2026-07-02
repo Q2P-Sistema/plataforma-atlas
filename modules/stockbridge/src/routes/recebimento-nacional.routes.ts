@@ -94,7 +94,7 @@ const ItemSchema = z
     (d) =>
       (d.empresa === 'acxe' && d.produto_codigo_acxe != null) ||
       (d.empresa === 'q2p' && d.produto_codigo_q2p != null),
-    { message: 'produto_codigo_acxe obrigatorio para acxe; produto_codigo_q2p obrigatorio para q2p' },
+    { message: 'produto_codigo_acxe obrigatório para acxe; produto_codigo_q2p obrigatório para q2p' },
   );
 
 const BodySchema = z.object({
@@ -122,7 +122,7 @@ router.post(
 
     const userId = req.user?.id;
     if (!userId) {
-      res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessao sem usuario' } });
+      res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessão sem usuário' } });
       return;
     }
 

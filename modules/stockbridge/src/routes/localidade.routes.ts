@@ -59,7 +59,7 @@ router.post('/api/v1/stockbridge/localidades', requireGestor, async (req: Reques
 router.patch('/api/v1/stockbridge/localidades/:id', requireGestor, async (req: Request, res: Response) => {
   const id = req.params.id as string | undefined;
   if (!id) {
-    res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', message: 'id obrigatorio' } });
+    res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', message: 'id obrigatório' } });
     return;
   }
   const parsed = UpdateSchema.safeParse(req.body);
@@ -78,7 +78,7 @@ router.patch('/api/v1/stockbridge/localidades/:id', requireGestor, async (req: R
 router.delete('/api/v1/stockbridge/localidades/:id', requireGestor, async (req: Request, res: Response) => {
   const id = req.params.id as string | undefined;
   if (!id) {
-    res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', message: 'id obrigatorio' } });
+    res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', message: 'id obrigatório' } });
     return;
   }
   try {

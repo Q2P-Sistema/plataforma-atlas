@@ -29,13 +29,13 @@ export interface MapearErroOmieResult {
   body: OmieErroResposta;
 }
 
-const MSG_ACXE = 'OMIE ACXE indisponivel no momento. Nada foi registrado — pode tentar novamente.';
+const MSG_ACXE = 'OMIE ACXE indisponível no momento. Nada foi registrado — pode tentar novamente.';
 const MSG_Q2P_RECOVERAVEL =
-  'Recebimento parcial: ACXE registrado, Q2P pendente. Voce pode tentar novamente uma vez ou aguardar o admin.';
+  'Recebimento parcial: ACXE registrado, Q2P pendente. Você pode tentar novamente uma vez ou aguardar o admin.';
 const MSG_Q2P_OPERADOR_ESGOTOU =
-  'Voce ja esgotou as retentativas. A pendencia foi escalada para um gestor/diretor.';
+  'Você já esgotou as retentativas. A pendência foi escalada para um gestor/diretor.';
 const MSG_Q2P_ADMIN =
-  'OMIE Q2P ainda indisponivel. Voce pode retentar quantas vezes precisar.';
+  'OMIE Q2P ainda indisponível. Você pode retentar quantas vezes precisar.';
 
 /**
  * Mapeia um OmieAjusteError para a resposta HTTP estruturada (US5).
