@@ -20,6 +20,8 @@ vi.mock('@atlas/core', () => ({
   }),
   getConfig: () => ({ SEED_ADMIN_EMAIL: 'admin@atlas.local' }),
   sendEmail: vi.fn().mockResolvedValue(undefined),
+  buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
+  escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
 }));
 
 vi.mock('@atlas/db', () => ({
@@ -336,7 +338,7 @@ describe('processarRecebimento — recebimento limpo notifica operador + Comex',
     const sendEmailMock = vi.mocked(core.sendEmail);
     const destinos = sendEmailMock.mock.calls.map((c) => (c[0] as { to: string; subject: string }));
     // Todos os emails desse fluxo sao "Recebimento concluído"
-    expect(destinos.every((d) => /Recebimento conclu[íi]do/.test(d.subject))).toBe(true);
+    expect(destinos.every((d) => d.subject.includes('Recebimento concluído'))).toBe(true);
     const tos = destinos.map((d) => d.to);
     expect(tos).toContain('operador@acxe.local');
     expect(tos).toContain('comex_acxe@acxe-polimeros.com.br');

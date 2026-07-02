@@ -1,4 +1,4 @@
-import { sendEmail, createLogger, getConfig, getDb } from '@atlas/core';
+import { sendEmail, createLogger, getConfig, getDb, buildEmailLayout, escapeHtml } from '@atlas/core';
 import { users, userModules } from '@atlas/db';
 import { eq, inArray, and, isNull } from 'drizzle-orm';
 
@@ -6,6 +6,42 @@ const logger = createLogger('stockbridge:notificacao');
 
 const ADMIN_FALLBACK_EMAIL = 'admin@atlas.local';
 const COMEX_FALLBACK_EMAIL = 'comex_acxe@acxe-polimeros.com.br';
+
+/**
+ * Rótulos legíveis dos tipos de aprovação — evita expor o enum snake_case cru
+ * ao usuário no assunto/corpo do e-mail (EML-03, ACXEGDP-252). Espelha os labels
+ * usados na tela de aprovações (AprovacoesPage).
+ */
+const TIPO_APROVACAO_LABEL: Record<string, string> = {
+  recebimento_divergencia: 'Recebimento com divergência',
+  entrada_manual: 'Entrada manual',
+  entrada_nacional: 'Entrada nacional',
+  compra_nacional: 'Compra nacional',
+  saida_transf_intra: 'Transferência intra-CNPJ',
+  transf_intra_cnpj: 'Transferência intra-CNPJ',
+  saida_comodato: 'Comodato',
+  saida_amostra: 'Amostra/Brinde',
+  saida_descarte: 'Descarte/Perda',
+  saida_quebra: 'Quebra técnica',
+  saida_troca: 'Troca',
+  ajuste_inventario: 'Ajuste de inventário',
+  retorno_comodato: 'Retorno de comodato',
+};
+
+function labelTipoAprovacao(tipo: string | null | undefined): string {
+  if (!tipo) return '—';
+  return TIPO_APROVACAO_LABEL[tipo] ?? tipo.replace(/_/g, ' ');
+}
+
+/** Formata quantidade em kg no padrão pt-BR (sem casas decimais). */
+function fmtKg(kg: number): string {
+  return `${kg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg`;
+}
+
+/** Linha de item chave→valor; o valor dinâmico é escapado (EML-07). */
+function li(label: string, valor: string | number): string {
+  return `<li><strong>${escapeHtml(label)}:</strong> ${escapeHtml(valor)}</li>`;
+}
 
 function getAdminEmail(): string {
   const config = getConfig();
@@ -19,7 +55,9 @@ function getComexEmail(): string {
 
 /**
  * Resolve emails dos usuarios ATIVOS com perfil compativel + acesso ao modulo.
- *  - nivel='gestor':  gestor + diretor (diretor tambem ve pendencias de gestor)
+ *  - nivel='gestor':  so gestor (diretor *pode* aprovar tudo, mas nao quer email
+ *    de cada saida do dia a dia — so e notificado quando a pendencia exige
+ *    nivel='diretor' de fato).
  *  - nivel='diretor': so diretor
  *
  * Filtros aplicados:
@@ -34,14 +72,11 @@ function getComexEmail(): string {
 export async function resolverEmailsAprovadores(nivel: 'gestor' | 'diretor'): Promise<string[]> {
   const config = getConfig();
   if (!config.MODULE_STOCKBRIDGE_ENABLED) {
-    logger.warn({ nivel }, 'Módulo StockBridge desabilitado — não envia notificação');
+    logger.warn({ nivel }, 'Modulo StockBridge desabilitado — nao envia notificacao');
     return [];
   }
 
   const db = getDb();
-  // Cada nivel notifica apenas o proprio role (diretor *pode* aprovar tudo,
-  // mas nao quer email de cada saida_descarte/quebra/amostra do dia a dia —
-  // ele so e notificado quando a pendencia exige nivel='diretor' de fato).
   const roles: ('gestor' | 'diretor')[] = nivel === 'diretor' ? ['diretor'] : ['gestor'];
   try {
     const rows = await db
@@ -75,23 +110,25 @@ export async function enviarAlertaProdutoSemCorrelato(args: {
 }): Promise<void> {
   const to = getAdminEmail();
   const subject = `StockBridge — Produto sem correlato Q2P (NF ${args.notaFiscal})`;
-  const html = `
-    <h2 style="color: #f0ad4e;">Ação Necessária: Produto Não Encontrado na Q2P</h2>
-    <p>Durante o recebimento da <strong>NF ${args.notaFiscal}</strong> no StockBridge, foi identificado que o produto abaixo não possui correlato cadastrado na Q2P (match por descrição textual).</p>
+  const corpoHtml = `
+    <p>Durante o recebimento da <strong>NF ${escapeHtml(args.notaFiscal)}</strong>, o produto abaixo não possui correlato cadastrado na Q2P (correspondência por descrição textual).</p>
     <ul>
-      <li><strong>Código ACXE:</strong> ${args.codigoProdutoAcxe}</li>
-      <li><strong>Descrição ACXE:</strong> ${args.descricaoProduto}</li>
+      ${li('Código ACXE', args.codigoProdutoAcxe)}
+      ${li('Descrição ACXE', args.descricaoProduto)}
     </ul>
-    <p>Ações esperadas:</p>
+    <p><strong>Ações esperadas:</strong></p>
     <ol>
-      <li>Cadastrar o produto correspondente na Q2P com <strong>descrição EXATA</strong> do ACXE.</li>
-      <li>Aguardar sync n8n (próximo ciclo).</li>
+      <li>Cadastrar o produto correspondente na Q2P com a <strong>descrição exata</strong> do ACXE.</li>
+      <li>Aguardar a sincronização (próximo ciclo do n8n).</li>
       <li>Tentar novamente o recebimento no StockBridge.</li>
     </ol>
-    <p style="color:#888;font-size:11px;">Sistema Atlas — StockBridge</p>
   `;
+  const { html, text } = buildEmailLayout({
+    titulo: 'Ação necessária: produto não encontrado na Q2P',
+    corpoHtml,
+  });
   try {
-    await sendEmail({ to, subject, html });
+    await sendEmail({ to, subject, html, text });
   } catch (err) {
     logger.error({ err, args }, 'Falha ao enviar email de alerta produto sem correlato');
   }
@@ -110,21 +147,21 @@ export async function enviarAlertaNfIndeterminada(args: {
 }): Promise<void> {
   const to = getAdminEmail();
   const subject = `StockBridge — NF ${args.nf} recebida com dado indeterminado (${args.cnpj.toUpperCase()})`;
-  const html = `
-    <h2 style="color: #f0ad4e;">Revisão Necessária: NF recebida sem validação completa</h2>
-    <p>O recebimento da <strong>NF ${args.nf}</strong> (${args.cnpj.toUpperCase()}) foi <strong>liberado</strong>, mas o sistema não conseguiu determinar com segurança um dos sinais da NF no OMIE.</p>
-    <ul>
-      <li><strong>Motivo:</strong> ${args.motivo}</li>
-    </ul>
-    <p>Ações esperadas:</p>
+  const corpoHtml = `
+    <p>O recebimento da <strong>NF ${escapeHtml(args.nf)}</strong> (${args.cnpj.toUpperCase()}) foi <strong>liberado</strong>, mas o sistema não conseguiu determinar com segurança um dos sinais da NF no OMIE.</p>
+    <ul>${li('Motivo', args.motivo)}</ul>
+    <p><strong>Ações esperadas:</strong></p>
     <ol>
-      <li>Conferir no OMIE se a NF ${args.nf} está válida e foi emitida pela empresa correta.</li>
+      <li>Conferir no OMIE se a NF ${escapeHtml(args.nf)} está válida e foi emitida pela empresa correta.</li>
       <li>Se houver irregularidade (cancelada ou emitente errado), estornar o recebimento no StockBridge.</li>
     </ol>
-    <p style="color:#888;font-size:11px;">Sistema Atlas — StockBridge</p>
   `;
+  const { html, text } = buildEmailLayout({
+    titulo: 'Revisão necessária: NF recebida sem validação completa',
+    corpoHtml,
+  });
   try {
-    await sendEmail({ to, subject, html });
+    await sendEmail({ to, subject, html, text });
   } catch (err) {
     logger.error({ err, args }, 'Falha ao enviar email de alerta de NF indeterminada');
   }
@@ -143,25 +180,24 @@ export async function enviarAlertaDebitoCruzado(args: {
   movimentacaoId: string;
 }): Promise<void> {
   const to = getAdminEmail();
-  const subject = `StockBridge — ⚠ Débito cruzado (NF ${args.notaFiscal})`;
-  const html = `
-    <h2 style="color: #dc3545;">Débito Cruzado Detectado</h2>
-    <p>Uma NF de saída gerou <strong>divergência cruzada</strong> entre CNPJ emissor e CNPJ onde o estoque físico está.</p>
+  const subject = `StockBridge — Débito cruzado (NF ${args.notaFiscal})`;
+  const corpoHtml = `
+    <p>Uma NF de saída gerou <strong>divergência cruzada</strong> entre o CNPJ emissor e o CNPJ onde está o estoque físico.</p>
     <ul>
-      <li><strong>NF:</strong> ${args.notaFiscal}</li>
-      <li><strong>Emissor (faturou):</strong> ${args.cnpjEmissor.toUpperCase()}</li>
-      <li><strong>Fisico (estoque real):</strong> ${args.cnpjFisico.toUpperCase()}</li>
-      <li><strong>Quantidade:</strong> ${args.quantidadeKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg</li>
+      ${li('NF', args.notaFiscal)}
+      ${li('Emissor (faturou)', args.cnpjEmissor.toUpperCase())}
+      ${li('Físico (estoque real)', args.cnpjFisico.toUpperCase())}
+      ${li('Quantidade', fmtKg(args.quantidadeKg))}
     </ul>
-    <p><strong>Ação esperada:</strong> setor contábil deve emitir NF de transferência
-    ${args.cnpjFisico.toUpperCase()} -> ${args.cnpjEmissor.toUpperCase()} para regularizar a posição fiscal.
+    <p><strong>Ação esperada:</strong> o setor contábil deve emitir a NF de transferência
+    ${args.cnpjFisico.toUpperCase()} → ${args.cnpjEmissor.toUpperCase()} para regularizar a posição fiscal.
     A divergência será fechada automaticamente quando a NF de regularização for processada.</p>
-    <p style="color:#888;font-size:11px;">Sistema Atlas — StockBridge</p>
   `;
+  const { html, text } = buildEmailLayout({ titulo: 'Débito cruzado detectado', corpoHtml });
   try {
-    await sendEmail({ to, subject, html });
+    await sendEmail({ to, subject, html, text });
   } catch (err) {
-    logger.error({ err, args }, 'Falha ao enviar email de débito cruzado');
+    logger.error({ err, args }, 'Falha ao enviar email de debito cruzado');
   }
 }
 
@@ -180,27 +216,28 @@ export async function enviarAlertaAprovacaoPendente(args: {
 }): Promise<void> {
   const destinatarios = await resolverEmailsAprovadores(args.nivel);
   const config = getConfig();
-  const linkPainel = `${config.APP_URL ?? ''}/stockbridge/aprovacoes`;
-  const subject = `StockBridge — Aprovação pendente (${args.nivel}) — ${args.tipoAprovacao}`;
-  const html = `
-    <h2 style="color: #D97706;">Nova pendência de aprovação</h2>
-    <p><strong>Tipo:</strong> ${args.tipoAprovacao}</p>
-    <p><strong>Item:</strong> ${args.loteCodigo} — ${args.produto} (${args.quantidadeKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg)</p>
-    ${args.detalhes ? `<p><strong>Detalhes:</strong> ${args.detalhes}</p>` : ''}
-    <p style="margin:16px 0;">
-      <a href="${linkPainel}"
-         style="display:inline-block;padding:10px 20px;background:#0077cc;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;">
-        Abrir aprovações pendentes →
-      </a>
-    </p>
-    <p style="color:#888;font-size:11px;">Sistema Atlas — StockBridge</p>
+  const linkPainel = `${config.APP_URL}/stockbridge/aprovacoes`;
+  const tipoLabel = labelTipoAprovacao(args.tipoAprovacao);
+  const subject = `StockBridge — Aprovação pendente (${args.nivel}) — ${tipoLabel}`;
+  const corpoHtml = `
+    <p><strong>Tipo:</strong> ${escapeHtml(tipoLabel)}</p>
+    <p><strong>Item:</strong> ${escapeHtml(args.loteCodigo)} — ${escapeHtml(args.produto)} (${fmtKg(args.quantidadeKg)})</p>
+    ${args.detalhes ? `<p><strong>Detalhes:</strong> ${escapeHtml(args.detalhes)}</p>` : ''}
   `;
+  const { html, text } = buildEmailLayout({
+    titulo: 'Nova pendência de aprovação',
+    corpoHtml,
+    ctaLabel: 'Abrir aprovações pendentes',
+    ctaUrl: linkPainel,
+  });
   try {
     // Envia 1 email por destinatario pra evitar vazar lista (To: ficaria visivel)
-    await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html })));
-    logger.info({ aprovacaoId: args.aprovacaoId, destinatarios: destinatarios.length }, 'Alerta de aprovação enviado');
+    const results = await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html, text })));
+    const falhas = results.filter((r) => r.status === 'rejected').length;
+    if (falhas > 0) logger.error({ aprovacaoId: args.aprovacaoId, falhas }, 'Falha ao enviar parte dos emails de aprovacao pendente');
+    logger.info({ aprovacaoId: args.aprovacaoId, destinatarios: destinatarios.length }, 'Alerta de aprovacao enviado');
   } catch (err) {
-    logger.error({ err, args }, 'Falha ao enviar email de aprovação pendente');
+    logger.error({ err, args }, 'Falha ao enviar email de aprovacao pendente');
   }
 }
 
@@ -220,30 +257,28 @@ export async function enviarAlertaPendenciaOmie(args: {
   const to = getAdminEmail();
   const config = getConfig();
   const linkPainel = `${config.APP_URL}/stockbridge/operacoes-pendentes`;
-  const ladoLabel = args.ladoPendente === 'q2p' ? 'OMIE Q2P' : 'OMIE ACXE (transferência diferença)';
-  const subject = `StockBridge — ⚠ Pendência OMIE (NF ${args.notaFiscal})`;
-  const html = `
-    <h2 style="color: #D97706;">Operação OMIE pendente</h2>
-    <p>O recebimento abaixo ficou em estado parcial — a chamada inicial sucedeu mas a continuação falhou. Nada foi perdido; basta retentar.</p>
+  const ladoLabel = args.ladoPendente === 'q2p' ? 'OMIE Q2P' : 'OMIE ACXE (transferência da diferença)';
+  const subject = `StockBridge — Pendência OMIE (NF ${args.notaFiscal})`;
+  const corpoHtml = `
+    <p>O recebimento abaixo ficou em estado parcial — a chamada inicial teve sucesso, mas a continuação falhou. Nada foi perdido; basta retentar.</p>
     <ul>
-      <li><strong>NF:</strong> ${args.notaFiscal}</li>
-      <li><strong>Lado pendente:</strong> ${ladoLabel}</li>
-      <li><strong>Tentativas já feitas:</strong> ${args.tentativas}</li>
-      <li><strong>Erro reportado:</strong> ${args.mensagemErro}</li>
+      ${li('NF', args.notaFiscal)}
+      ${li('Lado pendente', ladoLabel)}
+      ${li('Tentativas já feitas', args.tentativas)}
+      ${li('Erro reportado', args.mensagemErro)}
     </ul>
-    <p style="margin:16px 0;">
-      <a href="${linkPainel}"
-         style="display:inline-block;padding:10px 20px;background:#0077cc;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;">
-        Abrir painel de operações pendentes →
-      </a>
-    </p>
-    <p style="color:#888;font-size:11px;">Movimentação: ${args.movimentacaoId} · op_id: ${args.opId}</p>
-    <p style="color:#888;font-size:11px;">Sistema Atlas — StockBridge</p>
+    <p style="color:#6b7280;font-size:12px;margin-top:16px;">Movimentação: ${escapeHtml(args.movimentacaoId)} · op_id: ${escapeHtml(args.opId)}</p>
   `;
+  const { html, text } = buildEmailLayout({
+    titulo: 'Operação OMIE pendente',
+    corpoHtml,
+    ctaLabel: 'Abrir painel de operações pendentes',
+    ctaUrl: linkPainel,
+  });
   try {
-    await sendEmail({ to, subject, html });
+    await sendEmail({ to, subject, html, text });
   } catch (err) {
-    logger.error({ err, args }, 'Falha ao enviar email de pendência OMIE');
+    logger.error({ err, args }, 'Falha ao enviar email de pendencia OMIE');
   }
 }
 
@@ -281,37 +316,28 @@ export async function enviarNotificacaoRejeicaoOperador(args: {
 }): Promise<void> {
   const to = await resolverEmailOperador(args.operadorUserId);
   if (!to) {
-    logger.warn({ args }, 'Operador sem email cadastrado — notificação de rejeição não enviada');
+    logger.warn({ args }, 'Operador sem email cadastrado — notificacao de rejeicao nao enviada');
     return;
   }
   const subject = `StockBridge — Seu lançamento foi rejeitado`;
   const config = getConfig();
   const paginaPath = args.fluxo === 'recebimento' ? '/stockbridge/recebimento' : '/stockbridge/saida-manual';
   const paginaLabel = args.fluxo === 'recebimento' ? 'Recebimento' : 'Saída Manual';
-  const acaoLabel = args.fluxo === 'recebimento' ? 'Re-submeter agora' : 'Lançar novamente';
+  const acaoLabel = args.fluxo === 'recebimento' ? 'Reenviar agora' : 'Lançar novamente';
   const link = `${config.APP_URL}${paginaPath}#rejeicao=${args.aprovacaoId}`;
-  const html = `
-    <h2 style="color: #dc3545;">Lançamento Rejeitado</h2>
-    <p>O gestor/diretor rejeitou um lançamento (${args.tipoAprovacao}) que você fez no StockBridge.</p>
+  const tipoLabel = labelTipoAprovacao(args.tipoAprovacao);
+  const corpoHtml = `
+    <p>O gestor/diretor rejeitou um lançamento (${escapeHtml(tipoLabel)}) que você fez no StockBridge.</p>
     <p><strong>Motivo informado:</strong></p>
-    <blockquote style="border-left:3px solid #dc3545;padding-left:12px;color:#555;margin:8px 0;">
-      "${args.motivo}"
-    </blockquote>
-    <p>Corrija os dados e ${args.fluxo === 'recebimento' ? 're-submeta para nova aprovacao' : 'lance novamente'}:</p>
-    <p style="margin:16px 0;">
-      <a href="${link}"
-         style="display:inline-block;padding:10px 20px;background:#0077cc;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;">
-        ${acaoLabel} →
-      </a>
-    </p>
-    <p style="color:#888;font-size:11px;">Ou abra a tela de ${paginaLabel} no StockBridge e procure pela secao "Lancamentos rejeitados".</p>
-    <p style="color:#888;font-size:11px;">Aprovação id: ${args.aprovacaoId}</p>
-    <p style="color:#888;font-size:11px;">Sistema Atlas — StockBridge</p>
+    <blockquote style="border-left:3px solid #dc2626;padding-left:12px;color:#555;margin:8px 0;">${escapeHtml(args.motivo)}</blockquote>
+    <p>Corrija os dados e ${args.fluxo === 'recebimento' ? 'reenvie para nova aprovação' : 'lance novamente'}:</p>
+    <p style="color:#6b7280;font-size:12px;margin-top:16px;">Você também pode abrir a tela de ${escapeHtml(paginaLabel)} no StockBridge e procurar pela seção "Lançamentos rejeitados". · Aprovação: ${escapeHtml(args.aprovacaoId)}</p>
   `;
+  const { html, text } = buildEmailLayout({ titulo: 'Lançamento rejeitado', corpoHtml, ctaLabel: acaoLabel, ctaUrl: link });
   try {
-    await sendEmail({ to, cc: config.STOCKBRIDGE_ADMIN_CC_EMAIL || undefined, subject, html });
+    await sendEmail({ to, cc: config.STOCKBRIDGE_ADMIN_CC_EMAIL || undefined, subject, html, text });
   } catch (err) {
-    logger.error({ err, args }, 'Falha ao enviar email de rejeição ao operador');
+    logger.error({ err, args }, 'Falha ao enviar email de rejeicao ao operador');
   }
 }
 
@@ -334,22 +360,22 @@ export async function enviarNotificacaoAprovacaoOperador(args: {
 }): Promise<void> {
   const to = await resolverEmailOperador(args.operadorUserId);
   if (!to) {
-    logger.warn({ args }, 'Operador sem email cadastrado — notificação de aprovação não enviada');
+    logger.warn({ args }, 'Operador sem email cadastrado — notificacao de aprovacao nao enviada');
     return;
   }
   const subject = `StockBridge — Seu lançamento foi aprovado`;
+  const tipoLabel = labelTipoAprovacao(args.tipoAprovacao);
   const extraDivergencia =
     args.tipoAprovacao === 'recebimento_divergencia'
-      ? '<p>O ajuste foi registrado automaticamente na OMIE (ACXE + Q2P) com a quantidade aprovada.</p>'
+      ? '<p>O ajuste foi registrado automaticamente no OMIE (ACXE + Q2P) com a quantidade aprovada.</p>'
       : '';
-  const html = `
-    <h2 style="color: #198754;">Lançamento Aprovado</h2>
+  const corpoHtml = `
     <p>Um lançamento que você fez no StockBridge foi aprovado pelo gestor/diretor.</p>
-    <p><strong>Tipo:</strong> ${args.tipoAprovacao}</p>
+    <p><strong>Tipo:</strong> ${escapeHtml(tipoLabel)}</p>
     ${extraDivergencia}
-    <p style="color:#888;font-size:11px;">Aprovação id: ${args.aprovacaoId} · Lote: ${args.loteId}</p>
-    <p style="color:#888;font-size:11px;">Sistema Atlas — StockBridge</p>
+    <p style="color:#6b7280;font-size:12px;margin-top:16px;">Aprovação: ${escapeHtml(args.aprovacaoId)} · Lote: ${escapeHtml(args.loteId)}</p>
   `;
+  const { html, text } = buildEmailLayout({ titulo: 'Lançamento aprovado', corpoHtml });
   try {
     const ccList = [
       ...new Set(
@@ -358,9 +384,9 @@ export async function enviarNotificacaoAprovacaoOperador(args: {
         ),
       ),
     ];
-    await sendEmail({ to, cc: ccList.length > 0 ? ccList : undefined, subject, html });
+    await sendEmail({ to, cc: ccList.length > 0 ? ccList : undefined, subject, html, text });
   } catch (err) {
-    logger.error({ err, args }, 'Falha ao enviar email de aprovação ao operador');
+    logger.error({ err, args }, 'Falha ao enviar email de aprovacao ao operador');
   }
 }
 
@@ -388,30 +414,31 @@ export async function enviarNotificacaoRecebimentoConcluido(args: {
     ...new Set([emailOperador, ...gestores, getComexEmail()].filter((e): e is string => !!e)),
   ];
   if (destinatarios.length === 0) {
-    logger.warn({ notaFiscal: args.notaFiscal }, 'Nenhum destinatário para confirmação de recebimento');
+    logger.warn({ notaFiscal: args.notaFiscal }, 'Nenhum destinatario para confirmacao de recebimento');
     return;
   }
   const subject = `StockBridge — Recebimento concluído (NF ${args.notaFiscal})`;
-  const html = `
-    <h2 style="color: #198754;">Recebimento concluído</h2>
-    <p>O recebimento da <strong>NF ${args.notaFiscal}</strong> foi registrado no StockBridge sem divergências. O ajuste de estoque já foi aplicado na OMIE (ACXE + Q2P).</p>
+  const corpoHtml = `
+    <p>O recebimento da <strong>NF ${escapeHtml(args.notaFiscal)}</strong> foi registrado no StockBridge sem divergências. O ajuste de estoque já foi aplicado no OMIE (ACXE + Q2P).</p>
     <ul>
-      <li><strong>Lote:</strong> ${args.loteCodigo}</li>
-      <li><strong>Produto:</strong> ${args.produto}</li>
-      <li><strong>Quantidade recebida:</strong> ${args.quantidadeKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg</li>
-      <li><strong>Fornecedor:</strong> ${args.fornecedor ?? '—'}</li>
-      <li><strong>Local de destino:</strong> ${args.localidade}</li>
+      ${li('Lote', args.loteCodigo)}
+      ${li('Produto', args.produto)}
+      ${li('Quantidade recebida', fmtKg(args.quantidadeKg))}
+      ${li('Fornecedor', args.fornecedor ?? '—')}
+      ${li('Local de destino', args.localidade)}
     </ul>
-    <p style="color:#888;font-size:11px;">Sistema Atlas — StockBridge</p>
   `;
+  const { html, text } = buildEmailLayout({ titulo: 'Recebimento concluído', corpoHtml });
   try {
-    await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html })));
+    const results = await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html, text })));
+    const falhas = results.filter((r) => r.status === 'rejected').length;
+    if (falhas > 0) logger.error({ notaFiscal: args.notaFiscal, falhas }, 'Falha ao enviar parte das confirmacoes de recebimento');
     logger.info(
       { notaFiscal: args.notaFiscal, destinatarios: destinatarios.length },
-      'Confirmação de recebimento concluído enviada',
+      'Confirmacao de recebimento concluido enviada',
     );
   } catch (err) {
-    logger.error({ err, args }, 'Falha ao enviar confirmação de recebimento concluído');
+    logger.error({ err, args }, 'Falha ao enviar confirmacao de recebimento concluido');
   }
 }
 
@@ -436,41 +463,43 @@ export async function enviarAlertaComodatoVencido(args: {
   fase: 'inicial' | 'escalada';
 }): Promise<void> {
   if (args.destinatarios.length === 0) {
-    logger.warn({ movimentacaoId: args.movimentacaoId }, 'Nenhum destinatário pro alerta de comodato vencido');
+    logger.warn({ movimentacaoId: args.movimentacaoId }, 'Nenhum destinatario pro alerta de comodato vencido');
     return;
   }
   const config = getConfig();
-  const linkPainel = `${config.APP_URL ?? ''}/stockbridge/comodato-retorno`;
+  const linkPainel = `${config.APP_URL}/stockbridge/comodato-retorno`;
   const fmtDataBr = (d: string) => {
     const m = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
     return m ? `${m[3]}/${m[2]}/${m[1]}` : d;
   };
-  const tagFase = args.fase === 'escalada' ? '⚠ ESCALADO' : '⚠';
-  const subject = `StockBridge — ${tagFase} Comodato vencido há ${args.diasVencido}d (${args.cliente ?? 'cliente s/n'})`;
-  const corHeader = args.fase === 'escalada' ? '#b91c1c' : '#D97706';
-  const html = `
-    <h2 style="color: ${corHeader};">Comodato vencido — ação necessária</h2>
+  const tagFase = args.fase === 'escalada' ? '[Escalado] ' : '';
+  const subject = `StockBridge — ${tagFase}Comodato vencido há ${args.diasVencido}d (${args.cliente ?? 'sem cliente'})`;
+  const escalada = args.fase === 'escalada'
+    ? '<p style="color:#b91c1c;"><strong>Esta notificação foi escalada para a diretoria por ultrapassar 15 dias de atraso.</strong> As notificações seguem ocorrendo a cada 15 dias enquanto o comodato permanecer em aberto.</p>'
+    : '';
+  const corpoHtml = `
     <p>O comodato abaixo passou da data prevista de retorno e segue em aberto há <strong>${args.diasVencido} dia${args.diasVencido === 1 ? '' : 's'}</strong>.</p>
     <ul>
-      <li><strong>Cliente:</strong> ${args.cliente ?? '— sem cliente registrado —'}</li>
-      <li><strong>Produto:</strong> ${args.produtoDescricao} (SKU ${args.produtoCodigoAcxe})</li>
-      <li><strong>Quantidade:</strong> ${args.quantidadeKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg</li>
-      <li><strong>Galpão de origem:</strong> ${args.galpaoOrigem}</li>
-      <li><strong>Saída em:</strong> ${fmtDataBr(args.dtSaida)}</li>
-      <li><strong>Retorno previsto:</strong> ${fmtDataBr(args.dtPrevistaRetorno)}</li>
+      ${li('Cliente', args.cliente ?? 'sem cliente informado')}
+      ${li('Produto', `${args.produtoDescricao} (SKU ${args.produtoCodigoAcxe})`)}
+      ${li('Quantidade', fmtKg(args.quantidadeKg))}
+      ${li('Galpão de origem', args.galpaoOrigem)}
+      ${li('Saída em', fmtDataBr(args.dtSaida))}
+      ${li('Retorno previsto', fmtDataBr(args.dtPrevistaRetorno))}
     </ul>
-    <p style="margin:16px 0;">
-      <a href="${linkPainel}"
-         style="display:inline-block;padding:10px 20px;background:#0077cc;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;">
-        Abrir Retorno de Comodato →
-      </a>
-    </p>
-    ${args.fase === 'escalada' ? '<p style="color:#b91c1c;"><strong>Esta notificacao foi escalada para a diretoria por ultrapassar 15 dias de atraso.</strong> Notificacoes seguem ocorrendo a cada 15 dias enquanto o comodato permanecer em aberto.</p>' : ''}
-    <p style="color:#888;font-size:11px;">Movimentação: ${args.movimentacaoId}</p>
-    <p style="color:#888;font-size:11px;">Sistema Atlas — StockBridge</p>
+    ${escalada}
+    <p style="color:#6b7280;font-size:12px;margin-top:16px;">Movimentação: ${escapeHtml(args.movimentacaoId)}</p>
   `;
+  const { html, text } = buildEmailLayout({
+    titulo: 'Comodato vencido — ação necessária',
+    corpoHtml,
+    ctaLabel: 'Abrir Retorno de Comodato',
+    ctaUrl: linkPainel,
+  });
   try {
-    await Promise.allSettled(args.destinatarios.map((to) => sendEmail({ to, subject, html })));
+    const results = await Promise.allSettled(args.destinatarios.map((to) => sendEmail({ to, subject, html, text })));
+    const falhas = results.filter((r) => r.status === 'rejected').length;
+    if (falhas > 0) logger.error({ movimentacaoId: args.movimentacaoId, falhas }, 'Falha ao enviar parte dos alertas de comodato');
     logger.info(
       { movimentacaoId: args.movimentacaoId, diasVencido: args.diasVencido, destinatarios: args.destinatarios.length, fase: args.fase },
       'Alerta de comodato vencido enviado',
@@ -479,4 +508,3 @@ export async function enviarAlertaComodatoVencido(args: {
     logger.error({ err, movimentacaoId: args.movimentacaoId }, 'Falha ao enviar alerta comodato vencido');
   }
 }
-

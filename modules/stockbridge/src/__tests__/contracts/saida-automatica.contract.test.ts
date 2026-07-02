@@ -28,6 +28,8 @@ vi.mock('@atlas/core', () => ({
   }),
   getPool: () => ({ query: vi.fn() }),
   sendEmail: vi.fn(),
+  buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
+  escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
 }));
 
 vi.mock('@atlas/auth', () => ({

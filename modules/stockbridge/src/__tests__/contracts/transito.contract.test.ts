@@ -45,6 +45,8 @@ vi.mock('@atlas/core', () => ({
   }),
   getConfig: () => ({ SEED_ADMIN_EMAIL: 'a@a' }),
   sendEmail: vi.fn(),
+  buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
+  escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
 }));
 
 let currentUser: { id: string; role: 'operador' | 'gestor' | 'diretor' } = { id: 'u1', role: 'gestor' };

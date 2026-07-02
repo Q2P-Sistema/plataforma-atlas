@@ -25,6 +25,8 @@ vi.mock('@atlas/core', () => ({
   }),
   getConfig: () => ({ SEED_ADMIN_EMAIL: 'admin@atlas.local', MODULE_STOCKBRIDGE_ENABLED: true }),
   sendEmail: vi.fn().mockResolvedValue(undefined),
+  buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
+  escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
 }));
 
 vi.mock('@atlas/auth', () => ({
