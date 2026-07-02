@@ -65,6 +65,7 @@ vi.mock('@atlas/core', () => ({
     DATABASE_URL: 'postgresql://test:test@localhost:5432/test',
     REDIS_URL: 'redis://localhost:6379',
     SESSION_SECRET: 'test-secret-1234567890',
+    APP_URL: 'http://localhost:5173',
     API_PORT: 3005,
     NODE_ENV: 'test',
     MODULE_HEDGE_ENABLED: false,
