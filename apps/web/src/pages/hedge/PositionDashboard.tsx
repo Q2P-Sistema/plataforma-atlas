@@ -54,11 +54,11 @@ const fmtPct = (v: number) => v.toFixed(1) + '%';
 
 function SourceBadge({ src }: { src: 'acxe' | 'q2p' | 'bcb' | 'calc' | 'manual' }) {
   const styles: Record<string, string> = {
-    acxe: 'bg-blue-500/10 text-blue-600 border-blue-500/20',
-    q2p: 'bg-green-500/10 text-green-600 border-green-500/20',
-    bcb: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20',
-    calc: 'bg-gray-500/10 text-gray-500 border-gray-500/20',
-    manual: 'bg-purple-500/10 text-purple-600 border-purple-500/20',
+    acxe: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20',
+    q2p: 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20',
+    bcb: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20',
+    calc: 'bg-gray-500/10 text-gray-500 dark:text-gray-400 border-gray-500/20',
+    manual: 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20',
   };
   return (
     <span className={`inline-flex text-xs px-1.5 py-0.5 rounded border font-semibold tracking-wider uppercase ${styles[src]}`}>

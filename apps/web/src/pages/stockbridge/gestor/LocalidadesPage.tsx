@@ -77,7 +77,7 @@ export function LocalidadesPage() {
               <div className="text-atlas-muted">{l.cnpj ?? '—'}</div>
               <div className="text-atlas-muted">{l.cidade ?? '—'}</div>
               <div className="text-center">
-                <span className={`text-xs px-2 py-0.5 rounded ${l.ativo ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                <span className={`text-xs px-2 py-0.5 rounded ${l.ativo ? 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'}`}>
                   {l.ativo ? 'ativo' : 'inativo'}
                 </span>
               </div>

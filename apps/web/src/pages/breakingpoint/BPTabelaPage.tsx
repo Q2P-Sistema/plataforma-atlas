@@ -40,20 +40,20 @@ const fmtMi = (v: number) => {
 function StatusBadge({ status }: { status: 'critico' | 'alerta' | 'ok' }) {
   if (status === 'critico') {
     return (
-      <span className="text-[10px] px-2 py-0.5 rounded bg-red-500/15 text-red-700 border border-red-500/40 font-bold uppercase">
+      <span className="text-[10px] px-2 py-0.5 rounded bg-red-500/15 text-red-700 dark:text-red-300 border border-red-500/40 font-bold uppercase">
         ⛔ CRISE
       </span>
     );
   }
   if (status === 'alerta') {
     return (
-      <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/15 text-amber-700 border border-amber-500/40 font-bold uppercase">
+      <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40 font-bold uppercase">
         ⚠ ALERTA
       </span>
     );
   }
   return (
-    <span className="text-[10px] px-2 py-0.5 rounded bg-green-500/15 text-green-700 border border-green-500/40 font-semibold uppercase">
+    <span className="text-[10px] px-2 py-0.5 rounded bg-green-500/15 text-green-700 dark:text-green-300 border border-green-500/40 font-semibold uppercase">
       ✓ OK
     </span>
   );
@@ -61,10 +61,10 @@ function StatusBadge({ status }: { status: 'critico' | 'alerta' | 'ok' }) {
 
 function TipoBadge({ tipo, isFinimp }: { tipo: string; isFinimp: boolean }) {
   const color = isFinimp
-    ? 'bg-orange-500/15 text-orange-700'
+    ? 'bg-orange-500/15 text-orange-700 dark:text-orange-300'
     : tipo === 'Fornecedor'
-      ? 'bg-blue-500/15 text-blue-700'
-      : 'bg-gray-500/15 text-gray-700';
+      ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300'
+      : 'bg-gray-500/15 text-gray-700 dark:text-gray-300';
   return (
     <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${color}`}>
       {tipo || '—'}
@@ -122,22 +122,22 @@ export function BPTabelaPage() {
             </thead>
             <tbody>
               {semanas.map((s) => {
-                const gapColor = s.gap < 0 ? 'text-red-600' : s.gap < 300_000 ? 'text-amber-600' : 'text-green-600';
+                const gapColor = s.gap < 0 ? 'text-red-600 dark:text-red-400' : s.gap < 300_000 ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400';
                 return (
                   <tr key={s.semana} className="border-t border-atlas-border/50 tabular-nums hover:bg-atlas-bg/50">
                     <td className="px-3 py-2 font-bold">{s.label}</td>
                     <td className="px-3 py-2 text-atlas-muted whitespace-nowrap">{s.data_fmt}</td>
                     <td className="px-3 py-2"><TipoBadge tipo={s.tipo} isFinimp={s.is_finimp} /></td>
-                    <td className={`px-3 py-2 font-semibold ${s.is_finimp ? 'text-orange-600' : 'text-red-600'}`}>
+                    <td className={`px-3 py-2 font-semibold ${s.is_finimp ? 'text-orange-600 dark:text-orange-400' : 'text-red-600 dark:text-red-400'}`}>
                       {fmtMi(s.pagamento)}
                     </td>
-                    <td className={`px-3 py-2 font-semibold ${s.saldo_cc < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                    <td className={`px-3 py-2 font-semibold ${s.saldo_cc < 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
                       {fmtMi(s.saldo_cc)}
                     </td>
-                    <td className={`px-3 py-2 font-semibold ${s.antecip_disp < 200_000 ? 'text-red-600' : 'text-amber-600'}`}>
+                    <td className={`px-3 py-2 font-semibold ${s.antecip_disp < 200_000 ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'}`}>
                       {fmtMi(s.antecip_disp)}
                     </td>
-                    <td className="px-3 py-2 font-semibold text-pink-600">{fmtMi(s.cap_compra)}</td>
+                    <td className="px-3 py-2 font-semibold text-pink-600 dark:text-pink-400">{fmtMi(s.cap_compra)}</td>
                     <td className="px-3 py-2 font-semibold text-purple-600">{fmtMi(s.finimp_saldo)}</td>
                     <td className="px-3 py-2 text-atlas-muted">{fmtMi(s.dup_bloq)}</td>
                     <td className={`px-3 py-2 font-bold ${gapColor}`}>{fmtMi(s.gap)}</td>

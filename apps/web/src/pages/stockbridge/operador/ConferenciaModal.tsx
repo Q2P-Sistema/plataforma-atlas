@@ -158,11 +158,11 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
             </div>
             <div className="p-2 bg-slate-50 dark:bg-slate-800 rounded">
               <div className="text-xs text-atlas-muted">Recebido</div>
-              <div className={`font-serif text-sm ${temDivergencia ? 'text-amber-700' : 'text-green-700'}`}>{qtdFisicaKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg</div>
+              <div className={`font-serif text-sm ${temDivergencia ? 'text-amber-700 dark:text-amber-400' : 'text-green-700 dark:text-green-400'}`}>{qtdFisicaKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg</div>
             </div>
             <div className="p-2 bg-slate-50 dark:bg-slate-800 rounded">
               <div className="text-xs text-atlas-muted">Delta</div>
-              <div className={`font-serif text-sm ${Math.abs(deltaKg) < 1 ? 'text-green-700' : deltaKg > 0 ? 'text-amber-700' : 'text-red-700'}`}>
+              <div className={`font-serif text-sm ${Math.abs(deltaKg) < 1 ? 'text-green-700 dark:text-green-400' : deltaKg > 0 ? 'text-amber-700 dark:text-amber-400' : 'text-red-700 dark:text-red-400'}`}>
                 {deltaKg > 0 ? '+' : ''}{deltaKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg
               </div>
             </div>

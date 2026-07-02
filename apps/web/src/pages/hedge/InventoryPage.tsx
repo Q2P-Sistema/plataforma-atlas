@@ -44,9 +44,9 @@ const ORIGEM_COLORS: Record<string, string> = {
 
 function KpiCard({ label, value, color, src, sub }: { label: string; value: string; color: string; src: string; sub?: string }) {
   const srcStyles: Record<string, string> = {
-    acxe: 'bg-blue-500/10 text-blue-600 border-blue-500/20',
-    q2p: 'bg-green-500/10 text-green-600 border-green-500/20',
-    calc: 'bg-gray-500/10 text-gray-500 border-gray-500/20',
+    acxe: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20',
+    q2p: 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20',
+    calc: 'bg-gray-500/10 text-gray-500 dark:text-gray-400 border-gray-500/20',
   };
   return (
     <div className="bg-atlas-card border border-atlas-border rounded-lg p-4 relative overflow-hidden">

@@ -123,10 +123,10 @@ export function MotorMVPage() {
   }
 
   const prioridadeStyle = (p: string) =>
-    p === 'critica' ? 'bg-red-500/10 text-red-600 border-red-500/20'
-    : p === 'alta' ? 'bg-amber-500/10 text-amber-600 border-amber-500/20'
-    : p === 'media' ? 'bg-blue-500/10 text-blue-600 border-blue-500/20'
-    : 'bg-gray-500/10 text-gray-500 border-gray-500/20';
+    p === 'critica' ? 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20'
+    : p === 'alta' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+    : p === 'media' ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20'
+    : 'bg-gray-500/10 text-gray-500 dark:text-gray-400 border-gray-500/20';
 
   const columns: Column<Recomendacao>[] = [
     { key: 'mes_ref', header: 'Bucket', render: (r) => r.mes_ref.slice(0, 7) },

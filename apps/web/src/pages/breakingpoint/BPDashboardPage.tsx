@@ -84,7 +84,7 @@ function CustomTooltip(props: { active?: boolean; payload?: unknown[]; label?: s
   if (!d) return null;
 
   const gc =
-    d.gap < 0 ? 'text-red-600' : d.gap < 300_000 ? 'text-amber-600' : 'text-green-600';
+    d.gap < 0 ? 'text-red-600 dark:text-red-400' : d.gap < 300_000 ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400';
 
   return (
     <div className="bg-atlas-card border border-atlas-border rounded-lg p-3 text-xs min-w-56 shadow-lg">
@@ -92,12 +92,12 @@ function CustomTooltip(props: { active?: boolean; payload?: unknown[]; label?: s
         <span className="font-bold">{label}</span>
         <span className="text-atlas-muted">{d.data_fmt}</span>
       </div>
-      <Row label="Pagamentos" value={d.pagamento} color={d.is_finimp ? 'text-orange-600' : 'text-red-600'} extra={d.is_finimp ? ' ⚠ FINIMP' : ''} />
-      <Row label="Rec. Duplicatas" value={d.rec_dup} color="text-blue-600" />
-      <Row label="Rec. Estoque D+15" value={d.rec_estoque} color="text-teal-600" />
-      <Row label="Saldo CC" value={d.saldo_cc} color={d.saldo_cc < 0 ? 'text-red-600' : 'text-green-600'} />
-      <Row label="Cap. Antecip." value={d.antecip_disp} color={d.antecip_disp < 200_000 ? 'text-red-600' : 'text-amber-600'} />
-      <Row label="🛒 Cap. Compras" value={d.cap_compra} color="text-pink-600" />
+      <Row label="Pagamentos" value={d.pagamento} color={d.is_finimp ? 'text-orange-600 dark:text-orange-400' : 'text-red-600 dark:text-red-400'} extra={d.is_finimp ? ' ⚠ FINIMP' : ''} />
+      <Row label="Rec. Duplicatas" value={d.rec_dup} color="text-blue-600 dark:text-blue-400" />
+      <Row label="Rec. Estoque D+15" value={d.rec_estoque} color="text-teal-600 dark:text-teal-400" />
+      <Row label="Saldo CC" value={d.saldo_cc} color={d.saldo_cc < 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'} />
+      <Row label="Cap. Antecip." value={d.antecip_disp} color={d.antecip_disp < 200_000 ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'} />
+      <Row label="🛒 Cap. Compras" value={d.cap_compra} color="text-pink-600 dark:text-pink-400" />
       <Row label="Gap Liquidez" value={d.gap} color={gc} />
     </div>
   );
@@ -108,7 +108,7 @@ function Row({ label, value, color, extra }: { label: string; value: number; col
     <div className="flex justify-between gap-4 mb-1">
       <span className="text-atlas-muted">
         {label}
-        {extra && <span className="text-orange-600 text-[10px] ml-1">{extra}</span>}
+        {extra && <span className="text-orange-600 dark:text-orange-400 text-[10px] ml-1">{extra}</span>}
       </span>
       <span className={`font-semibold ${color}`}>{fmtMi(value)}</span>
     </div>
@@ -147,7 +147,7 @@ export function BPDashboardPage() {
   if (error || !proj) {
     return (
       <div className="p-6">
-        <p className="text-red-600 font-semibold">Erro ao carregar projeção</p>
+        <p className="text-red-600 dark:text-red-400 font-semibold">Erro ao carregar projeção</p>
         <p className="text-atlas-muted text-sm mt-2">{(error as Error)?.message}</p>
       </div>
     );
@@ -199,7 +199,7 @@ export function BPDashboardPage() {
       {kpis.config_incompleta && (
         <div
           role="alert"
-          className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-xs text-amber-700"
+          className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-xs text-amber-700 dark:text-amber-300"
         >
           ⚠ Configuração incompleta — limites bancários zerados ou categoria FINIMP não configurada.
           Acesse a aba <strong>Configurar</strong> para completar os parâmetros e obter projeção precisa.
@@ -235,7 +235,7 @@ export function BPDashboardPage() {
           </div>
           <div className="bg-pink-500/10 border border-pink-500/30 rounded-lg px-4 py-2 text-center min-w-[170px]">
             <div className="text-[10px] text-atlas-muted uppercase tracking-wider">🛒 Cap. Compras Agora</div>
-            <div className="text-xl font-bold text-pink-600 leading-tight">{fmtMi(kpis.cap_compra_atual)}</div>
+            <div className="text-xl font-bold text-pink-600 dark:text-pink-400 leading-tight">{fmtMi(kpis.cap_compra_atual)}</div>
             <div className="text-[10px] text-atlas-muted mt-1">Média 8 sem: {fmtMi(kpis.cap_compra_med8)}</div>
           </div>
         </div>
