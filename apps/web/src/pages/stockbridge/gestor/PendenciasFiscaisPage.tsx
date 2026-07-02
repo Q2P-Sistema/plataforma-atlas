@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronRight, ChevronDown, AlertTriangle } from 'lucide-react';
 import { useAuthStore } from '../../../stores/auth.store.js';
+import { ESTAGIO_FUP_LABEL, rotulo } from '../labels.js';
 
 type StatusPendencia = 'recebida' | 'parcial' | 'pendente';
 type FonteRecebimento = 'omie' | 'movimentacao' | 'movimentacao_legado' | null;
@@ -229,7 +230,7 @@ export function PendenciasFiscaisPage() {
                     </span>
                   )}
                   {p.estagioFup && (
-                    <span className="text-[11px] text-atlas-muted px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 shrink-0">{p.estagioFup}</span>
+                    <span className="text-[11px] text-atlas-muted px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 shrink-0">{rotulo(ESTAGIO_FUP_LABEL, p.estagioFup)}</span>
                   )}
                   {p.diasEmExoneracao != null && (
                     <span className={`text-[11px] shrink-0 ${agingClass(p.diasEmExoneracao)}`} title={`Em exoneração desde ${fmtData(p.exoneracaoDataEntrada)}`}>

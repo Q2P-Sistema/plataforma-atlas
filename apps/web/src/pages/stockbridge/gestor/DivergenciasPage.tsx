@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '../../../stores/auth.store.js';
+import { SUBTIPO_LABEL, rotulo } from '../labels.js';
 
 type StatusDivergencia = 'aberta' | 'regularizada' | 'descartada';
 type TipoDivergencia = 'faltando' | 'varredura' | 'cruzada' | 'fiscal_pendente';
@@ -238,7 +239,7 @@ export function DivergenciasPage() {
                     <td className="px-3 py-2 font-mono text-xs">
                       {d.notaFiscal ?? '—'}
                       {d.subtipo && (
-                        <div className="text-[10px] text-atlas-muted normal-case">{d.subtipo}</div>
+                        <div className="text-[10px] text-atlas-muted normal-case">{rotulo(SUBTIPO_LABEL, d.subtipo)}</div>
                       )}
                     </td>
                     <td className="px-3 py-2 text-xs">

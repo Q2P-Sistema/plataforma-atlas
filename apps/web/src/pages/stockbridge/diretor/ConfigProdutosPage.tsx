@@ -147,7 +147,7 @@ export function ConfigProdutosPage() {
               </div>
               <div className="text-right">
                 {p.consumoMedioDiarioKg != null ? (
-                  p.consumoMedioDiarioKg.toFixed(2)
+                  p.consumoMedioDiarioKg.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                 ) : (
                   <span className="text-atlas-muted italic">Sem dados</span>
                 )}

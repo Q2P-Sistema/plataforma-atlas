@@ -177,7 +177,7 @@ export function TransitoPage() {
                         <div className="text-[10px] text-atlas-muted">
                           {l.paisOrigem && `${l.paisOrigem} · `}
                           {l.quantidadeFiscalKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg
-                          {l.custoBrlKg != null && ` · R$ ${l.custoBrlKg.toFixed(2)}/kg`}
+                          {l.custoBrlKg != null && ` · R$ ${l.custoBrlKg.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/kg`}
                         </div>
 
                         {l.etapaFup && (
