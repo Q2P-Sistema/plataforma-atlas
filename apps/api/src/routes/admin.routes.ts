@@ -265,7 +265,7 @@ router.put(
         sendError(
           res,
           'VALIDATION_ERROR',
-          'Campo "modules" deve ser array de strings',
+          'O campo "modules" deve ser um array de strings',
           400,
         );
         return;

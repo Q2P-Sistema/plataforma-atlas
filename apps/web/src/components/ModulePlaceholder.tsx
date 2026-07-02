@@ -15,7 +15,7 @@ export function ModulePlaceholder({ name, icon: Icon = Construction }: ModulePla
           {name}
         </h2>
         <p className="text-atlas-muted text-sm max-w-xs">
-          Modulo em implementacao. Em breve estara disponivel.
+          Módulo em implementação. Em breve estará disponível.
         </p>
       </div>
     </div>

@@ -102,7 +102,7 @@ export function Sidebar({
           <button
             onClick={onToggleCollapse}
             className="hidden lg:flex p-1 rounded hover:bg-atlas-border focus:outline-none focus:ring-2 focus:ring-acxe transition-colors"
-            aria-label={collapsed ? 'Expandir sidebar' : 'Recolher sidebar'}
+            aria-label={collapsed ? 'Expandir menu lateral' : 'Recolher menu lateral'}
           >
             <ChevronLeft
               size={16}
@@ -146,7 +146,7 @@ export function Sidebar({
                   {!collapsed && <span className="truncate">{mod.name}</span>}
                   {!collapsed && !isEnabled && (
                     <span className="ml-auto text-[10px] text-atlas-muted/40 uppercase tracking-wider">
-                      off
+                      inativo
                     </span>
                   )}
                 </button>
