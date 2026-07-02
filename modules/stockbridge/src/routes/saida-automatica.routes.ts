@@ -7,15 +7,34 @@ import { processarSaidaAutomatica } from '../services/saida-automatica.service.j
 const logger = createLogger('stockbridge:saida-automatica');
 const router: Router = Router();
 
+// Normaliza a unidade vinda do OMIE (uCom), que chega em MAIUSCULA e em formas
+// variadas (KG, TON, SC, BG), para o enum canonico. Unidade desconhecida NAO cai
+// em kg silenciosamente: fica crua e o enum a rejeita com 400 (STK-05, ACXEGDP-285).
+const unidadeSchema = z.preprocess((v) => {
+  if (typeof v !== 'string') return v;
+  const u = v.trim().toLowerCase();
+  const alias: Record<string, string> = {
+    t: 't', ton: 't', tonelada: 't', toneladas: 't',
+    kg: 'kg', quilo: 'kg', quilos: 'kg', kilo: 'kg', kilos: 'kg',
+    saco: 'saco', sc: 'saco', sacos: 'saco',
+    bigbag: 'bigbag', 'big bag': 'bigbag', bb: 'bigbag', bg: 'bigbag',
+  };
+  return alias[u] ?? u;
+}, z.enum(['t', 'kg', 'saco', 'bigbag']));
+
 const BodySchema = z.object({
   nf: z.string().min(1),
   tipo_omie: z.enum(['venda', 'remessa_beneficiamento', 'transf_cnpj', 'devolucao_fornecedor']),
   cnpj_emissor: z.enum(['acxe', 'q2p']),
-  produto_codigo: z.number().int().positive(),
-  quantidade_original: z.number().positive(),
-  unidade: z.enum(['t', 'kg', 'saco', 'bigbag']),
-  localidade_origem_codigo: z.number().int().positive(),
-  dt_emissao: z.string().min(1),
+  // OMIE pode enviar codigos/quantidades como string — coerce aceita "123" e 123.
+  produto_codigo: z.coerce.number().int().positive(),
+  quantidade_original: z.coerce.number().positive(),
+  unidade: unidadeSchema,
+  localidade_origem_codigo: z.coerce.number().int().positive(),
+  // OMIE emite a data como dd/MM/aaaa (campo dEmi). Validar o formato aqui evita
+  // que o parse no service caia em Invalid Date (dia>12) ou troque dia/mes
+  // silenciosamente via new Date() (STK-04, ACXEGDP-284).
+  dt_emissao: z.string().regex(/^\d{2}\/\d{2}\/\d{4}$/, 'dt_emissao deve estar no formato dd/MM/aaaa'),
   id_movest_omie: z.string().min(1),
   id_ajuste_omie: z.string().optional(),
 });
