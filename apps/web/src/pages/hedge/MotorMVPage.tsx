@@ -5,6 +5,8 @@ import { useAuthStore } from '../../stores/auth.store.js';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
+import { fmtNum, fmtPct, fmtBRL, fmtMesRef } from '../../lib/format.js';
+import { PRIORIDADE_LABEL, rotulo } from './labels.js';
 
 interface CamadasResult { l1_pct: number; l2_pct: number; l3_pct: number; }
 interface Recomendacao {
@@ -20,8 +22,8 @@ interface MotorResult {
   custo_acao_brl: number;
 }
 
-const fmtK = (v: number) => '$' + Math.round(v / 1000) + 'K';
-const fmtM = (v: number) => '$' + (v / 1e6).toFixed(2) + 'M';
+const fmtK = (v: number) => 'US$ ' + Math.round(v / 1000).toLocaleString('pt-BR') + 'K';
+const fmtM = (v: number) => 'US$ ' + fmtNum(v / 1e6, 2) + 'M';
 
 export function MotorMVPage() {
   const csrfToken = useAuthStore((s) => s.csrfToken);
@@ -95,7 +97,7 @@ export function MotorMVPage() {
     const l = i * 0.1;
     const volUsd = 1e6; // reference
     return {
-      lambda: l.toFixed(1),
+      lambda: fmtNum(l, 1),
       custo: Math.round(volUsd * (ndf90Rate - spotRate) * l / 1000),
       protecao: Math.round(volUsd * spotRate * 0.05 * l / 1000),
     };
@@ -115,7 +117,7 @@ export function MotorMVPage() {
   for (let c = 4.5; c <= 7.5; c += 0.10) {
     const cambio = parseFloat(c.toFixed(2));
     simData.push({
-      cambio: `R$${cambio.toFixed(2)}`,
+      cambio: `R$ ${fmtNum(cambio, 2)}`,
       sem_hedge: +((fat - vu * cambio - fat * 0.1) / fat * 100).toFixed(2),
       com_hedge: +((fat - vu * (taxaEfetiva * (1 - pctAberta) + cambio * pctAberta) - fat * 0.1) / fat * 100).toFixed(2),
       floor: 15,
@@ -129,13 +131,13 @@ export function MotorMVPage() {
     : 'bg-gray-500/10 text-gray-500 border-gray-500/20';
 
   const columns: Column<Recomendacao>[] = [
-    { key: 'mes_ref', header: 'Bucket', render: (r) => r.mes_ref.slice(0, 7) },
+    { key: 'mes_ref', header: 'Bucket', render: (r) => fmtMesRef(r.mes_ref) },
     { key: 'gap_atual', header: 'Gap USD', render: (r) => fmtK(r.gap_atual) },
-    { key: 'notional_sugerido', header: 'NDF a contratar', render: (r) => r.notional_sugerido > 0 ? <span className="text-red-600">{fmtK(r.notional_sugerido)}</span> : <span className="text-emerald-600">OK</span> },
+    { key: 'notional_sugerido', header: 'NDF a contratar', render: (r) => r.notional_sugerido > 0 ? <span className="text-red-600 dark:text-red-400">{fmtK(r.notional_sugerido)}</span> : <span className="text-emerald-600 dark:text-emerald-400">OK</span> },
     { key: 'instrumento', header: 'Instrumento', render: (r) => <span className="text-xs font-semibold">{r.instrumento}</span> },
-    { key: 'taxa_ndf', header: 'Taxa NDF', render: (r) => r.taxa_ndf > 0 ? `R$ ${r.taxa_ndf.toFixed(2)}` : '—' },
-    { key: 'cobertura_alvo', header: 'Cobertura Alvo', render: (r) => `${r.cobertura_alvo.toFixed(1)}%` },
-    { key: 'prioridade', header: 'Prioridade', render: (r) => <span className={`inline-flex text-xs px-1.5 py-0.5 rounded border font-semibold ${prioridadeStyle(r.prioridade)}`}>{r.prioridade}</span> },
+    { key: 'taxa_ndf', header: 'Taxa NDF', render: (r) => r.taxa_ndf > 0 ? fmtBRL(r.taxa_ndf) : '—' },
+    { key: 'cobertura_alvo', header: 'Cobertura Alvo', render: (r) => fmtPct(r.cobertura_alvo) },
+    { key: 'prioridade', header: 'Prioridade', render: (r) => <span className={`inline-flex text-xs px-1.5 py-0.5 rounded border font-semibold ${prioridadeStyle(r.prioridade)}`}>{rotulo(PRIORIDADE_LABEL, r.prioridade)}</span> },
   ];
 
   return (
@@ -156,7 +158,7 @@ export function MotorMVPage() {
             onChange={(e: ChangeEvent<HTMLInputElement>) => { const v = parseFloat(e.target.value); setLambda(v); commitSliders(v, pctEstoque); }}
             className="w-full accent-q2p" />
           <div className="text-right">
-            <p className="text-3xl font-bold text-emerald-600">{lambda.toFixed(2)}</p>
+            <p className="text-3xl font-bold text-emerald-600">{fmtNum(lambda, 2)}</p>
             <p className="text-xs text-atlas-muted mt-1">{lambdaDesc}</p>
           </div>
         </div>
@@ -167,7 +169,7 @@ export function MotorMVPage() {
             <div className="bg-atlas-bg border border-atlas-border rounded-lg p-3">
               <p className="text-xs tracking-[2px] text-atlas-muted uppercase mb-1">Cobertura Global</p>
               <p className="text-2xl font-bold" style={{ color: result.cobertura_global_pct >= 60 ? '#059669' : result.cobertura_global_pct >= 40 ? '#d97706' : '#dc2626' }}>
-                {result.cobertura_global_pct.toFixed(1)}%
+                {fmtPct(result.cobertura_global_pct)}
               </p>
               <p className="text-xs text-atlas-muted mt-1">% da exposição total coberta</p>
             </div>
@@ -193,7 +195,7 @@ export function MotorMVPage() {
           <div>
             <div className="flex justify-between text-xs text-atlas-muted mb-1">
               <span>Câmbio Spot (R$)</span>
-              <span className="font-bold text-blue-600">R$ {spotRate.toFixed(2)}</span>
+              <span className="font-bold text-blue-600">{fmtBRL(spotRate)}</span>
             </div>
             <input type="range" min={4.5} max={7.5} step={0.05} value={spotRate}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setSpotRate(parseFloat(e.target.value))}
@@ -202,7 +204,7 @@ export function MotorMVPage() {
           <div>
             <div className="flex justify-between text-xs text-atlas-muted mb-1">
               <span>Taxa NDF 90d (R$)</span>
-              <span className="font-bold text-purple-600">R$ {ndf90Rate.toFixed(2)}</span>
+              <span className="font-bold text-purple-600">{fmtBRL(ndf90Rate)}</span>
             </div>
             <input type="range" min={4.5} max={8.0} step={0.05} value={ndf90Rate}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setNdf90Rate(parseFloat(e.target.value))}
@@ -264,11 +266,11 @@ export function MotorMVPage() {
               <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" />
               <XAxis dataKey="cambio" tick={{ fontSize: 9 }} interval={4} />
               <YAxis tick={{ fontSize: 9 }} tickFormatter={(v: number) => `${v}%`} />
-              <Tooltip formatter={(v) => `${Number(v).toFixed(2)}%`} />
+              <Tooltip formatter={(v) => fmtPct(Number(v), 2)} />
               <Legend />
               <Line type="monotone" dataKey="sem_hedge" name="Sem hedge" stroke="#dc2626" strokeWidth={1.5} strokeDasharray="3 2" dot={false} />
               <Line type="monotone" dataKey="com_hedge" name={`Modelo MV (${l1}/${l2}/${100 - l1 - l2})`} stroke="#059669" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="floor" name="Floor 15%" stroke="rgba(220,38,38,0.3)" strokeWidth={1} strokeDasharray="2 4" dot={false} />
+              <Line type="monotone" dataKey="floor" name="Piso 15%" stroke="rgba(220,38,38,0.3)" strokeWidth={1} strokeDasharray="2 4" dot={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -282,7 +284,7 @@ function LayerCard({ num, name, pct, color, desc }: { num: string; name: string;
     <div className="rounded-lg p-4 border border-atlas-border" style={{ borderColor: color + '33', background: color + '0a' }}>
       <p className="text-xs tracking-[2px] uppercase mb-2" style={{ color }}>{`CAMADA ${num}`}</p>
       <p className="text-sm font-bold mb-1" style={{ color }}>{name}</p>
-      <p className="text-2xl font-extrabold leading-none mb-2" style={{ color }}>{pct.toFixed(1)}%</p>
+      <p className="text-2xl font-extrabold leading-none mb-2" style={{ color }}>{fmtPct(pct)}</p>
       <p className="text-xs text-atlas-muted leading-relaxed">{desc}</p>
       <div className="h-1.5 rounded bg-atlas-border/50 mt-3">
         <div className="h-full rounded transition-all duration-300" style={{ width: `${pct}%`, backgroundColor: color }} />

@@ -4,6 +4,7 @@ import { useAuthStore } from '../../stores/auth.store.js';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
+import { fmtNum, fmtPct, fmtBRL } from '../../lib/format.js';
 
 interface Cenario {
   cambio: number;
@@ -44,7 +45,7 @@ export function MarginSimulationPage() {
 
   // Chart data
   const chartData = cenarios.map((c) => ({
-    cambio: `R$${c.cambio.toFixed(2)}`,
+    cambio: `R$ ${fmtNum(c.cambio, 2)}`,
     sem_hedge: +((parseFloat(faturamento) - parseFloat(volume) * c.cambio - parseFloat(custos)) / parseFloat(faturamento) * 100).toFixed(2),
     com_hedge: c.margem_pct,
     floor: 15,
@@ -59,7 +60,7 @@ export function MarginSimulationPage() {
           <label htmlFor="sim-fat" className="block text-xs text-atlas-muted uppercase tracking-wider mb-1">Faturamento BRL</label>
           <input id="sim-fat" type="number" value={faturamento} onChange={(e: ChangeEvent<HTMLInputElement>) => setFaturamento(e.target.value)}
             className="w-full px-3 py-2 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-sm font-mono focus:outline-none focus:ring-1 focus:ring-acxe" />
-          <p className="text-xs text-atlas-muted mt-1">R$ {(parseFloat(faturamento || '0') / 1e6).toFixed(1)}M</p>
+          <p className="text-xs text-atlas-muted mt-1">R$ {fmtNum(parseFloat(faturamento || '0') / 1e6, 1)}M</p>
         </div>
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
           <label htmlFor="sim-custos" className="block text-xs text-atlas-muted uppercase tracking-wider mb-1">Outros Custos BRL</label>
@@ -71,7 +72,7 @@ export function MarginSimulationPage() {
           <label htmlFor="sim-vol" className="block text-xs text-atlas-muted uppercase tracking-wider mb-1">Volume USD (exposição)</label>
           <input id="sim-vol" type="number" value={volume} onChange={(e: ChangeEvent<HTMLInputElement>) => setVolume(e.target.value)}
             className="w-full px-3 py-2 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-sm font-mono focus:outline-none focus:ring-1 focus:ring-acxe" />
-          <p className="text-xs text-atlas-muted mt-1">$ {(parseFloat(volume || '0') / 1e6).toFixed(2)}M</p>
+          <p className="text-xs text-atlas-muted mt-1">US$ {fmtNum(parseFloat(volume || '0') / 1e6, 2)}M</p>
         </div>
       </div>
 
@@ -90,11 +91,11 @@ export function MarginSimulationPage() {
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" />
                 <XAxis dataKey="cambio" tick={{ fontSize: 9 }} interval={1} />
                 <YAxis tick={{ fontSize: 9 }} tickFormatter={(v: number) => `${v}%`} />
-                <Tooltip formatter={(v) => `${Number(v).toFixed(2)}%`} />
+                <Tooltip formatter={(v) => fmtPct(Number(v), 2)} />
                 <Legend />
                 <Line type="monotone" dataKey="sem_hedge" name="Sem hedge" stroke="#dc2626" strokeWidth={1.5} strokeDasharray="3 2" dot={false} />
                 <Line type="monotone" dataKey="com_hedge" name="Com NDF" stroke="#059669" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="floor" name="Floor 15%" stroke="rgba(220,38,38,0.3)" strokeWidth={1} strokeDasharray="2 4" dot={false} />
+                <Line type="monotone" dataKey="floor" name="Piso 15%" stroke="rgba(220,38,38,0.3)" strokeWidth={1} strokeDasharray="2 4" dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -113,11 +114,11 @@ export function MarginSimulationPage() {
               <tbody className="bg-atlas-card divide-y divide-atlas-border/50">
                 {cenarios.map((c) => (
                   <tr key={c.cambio} className="hover:bg-atlas-bg/50">
-                    <td className="px-3 py-2">R$ {c.cambio.toFixed(2)}</td>
+                    <td className="px-3 py-2">{fmtBRL(c.cambio)}</td>
                     <td className="px-3 py-2 text-right">{formatBrl(c.custo_com_hedge)}</td>
                     <td className="px-3 py-2 text-right">{formatBrl(c.custo_sem_hedge)}</td>
-                    <td className={`px-3 py-2 text-right font-semibold ${c.margem_pct >= 20 ? 'text-emerald-600' : c.margem_pct >= 10 ? 'text-amber-600' : 'text-red-600'}`}>
-                      {c.margem_pct.toFixed(1)}%
+                    <td className={`px-3 py-2 text-right font-semibold ${c.margem_pct >= 20 ? 'text-emerald-600 dark:text-emerald-400' : c.margem_pct >= 10 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'}`}>
+                      {fmtPct(c.margem_pct)}
                     </td>
                   </tr>
                 ))}

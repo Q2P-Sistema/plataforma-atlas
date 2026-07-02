@@ -1,5 +1,6 @@
 import { Outlet } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { fmtBRL, fmtPct } from '../../lib/format.js';
 
 interface PtaxAtual {
   dataRef: string;
@@ -39,13 +40,13 @@ export function HedgePtaxBadge() {
   const neutro = variacao_pct === 0;
   const color = neutro ? 'text-atlas-muted' : subiu ? 'text-red-500' : 'text-emerald-500';
   const arrow = neutro ? '' : subiu ? '▲' : '▼';
-  const varStr = `${arrow} ${Math.abs(variacao_pct).toFixed(2)}%`;
+  const varStr = `${arrow} ${fmtPct(Math.abs(variacao_pct), 2)}`;
 
   return (
     <div className="flex items-center gap-2 text-xs">
       <span className="text-atlas-muted uppercase tracking-wider">USD</span>
       <span className={`font-bold text-sm ${color}`}>
-        R$ {venda.toFixed(4)}
+        {fmtBRL(venda, 4)}
       </span>
       {!neutro && (
         <span className={`font-semibold ${color}`}>{varStr}</span>
