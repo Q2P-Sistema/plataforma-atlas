@@ -28,6 +28,11 @@ export function fmtUsdMi(v: number, casas = 2): string {
   return `US$ ${(v / 1_000_000).toLocaleString('pt-BR', { minimumFractionDigits: casas, maximumFractionDigits: casas })} Mi`;
 }
 
+/** Quantidade em kg → toneladas quando >= 1000 kg. Ex.: 25000 → "25,0t", 500 → "500kg". */
+export function fmtToneladas(kg: number): string {
+  return kg >= 1000 ? `${fmtNum(kg / 1000, 1)}t` : `${fmtNum(kg, 0)}kg`;
+}
+
 /** ISO "YYYY-MM-DD[...]" → "DD/MM/YYYY" (sem Date, evita fuso). */
 export function fmtDataBr(iso: string): string {
   const [y, m, d] = (iso.split('T')[0] ?? iso).split('-');

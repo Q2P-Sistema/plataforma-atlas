@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useAuthStore } from '../../stores/auth.store.js';
+import { fmtToneladas as fmtT } from '../../lib/format.js';
 
 interface AIRecomendacao { familia: string; acao: string; justificativa: string; prioridade: number; }
 interface AIResult { resumo_executivo: string; alertas: string[]; recomendacoes: AIRecomendacao[]; }
@@ -20,7 +21,6 @@ interface ShoppingItem {
   is_local: boolean;
 }
 
-const fmtT = (kg: number) => kg >= 1000 ? `${(kg / 1000).toFixed(1)}t` : `${kg}kg`;
 const fmtBrl = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
 export function ShoppingListPage() {
@@ -118,7 +118,7 @@ export function ShoppingListPage() {
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-heading font-bold text-atlas-text">Shopping List</h1>
+        <h1 className="text-2xl font-heading font-bold text-atlas-text">Lista de Compras</h1>
         <div className="flex items-center gap-3">
           <span className="text-xs text-atlas-muted">{selectedItems.length} itens | {fmtBrl(totalValor)}</span>
           <button onClick={runAnalysis} disabled={selectedItems.length === 0 || aiMutation.isPending}

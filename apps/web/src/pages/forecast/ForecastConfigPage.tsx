@@ -127,7 +127,7 @@ export function ForecastConfigPage() {
             </tbody>
           </table>
         </div>
-        <p className="text-xs text-atlas-muted mt-2">Valores com borda amarela foram editados pelo usuário. 1.00 = media, &gt;1 = pico, &lt;1 = baixa.</p>
+        <p className="text-xs text-atlas-muted mt-2">Valores com borda amarela foram editados pelo usuário. 1,00 = média, &gt;1 = pico, &lt;1 = baixa.</p>
       </div>
     </div>
   );

@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   AreaChart, Area, ResponsiveContainer, Tooltip,
 } from 'recharts';
+import { fmtToneladas as fmtT, fmtPct } from '../../lib/format.js';
 
 interface VendaMensal { mes: string; volume_kg: number; valor_brl: number; }
 interface SkuContrib { codigo: string; descricao: string; volume_24m: number; contribuicao_pct: number; cobertura_dias: number; }
@@ -11,8 +12,6 @@ interface FamiliaDemanda {
   familia: string; meses: VendaMensal[]; ultimos_3m: VendaMensal[];
   yoy: YoY; sparkline: number[]; skus: SkuContrib[];
 }
-
-const fmtT = (kg: number) => kg >= 1000 ? `${(kg / 1000).toFixed(1)}t` : `${kg}kg`;
 
 export function DemandAnalysisPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -47,7 +46,7 @@ export function DemandAnalysisPage() {
                 {familias[0]?.ultimos_3m.map((m) => (
                   <th key={m.mes} className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">{formatMesLabel(m.mes)}</th>
                 ))}
-                <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">YoY %</th>
+                <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Var. anual %</th>
                 <th className="px-3 py-2.5 text-center text-xs text-atlas-muted uppercase w-28">Tendência 24m</th>
               </tr>
             </thead>
@@ -91,7 +90,7 @@ export function DemandAnalysisPage() {
                         </td>
                         <td className="px-3 py-2 text-right text-xs">
                           <span className={sk.contribuicao_pct >= 30 ? 'font-semibold text-blue-600' : 'text-atlas-muted'}>
-                            {sk.contribuicao_pct}%
+                            {fmtPct(sk.contribuicao_pct)}
                           </span>
                         </td>
                         <td className="px-3 py-2 text-center text-xs text-atlas-muted">
@@ -118,7 +117,7 @@ function YoYBadge({ yoy }: { yoy: YoY }) {
 
   return (
     <span className="inline-flex items-center gap-1 text-sm font-semibold" style={{ color }}>
-      {arrow} {yoy.variacao_pct > 0 ? '+' : ''}{yoy.variacao_pct}%
+      {arrow} {yoy.variacao_pct > 0 ? '+' : ''}{fmtPct(yoy.variacao_pct)}
     </span>
   );
 }

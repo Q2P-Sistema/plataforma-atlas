@@ -1,5 +1,6 @@
 import { useState, useMemo, type ChangeEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { fmtToneladas as fmtT } from '../../lib/format.js';
 
 interface Sku {
   codigo: string; descricao: string; disponivel: number; bloqueado: number;
@@ -22,7 +23,6 @@ interface UrgenteForecast {
   compra_local: { dia_abrir: number; gap_dias: number; custo_oportunidade: number; qtd_local: number; valor_local: number } | null;
 }
 
-const fmtT = (kg: number) => kg >= 1000 ? `${(kg / 1000).toFixed(1)}t` : `${kg}kg`;
 const fmtBrl = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
 const STATUS_STYLE: Record<string, string> = {
@@ -30,6 +30,8 @@ const STATUS_STYLE: Record<string, string> = {
   atencao: 'bg-amber-500/10 text-amber-600 border-amber-500/20',
   ok: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20',
 };
+
+const STATUS_LABEL: Record<string, string> = { critico: 'Crítico', atencao: 'Atenção', ok: 'OK' };
 
 export function ForecastDashboard() {
   const [tab, setTab] = useState<'familias' | 'urgentes'>('familias');
@@ -115,7 +117,7 @@ export function ForecastDashboard() {
         <KpiCard label="Estoque Total" value={fmtT(totalEstoque)} color="#059669" sub={`${familias.length} famílias`} />
         <KpiCard label="Próxima Ruptura" value={proxRuptura ? `${proxRuptura.cobertura_dias}d` : '—'} color="#d97706"
           sub={proxRuptura ? proxRuptura.familia_nome : 'Nenhuma ruptura'} />
-        <KpiCard label="Compra Intl." value={String(intl.length)} color="#dc2626" sub="urgentes 15 dias" />
+        <KpiCard label="Compra Internac." value={String(intl.length)} color="#dc2626" sub="urgentes 15 dias" />
         <KpiCard label="Compra Local" value={String(local.length)} color="#7c3aed" sub="prazo perdido" />
         <KpiCard label="Valor a Comprar" value={fmtBrl(valorTotal)} color="#0077cc" sub={`${urgentes.length} famílias`} />
       </div>
@@ -161,7 +163,7 @@ export function ForecastDashboard() {
                         <td className="px-3 py-3 text-right">{r.pool_bloqueado > 0 ? <span className="text-amber-600">{fmtT(r.pool_bloqueado)}</span> : '—'}</td>
                         <td className="px-3 py-3 text-right">{r.pool_transito > 0 ? <span className="text-blue-600">{fmtT(r.pool_transito)}</span> : '—'}</td>
                         <td className="px-3 py-3 text-right font-semibold">{fmtT(r.pool_total)}</td>
-                        <td className="px-3 py-3 text-right">R$ {r.cmc_medio.toFixed(2)}</td>
+                        <td className="px-3 py-3 text-right">{fmtBrl(r.cmc_medio)}</td>
                         <td className="px-3 py-3 text-right">{r.venda_diaria_media > 0 ? fmtT(r.venda_diaria_media) : <span className="text-atlas-muted">—</span>}</td>
                         <td className="px-3 py-3 text-right">
                           {r.cobertura_dias >= 999 ? <span className="text-atlas-muted">sem hist.</span> : (
@@ -169,7 +171,7 @@ export function ForecastDashboard() {
                           )}
                         </td>
                         <td className="px-3 py-3 text-center">
-                          <span className={`inline-flex text-xs px-1.5 py-0.5 rounded border font-semibold ${STATUS_STYLE[r.status] ?? ''}`}>{r.status}</span>
+                          <span className={`inline-flex text-xs px-1.5 py-0.5 rounded border font-semibold ${STATUS_STYLE[r.status] ?? ''}`}>{STATUS_LABEL[r.status] ?? r.status}</span>
                         </td>
                       </tr>
                       {isOpen && r.skus.map((sk) => (
@@ -182,7 +184,7 @@ export function ForecastDashboard() {
                           <td className="px-3 py-2 text-right text-xs text-amber-600">{sk.bloqueado > 0 ? fmtT(sk.bloqueado) : '—'}</td>
                           <td className="px-3 py-2 text-right text-xs text-blue-600">{sk.transito > 0 ? fmtT(sk.transito) : '—'}</td>
                           <td className="px-3 py-2 text-right text-xs font-semibold">{fmtT(sk.total)}</td>
-                          <td className="px-3 py-2 text-right text-xs">R$ {sk.cmc.toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right text-xs">{fmtBrl(sk.cmc)}</td>
                           <td className="px-3 py-2 text-right text-xs">{sk.venda_dia > 0 ? fmtT(sk.venda_dia) : '—'}</td>
                           <td className="px-3 py-2 text-right text-xs">{sk.cobertura < 999 ? `${sk.cobertura}d` : '—'}</td>
                           <td className="px-3 py-2 text-center text-xs text-atlas-muted">{sk.lt}d LT</td>
@@ -261,7 +263,7 @@ function DefinitionsPanel() {
           </div>
           <div>
             <p className="font-semibold text-atlas-text mb-0.5">Sazonalidade</p>
-            <p>Fator multiplicador mensal aplicado à demanda diária média. Valores &gt;1.0 indicam mês de alta demanda, &lt;1.0 indica baixa. Editável em Config &gt; Sazonalidade.</p>
+            <p>Fator multiplicador mensal aplicado à demanda diária média. Valores &gt;1,0 indicam mês de alta demanda, &lt;1,0 indicam baixa. Editável em Config &gt; Sazonalidade.</p>
           </div>
           <div>
             <p className="font-semibold text-atlas-text mb-0.5">Qtd Sugerida (net-of-pipeline)</p>
@@ -340,7 +342,7 @@ function UrgentSection({ title, subtitle, color, items, type }: {
                     {type === 'local'
                       ? <span className="text-red-600 font-semibold">{u.compra_local ? `${u.compra_local.gap_dias}d` : '—'}</span>
                       : <><span className="font-semibold" style={{ color }}>{fmtT(u.qtd_sugerida)}</span>
-                          <span className="text-xs text-atlas-muted ml-1">MOQ {u.moq_ativo / 1000}t</span></>
+                          <span className="text-xs text-atlas-muted ml-1">MOQ {fmtT(u.moq_ativo)}</span></>
                     }
                   </td>
                   <td className="px-3 py-3 text-right">
