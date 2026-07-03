@@ -1,7 +1,11 @@
 import { useAuthStore } from '../stores/auth.store.js';
+import { useModules } from '../hooks/useModules.js';
 
 export function DashboardPage() {
   const user = useAuthStore((s) => s.user);
+  const { data: modules } = useModules();
+  // Antes o card mostrava "-" fixo (nunca calculado) — UI-E, ACXEGDP-265.
+  const modulosAtivos = modules ? String(modules.filter((m) => m.enabled).length) : '…';
 
   return (
     <div>
@@ -13,7 +17,7 @@ export function DashboardPage() {
       </p>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <StatCard label="Módulos ativos" value="-" />
+        <StatCard label="Módulos ativos" value={modulosAtivos} />
         <StatCard label="Último acesso" value={formatDate(user?.last_login_at)} />
         <StatCard label="Perfil" value={capitalize(user?.role)} />
       </div>

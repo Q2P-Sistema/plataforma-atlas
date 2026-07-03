@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { bpChartColors } from '@atlas/ui';
+import { bpChartColors, ErrorState } from '@atlas/ui';
+import { fmtMi } from './format.js';
 
 interface Banco {
   id: string;
@@ -19,13 +20,11 @@ interface Banco {
 
 async function fetchBancos(): Promise<Banco[]> {
   const r = await fetch('/api/v1/bp/bancos?empresa=acxe', { credentials: 'include' });
+  // Sem o guard, erro estruturado do backend resolve como data=null (UI-E).
+  if (!r.ok) throw new Error('Falha ao carregar bancos');
   return (await r.json()).data;
 }
 
-const fmtMi = (v: number) => {
-  const mi = v / 1_000_000;
-  return `R$ ${mi.toFixed(2).replace('.', ',')}Mi`;
-};
 const fmtBRL = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(v);
 
@@ -72,10 +71,17 @@ function TotalCard({
 }
 
 export function BPLimitesPage() {
-  const { data: bancos = [], isLoading } = useQuery({ queryKey: ['bp', 'bancos'], queryFn: fetchBancos });
+  const { data: bancos = [], isLoading, error, refetch } = useQuery({ queryKey: ['bp', 'bancos'], queryFn: fetchBancos });
+
+  // Falha na query mostrava página vazia sem feedback (UI-E, ACXEGDP-265).
+  if (error) return (
+    <div className="p-6 max-w-[1440px] mx-auto">
+      <ErrorState message={(error as Error).message} retry={() => refetch()} />
+    </div>
+  );
 
   if (isLoading) return (
-    <div className="p-6 space-y-5">
+    <div className="p-6 max-w-[1440px] mx-auto space-y-5">
       <div className="h-8 w-64 bg-atlas-border rounded animate-pulse" />
       <div className="grid grid-cols-3 gap-4">
         {Array.from({ length: 3 }, (_, i) => <div key={i} className="h-48 rounded-xl bg-atlas-border animate-pulse" />)}

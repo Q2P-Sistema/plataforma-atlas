@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { ErrorState } from '@atlas/ui';
+import { fmtMi } from './format.js';
 
 interface SemanaProjetada {
   semana: number;
@@ -26,16 +28,12 @@ interface Projecao {
 
 async function fetchProjecao(): Promise<Projecao> {
   const r = await fetch('/api/v1/bp/projecao?empresa=acxe', { credentials: 'include' });
+  // O backend responde erro como JSON valido ({data:null,error}) — sem este
+  // guard, r.json() resolve e o React Query nunca popula `error` (UI-E).
+  if (!r.ok) throw new Error('Falha ao carregar projeção');
   const j = await r.json();
   return j.data;
 }
-
-const fmtMi = (v: number) => {
-  if (v === 0) return 'R$ 0';
-  const mi = v / 1_000_000;
-  const sign = v < 0 ? '− ' : '';
-  return `${sign}R$ ${Math.abs(mi).toFixed(2).replace('.', ',')}Mi`;
-};
 
 function StatusBadge({ status }: { status: 'critico' | 'alerta' | 'ok' }) {
   if (status === 'critico') {
@@ -74,14 +72,22 @@ function TipoBadge({ tipo, isFinimp }: { tipo: string; isFinimp: boolean }) {
 
 export function BPTabelaPage() {
   const [showAll, setShowAll] = useState(false);
-  const { data: proj, isLoading } = useQuery({
+  const { data: proj, isLoading, error, refetch } = useQuery({
     queryKey: ['bp', 'projecao', 'acxe'],
     queryFn: fetchProjecao,
     staleTime: 60_000,
   });
 
+  // Sem isso, uma falha na query deixava a página presa no skeleton para
+  // sempre (isLoading=false, proj=undefined) — UI-E, ACXEGDP-265.
+  if (error) return (
+    <div className="p-6 max-w-[1440px] mx-auto">
+      <ErrorState message={(error as Error).message} retry={() => refetch()} />
+    </div>
+  );
+
   if (isLoading || !proj) return (
-    <div className="p-6 space-y-5">
+    <div className="p-6 max-w-[1440px] mx-auto space-y-5">
       <div className="h-8 w-64 bg-atlas-border rounded animate-pulse" />
       <div className="h-64 rounded-xl bg-atlas-border animate-pulse" />
     </div>

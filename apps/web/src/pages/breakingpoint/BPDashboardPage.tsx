@@ -13,6 +13,7 @@ import {
 } from 'recharts';
 import { Countdown } from './components/Countdown.js';
 import { bpChartColors } from '@atlas/ui';
+import { fmtMi } from './format.js';
 
 interface BreakingPoint { semana: number; data: string; val: number }
 interface TravaEvent { semana: number; data: string }
@@ -63,12 +64,6 @@ interface Projecao {
   sync_at: string;
 }
 
-const fmtMi = (v: number) => {
-  if (v === null || v === undefined) return '—';
-  const mi = v / 1_000_000;
-  const sign = v < 0 ? '− ' : '';
-  return `${sign}R$ ${Math.abs(mi).toFixed(2).replace('.', ',')}Mi`;
-};
 const fmtAxis = (v: number) => `${(v / 1_000_000).toFixed(1)}M`;
 
 async function fetchProjecao(): Promise<Projecao> {
