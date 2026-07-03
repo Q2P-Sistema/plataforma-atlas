@@ -160,7 +160,9 @@ export async function getPagamentosSemanais(
       COALESCE(SUM(${finimpMatch}), 0) AS finimp_total
     FROM public."${tables.contasPagar}"
     WHERE status_titulo = ANY(ARRAY['A VENCER','ATRASADO','VENCE HOJE'])
-      AND data_vencimento BETWEEN CURRENT_DATE AND CURRENT_DATE + ${semanas * 7}
+      -- inclui vencidos (venc < hoje): sem limite inferior, o clamp Math.max(0, semana)
+      -- abaixo agrega os atrasados na semana 0 (pressao de caixa imediata) — MOD-03.
+      AND data_vencimento <= CURRENT_DATE + ${semanas * 7}
     GROUP BY 1
     ORDER BY 1
   `));
@@ -199,7 +201,9 @@ export async function getRecebimentosSemanais(
       COALESCE(SUM(valor_documento), 0) AS total
     FROM public."${tables.contasReceber}"
     WHERE status_titulo = ANY(ARRAY['A VENCER','ATRASADO','VENCE HOJE'])
-      AND data_vencimento BETWEEN CURRENT_DATE AND CURRENT_DATE + ${semanas * 7}
+      -- inclui vencidos (venc < hoje): sem limite inferior, o clamp Math.max(0, semana)
+      -- abaixo agrega os atrasados na semana 0 — consistente com getDupTotal — MOD-03.
+      AND data_vencimento <= CURRENT_DATE + ${semanas * 7}
     GROUP BY 1
     ORDER BY 1
   `));
