@@ -6,6 +6,8 @@ vi.mock('@atlas/core', () => ({
   getConfig: () => ({}),
   sendEmail: vi.fn(),
   buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
+  emailDataList: () => '',
+  emailActionBox: (html: string) => html,
   escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
   getPool: () => ({ query: vi.fn() }),
 }));
