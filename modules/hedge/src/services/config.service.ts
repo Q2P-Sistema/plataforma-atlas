@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import { getDb, createLogger } from '@atlas/core';
 import { configMotor, ndfTaxas } from '@atlas/db';
 
@@ -23,7 +23,8 @@ export async function getTaxasNdf(dataRef?: string) {
   if (dataRef) {
     return db.select().from(ndfTaxas).where(eq(ndfTaxas.dataRef, dataRef)).orderBy(ndfTaxas.prazoDias);
   }
-  return db.select().from(ndfTaxas).orderBy(ndfTaxas.dataRef, ndfTaxas.prazoDias).limit(30);
+  // data_ref DESC: as 30 cotacoes MAIS RECENTES (antes ASC trazia as mais antigas — MOD-01)
+  return db.select().from(ndfTaxas).orderBy(desc(ndfTaxas.dataRef), ndfTaxas.prazoDias).limit(30);
 }
 
 export async function inserirTaxaNdf(dataRef: string, prazoDias: number, taxa: number): Promise<void> {
