@@ -1,6 +1,7 @@
 import { useState, useMemo, type ChangeEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { fmtToneladas as fmtT } from '../../lib/format.js';
+import { chartColors } from '@atlas/ui';
 
 interface Sku {
   codigo: string; descricao: string; disponivel: number; bloqueado: number;
@@ -114,12 +115,12 @@ export function ForecastDashboard() {
 
       {/* KPI Strip */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-        <KpiCard label="Estoque Total" value={fmtT(totalEstoque)} color="#059669" sub={`${familias.length} famílias`} />
-        <KpiCard label="Próxima Ruptura" value={proxRuptura ? `${proxRuptura.cobertura_dias}d` : '—'} color="#d97706"
+        <KpiCard label="Estoque Total" value={fmtT(totalEstoque)} color={chartColors.success} sub={`${familias.length} famílias`} />
+        <KpiCard label="Próxima Ruptura" value={proxRuptura ? `${proxRuptura.cobertura_dias}d` : '—'} color={chartColors.warn}
           sub={proxRuptura ? proxRuptura.familia_nome : 'Nenhuma ruptura'} />
-        <KpiCard label="Compra Internac." value={String(intl.length)} color="#dc2626" sub="urgentes 15 dias" />
-        <KpiCard label="Compra Local" value={String(local.length)} color="#7c3aed" sub="prazo perdido" />
-        <KpiCard label="Valor a Comprar" value={fmtBrl(valorTotal)} color="#0077cc" sub={`${urgentes.length} famílias`} />
+        <KpiCard label="Compra Internac." value={String(intl.length)} color={chartColors.crit} sub="urgentes 15 dias" />
+        <KpiCard label="Compra Local" value={String(local.length)} color={chartColors.ndf} sub="prazo perdido" />
+        <KpiCard label="Valor a Comprar" value={fmtBrl(valorTotal)} color={chartColors.acxe} sub={`${urgentes.length} famílias`} />
       </div>
 
       {/* TAB: Familias */}
@@ -167,7 +168,7 @@ export function ForecastDashboard() {
                         <td className="px-3 py-3 text-right">{r.venda_diaria_media > 0 ? fmtT(r.venda_diaria_media) : <span className="text-atlas-muted">—</span>}</td>
                         <td className="px-3 py-3 text-right">
                           {r.cobertura_dias >= 999 ? <span className="text-atlas-muted">sem hist.</span> : (
-                            <span style={{ color: r.cobertura_dias <= 30 ? '#dc2626' : r.cobertura_dias <= 60 ? '#d97706' : '#059669' }} className="font-semibold">{r.cobertura_dias}d</span>
+                            <span style={{ color: r.cobertura_dias <= 30 ? chartColors.crit : r.cobertura_dias <= 60 ? chartColors.warn : chartColors.success }} className="font-semibold">{r.cobertura_dias}d</span>
                           )}
                         </td>
                         <td className="px-3 py-3 text-center">
@@ -206,7 +207,7 @@ export function ForecastDashboard() {
           <UrgentSection
             title="Compras Internacionais"
             subtitle="Pedido necessário nos próximos 15 dias"
-            color="#dc2626"
+            color={chartColors.crit}
             items={intl}
             type="intl"
           />
@@ -215,7 +216,7 @@ export function ForecastDashboard() {
           <UrgentSection
             title="Compras Locais Emergenciais"
             subtitle="Prazo internacional perdido — negociação spot"
-            color="#7c3aed"
+            color={chartColors.ndf}
             items={local}
             type="local"
           />
@@ -316,7 +317,7 @@ function UrgentSection({ title, subtitle, color, items, type }: {
               const dias = type === 'local'
                 ? u.compra_local?.dia_abrir ?? 0
                 : u.dia_pedido_ideal;
-              const urgColor = dias === 0 ? '#dc2626' : dias <= 5 ? '#ea580c' : color;
+              const urgColor = dias === 0 ? chartColors.crit : dias <= 5 ? '#ea580c' : color;
               return (
                 <tr key={u.familia_id} className="border-b border-atlas-border/30 hover:bg-atlas-bg/30">
                   <td className="px-3 py-3 text-center">
@@ -334,7 +335,7 @@ function UrgentSection({ title, subtitle, color, items, type }: {
                   <td className="px-3 py-3 text-right">
                     {type === 'local'
                       ? <span className="text-red-600 font-semibold">{u.dia_ruptura >= 0 ? `${u.dia_ruptura}d` : '—'}</span>
-                      : <span className="font-semibold" style={{ color: u.dia_ruptura <= 30 ? '#dc2626' : '#d97706' }}>{u.dia_ruptura >= 0 ? `${u.dia_ruptura}d` : '>120d'}</span>
+                      : <span className="font-semibold" style={{ color: u.dia_ruptura <= 30 ? chartColors.crit : chartColors.warn }}>{u.dia_ruptura >= 0 ? `${u.dia_ruptura}d` : '>120d'}</span>
                     }
                   </td>
                   <td className="px-3 py-3 text-center text-atlas-muted">{u.lt_efetivo}d</td>

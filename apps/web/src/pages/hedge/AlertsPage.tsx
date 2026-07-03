@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { DataTable, type Column } from '@atlas/ui';
+import { DataTable, type Column, chartColors } from '@atlas/ui';
 import { useAuthStore } from '../../stores/auth.store.js';
 import { fmtBRL } from '../../lib/format.js';
 import { NDF_STATUS_LABEL, NDF_TIPO_LABEL, rotulo } from './labels.js';
@@ -28,9 +28,9 @@ interface NdfRow {
 }
 
 const SEV_STYLES: Record<string, { bg: string; border: string; color: string; icon: string }> = {
-  critico: { bg: 'rgba(220,38,38,0.07)', border: 'rgba(255,77,109,0.25)', color: '#dc2626', icon: '\u26A0' },
-  alta: { bg: 'rgba(217,119,6,0.08)', border: 'rgba(255,181,71,0.25)', color: '#d97706', icon: '\u25C8' },
-  media: { bg: 'rgba(5,150,105,0.07)', border: 'rgba(0,229,160,0.2)', color: '#059669', icon: '\u25CE' },
+  critico: { bg: 'rgba(220,38,38,0.07)', border: 'rgba(255,77,109,0.25)', color: chartColors.crit, icon: '\u26A0' },
+  alta: { bg: 'rgba(217,119,6,0.08)', border: 'rgba(255,181,71,0.25)', color: chartColors.warn, icon: '\u25C8' },
+  media: { bg: 'rgba(5,150,105,0.07)', border: 'rgba(0,229,160,0.2)', color: chartColors.success, icon: '\u25CE' },
 };
 
 const fmtK = (v: number) => '$' + Math.round(v / 1000) + 'K';
@@ -77,7 +77,7 @@ export function AlertsPage() {
     {
       key: 'resultado_brl', header: 'Resultado',
       render: (r) => r.resultado_brl != null
-        ? <span style={{ color: r.resultado_brl >= 0 ? '#059669' : '#dc2626' }}>R$ {r.resultado_brl.toLocaleString('pt-BR')}</span>
+        ? <span style={{ color: r.resultado_brl >= 0 ? chartColors.success : chartColors.crit }}>R$ {r.resultado_brl.toLocaleString('pt-BR')}</span>
         : <span className="text-atlas-muted">—</span>,
     },
     {
@@ -137,7 +137,7 @@ export function AlertsPage() {
                   )}
                   <button onClick={() => actionMut.mutate({ id: a.id, action: 'resolver' })}
                     className="text-xs px-2.5 py-1 rounded border font-mono transition-colors"
-                    style={{ background: 'rgba(5,150,105,0.1)', borderColor: 'rgba(0,229,160,0.3)', color: '#059669' }}>
+                    style={{ background: 'rgba(5,150,105,0.1)', borderColor: 'rgba(0,229,160,0.3)', color: chartColors.success }}>
                     Resolver
                   </button>
                 </div>

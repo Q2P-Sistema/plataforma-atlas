@@ -4,6 +4,7 @@ import {
   AreaChart, Area, ResponsiveContainer, Tooltip,
 } from 'recharts';
 import { fmtToneladas as fmtT, fmtPct } from '../../lib/format.js';
+import { chartColors } from '@atlas/ui';
 
 interface VendaMensal { mes: string; volume_kg: number; valor_brl: number; }
 interface SkuContrib { codigo: string; descricao: string; volume_24m: number; contribuicao_pct: number; cobertura_dias: number; }
@@ -112,7 +113,7 @@ export function DemandAnalysisPage() {
 function YoYBadge({ yoy }: { yoy: YoY }) {
   if (yoy.trimestre_anterior === 0) return <span className="text-xs text-atlas-muted">—</span>;
 
-  const color = yoy.tendencia === 'subindo' ? '#059669' : yoy.tendencia === 'descendo' ? '#dc2626' : '#d97706';
+  const color = yoy.tendencia === 'subindo' ? chartColors.success : yoy.tendencia === 'descendo' ? chartColors.crit : chartColors.warn;
   const arrow = yoy.tendencia === 'subindo' ? '\u2191' : yoy.tendencia === 'descendo' ? '\u2193' : '\u2192';
 
   return (

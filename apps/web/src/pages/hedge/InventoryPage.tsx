@@ -1,6 +1,7 @@
 import { useState, type ChangeEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../../stores/auth.store.js';
+import { chartColors } from '@atlas/ui';
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -214,10 +215,10 @@ export function InventoryPage() {
       {/* KPI Strip — 5 fases */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
         <KpiCard label="Marítimo / Trânsito" value={fmtBrlM(transitoBrl)} color="#8492a6" src="acxe" sub="Câmbio ainda flutuante" />
-        <KpiCard label="Importado no Chão" value={fmtBrlM(importadoBrl)} color="#0077cc" src="acxe" sub="NF entrada emitida" />
-        <KpiCard label="Nacional Q2P" value={fmtBrlM(nacionalBrl)} color="#1a9944" src="q2p" sub="Distribuição ativa" />
-        <KpiCard label="Total Consolidado" value={fmtBrlM(totalBrl)} color="#059669" src="calc" sub={`${totalItens} produtos`} />
-        <KpiCard label="Localidades" value={String(estoque.length)} color="#7c3aed" src="calc" sub="Depósitos ativos" />
+        <KpiCard label="Importado no Chão" value={fmtBrlM(importadoBrl)} color={chartColors.acxe} src="acxe" sub="NF entrada emitida" />
+        <KpiCard label="Nacional Q2P" value={fmtBrlM(nacionalBrl)} color={chartColors.q2p} src="q2p" sub="Distribuição ativa" />
+        <KpiCard label="Total Consolidado" value={fmtBrlM(totalBrl)} color={chartColors.success} src="calc" sub={`${totalItens} produtos`} />
+        <KpiCard label="Localidades" value={String(estoque.length)} color={chartColors.ndf} src="calc" sub="Depósitos ativos" />
       </div>
 
       {/* Estados chart + Pie */}
@@ -257,7 +258,7 @@ export function InventoryPage() {
           {estoque.map((d) => (
             <div key={`${d.localidade}-${d.empresa}`}
               className="bg-atlas-card border border-atlas-border rounded-lg p-4 hover:border-acxe/30 transition-colors">
-              <p className="text-xs font-semibold mb-2" style={{ color: d.empresa === 'acxe' ? '#0077cc' : '#1a9944' }}>
+              <p className="text-xs font-semibold mb-2" style={{ color: d.empresa === 'acxe' ? chartColors.acxe : chartColors.q2p }}>
                 {d.localidade}
               </p>
               <div className="space-y-1 text-sm">
@@ -292,15 +293,15 @@ export function InventoryPage() {
 
       {/* Insights */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div className="rounded-r p-3 text-xs leading-relaxed" style={{ borderLeft: '2px solid #d97706', backgroundColor: 'rgba(217,119,6,0.08)' }}>
+        <div className="rounded-r p-3 text-xs leading-relaxed" style={{ borderLeft: `2px solid ${chartColors.warn}`, backgroundColor: 'rgba(217,119,6,0.08)' }}>
           <strong className="text-atlas-text">Trânsito aduaneiro:</strong>{' '}
           <span className="text-atlas-muted">{fmtBrlM(transitoBrl)} em mercadoria em trânsito marítimo — câmbio ainda flutuante</span>
         </div>
-        <div className="rounded-r p-3 text-xs leading-relaxed" style={{ borderLeft: '2px solid #0077cc', backgroundColor: 'rgba(0,119,204,0.07)' }}>
+        <div className="rounded-r p-3 text-xs leading-relaxed" style={{ borderLeft: `2px solid ${chartColors.acxe}`, backgroundColor: 'rgba(0,119,204,0.07)' }}>
           <strong className="text-atlas-text">Estoque Acxe:</strong>{' '}
           <span className="text-atlas-muted">{fmtBrlM(importadoBrl)} nacionalizado nos depósitos — custo fixo em BRL</span>
         </div>
-        <div className="rounded-r p-3 text-xs leading-relaxed" style={{ borderLeft: '2px solid #1a9944', backgroundColor: 'rgba(26,153,68,0.07)' }}>
+        <div className="rounded-r p-3 text-xs leading-relaxed" style={{ borderLeft: `2px solid ${chartColors.q2p}`, backgroundColor: 'rgba(26,153,68,0.07)' }}>
           <strong className="text-atlas-text">Estoque Q2P:</strong>{' '}
           <span className="text-atlas-muted">{fmtBrlM(nacionalBrl)} em distribuição ativa nos depósitos Q2P</span>
         </div>

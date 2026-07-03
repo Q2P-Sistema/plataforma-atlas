@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { bpChartColors } from '@atlas/ui';
 
 interface Banco {
   id: string;
@@ -107,9 +108,9 @@ export function BPLimitesPage() {
       </div>
 
       <div className="grid grid-cols-3 gap-4 mb-6">
-        <TotalCard titulo="Antecipação" icone="📄" {...totalAntecip} cor="#CF6437" />
-        <TotalCard titulo="FINIMP" icone="🏛" {...totalFinimp} cor="#A85A08" />
-        <TotalCard titulo="Cheque Especial" icone="💳" {...totalCheque} cor="#0C6E8A" />
+        <TotalCard titulo="Antecipação" icone="📄" {...totalAntecip} cor={bpChartColors.laranja} />
+        <TotalCard titulo="FINIMP" icone="🏛" {...totalFinimp} cor={bpChartColors.ocre} />
+        <TotalCard titulo="Cheque Especial" icone="💳" {...totalCheque} cor={bpChartColors.azul} />
       </div>
 
       <div className="bg-atlas-card border border-atlas-border rounded-xl p-5">

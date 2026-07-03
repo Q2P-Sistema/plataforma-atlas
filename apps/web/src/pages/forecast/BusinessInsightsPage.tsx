@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { chartColors } from '@atlas/ui';
 import {
   Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart,
 } from 'recharts';
@@ -62,7 +63,7 @@ export function BusinessInsightsPage() {
                   <div className="h-2 rounded bg-atlas-border/30">
                     <div className="h-full rounded transition-all" style={{
                       width: `${s.score}%`,
-                      backgroundColor: s.score >= 70 ? '#059669' : s.score >= 55 ? '#22c55e' : s.score >= 40 ? '#d97706' : s.score >= 25 ? '#ea580c' : '#dc2626',
+                      backgroundColor: s.score >= 70 ? chartColors.success : s.score >= 55 ? '#22c55e' : s.score >= 40 ? chartColors.warn : s.score >= 25 ? '#ea580c' : chartColors.crit,
                     }} />
                   </div>
                   <div className="flex justify-between text-xs text-atlas-muted mt-2">
@@ -127,7 +128,7 @@ export function BusinessInsightsPage() {
               <Tooltip formatter={(v, name) => name === 'Volume (kg)' ? fmtT(Number(v)) : name === 'Valor USD' ? fmtK(Number(v)) : `US$ ${fmtNum(Number(v), 0)}/t`} />
               <Legend />
               <Bar yAxisId="vol" dataKey="volume_kg" name="Volume (kg)" fill="#3b82f6" opacity={0.7} />
-              <Line yAxisId="preco" type="monotone" dataKey="preco_ton_usd" name="Preço/ton USD" stroke="#dc2626" strokeWidth={2} dot={{ r: 3 }} />
+              <Line yAxisId="preco" type="monotone" dataKey="preco_ton_usd" name="Preço/ton USD" stroke={chartColors.crit} strokeWidth={2} dot={{ r: 3 }} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
