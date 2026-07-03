@@ -20,6 +20,7 @@ import {
   AlertTriangle,
   FileWarning,
   Coins,
+  RotateCcw,
 } from 'lucide-react';
 import { LoginPage } from './pages/LoginPage.js';
 import { TwoFactorPage } from './pages/TwoFactorPage.js';
@@ -70,6 +71,7 @@ import { ForgotPasswordPage } from './pages/ForgotPasswordPage.js';
 import { ResetPasswordPage } from './pages/ResetPasswordPage.js';
 import { useAuth } from './hooks/useAuth.js';
 import { useModules, type ModuleInfo } from './hooks/useModules.js';
+import { MODULE_NAMES, ALL_MODULE_IDS } from './lib/modules.js';
 import { useAuthStore } from './stores/auth.store.js';
 import {
   TrendingUp,
@@ -95,24 +97,31 @@ const FORECAST_SUB_ITEMS: SidebarSubItem[] = [
 // Roles refletem requireOperador/requireGestor/requireDiretor das rotas
 // (modules/stockbridge/src/middleware/role.ts) — fonte da verdade no backend.
 // Aqui e so visibilidade no menu pra evitar UX de clicar e levar 403.
+//
+// UI-C (ACXEGDP-263): itens agrupados por secao — "Operação" (dia a dia do
+// operador), "Gestão" (gestor/diretor) e "Cadastros" (configuracao). Mantenha
+// itens do mesmo grupo em sequencia: o cabecalho renderiza quando o grupo muda.
+// Nomenclatura historica: 'Indicadores por Produto' vive em /config-produtos
+// (ConfigProdutosPage) e 'Custos de Estoque' em /custos (CmcPage) — renomear
+// a rota quebraria links salvos.
 const STOCKBRIDGE_SUB_ITEMS: SidebarSubItem[] = [
-  { id: 'sb-cockpit',          name: 'Cockpit',                 path: '/stockbridge/cockpit',           icon: LayoutDashboard, roles: ['gestor', 'diretor'] },
-  { id: 'sb-custos',           name: 'Custos de Estoque',       path: '/stockbridge/custos',            icon: Coins,           roles: ['gestor', 'diretor'] },
-  { id: 'sb-fila',             name: 'Recebimento',             path: '/stockbridge/fila',              icon: FileText,        roles: ['operador', 'gestor', 'diretor'] },
-  { id: 'sb-aprovacoes',       name: 'Aprovações',              path: '/stockbridge/aprovacoes',        icon: Bell,            roles: ['gestor', 'diretor'] },
-  { id: 'sb-divergencias',     name: 'Divergências',            path: '/stockbridge/divergencias',      icon: AlertTriangle,   roles: ['gestor', 'diretor'] },
-  { id: 'sb-conferencia',      name: 'Conferência de Estoque',  path: '/stockbridge/conferencia',       icon: Scale,           roles: ['gestor', 'diretor'] },
-  { id: 'sb-pendencias-fiscais', name: 'Pendências Fiscais',    path: '/stockbridge/pendencias-fiscais', icon: FileWarning,    roles: ['gestor', 'diretor'] },
-  { id: 'sb-movimentacoes',    name: 'Movimentações',           path: '/stockbridge/movimentacoes',     icon: Table,           roles: ['operador', 'gestor', 'diretor'] },
-  { id: 'sb-transito',         name: 'Trânsito',                path: '/stockbridge/transito',          icon: Activity,        roles: ['operador', 'gestor', 'diretor'] },
-  { id: 'sb-saida-manual',     name: 'Saída Manual',            path: '/stockbridge/saida-manual',      icon: ShoppingCart,    roles: ['operador', 'gestor', 'diretor'] },
-  { id: 'sb-comodato-retorno', name: 'Retorno Comodato',        path: '/stockbridge/comodato-retorno',  icon: Activity,        roles: ['operador', 'gestor', 'diretor'] },
-  { id: 'sb-metricas',         name: 'Métricas',                path: '/stockbridge/metricas',          icon: BarChart3,       roles: ['diretor'] },
-  { id: 'sb-fornecedores',     name: 'Fornecedores',            path: '/stockbridge/fornecedores',      icon: Building2,       roles: ['diretor'] },
-  { id: 'sb-localidades',      name: 'Localidades',             path: '/stockbridge/localidades',       icon: Landmark,        roles: ['gestor', 'diretor'] },
-  { id: 'sb-config',           name: 'Indicadores por Produto', path: '/stockbridge/config-produtos',   icon: Settings,        roles: ['diretor'] },
-  { id: 'sb-estoque',          name: 'Meu Estoque',             path: '/stockbridge/estoque',           icon: Package,         roles: ['operador', 'gestor', 'diretor'] },
-  { id: 'sb-user-galpao',      name: 'Galpões × Usuários',      path: '/stockbridge/admin/user-galpao', icon: Users,           roles: ['gestor', 'diretor'] },
+  { id: 'sb-estoque', name: 'Meu Estoque', path: '/stockbridge/estoque', icon: Package, roles: ['operador', 'gestor', 'diretor'], group: 'Operação' },
+  { id: 'sb-fila', name: 'Recebimento', path: '/stockbridge/fila', icon: FileText, roles: ['operador', 'gestor', 'diretor'], group: 'Operação' },
+  { id: 'sb-saida-manual', name: 'Saída Manual', path: '/stockbridge/saida-manual', icon: ShoppingCart, roles: ['operador', 'gestor', 'diretor'], group: 'Operação' },
+  { id: 'sb-comodato-retorno', name: 'Retorno Comodato', path: '/stockbridge/comodato-retorno', icon: RotateCcw, roles: ['operador', 'gestor', 'diretor'], group: 'Operação' },
+  { id: 'sb-movimentacoes', name: 'Movimentações', path: '/stockbridge/movimentacoes', icon: Table, roles: ['operador', 'gestor', 'diretor'], group: 'Operação' },
+  { id: 'sb-transito', name: 'Trânsito', path: '/stockbridge/transito', icon: Activity, roles: ['operador', 'gestor', 'diretor'], group: 'Operação' },
+  { id: 'sb-cockpit', name: 'Cockpit', path: '/stockbridge/cockpit', icon: LayoutDashboard, roles: ['gestor', 'diretor'], group: 'Gestão' },
+  { id: 'sb-aprovacoes', name: 'Aprovações', path: '/stockbridge/aprovacoes', icon: Bell, roles: ['gestor', 'diretor'], group: 'Gestão' },
+  { id: 'sb-divergencias', name: 'Divergências', path: '/stockbridge/divergencias', icon: AlertTriangle, roles: ['gestor', 'diretor'], group: 'Gestão' },
+  { id: 'sb-conferencia', name: 'Conferência de Estoque', path: '/stockbridge/conferencia', icon: Scale, roles: ['gestor', 'diretor'], group: 'Gestão' },
+  { id: 'sb-pendencias-fiscais', name: 'Pendências Fiscais', path: '/stockbridge/pendencias-fiscais', icon: FileWarning, roles: ['gestor', 'diretor'], group: 'Gestão' },
+  { id: 'sb-custos', name: 'Custos de Estoque', path: '/stockbridge/custos', icon: Coins, roles: ['gestor', 'diretor'], group: 'Gestão' },
+  { id: 'sb-metricas', name: 'Métricas', path: '/stockbridge/metricas', icon: BarChart3, roles: ['diretor'], group: 'Gestão' },
+  { id: 'sb-fornecedores', name: 'Fornecedores', path: '/stockbridge/fornecedores', icon: Building2, roles: ['diretor'], group: 'Cadastros' },
+  { id: 'sb-localidades', name: 'Localidades', path: '/stockbridge/localidades', icon: Landmark, roles: ['gestor', 'diretor'], group: 'Cadastros' },
+  { id: 'sb-config', name: 'Indicadores por Produto', path: '/stockbridge/config-produtos', icon: Settings, roles: ['diretor'], group: 'Cadastros' },
+  { id: 'sb-user-galpao', name: 'Galpões × Usuários', path: '/stockbridge/admin/user-galpao', icon: Users, roles: ['gestor', 'diretor'], group: 'Cadastros' },
 ];
 
 const BP_SUB_ITEMS: SidebarSubItem[] = [
@@ -137,17 +146,6 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1 } },
 });
 
-const MODULE_NAMES: Record<string, string> = {
-  hedge: 'Hedge Engine',
-  stockbridge: 'StockBridge',
-  breakingpoint: 'Breaking Point',
-  clevel: 'C-Level',
-  comexinsight: 'ComexInsight',
-  comexflow: 'ComexFlow',
-  forecast: 'Forecast',
-};
-
-const ALL_MODULE_IDS = Object.keys(MODULE_NAMES);
 
 export function App() {
   return (

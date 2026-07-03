@@ -9,6 +9,7 @@ import {
   FileText,
   LineChart,
 } from 'lucide-react';
+import { MODULE_NAMES } from '../lib/modules.js';
 
 export interface ModuleInfo {
   id: string;
@@ -26,16 +27,6 @@ const MODULE_ICONS: Record<string, LucideIcon> = {
   comexinsight: Ship,
   comexflow: FileText,
   forecast: LineChart,
-};
-
-const MODULE_NAMES: Record<string, string> = {
-  hedge: 'Hedge Engine',
-  stockbridge: 'StockBridge',
-  breakingpoint: 'Breaking Point',
-  clevel: 'C-Level',
-  comexinsight: 'ComexInsight',
-  comexflow: 'ComexFlow',
-  forecast: 'Forecast',
 };
 
 export function useModules(options: { enabled?: boolean } = {}) {
