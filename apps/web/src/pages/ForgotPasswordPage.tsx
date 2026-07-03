@@ -1,6 +1,6 @@
 import { useState, type FormEvent, type ChangeEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { ThemeToggle } from '@atlas/ui';
+import { AuthPageShell } from '@atlas/ui';
 
 export function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
@@ -36,10 +36,7 @@ export function ForgotPasswordPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-atlas-bg p-4">
-      <div className="absolute top-4 right-4">
-        <ThemeToggle />
-      </div>
+    <AuthPageShell>
 
       <div className="w-full max-w-sm bg-atlas-card rounded-xl shadow-lg p-8 border border-atlas-border">
         <div className="text-center mb-8">
@@ -111,6 +108,6 @@ export function ForgotPasswordPage() {
           </form>
         )}
       </div>
-    </div>
+    </AuthPageShell>
   );
 }
