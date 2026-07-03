@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent, type ChangeEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Badge, DataTable, Modal, type Column } from '@atlas/ui';
+import { MODULE_OPTIONS } from '../lib/modules.js';
 import { UserPlus, Edit2, UserX, UserCheck, KeyRound, ShieldOff } from 'lucide-react';
 import { useAuthStore } from '../stores/auth.store.js';
 
@@ -26,15 +27,6 @@ const STATUS_LABELS: Record<string, string> = {
   inactive: 'Inativo',
 };
 
-const MODULE_OPTIONS: { id: string; name: string }[] = [
-  { id: 'hedge', name: 'Hedge Engine' },
-  { id: 'stockbridge', name: 'StockBridge' },
-  { id: 'breakingpoint', name: 'Breaking Point' },
-  { id: 'forecast', name: 'Forecast' },
-  { id: 'clevel', name: 'C-Level' },
-  { id: 'comexinsight', name: 'ComexInsight' },
-  { id: 'comexflow', name: 'ComexFlow' },
-];
 
 function useAdminFetch() {
   const csrfToken = useAuthStore((s) => s.csrfToken);

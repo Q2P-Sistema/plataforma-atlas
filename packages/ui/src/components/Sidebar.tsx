@@ -28,6 +28,12 @@ export interface SidebarSubItem {
    * o que receber.
    */
   roles?: SidebarRole[];
+  /**
+   * Cabecalho de secao no menu (ex.: "Operação"/"Gestão"/"Cadastros").
+   * Renderizado quando difere do item visivel anterior — agrupe itens da
+   * mesma secao em sequencia. Ausente = sem cabecalho.
+   */
+  group?: string;
 }
 
 export interface SidebarModule {
@@ -152,15 +158,24 @@ export function Sidebar({
                 </button>
                 {showSub && (
                   <div className="ml-4 mt-0.5 space-y-0.5 border-l border-atlas-border/50 pl-2">
-                    {mod.subItems!.map((sub) => {
+                    {mod.subItems!.map((sub, subIdx) => {
                       const SubIcon = sub.icon;
                       const isSubActive =
                         sub.path === mod.path
                           ? currentPath === sub.path
                           : currentPath.startsWith(sub.path);
+                      // Cabecalho de secao quando o grupo muda em relacao ao
+                      // item visivel anterior (itens ja chegam filtrados por role).
+                      const showGroupHeader =
+                        sub.group != null && sub.group !== mod.subItems![subIdx - 1]?.group;
                       return (
+                        <div key={sub.id}>
+                          {showGroupHeader && (
+                            <div className={`px-2.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-atlas-muted/60 select-none ${subIdx > 0 ? 'pt-2.5' : 'pt-1'}`}>
+                              {sub.group}
+                            </div>
+                          )}
                         <button
-                          key={sub.id}
                           onClick={() => {
                             onNavigate(sub.path);
                             setMobileOpen(false);
@@ -203,6 +218,7 @@ export function Sidebar({
                             </span>
                           ) : null}
                         </button>
+                        </div>
                       );
                     })}
                   </div>
