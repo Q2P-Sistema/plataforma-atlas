@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Modal } from '@atlas/ui';
 import { useAuthStore } from '../../../stores/auth.store.js';
 
 type Empresa = 'acxe' | 'q2p';
@@ -573,28 +574,40 @@ function SaidaManualModal({ sku, onClose, onSuccess, galpoesDisponiveis }: Saida
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div
-        className="bg-atlas-card border border-atlas-border rounded-lg shadow-xl max-w-xl w-full max-h-[90vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="p-5 border-b border-atlas-border">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-serif text-atlas-ink mb-1">Registrar saída</h2>
-              <div className="text-sm font-medium text-atlas-ink truncate">{sku.descricaoProduto}</div>
-              <div className="text-[11px] text-atlas-muted">
-                SKU <span className="font-mono">{sku.produtoCodigoAcxe}</span> ·{' '}
-                <strong>{labelGalpao(sku.galpao)}</strong> · Empresa{' '}
-                <strong>{sku.empresaUI}</strong>
-              </div>
-            </div>
-            <button
-              onClick={onClose}
-              className="text-atlas-muted hover:text-atlas-ink text-xl leading-none px-2"
-            >
-              ×
-            </button>
+    <Modal
+      open
+      onClose={onClose}
+      title="Registrar saída"
+      maxWidth="xl"
+      footer={
+        <>
+          <button
+            onClick={onClose}
+            className="px-4 py-2 rounded text-sm border border-atlas-border hover:bg-atlas-bg/60"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={() => mut.mutate()}
+            disabled={!podeEnviar || mut.isPending}
+            className={`px-5 py-2 rounded text-sm font-medium ${
+              podeEnviar
+                ? 'bg-atlas-btn-bg text-atlas-btn-text hover:opacity-90'
+                : 'bg-atlas-muted/20 text-atlas-muted cursor-not-allowed'
+            }`}
+          >
+            {mut.isPending ? 'Enviando...' : 'Registrar saída'}
+          </button>
+        </>
+      }
+    >
+        {/* Contexto do SKU (antes vivia no header hand-rolled) */}
+        <div className="pb-4 mb-4 border-b border-atlas-border">
+          <div className="text-sm font-medium text-atlas-ink truncate">{sku.descricaoProduto}</div>
+          <div className="text-[11px] text-atlas-muted">
+            SKU <span className="font-mono">{sku.produtoCodigoAcxe}</span> ·{' '}
+            <strong>{labelGalpao(sku.galpao)}</strong> · Empresa{' '}
+            <strong>{sku.empresaUI}</strong>
           </div>
 
           <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
@@ -615,7 +628,7 @@ function SaidaManualModal({ sku, onClose, onSuccess, galpoesDisponiveis }: Saida
           </div>
         </div>
 
-        <div className="p-5 space-y-4">
+        <div className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-atlas-muted mb-1">Tipo de saída *</label>
             <select
@@ -738,27 +751,6 @@ function SaidaManualModal({ sku, onClose, onSuccess, galpoesDisponiveis }: Saida
             </div>
           )}
         </div>
-
-        <div className="px-5 py-3 border-t border-atlas-border flex justify-end gap-2">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded text-sm border border-atlas-border hover:bg-atlas-bg/60"
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={() => mut.mutate()}
-            disabled={!podeEnviar || mut.isPending}
-            className={`px-5 py-2 rounded text-sm font-medium ${
-              podeEnviar
-                ? 'bg-atlas-btn-bg text-atlas-btn-text hover:opacity-90'
-                : 'bg-atlas-muted/20 text-atlas-muted cursor-not-allowed'
-            }`}
-          >
-            {mut.isPending ? 'Enviando...' : 'Registrar saída'}
-          </button>
-        </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
