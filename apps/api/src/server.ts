@@ -1,4 +1,5 @@
 import express from 'express';
+import helmet from 'helmet';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { loadConfig, createLogger } from '@atlas/core';
@@ -14,7 +15,17 @@ const logger = createLogger('api');
 const app: express.Express = express();
 
 // Global middleware
-app.use(cors({ origin: true, credentials: true }));
+// SEG-06: headers de segurança. CSP desligada — a API é JSON-only e o SPA é
+// servido pelo nginx (apps/web); helmet antes do cors para cobrir erros/preflight.
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  }),
+);
+// SEG-05: allowlist de origem (antes `origin: true` refletia qualquer site com
+// credentials). APP_URL cobre dev (localhost:5173), UAT e prod.
+app.use(cors({ origin: config.APP_URL, credentials: true }));
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 

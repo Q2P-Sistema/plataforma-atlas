@@ -1,7 +1,19 @@
+import { timingSafeEqual } from 'node:crypto';
 import type { Request, Response, NextFunction } from 'express';
 import { getConfig, createLogger } from '@atlas/core';
 
 const logger = createLogger('stockbridge:integration-key');
+
+/**
+ * Comparação constante no tempo (SEG-08) — evita timing attack contra o shared
+ * secret. O guard de tamanho é obrigatório: timingSafeEqual lança se os buffers
+ * diferem em tamanho (vazar o tamanho da chave é aceitável, padrão da indústria).
+ */
+function safeCompare(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  return bufA.length === bufB.length && timingSafeEqual(bufA, bufB);
+}
 
 /**
  * Middleware que valida o header `X-Atlas-Integration-Key` contra a env
@@ -24,7 +36,7 @@ export function requireIntegrationKey(req: Request, res: Response, next: NextFun
   }
 
   const provided = req.header('X-Atlas-Integration-Key');
-  if (!provided || provided !== expected) {
+  if (!provided || !safeCompare(provided, expected)) {
     logger.warn({ provided: provided ? 'present-invalid' : 'missing' }, 'Integration key invalida ou ausente');
     res.status(401).json({
       data: null,
