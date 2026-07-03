@@ -101,11 +101,17 @@ export async function buildForecastFamilia(
   const hoje = new Date();
   const horizonte = config.horizonte_dias;
 
-  // vendas12m for this family = sum across SKUs, with per-SKU demand adjustments
+  // familia.skus tem uma entrada por LOCAL de estoque — um mesmo codigo aparece
+  // varias vezes (produto em N galpoes). vendasMap/chegadasMap sao indexados por
+  // codigo, entao iterar por linha contaria vendas e chegadas 2x-4x para SKU
+  // multi-local (MOD-02). Deduplicamos os codigos antes de somar.
+  const codigosUnicos = [...new Set(familia.skus.map((sk) => sk.codigo))];
+
+  // vendas12m for this family = sum across DISTINCT SKU codes, with per-SKU demand adjustments
   let vendas12m = 0;
-  for (const sku of familia.skus) {
-    const base = vendasMap.get(sku.codigo) ?? 0;
-    const ajuste = ajustesDemanda[sku.codigo] ?? 0;
+  for (const codigo of codigosUnicos) {
+    const base = vendasMap.get(codigo) ?? 0;
+    const ajuste = ajustesDemanda[codigo] ?? 0;
     vendas12m += base * (1 + ajuste / 100);
   }
   const vendaDiariaMedia = vendas12m > 0 ? vendas12m / 365 : 0;
@@ -121,8 +127,8 @@ export async function buildForecastFamilia(
   let qtdEmRota = 0;
   const pedidosEmRota: PedidoRota[] = [];
 
-  for (const sku of familia.skus) {
-    const chegadas = chegadasMap.get(sku.codigo) ?? [];
+  for (const codigo of codigosUnicos) {
+    const chegadas = chegadasMap.get(codigo) ?? [];
     for (const c of chegadas) {
       const chegadaDate = new Date(c.data);
       const diaOffset = Math.max(0, Math.ceil((chegadaDate.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24)));
@@ -131,7 +137,7 @@ export async function buildForecastFamilia(
       }
       qtdEmRota += c.qtd;
       pedidosEmRota.push({
-        codigo: sku.codigo,
+        codigo,
         qtd_pendente: c.qtd,
         data_chegada: c.data,
         valor_brl: c.valor_brl,
