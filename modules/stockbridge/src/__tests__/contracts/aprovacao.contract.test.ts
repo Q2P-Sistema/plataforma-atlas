@@ -37,6 +37,7 @@ vi.mock('@atlas/core', () => ({
 let currentUser: { id: string; role: 'operador' | 'gestor' | 'diretor' } = { id: 'u1', role: 'gestor' };
 
 vi.mock('@atlas/auth', () => ({
+  csrfProtection: (_req: any, _res: any, next: any) => next(),
   requireAuth: (req: Request, _res: Response, next: NextFunction) => {
     req.user = {
       id: currentUser.id, role: currentUser.role,

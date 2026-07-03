@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express';
-import { requireAuth, requireModule } from '@atlas/auth';
+import { requireAuth, requireModule, csrfProtection } from '@atlas/auth';
 import { createLogger } from '@atlas/core';
 import filaRouter from './fila.routes.js';
 import recebimentoRouter from './recebimento.routes.js';
@@ -32,7 +32,7 @@ router.use(saidaAutomaticaRouter);
 router.use(nfPedidoMapaRouter);
 
 // Todas as demais rotas exigem sessão autenticada + acesso ao módulo
-router.use('/api/v1/stockbridge', requireAuth, requireModule('stockbridge'));
+router.use('/api/v1/stockbridge', requireAuth, csrfProtection, requireModule('stockbridge'));
 
 // Health check
 router.get('/api/v1/stockbridge/health', (_req: Request, res: Response) => {

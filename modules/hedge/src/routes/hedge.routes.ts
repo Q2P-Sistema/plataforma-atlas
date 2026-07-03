@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express';
-import { requireAuth, requireRole, requireModule } from '@atlas/auth';
+import { requireAuth, requireRole, requireModule, csrfProtection } from '@atlas/auth';
 import { createLogger } from '@atlas/core';
 import { calcularPosicao, recalcularBuckets, getHistorico } from '../services/posicao.service.js';
 import { calcularMotor } from '../services/motor.service.js';
@@ -26,7 +26,7 @@ function sendError(res: Response, code: string, message: string, status = 400) {
 }
 
 // All hedge routes require authentication + module access
-router.use('/api/v1/hedge', requireAuth, requireModule('hedge'));
+router.use('/api/v1/hedge', requireAuth, csrfProtection, requireModule('hedge'));
 
 // ── Dashboard & Position ───────────────────────────────────
 

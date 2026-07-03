@@ -124,6 +124,7 @@ vi.mock('@atlas/core', () => ({
 }));
 
 vi.mock('@atlas/auth', () => ({
+  csrfProtection: (_req: any, _res: any, next: any) => next(),
   verifyPassword: vi.fn((_hash: string, password: string) =>
     Promise.resolve(password === 'correct-password'),
   ),
@@ -253,6 +254,8 @@ describe('Auth Routes', () => {
       expect(res.status).toBe(200);
       expect(res.body.data.email).toBe('admin@test.com');
       expect(res.body.data.role).toBe('diretor');
+      // SEG-07: /me devolve o csrfToken para restaurá-lo após F5.
+      expect(res.body.data.csrfToken).toBe('test-csrf-token');
     });
   });
 

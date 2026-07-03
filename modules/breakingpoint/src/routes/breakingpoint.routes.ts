@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
-import { requireAuth, requireRole, requireModule } from '@atlas/auth';
+import { requireAuth, requireRole, requireModule, csrfProtection } from '@atlas/auth';
 import { createLogger } from '@atlas/core';
 import { getDadosMotor, listContas } from '../services/dados.service.js';
 import { calcular } from '../services/motor.service.js';
@@ -39,6 +39,7 @@ function parseEmpresa(req: Request): Empresa {
 router.use(
   '/api/v1/bp',
   requireAuth,
+  csrfProtection,
   requireModule('breakingpoint'),
   requireRole('gestor', 'diretor'),
 );

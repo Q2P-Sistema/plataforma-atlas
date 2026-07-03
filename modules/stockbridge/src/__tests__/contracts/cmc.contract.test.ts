@@ -45,6 +45,7 @@ vi.mock('@atlas/core', () => ({
 
 // requireAuth lê o papel do header x-test-role (default gestor); requireRole ENFORÇA.
 vi.mock('@atlas/auth', () => ({
+  csrfProtection: (_req: any, _res: any, next: any) => next(),
   requireAuth: (req: Request, _res: Response, next: NextFunction) => {
     req.user = {
       id: '00000000-0000-0000-0000-000000000001',

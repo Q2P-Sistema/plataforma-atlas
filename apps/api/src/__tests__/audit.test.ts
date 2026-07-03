@@ -104,6 +104,7 @@ vi.mock('@atlas/core', () => ({
 }));
 
 vi.mock('@atlas/auth', () => ({
+  csrfProtection: (_req: any, _res: any, next: any) => next(),
   requireAuth: vi.fn(),
   requireRole: vi.fn(() => vi.fn()),
   listUsers: vi.fn(() => Promise.resolve([])),

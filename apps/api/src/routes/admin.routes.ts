@@ -5,6 +5,7 @@ import { auditLog } from '@atlas/db';
 import {
   requireAuth,
   requireRole,
+  csrfProtection,
   listUsers,
   createUser,
   updateUser,
@@ -22,7 +23,7 @@ const logger = createLogger('admin');
 const router: Router = Router();
 
 // All admin routes require auth + diretor role
-router.use('/api/v1/admin', requireAuth, requireRole('diretor'));
+router.use('/api/v1/admin', requireAuth, csrfProtection, requireRole('diretor'));
 
 // GET /api/v1/admin/users
 router.get('/api/v1/admin/users', async (_req: Request, res: Response) => {

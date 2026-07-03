@@ -9,6 +9,7 @@ import {
   createSession,
   destroySession,
   requireAuth,
+  csrfProtection,
   checkLoginRateLimit,
   recordFailedLogin,
   resetFailedLogins,
@@ -242,6 +243,7 @@ router.post('/api/v1/auth/verify-2fa', async (req: Request, res: Response) => {
 router.post(
   '/api/v1/auth/setup-2fa',
   requireAuth,
+  csrfProtection,
   async (req: Request, res: Response) => {
     try {
       const user = req.user!;
@@ -292,6 +294,7 @@ router.post(
 router.post(
   '/api/v1/auth/confirm-2fa',
   requireAuth,
+  csrfProtection,
   async (req: Request, res: Response) => {
     try {
       const { code } = req.body;
@@ -491,6 +494,7 @@ router.post('/api/v1/auth/reset-password', resetPasswordLimiter, async (req: Req
 router.post(
   '/api/v1/auth/logout',
   requireAuth,
+  csrfProtection,
   async (req: Request, res: Response) => {
     try {
       await destroySession(req.session!.id);
@@ -517,6 +521,7 @@ router.get(
       role: user.role,
       totp_enabled: user.totpEnabled,
       last_login_at: user.lastLoginAt,
+      csrfToken: req.session!.csrfToken,
     });
   },
 );
