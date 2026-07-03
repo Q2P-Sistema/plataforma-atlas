@@ -40,6 +40,10 @@ const envSchema = z.object({
   // CC opcional em todos os emails operacionais do StockBridge (rejeicao,
   // aprovacao, alertas). Usar para que o admin/responsavel monitore por copia.
   STOCKBRIDGE_ADMIN_CC_EMAIL: z.string().email().optional(),
+  // Caixa operacional que recebe os alertas de exceção do StockBridge (produto
+  // sem correlato, NF indeterminada, débito cruzado, pendência OMIE) — EML-08.
+  // Antes esses alertas iam só para SEED_ADMIN_EMAIL, com fallback não-entregável.
+  STOCKBRIDGE_OPS_EMAIL: z.string().email().default('flavio.endo@acxe-polimeros.com.br'),
   // Caixa de Comex da ACXE — recebe confirmacao de TODO recebimento concluido
   // com sucesso (limpo direto, ou divergente apos aprovacao). Nao recebe os emails
   // de aprovacao pendente nem os alertas de pendencia OMIE (insucesso).
