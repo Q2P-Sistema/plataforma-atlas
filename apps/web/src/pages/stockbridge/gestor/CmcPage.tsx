@@ -101,7 +101,7 @@ export function CmcPage() {
           onChange={setProdutos}
           title="Filtrar por um ou mais produtos"
         />
-        <div className="flex rounded border border-slate-300 dark:border-slate-600 overflow-hidden">
+        <div className="flex rounded border border-atlas-border overflow-hidden">
           {ORIGENS.map((o) => (
             <button
               key={o.value || 'ambas'}

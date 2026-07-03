@@ -82,15 +82,15 @@ export function FornecedoresPage() {
         value={busca}
         onChange={(e) => setBusca(e.target.value)}
         placeholder="Buscar por nome, CNPJ ou país..."
-        className="w-full mb-4 px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+        className="w-full mb-4 px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
       />
 
       {ativos.length > 0 && (
         <div className="mb-5">
           <div className="text-xs font-semibold text-atlas-muted uppercase mb-2">Ativos ({ativos.length})</div>
-          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
+          <div className="bg-atlas-card border border-atlas-border rounded-lg overflow-hidden">
             <table className="w-full text-sm">
-              <thead className="bg-slate-50 dark:bg-slate-900/40 text-xs text-atlas-muted">
+              <thead className="bg-atlas-bg text-xs text-atlas-muted">
                 <tr>
                   <th className="text-left px-3 py-2">Fornecedor</th>
                   <th className="text-left px-3 py-2">CNPJ</th>
@@ -100,7 +100,7 @@ export function FornecedoresPage() {
               </thead>
               <tbody>
                 {ativos.map((f) => (
-                  <tr key={f.cnpj} className="border-t border-slate-200 dark:border-slate-700">
+                  <tr key={f.cnpj} className="border-t border-atlas-border">
                     <td className="px-3 py-2 font-medium">{f.nome}</td>
                     <td className="px-3 py-2 font-mono text-xs text-atlas-muted">{f.cnpj}</td>
                     <td className="px-3 py-2 text-atlas-muted">{f.pais ?? '—'}</td>
@@ -167,7 +167,7 @@ export function FornecedoresPage() {
                 onChange={(e) => setMotivo(e.target.value)}
                 rows={3}
                 placeholder="Ex: Problemas recorrentes de qualidade"
-                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+                className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
               />
             </div>
             {excluirMut.isError && (
@@ -176,11 +176,11 @@ export function FornecedoresPage() {
               </div>
             )}
             <div className="flex gap-2 justify-end">
-              <button onClick={() => setExcluindo(null)} className="px-4 py-2 border border-slate-300 rounded text-sm">Cancelar</button>
+              <button onClick={() => setExcluindo(null)} className="px-4 py-2 border border-atlas-border rounded text-sm">Cancelar</button>
               <button
                 onClick={() => excluirMut.mutate({ cnpj: excluindo.cnpj, nome: excluindo.nome, motivo })}
                 disabled={!motivo.trim() || excluirMut.isPending}
-                className={`px-5 py-2 rounded text-sm font-medium ${motivo.trim() ? 'bg-red-700 text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
+                className={`px-5 py-2 rounded text-sm font-medium ${motivo.trim() ? 'bg-red-700 text-white' : 'bg-atlas-muted/20 text-atlas-muted cursor-not-allowed'}`}
               >
                 Confirmar exclusão
               </button>

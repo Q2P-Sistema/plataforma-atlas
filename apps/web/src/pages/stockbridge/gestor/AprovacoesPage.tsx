@@ -168,7 +168,7 @@ export function AprovacoesPage() {
       {isLoading && <div className="p-6 text-sm text-atlas-muted">Carregando...</div>}
 
       {!isLoading && pendencias.length === 0 && (
-        <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
+        <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-atlas-border rounded-lg">
           ✓ Nenhuma pendência de aprovação
         </div>
       )}
@@ -179,12 +179,12 @@ export function AprovacoesPage() {
           return (
             <div
               key={p.id}
-              className={`bg-white dark:bg-slate-800 border rounded-lg p-4 ${hasDivergencia ? 'border-red-200 dark:border-red-800 bg-red-50/30 dark:bg-red-900/10' : 'border-amber-200 dark:border-amber-800 bg-amber-50/30 dark:bg-amber-900/10'}`}
+              className={`bg-atlas-card border rounded-lg p-4 ${hasDivergencia ? 'border-red-200 dark:border-red-800 bg-red-50/30 dark:bg-red-900/10' : 'border-amber-200 dark:border-amber-800 bg-amber-50/30 dark:bg-amber-900/10'}`}
             >
               <div className="flex justify-between items-start mb-3">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-semibold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-700">
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded bg-atlas-bg">
                       {TIPO_LABEL[p.tipoAprovacao] ?? p.tipoAprovacao}
                     </span>
                     {p.precisaNivel === 'diretor' && (
@@ -224,7 +224,7 @@ export function AprovacoesPage() {
               )}
 
               {p.observacoes && (
-                <div className="p-2 bg-white dark:bg-slate-900/50 rounded text-xs text-atlas-muted italic mb-3">
+                <div className="p-2 bg-atlas-bg rounded text-xs text-atlas-muted italic mb-3">
                   "{p.observacoes}"
                 </div>
               )}
@@ -264,7 +264,7 @@ export function AprovacoesPage() {
                 rows={3}
                 autoFocus
                 placeholder="Ex: Quantidade incorreta, solicitar reconferência"
-                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded text-sm"
+                className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg text-atlas-ink placeholder:text-atlas-muted rounded text-sm"
               />
             </div>
             {rejeitarMut.isError && (
@@ -275,14 +275,14 @@ export function AprovacoesPage() {
             <div className="flex gap-2 justify-end">
               <button
                 onClick={() => setRejeitando(null)}
-                className="px-4 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 rounded text-sm"
+                className="px-4 py-2 border border-atlas-border bg-atlas-card text-atlas-ink hover:bg-atlas-bg/60 rounded text-sm"
               >
                 Cancelar
               </button>
               <button
                 onClick={() => rejeitarMut.mutate({ p: rejeitando, motivo: motivoRejeicao })}
                 disabled={!motivoRejeicao.trim() || rejeitarMut.isPending}
-                className={`px-5 py-2 rounded text-sm font-medium ${motivoRejeicao.trim() ? 'bg-red-700 text-white hover:opacity-90' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
+                className={`px-5 py-2 rounded text-sm font-medium ${motivoRejeicao.trim() ? 'bg-red-700 text-white hover:opacity-90' : 'bg-atlas-muted/20 text-atlas-muted cursor-not-allowed'}`}
               >
                 {rejeitarMut.isPending ? 'Enviando...' : 'Confirmar rejeição'}
               </button>
@@ -296,7 +296,7 @@ export function AprovacoesPage() {
 
 function Cell({ label, value, accent }: { label: string; value: string; accent?: string }) {
   return (
-    <div className="bg-white dark:bg-slate-900/50 rounded p-2">
+    <div className="bg-atlas-bg rounded p-2">
       <div className="text-[10px] text-atlas-muted">{label}</div>
       <div className={`font-serif text-sm ${accent ?? 'text-atlas-ink'}`}>{value}</div>
     </div>

@@ -69,7 +69,7 @@ export function CmcTendenciaTab({ filtros }: { filtros: CmcUiFiltros }) {
             type="date"
             value={de}
             onChange={(e) => setDe(e.target.value)}
-            className="px-2 py-1 rounded border border-slate-300 dark:border-slate-600 dark:bg-slate-900 text-xs focus:outline-none focus:ring-1 focus:ring-acxe"
+            className="px-2 py-1 rounded border border-atlas-border bg-atlas-bg text-xs focus:outline-none focus:ring-1 focus:ring-acxe"
           />
         </label>
         <label className="flex flex-col gap-1">
@@ -78,7 +78,7 @@ export function CmcTendenciaTab({ filtros }: { filtros: CmcUiFiltros }) {
             type="date"
             value={ate}
             onChange={(e) => setAte(e.target.value)}
-            className="px-2 py-1 rounded border border-slate-300 dark:border-slate-600 dark:bg-slate-900 text-xs focus:outline-none focus:ring-1 focus:ring-acxe"
+            className="px-2 py-1 rounded border border-atlas-border bg-atlas-bg text-xs focus:outline-none focus:ring-1 focus:ring-acxe"
           />
         </label>
         {(de || ate) && (
@@ -104,13 +104,13 @@ export function CmcTendenciaTab({ filtros }: { filtros: CmcUiFiltros }) {
       {isLoading && <div className="p-6 text-sm text-atlas-muted">Carregando...</div>}
 
       {data && !temSerie && !isLoading && (
-        <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
+        <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-atlas-border rounded-lg">
           Sem histórico de CMC para o período/seleção atuais.
         </div>
       )}
 
       {temSerie && (
-        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4">
+        <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
           <ResponsiveContainer width="100%" height={360}>
             <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 4, left: 4 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" />

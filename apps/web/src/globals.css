@@ -59,8 +59,11 @@ body {
   .input {
     @apply px-3 py-2 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-xs focus:outline-none focus:ring-1 focus:ring-q2p;
   }
+  /* Decisão UI-B2 (ACXEGDP-262): botão primário do sistema é AZUL, via CSS vars
+     --atlas-btn-* (adapta light/dark). Verde bg-q2p permanece como cor de
+     identidade da empresa Q2P (chips, KPIs), não de ação. */
   .btn-primary {
-    @apply px-4 py-2 rounded bg-q2p text-white font-semibold hover:bg-q2p-dark disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-150;
+    @apply px-4 py-2 rounded bg-atlas-btn-bg text-atlas-btn-text font-semibold hover:bg-atlas-btn-bg-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-150;
   }
   .btn-secondary {
     @apply px-4 py-2 rounded border border-atlas-border bg-atlas-bg text-atlas-text hover:bg-atlas-border transition-colors duration-150;

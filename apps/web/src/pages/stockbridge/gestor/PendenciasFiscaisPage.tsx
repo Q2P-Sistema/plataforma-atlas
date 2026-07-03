@@ -146,12 +146,12 @@ export function PendenciasFiscaisPage() {
 
       {/* Filtros */}
       <div className="flex items-center gap-3 mb-5 text-sm flex-wrap">
-        <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded">
+        <div className="flex gap-1 p-1 bg-atlas-bg rounded">
           {(['pendente', 'parcial', 'recebida', 'todas'] as const).map((v) => (
             <button
               key={v}
               onClick={() => setStatusFilter(v)}
-              className={`px-3 py-1 rounded text-xs font-medium transition ${statusFilter === v ? 'bg-white dark:bg-slate-900 shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
+              className={`px-3 py-1 rounded text-xs font-medium transition ${statusFilter === v ? 'bg-atlas-card shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
             >
               {v === 'todas' ? 'Todas' : STATUS_CFG[v].label}
             </button>
@@ -162,7 +162,7 @@ export function PendenciasFiscaisPage() {
             type="checkbox"
             checked={incluirMetricas}
             onChange={(e) => setIncluirMetricas(e.target.checked)}
-            className="rounded border-slate-300 dark:border-slate-600"
+            className="rounded border-atlas-border"
           />
           Incluir produtos fora de métrica
         </label>
@@ -171,21 +171,21 @@ export function PendenciasFiscaisPage() {
       {/* Resumo */}
       {resumo && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-5">
-          <div className="border border-slate-200 dark:border-slate-700 rounded-lg p-3">
+          <div className="border border-atlas-border rounded-lg p-3">
             <div className="text-xs font-medium text-atlas-muted">Pedidos</div>
             <div className="font-serif text-xl text-atlas-ink mt-1">{resumo.totalPedidos}</div>
           </div>
-          <div className="border border-slate-200 dark:border-slate-700 rounded-lg p-3">
+          <div className="border border-atlas-border rounded-lg p-3">
             <div className="text-xs font-medium text-atlas-muted">Saldo pendente</div>
             <div className="font-serif text-xl text-atlas-ink mt-1">{fmtKg(resumo.totalSaldoPendenteKg)} kg</div>
           </div>
-          <div className={`border rounded-lg p-3 ${resumo.totalInconsistencias > 0 ? 'border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20' : 'border-slate-200 dark:border-slate-700'}`}>
+          <div className={`border rounded-lg p-3 ${resumo.totalInconsistencias > 0 ? 'border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20' : 'border-atlas-border'}`}>
             <div className="text-xs font-medium text-red-700 dark:text-red-300 flex items-center gap-1">
               {resumo.totalInconsistencias > 0 && <AlertTriangle size={12} />} Inconsistências
             </div>
             <div className="font-serif text-xl text-atlas-ink mt-1">{resumo.totalInconsistencias}</div>
           </div>
-          <div className="border border-slate-200 dark:border-slate-700 rounded-lg p-3">
+          <div className="border border-atlas-border rounded-lg p-3">
             <div className="text-xs font-medium text-atlas-muted">Sem mapa</div>
             <div className="font-serif text-xl text-atlas-ink mt-1">{fmtKg(resumo.totalSemMapaKg)} kg</div>
           </div>
@@ -202,13 +202,13 @@ export function PendenciasFiscaisPage() {
 
       {/* Pedidos com mapa */}
       {!isLoading && pedidos.length === 0 && (
-        <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
+        <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-atlas-border rounded-lg">
           Nenhum pedido neste filtro.
         </div>
       )}
 
       {pedidos.length > 0 && (
-        <div className="border border-slate-200 dark:border-slate-700 rounded-lg divide-y divide-slate-200 dark:divide-slate-700 overflow-hidden">
+        <div className="border border-atlas-border rounded-lg divide-y divide-atlas-border overflow-hidden">
           {pedidos.map((p) => {
             const cfg = STATUS_CFG[p.statusAgregado];
             const aberto = expandidos.has(p.pedidoAcxeOmie);
@@ -216,7 +216,7 @@ export function PendenciasFiscaisPage() {
               <div key={p.pedidoAcxeOmie}>
                 <button
                   onClick={() => toggle(p.pedidoAcxeOmie)}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800/30"
+                  className="w-full flex items-center gap-3 px-3 py-2.5 text-left text-sm hover:bg-atlas-bg/60"
                 >
                   {aberto ? <ChevronDown size={15} className="text-atlas-muted shrink-0" /> : <ChevronRight size={15} className="text-atlas-muted shrink-0" />}
                   <span className={`text-xs font-semibold px-2 py-0.5 rounded ${cfg.bg} ${cfg.text} shrink-0`}>{cfg.label}</span>
@@ -230,7 +230,7 @@ export function PendenciasFiscaisPage() {
                     </span>
                   )}
                   {p.estagioFup && (
-                    <span className="text-[11px] text-atlas-muted px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 shrink-0">{rotulo(ESTAGIO_FUP_LABEL, p.estagioFup)}</span>
+                    <span className="text-[11px] text-atlas-muted px-2 py-0.5 rounded bg-atlas-bg shrink-0">{rotulo(ESTAGIO_FUP_LABEL, p.estagioFup)}</span>
                   )}
                   {p.diasEmExoneracao != null && (
                     <span className={`text-[11px] shrink-0 ${agingClass(p.diasEmExoneracao)}`} title={`Em exoneração desde ${fmtData(p.exoneracaoDataEntrada)}`}>
@@ -244,7 +244,7 @@ export function PendenciasFiscaisPage() {
                 </button>
 
                 {aberto && (
-                  <div className="bg-slate-50/60 dark:bg-slate-900/30 px-3 pb-3 pt-1">
+                  <div className="bg-atlas-bg/60 px-3 pb-3 pt-1">
                     <table className="min-w-full text-xs">
                       <thead className="text-[11px] uppercase text-atlas-muted">
                         <tr>
@@ -257,7 +257,7 @@ export function PendenciasFiscaisPage() {
                       </thead>
                       <tbody>
                         {p.filhotes.map((f) => (
-                          <tr key={f.nfFilhote} className="border-t border-slate-200 dark:border-slate-700/50">
+                          <tr key={f.nfFilhote} className="border-t border-atlas-border/60">
                             <td className="px-2 py-1 text-atlas-muted">{f.posicao}</td>
                             <td className="px-2 py-1 font-mono">{f.nfFilhote}</td>
                             <td className="px-2 py-1 text-right font-mono text-atlas-ink">{fmtKg(f.qtdeKg)}</td>
@@ -295,9 +295,9 @@ export function PendenciasFiscaisPage() {
             NFs de importação (CFOP 3) sem mapa NF mãe/filhote cadastrado e sem recebimento reconhecido.
             Valide se não são falsas pendências (já recebidas mas não lançadas) ou pedidos a mapear.
           </p>
-          <div className="overflow-x-auto border border-slate-200 dark:border-slate-700 rounded-lg">
+          <div className="overflow-x-auto border border-atlas-border rounded-lg">
             <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 dark:bg-slate-800/50 text-xs uppercase text-atlas-muted">
+              <thead className="bg-atlas-bg text-xs uppercase text-atlas-muted">
                 <tr>
                   <th className="text-left px-3 py-2">NF</th>
                   <th className="text-left px-3 py-2">Produto</th>
@@ -308,7 +308,7 @@ export function PendenciasFiscaisPage() {
               </thead>
               <tbody>
                 {semMapa.map((n) => (
-                  <tr key={`${n.notaFiscal}-${n.produtoCodigoAcxe}`} className="border-t border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                  <tr key={`${n.notaFiscal}-${n.produtoCodigoAcxe}`} className="border-t border-atlas-border hover:bg-atlas-bg/60">
                     <td className="px-3 py-2 font-mono text-xs">{n.notaFiscal}</td>
                     <td className="px-3 py-2">
                       <div className="text-atlas-ink">{n.produtoNome ?? '—'}</div>

@@ -168,7 +168,7 @@ export function RecebimentoNacionalForm() {
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-4 bg-atlas-card border border-atlas-border rounded-lg">
         <div className="md:col-span-1">
           <label className="block text-xs font-medium text-atlas-muted mb-1">
             Número da NF <span className="text-red-500">*</span>
@@ -178,7 +178,7 @@ export function RecebimentoNacionalForm() {
             onChange={(e) => setNf(e.target.value)}
             placeholder="Ex: 12345"
             required
-            className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm outline-none focus:ring-2 focus:ring-atlas-accent"
+            className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm outline-none focus:ring-2 focus:ring-atlas-accent"
           />
           <p className="text-[11px] text-atlas-muted mt-1">
             Vai pra observação do ajuste OMIE — não consultamos a NF, só registramos a referência.
@@ -192,7 +192,7 @@ export function RecebimentoNacionalForm() {
             value={observacoes}
             onChange={(e) => setObservacoes(e.target.value)}
             placeholder="Detalhe adicional que deve aparecer na aprovação"
-            className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm outline-none focus:ring-2 focus:ring-atlas-accent"
+            className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm outline-none focus:ring-2 focus:ring-atlas-accent"
           />
         </div>
       </div>
@@ -279,7 +279,7 @@ function ItemRow({ indice, valor, podeRemover, onMudar, onRemover }: ItemRowProp
   }, [valor.empresa, localidades]);
 
   return (
-    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4">
+    <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
       <div className="flex items-center justify-between mb-3">
         <span className="text-xs font-medium text-atlas-muted">Item {indice + 1}</span>
         {podeRemover && (
@@ -299,7 +299,7 @@ function ItemRow({ indice, valor, podeRemover, onMudar, onRemover }: ItemRowProp
           <select
             value={valor.empresa}
             onChange={(e) => onMudar({ empresa: e.target.value as Empresa, produtoCodigo: null, produtoDescricao: '', localidadeId: '' })}
-            className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm outline-none"
+            className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm outline-none"
           >
             <option value="q2p">Q2P</option>
             <option value="acxe">ACXE</option>
@@ -326,7 +326,7 @@ function ItemRow({ indice, valor, podeRemover, onMudar, onRemover }: ItemRowProp
           <select
             value={valor.localidadeId}
             onChange={(e) => onMudar({ localidadeId: e.target.value })}
-            className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm outline-none"
+            className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm outline-none"
           >
             <option value="">Selecione...</option>
             {localidades.map((l) => (
@@ -351,12 +351,12 @@ function ItemRow({ indice, valor, podeRemover, onMudar, onRemover }: ItemRowProp
               value={valor.quantidade}
               onChange={(e) => onMudar({ quantidade: e.target.value })}
               placeholder="0"
-              className="flex-1 min-w-0 px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm outline-none focus:ring-2 focus:ring-atlas-accent"
+              className="flex-1 min-w-0 px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm outline-none focus:ring-2 focus:ring-atlas-accent"
             />
             <select
               value={valor.unidade}
               onChange={(e) => onMudar({ unidade: e.target.value as Unidade })}
-              className="px-2 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm outline-none"
+              className="px-2 py-2 border border-atlas-border bg-atlas-bg rounded text-sm outline-none"
             >
               <option value="kg">kg</option>
               <option value="t">t</option>
@@ -378,7 +378,7 @@ function ItemRow({ indice, valor, podeRemover, onMudar, onRemover }: ItemRowProp
               value={valor.valorTotalBrl}
               onChange={(e) => onMudar({ valorTotalBrl: e.target.value })}
               placeholder="0,00"
-              className="w-full pl-7 pr-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm outline-none focus:ring-2 focus:ring-atlas-accent"
+              className="w-full pl-7 pr-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm outline-none focus:ring-2 focus:ring-atlas-accent"
             />
           </div>
           {(() => {
@@ -451,7 +451,7 @@ function ProdutoCombobox({ empresa, valor, onChange }: ProdutoComboboxProps) {
       <button
         type="button"
         onClick={() => setAberto((v) => !v)}
-        className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm text-left hover:border-slate-400 flex items-center justify-between gap-2"
+        className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm text-left hover:border-atlas-muted flex items-center justify-between gap-2"
       >
         <span className={valor ? 'truncate' : 'truncate text-atlas-muted'} title={valor?.descricao}>
           {valor?.descricao ?? 'Selecionar produto...'}
@@ -459,13 +459,13 @@ function ProdutoCombobox({ empresa, valor, onChange }: ProdutoComboboxProps) {
         <span className="text-atlas-muted text-xs">▾</span>
       </button>
       {aberto && (
-        <div className="absolute z-10 mt-1 w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded shadow-lg max-h-72 overflow-hidden flex flex-col">
+        <div className="absolute z-10 mt-1 w-full bg-atlas-card border border-atlas-border rounded shadow-lg max-h-72 overflow-hidden flex flex-col">
           <input
             autoFocus
             value={termo}
             onChange={(e) => setTermo(e.target.value)}
             placeholder="Buscar produto pela descrição..."
-            className="w-full px-3 py-2 border-b border-slate-200 dark:border-slate-700 dark:bg-slate-900 text-sm focus:outline-none"
+            className="w-full px-3 py-2 border-b border-atlas-border bg-atlas-bg text-sm focus:outline-none"
           />
           <div className="overflow-y-auto flex-1">
             {isFetching && opcoes.length === 0 && (
@@ -479,8 +479,8 @@ function ProdutoCombobox({ empresa, valor, onChange }: ProdutoComboboxProps) {
                 key={p.codigo}
                 type="button"
                 onClick={() => escolher(p)}
-                className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-700 ${
-                  p.codigo === valor?.codigo ? 'bg-slate-100 dark:bg-slate-700/60 font-medium' : ''
+                className={`w-full text-left px-3 py-2 text-sm hover:bg-atlas-bg/60 ${
+                  p.codigo === valor?.codigo ? 'bg-atlas-bg font-medium' : ''
                 }`}
               >
                 <div className="truncate" title={p.descricao}>

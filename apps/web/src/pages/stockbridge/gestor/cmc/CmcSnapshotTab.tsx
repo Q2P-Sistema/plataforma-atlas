@@ -72,7 +72,7 @@ export function CmcSnapshotTab({ filtros }: { filtros: CmcUiFiltros }) {
       {isLoading && <div className="p-6 text-sm text-atlas-muted">Carregando...</div>}
 
       {data && familias.length === 0 && !isLoading && (
-        <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
+        <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-atlas-border rounded-lg">
           Nenhum dado de custo encontrado para os filtros selecionados.
         </div>
       )}
@@ -84,7 +84,7 @@ export function CmcSnapshotTab({ filtros }: { filtros: CmcUiFiltros }) {
 
 function ResumoCard({ label, value, tone }: { label: string; value: string; tone: string }) {
   return (
-    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 min-w-[180px]">
+    <div className="bg-atlas-card border border-atlas-border rounded-lg p-3 min-w-[180px]">
       <div className="text-xs uppercase tracking-wide text-atlas-muted font-medium mb-0.5">{label}</div>
       <div className={`font-serif text-lg ${tone}`}>{value}</div>
     </div>

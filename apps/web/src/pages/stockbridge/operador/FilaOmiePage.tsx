@@ -38,8 +38,8 @@ const TIPO_LABEL: Record<string, { label: string; color: string }> = {
   importacao: { label: 'Importação', color: 'bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-400' },
   devolucao_cliente: { label: 'Devolução', color: 'bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-400' },
   compra_nacional: { label: 'Compra Nacional', color: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400' },
-  retorno_remessa: { label: 'Retorno Remessa', color: 'bg-slate-100 text-slate-800' },
-  retorno_comodato: { label: 'Retorno Comodato', color: 'bg-slate-100 text-slate-800' },
+  retorno_remessa: { label: 'Retorno Remessa', color: 'bg-atlas-muted/20 text-atlas-muted' },
+  retorno_comodato: { label: 'Retorno Comodato', color: 'bg-atlas-muted/20 text-atlas-muted' },
 };
 
 function useApiFetch() {
@@ -141,7 +141,7 @@ export function FilaOmiePage() {
         </p>
       </div>
 
-      <div className="flex gap-1 mb-6 border-b border-slate-200 dark:border-slate-700">
+      <div className="flex gap-1 mb-6 border-b border-atlas-border">
         <button
           type="button"
           onClick={() => setAba('importacao')}
@@ -261,7 +261,7 @@ export function FilaOmiePage() {
                         }
                       }}
                       disabled={dispensarMut.isPending}
-                      className="px-3 py-1.5 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 rounded text-xs font-medium hover:bg-slate-50 dark:hover:bg-slate-800"
+                      className="px-3 py-1.5 border border-atlas-border text-atlas-ink rounded text-xs font-medium hover:bg-atlas-bg/60"
                     >
                       Descartar
                     </button>
@@ -299,14 +299,14 @@ function ImportacaoSection({
 }: ImportacaoSectionProps) {
   return (
     <>
-      <form onSubmit={handleBuscar} className="flex items-end gap-3 mb-6 p-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg">
+      <form onSubmit={handleBuscar} className="flex items-end gap-3 mb-6 p-4 bg-atlas-card border border-atlas-border rounded-lg">
         <div className="flex-1">
           <label className="block text-xs font-medium text-atlas-muted mb-1">Número da NF</label>
           <input
             value={buscaNf}
             onChange={(e) => setBuscaNf(e.target.value)}
             placeholder="Ex: 4878 ou IMP-2026-0301"
-            className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm outline-none focus:ring-2 focus:ring-atlas-accent"
+            className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm outline-none focus:ring-2 focus:ring-atlas-accent"
           />
         </div>
         <button type="submit" className="px-5 py-2 bg-atlas-btn-bg text-atlas-btn-text rounded text-sm font-medium hover:opacity-90">
@@ -321,7 +321,7 @@ function ImportacaoSection({
       )}
 
       {!queryKey.nf && (
-        <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
+        <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-atlas-border rounded-lg">
           Informe um número de NF para buscar.
         </div>
       )}
@@ -329,16 +329,16 @@ function ImportacaoSection({
       {isLoading && <div className="p-6 text-sm text-atlas-muted">Consultando OMIE...</div>}
 
       {queryKey.nf && !isLoading && itens.length === 0 && !error && (
-        <div className="p-6 text-sm text-atlas-muted border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
+        <div className="p-6 text-sm text-atlas-muted border border-dashed border-atlas-border rounded-lg">
           Nenhuma NF encontrada ou já processada. Verifique o número.
         </div>
       )}
 
       <div className="flex flex-col gap-3">
         {itens.map((item) => {
-          const tipoCfg = TIPO_LABEL[item.tipo] ?? { label: item.tipo, color: 'bg-slate-100 text-slate-800' };
+          const tipoCfg = TIPO_LABEL[item.tipo] ?? { label: item.tipo, color: 'bg-atlas-muted/20 text-atlas-muted' };
           return (
-            <div key={item.nf} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4 flex items-center gap-4">
+            <div key={item.nf} className="bg-atlas-card border border-atlas-border rounded-lg p-4 flex items-center gap-4">
               <span className={`text-xs font-semibold px-2 py-1 rounded ${tipoCfg.color}`}>{tipoCfg.label}</span>
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-3 mb-1">

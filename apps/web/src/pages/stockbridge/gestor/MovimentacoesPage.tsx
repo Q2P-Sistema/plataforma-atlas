@@ -65,7 +65,7 @@ const TIPO_COLOR: Record<string, string> = {
   saida_manual: 'bg-orange-50 text-orange-700 border-orange-200',
   debito_cruzado: 'bg-red-50 text-red-700 border-red-200',
   regularizacao_fiscal: 'bg-violet-50 text-violet-700 border-violet-200',
-  ajuste: 'bg-slate-50 text-slate-700 border-slate-200',
+  ajuste: 'bg-atlas-muted/20 text-atlas-muted border-atlas-border',
 };
 
 function useApiFetch() {
@@ -120,12 +120,12 @@ export function MovimentacoesPage() {
           value={filtroNf}
           onChange={(e) => setFiltroNf(e.target.value)}
           placeholder="Buscar por NF..."
-          className="px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm flex-1 min-w-48"
+          className="px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm flex-1 min-w-48"
         />
         <select
           value={filtroTipo}
           onChange={(e) => { setPage(1); setFiltroTipo(e.target.value); setFiltroSubtipo(''); }}
-          className="px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+          className="px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
         >
           <option value="">Todos os tipos</option>
           <option value="entrada_nf">Entrada NF</option>
@@ -140,7 +140,7 @@ export function MovimentacoesPage() {
           <select
             value={filtroSubtipo}
             onChange={(e) => { setPage(1); setFiltroSubtipo(e.target.value); }}
-            className="px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+            className="px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
           >
             <option value="">Todos subtipos</option>
             <option value="transf_intra_cnpj">Transferência intra-CNPJ</option>
@@ -154,7 +154,7 @@ export function MovimentacoesPage() {
         <select
           value={filtroCnpj}
           onChange={(e) => { setPage(1); setFiltroCnpj(e.target.value as '' | 'acxe' | 'q2p' | 'ambos'); }}
-          className="px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+          className="px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
         >
           <option value="">Todos CNPJs</option>
           <option value="acxe">Só ACXE</option>
@@ -162,7 +162,7 @@ export function MovimentacoesPage() {
           <option value="ambos">Ambos (dual)</option>
         </select>
         {role !== 'operador' && (
-          <label className="flex items-center gap-1.5 px-3 py-2 border border-slate-300 dark:border-slate-600 rounded text-sm cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800">
+          <label className="flex items-center gap-1.5 px-3 py-2 border border-atlas-border rounded text-sm cursor-pointer hover:bg-atlas-bg/60">
             <input
               type="checkbox"
               checked={apenasMinhas}
@@ -183,7 +183,7 @@ export function MovimentacoesPage() {
       {isLoading && <div className="p-6 text-sm text-atlas-muted">Carregando...</div>}
 
       {data && data.items.length === 0 && !isLoading && (
-        <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
+        <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-atlas-border rounded-lg">
           Nenhuma movimentação para os filtros aplicados.
         </div>
       )}
@@ -191,11 +191,11 @@ export function MovimentacoesPage() {
       {data && data.items.length > 0 && (
         <>
           <div
-            className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-y-auto mb-3"
+            className="bg-atlas-card border border-atlas-border rounded-lg overflow-y-auto mb-3"
             style={{ maxHeight: 'calc(100vh - 320px)' }}
           >
             <table className="w-full text-xs">
-              <thead className="bg-slate-100 dark:bg-slate-900 text-atlas-muted sticky top-0 z-10 border-b-2 border-slate-300 dark:border-slate-600">
+              <thead className="bg-atlas-bg text-atlas-muted sticky top-0 z-10 border-b-2 border-atlas-border">
                 <tr>
                   <th className="text-left px-3 py-2">Data</th>
                   <th className="text-left px-3 py-2">Produto</th>
@@ -209,7 +209,7 @@ export function MovimentacoesPage() {
               </thead>
               <tbody>
                 {data.items.map((m) => (
-                  <tr key={m.id} className="border-t border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-900/30">
+                  <tr key={m.id} className="border-t border-atlas-border hover:bg-atlas-bg/60">
                     <td className="px-3 py-2 text-atlas-muted">{new Date(m.createdAt).toLocaleString('pt-BR')}</td>
                     <td className="px-3 py-2 text-[11px]">
                       {m.produtoDescricao ? (
@@ -217,7 +217,7 @@ export function MovimentacoesPage() {
                           <div className="text-atlas-ink font-medium">{m.produtoDescricao}</div>
                           <div>
                             <span
-                              className={`text-[10px] px-2 py-0.5 rounded border ${TIPO_COLOR[m.tipoMovimento] ?? 'bg-slate-50 text-slate-700 border-slate-200'}`}
+                              className={`text-[10px] px-2 py-0.5 rounded border ${TIPO_COLOR[m.tipoMovimento] ?? 'bg-atlas-muted/20 text-atlas-muted border-atlas-border'}`}
                             >
                               {rotulo(TIPO_MOVIMENTO_LABEL, m.tipoMovimento)}{m.subtipo ? ` · ${rotulo(SUBTIPO_LABEL, m.subtipo)}` : ''}
                             </span>
@@ -225,7 +225,7 @@ export function MovimentacoesPage() {
                         </div>
                       ) : (
                         <span
-                          className={`text-[10px] px-2 py-0.5 rounded border ${TIPO_COLOR[m.tipoMovimento] ?? 'bg-slate-50 text-slate-700 border-slate-200'}`}
+                          className={`text-[10px] px-2 py-0.5 rounded border ${TIPO_COLOR[m.tipoMovimento] ?? 'bg-atlas-muted/20 text-atlas-muted border-atlas-border'}`}
                         >
                           {rotulo(TIPO_MOVIMENTO_LABEL, m.tipoMovimento)}{m.subtipo ? ` · ${rotulo(SUBTIPO_LABEL, m.subtipo)}` : ''}
                         </span>
@@ -292,14 +292,14 @@ export function MovimentacoesPage() {
               <button
                 disabled={page <= 1}
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
-                className="px-3 py-1 border border-slate-300 rounded disabled:opacity-50"
+                className="px-3 py-1 border border-atlas-border rounded disabled:opacity-50"
               >
                 ← Anterior
               </button>
               <button
                 disabled={page >= totalPages}
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                className="px-3 py-1 border border-slate-300 rounded disabled:opacity-50"
+                className="px-3 py-1 border border-atlas-border rounded disabled:opacity-50"
               >
                 Próxima →
               </button>

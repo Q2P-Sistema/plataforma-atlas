@@ -47,7 +47,7 @@ const STATUS_BADGE: Record<StatusGeral, string> = {
   'Divergente e Negativo': 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300',
   Divergente: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
   Negativo: 'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300',
-  OK: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400',
+  OK: 'bg-atlas-muted/20 text-atlas-muted',
 };
 
 /** kg com separador de milhar, sem decimais; sinal explícito p/ diferença. */
@@ -84,7 +84,7 @@ function useApiFetch() {
 
 function ResumoCard({ label, value, tone }: { label: string; value: string; tone: string }) {
   return (
-    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 min-w-[160px]">
+    <div className="bg-atlas-card border border-atlas-border rounded-lg p-3 min-w-[160px]">
       <div className="text-xs uppercase tracking-wide text-atlas-muted font-medium mb-0.5">{label}</div>
       <div className={`font-serif text-lg ${tone}`}>{value}</div>
     </div>
@@ -166,7 +166,7 @@ export function ConferenciaEstoquePage() {
 
       {/* Filtros (US3 / FR-012) */}
       <div className="flex items-center gap-3 mb-5 text-sm flex-wrap">
-        <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded">
+        <div className="flex gap-1 p-1 bg-atlas-bg rounded">
           {(
             [
               ['problemas', 'Problemas'],
@@ -178,19 +178,19 @@ export function ConferenciaEstoquePage() {
             <button
               key={v}
               onClick={() => setStatusFilter(v)}
-              className={`px-3 py-1 rounded text-xs font-medium transition ${statusFilter === v ? 'bg-white dark:bg-slate-900 shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
+              className={`px-3 py-1 rounded text-xs font-medium transition ${statusFilter === v ? 'bg-atlas-card shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
             >
               {label}
             </button>
           ))}
         </div>
 
-        <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded">
+        <div className="flex gap-1 p-1 bg-atlas-bg rounded">
           {(['todos', 'ESPELHADO', 'INDIVIDUAL'] as const).map((v) => (
             <button
               key={v}
               onClick={() => setTipoFilter(v)}
-              className={`px-3 py-1 rounded text-xs font-medium transition ${tipoFilter === v ? 'bg-white dark:bg-slate-900 shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
+              className={`px-3 py-1 rounded text-xs font-medium transition ${tipoFilter === v ? 'bg-atlas-card shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
             >
               {v === 'todos' ? 'Todos os tipos' : v === 'ESPELHADO' ? 'Espelhado' : 'Individual'}
             </button>
@@ -202,7 +202,7 @@ export function ConferenciaEstoquePage() {
           value={busca}
           onChange={(e) => setBusca(e.target.value)}
           placeholder="Buscar produto ou local…"
-          className="px-3 py-1.5 text-xs rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-atlas-ink placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500/40 w-56"
+          className="px-3 py-1.5 text-xs rounded border border-atlas-border bg-atlas-bg text-atlas-ink placeholder:text-atlas-muted focus:outline-none focus:ring-2 focus:ring-amber-500/40 w-56"
         />
       </div>
 
@@ -215,7 +215,7 @@ export function ConferenciaEstoquePage() {
       {isLoading && <div className="p-6 text-sm text-atlas-muted">Carregando posição...</div>}
 
       {!isLoading && !error && filtrados.length === 0 && (
-        <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
+        <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-atlas-border rounded-lg">
           Nenhum item para este filtro.
         </div>
       )}
@@ -225,9 +225,9 @@ export function ConferenciaEstoquePage() {
           <div className="mb-2 text-xs text-atlas-muted">
             {filtrados.length.toLocaleString('pt-BR')} de {itens.length.toLocaleString('pt-BR')} linhas
           </div>
-          <div className="overflow-x-auto border border-slate-200 dark:border-slate-700 rounded-lg">
+          <div className="overflow-x-auto border border-atlas-border rounded-lg">
             <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 dark:bg-slate-800/50 text-xs uppercase text-atlas-muted">
+              <thead className="bg-atlas-bg text-xs uppercase text-atlas-muted">
                 <tr>
                   <th className="text-left px-3 py-2">Status</th>
                   <th className="text-left px-3 py-2">Local</th>
@@ -243,7 +243,7 @@ export function ConferenciaEstoquePage() {
                 {filtrados.map((i, idx) => (
                   <tr
                     key={`${i.codigoEstoque}|${i.produto}|${idx}`}
-                    className={`border-t border-slate-200 dark:border-slate-700 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/30 ${LINHA_CFG[i.statusGeral]}`}
+                    className={`border-t border-atlas-border transition-colors hover:bg-atlas-bg/60 ${LINHA_CFG[i.statusGeral]}`}
                   >
                     <td className="px-3 py-2">
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded whitespace-nowrap ${STATUS_BADGE[i.statusGeral]}`}>

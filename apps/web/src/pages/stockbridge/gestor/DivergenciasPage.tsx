@@ -52,15 +52,15 @@ const TIPO_CFG: Record<TipoDivergencia, { label: string; descr: string; bg: stri
   fiscal_pendente: {
     label: 'Fiscal pendente',
     descr: 'Saída manual sem NF (amostra/descarte/quebra) aguardando regularização',
-    bg: 'bg-slate-100 dark:bg-slate-800',
-    text: 'text-slate-700 dark:text-slate-300',
+    bg: 'bg-atlas-muted/20',
+    text: 'text-atlas-muted',
   },
 };
 
 const STATUS_CFG: Record<StatusDivergencia, { label: string; color: string }> = {
   aberta: { label: 'Aberta', color: 'text-red-700 dark:text-red-300' },
   regularizada: { label: 'Regularizada', color: 'text-green-700 dark:text-green-300' },
-  descartada: { label: 'Descartada', color: 'text-slate-500 dark:text-slate-400' },
+  descartada: { label: 'Descartada', color: 'text-atlas-muted' },
 };
 
 function fmtKg(n: number) {
@@ -122,36 +122,36 @@ export function DivergenciasPage() {
       </div>
 
       <div className="flex items-center gap-3 mb-5 text-sm flex-wrap">
-        <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded">
+        <div className="flex gap-1 p-1 bg-atlas-bg rounded">
           {(['aberta', 'regularizada', 'descartada'] as const).map((v) => (
             <button
               key={v}
               onClick={() => setStatusFilter(v)}
-              className={`px-3 py-1 rounded text-xs font-medium transition ${statusFilter === v ? 'bg-white dark:bg-slate-900 shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
+              className={`px-3 py-1 rounded text-xs font-medium transition ${statusFilter === v ? 'bg-atlas-card shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
             >
               {STATUS_CFG[v].label}
             </button>
           ))}
         </div>
 
-        <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded">
+        <div className="flex gap-1 p-1 bg-atlas-bg rounded">
           {(['todos', 'faltando', 'varredura', 'cruzada', 'fiscal_pendente'] as const).map((v) => (
             <button
               key={v}
               onClick={() => setTipoFilter(v)}
-              className={`px-3 py-1 rounded text-xs font-medium transition ${tipoFilter === v ? 'bg-white dark:bg-slate-900 shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
+              className={`px-3 py-1 rounded text-xs font-medium transition ${tipoFilter === v ? 'bg-atlas-card shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
             >
               {v === 'todos' ? 'Todos os tipos' : TIPO_CFG[v].label}
             </button>
           ))}
         </div>
 
-        <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded">
+        <div className="flex gap-1 p-1 bg-atlas-bg rounded">
           {(['ambos', 'acxe', 'q2p'] as const).map((v) => (
             <button
               key={v}
               onClick={() => setCnpjFilter(v)}
-              className={`px-3 py-1 rounded text-xs font-medium transition ${cnpjFilter === v ? 'bg-white dark:bg-slate-900 shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
+              className={`px-3 py-1 rounded text-xs font-medium transition ${cnpjFilter === v ? 'bg-atlas-card shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
             >
               {v === 'ambos' ? 'Ambos CNPJs' : v.toUpperCase()}
             </button>
@@ -166,7 +166,7 @@ export function DivergenciasPage() {
             return (
               <div
                 key={tipo}
-                className={`border border-slate-200 dark:border-slate-700 rounded-lg p-3 ${cfg.bg}`}
+                className={`border border-atlas-border rounded-lg p-3 ${cfg.bg}`}
               >
                 <div className={`text-xs font-medium ${cfg.text}`}>{cfg.label}</div>
                 <div className="font-serif text-xl text-atlas-ink mt-1">{count}</div>
@@ -185,15 +185,15 @@ export function DivergenciasPage() {
       {isLoading && <div className="p-6 text-sm text-atlas-muted">Carregando...</div>}
 
       {!isLoading && data.length === 0 && (
-        <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
+        <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-atlas-border rounded-lg">
           Nenhuma divergência {STATUS_CFG[statusFilter].label.toLowerCase()} encontrada para este filtro.
         </div>
       )}
 
       {data.length > 0 && (
-        <div className="overflow-x-auto border border-slate-200 dark:border-slate-700 rounded-lg">
+        <div className="overflow-x-auto border border-atlas-border rounded-lg">
           <table className="min-w-full text-sm">
-            <thead className="bg-slate-50 dark:bg-slate-800/50 text-xs uppercase text-atlas-muted">
+            <thead className="bg-atlas-bg text-xs uppercase text-atlas-muted">
               <tr>
                 <th className="text-left px-3 py-2">Tipo</th>
                 <th className="text-left px-3 py-2">Produto</th>
@@ -210,7 +210,7 @@ export function DivergenciasPage() {
                 return (
                   <tr
                     key={d.id}
-                    className="border-t border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/30"
+                    className="border-t border-atlas-border hover:bg-atlas-bg/60"
                   >
                     <td className="px-3 py-2">
                       <span

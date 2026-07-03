@@ -22,9 +22,9 @@ export function FamiliaTree({ familias }: { familias: CmcFamiliaNode[] }) {
   }
 
   return (
-    <div className="overflow-x-auto bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg">
+    <div className="overflow-x-auto bg-atlas-card border border-atlas-border rounded-lg">
       <table className="w-full text-xs">
-        <thead className="bg-slate-50 dark:bg-slate-800/50 text-[10px] uppercase tracking-wide text-atlas-muted">
+        <thead className="bg-atlas-bg text-[10px] uppercase tracking-wide text-atlas-muted">
           <tr>
             <th className="text-left px-3 py-2 font-medium">Família / Produto</th>
             <th className="text-left px-3 py-2 font-medium">Origem</th>
@@ -68,7 +68,7 @@ function FamiliaRows({
     <>
       <tr
         onClick={onToggle}
-        className="border-t border-slate-200 dark:border-slate-700 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/30"
+        className="border-t border-atlas-border cursor-pointer hover:bg-atlas-bg/60"
       >
         <td className="px-3 py-2">
           <button
@@ -104,7 +104,7 @@ function FamiliaRows({
         f.produtos.map((p) => (
           <tr
             key={`${f.descricaoFamilia}-${p.codigoProduto}-${p.origem}`}
-            className="border-t border-slate-100 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/20"
+            className="border-t border-atlas-border/60 bg-atlas-bg/40"
           >
             <td className="px-3 py-1.5 pl-9">
               <span className="text-atlas-ink">{p.descricaoProduto}</span>

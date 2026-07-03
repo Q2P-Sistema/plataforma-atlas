@@ -119,7 +119,7 @@ export function ComodatoRetornoPage() {
               }}
               disabled={dispararCronMut.isPending}
               title="Roda agora o cron de alerta — normalmente roda às 08:00 BR todo dia"
-              className="px-3 py-1.5 text-xs font-medium border border-slate-300 dark:border-slate-600 rounded hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+              className="px-3 py-1.5 text-xs font-medium border border-atlas-border rounded hover:bg-atlas-bg/60 disabled:opacity-50"
             >
               {dispararCronMut.isPending ? 'Rodando…' : '🔔 Disparar alerta agora'}
             </button>
@@ -137,7 +137,7 @@ export function ComodatoRetornoPage() {
           value={busca}
           onChange={(e) => setBusca(e.target.value)}
           placeholder="Buscar por produto, SKU ou cliente"
-          className="w-full max-w-md px-3 py-1.5 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+          className="w-full max-w-md px-3 py-1.5 border border-atlas-border bg-atlas-bg rounded text-sm"
         />
       </div>
 
@@ -150,10 +150,10 @@ export function ComodatoRetornoPage() {
 
       {data && (
         <div
-          className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-y-auto"
+          className="bg-atlas-card border border-atlas-border rounded-lg overflow-y-auto"
           style={{ maxHeight: 'calc(100vh - 250px)' }}
         >
-          <div className="sticky top-0 z-10 bg-slate-100 dark:bg-slate-900 border-b-2 border-slate-300 dark:border-slate-600 grid grid-cols-[2.5fr_1fr_1fr_1fr_1fr_0.8fr_0.8fr] text-xs text-atlas-muted font-semibold px-3 py-2">
+          <div className="sticky top-0 z-10 bg-atlas-bg border-b-2 border-atlas-border grid grid-cols-[2.5fr_1fr_1fr_1fr_1fr_0.8fr_0.8fr] text-xs text-atlas-muted font-semibold px-3 py-2">
             <div>Produto</div>
             <div>Cliente</div>
             <div>Qtd saída (kg)</div>
@@ -172,7 +172,7 @@ export function ComodatoRetornoPage() {
           {filtrados.map((c) => (
             <div
               key={c.movimentacaoId}
-              className={`grid grid-cols-[2.5fr_1fr_1fr_1fr_1fr_0.8fr_0.8fr] text-xs border-b border-slate-100 dark:border-slate-700/60 px-3 py-2 hover:bg-slate-50/60 dark:hover:bg-slate-900/30 items-center ${
+              className={`grid grid-cols-[2.5fr_1fr_1fr_1fr_1fr_0.8fr_0.8fr] text-xs border-b border-atlas-border/60 px-3 py-2 hover:bg-atlas-bg/60 items-center ${
                 c.vencido ? 'bg-rose-50/50 dark:bg-rose-900/20' : ''
               }`}
             >
@@ -193,7 +193,7 @@ export function ComodatoRetornoPage() {
               <div className="text-center">
                 <span
                   className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                    c.vencido ? 'bg-rose-100 dark:bg-rose-900/30 text-rose-800 dark:text-rose-300' : 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                    c.vencido ? 'bg-rose-100 text-rose-800' : 'bg-atlas-muted/20 text-atlas-muted'
                   }`}
                 >
                   {c.diasEmAberto}d
@@ -296,10 +296,10 @@ function RetornoModal({ comodato, onClose, onSuccess }: RetornoModalProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div
-        className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl max-w-xl w-full max-h-[90vh] overflow-y-auto"
+        className="bg-atlas-card border border-atlas-border rounded-lg shadow-xl max-w-xl w-full max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="p-5 border-b border-slate-200 dark:border-slate-700">
+        <div className="p-5 border-b border-atlas-border">
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-serif text-atlas-ink mb-1">Retorno de Comodato</h2>
@@ -340,7 +340,7 @@ function RetornoModal({ comodato, onClose, onSuccess }: RetornoModalProps) {
             <select
               value={galpaoDestino}
               onChange={(e) => setGalpaoDestino(e.target.value)}
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+              className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
               disabled={galpoesQuery.isLoading}
             >
               <option value="">— selecione —</option>
@@ -366,8 +366,8 @@ function RetornoModal({ comodato, onClose, onSuccess }: RetornoModalProps) {
               value={quantidadeKg}
               onChange={(e) => setQuantidadeKg(e.target.value)}
               placeholder="0,000"
-              className={`w-full px-3 py-2 border rounded text-sm font-serif dark:bg-slate-900 ${
-                qtdMudou ? 'border-amber-400' : 'border-slate-300 dark:border-slate-600'
+              className={`w-full px-3 py-2 border rounded text-sm font-serif bg-atlas-bg ${
+                qtdMudou ? 'border-amber-400' : 'border-atlas-border'
               }`}
             />
             {qtdMudou && (
@@ -391,7 +391,7 @@ function RetornoModal({ comodato, onClose, onSuccess }: RetornoModalProps) {
                   ? 'Justifique a divergência (SKU/qtd diferentes do comodato original)'
                   : 'Observações sobre o retorno'
               }
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+              className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
             />
           </div>
 
@@ -408,10 +408,10 @@ function RetornoModal({ comodato, onClose, onSuccess }: RetornoModalProps) {
           )}
         </div>
 
-        <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-2">
+        <div className="px-5 py-3 border-t border-atlas-border flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded text-sm border border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700"
+            className="px-4 py-2 rounded text-sm border border-atlas-border hover:bg-atlas-bg/60"
           >
             Cancelar
           </button>
@@ -421,7 +421,7 @@ function RetornoModal({ comodato, onClose, onSuccess }: RetornoModalProps) {
             className={`px-5 py-2 rounded text-sm font-medium ${
               podeEnviar
                 ? 'bg-atlas-btn-bg text-atlas-btn-text hover:opacity-90'
-                : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                : 'bg-atlas-muted/20 text-atlas-muted cursor-not-allowed'
             }`}
           >
             {mut.isPending ? 'Enviando...' : 'Registrar retorno'}
@@ -491,9 +491,9 @@ function ProdutoCombobox({ valor, onChange, destacar }: ProdutoComboboxProps) {
       <button
         type="button"
         onClick={() => setAberto((v) => !v)}
-        className={`w-full px-3 py-2 border rounded text-sm text-left dark:bg-slate-900 ${
-          destacar ? 'border-amber-400' : 'border-slate-300 dark:border-slate-600'
-        } hover:border-slate-400 flex items-center justify-between gap-2`}
+        className={`w-full px-3 py-2 border rounded text-sm text-left bg-atlas-bg ${
+          destacar ? 'border-amber-400' : 'border-atlas-border'
+        } hover:border-atlas-muted flex items-center justify-between gap-2`}
       >
         <span className="truncate" title={valor.descricao}>
           {valor.descricao}
@@ -502,13 +502,13 @@ function ProdutoCombobox({ valor, onChange, destacar }: ProdutoComboboxProps) {
       </button>
 
       {aberto && (
-        <div className="absolute z-10 mt-1 w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded shadow-lg max-h-72 overflow-hidden flex flex-col">
+        <div className="absolute z-10 mt-1 w-full bg-atlas-card border border-atlas-border rounded shadow-lg max-h-72 overflow-hidden flex flex-col">
           <input
             autoFocus
             value={termo}
             onChange={(e) => setTermo(e.target.value)}
             placeholder="Buscar produto pela descrição..."
-            className="w-full px-3 py-2 border-b border-slate-200 dark:border-slate-700 dark:bg-slate-900 text-sm focus:outline-none"
+            className="w-full px-3 py-2 border-b border-atlas-border bg-atlas-bg text-sm focus:outline-none"
           />
           <div className="overflow-y-auto flex-1">
             {isFetching && opcoes.length === 0 && (
@@ -522,8 +522,8 @@ function ProdutoCombobox({ valor, onChange, destacar }: ProdutoComboboxProps) {
                 key={p.codigoAcxe}
                 type="button"
                 onClick={() => escolher(p)}
-                className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-700 ${
-                  p.codigoAcxe === valor.codigoAcxe ? 'bg-slate-100 dark:bg-slate-700/60 font-medium' : ''
+                className={`w-full text-left px-3 py-2 text-sm hover:bg-atlas-bg/60 ${
+                  p.codigoAcxe === valor.codigoAcxe ? 'bg-atlas-bg font-medium' : ''
                 }`}
               >
                 <div className="truncate" title={p.descricao}>{p.descricao}</div>

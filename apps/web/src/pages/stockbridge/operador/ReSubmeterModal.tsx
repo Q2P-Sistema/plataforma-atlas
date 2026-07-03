@@ -61,7 +61,7 @@ export function ReSubmeterModal({ aprovacaoId, loteCodigo, quantidadeOriginalKg,
             value={quantidade}
             onChange={(e) => setQuantidade(e.target.value)}
             autoFocus
-            className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded font-serif text-lg"
+            className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded font-serif text-lg"
           />
         </div>
 
@@ -72,7 +72,7 @@ export function ReSubmeterModal({ aprovacaoId, loteCodigo, quantidadeOriginalKg,
             onChange={(e) => setObservacoes(e.target.value)}
             rows={3}
             placeholder="Ex: Recontagem encontrou 2t adicionais"
-            className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+            className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
           />
         </div>
 
@@ -83,11 +83,11 @@ export function ReSubmeterModal({ aprovacaoId, loteCodigo, quantidadeOriginalKg,
         )}
 
         <div className="flex gap-2 justify-end">
-          <button onClick={onClose} className="px-4 py-2 border border-slate-300 rounded text-sm">Cancelar</button>
+          <button onClick={onClose} className="px-4 py-2 border border-atlas-border rounded text-sm">Cancelar</button>
           <button
             onClick={() => resubmeterMut.mutate()}
             disabled={!podeEnviar || resubmeterMut.isPending}
-            className={`px-5 py-2 rounded text-sm font-medium ${podeEnviar ? 'bg-atlas-btn-bg text-atlas-btn-text' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
+            className={`px-5 py-2 rounded text-sm font-medium ${podeEnviar ? 'bg-atlas-btn-bg text-atlas-btn-text' : 'bg-atlas-muted/20 text-atlas-muted cursor-not-allowed'}`}
           >
             {resubmeterMut.isPending ? 'Enviando...' : 'Re-submeter para aprovação'}
           </button>

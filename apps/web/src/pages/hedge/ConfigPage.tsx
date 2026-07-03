@@ -118,7 +118,7 @@ export function ConfigPage() {
                             className="w-20 px-2 py-1 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-xs text-right font-mono focus:outline-none focus:ring-1 focus:ring-emerald-600" />
                           <span className="text-xs text-atlas-muted min-w-[28px]">{p.unit}</span>
                           <button onClick={() => updateMut.mutate({ chave: p.key, valor: editVal })}
-                            className="text-xs px-2 py-1 rounded bg-q2p text-white">OK</button>
+                            className="text-xs px-2 py-1 rounded bg-atlas-btn-bg text-atlas-btn-text">OK</button>
                           <button onClick={() => setEditKey(null)} className="text-xs px-2 py-1 rounded bg-atlas-border text-atlas-text">X</button>
                         </>
                       ) : (
@@ -206,7 +206,7 @@ export function ConfigPage() {
                 className="w-full px-3 py-2 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-xs focus:outline-none focus:ring-1 focus:ring-acxe" />
             </div>
             <button onClick={() => taxaMut.mutate()} disabled={!taxaForm.data_ref || !taxaForm.taxa || taxaMut.isPending}
-              className="w-full px-4 py-2 rounded bg-q2p text-white text-xs font-medium hover:bg-q2p-dark disabled:opacity-50 transition-colors">
+              className="w-full px-4 py-2 rounded bg-atlas-btn-bg text-atlas-btn-text text-xs font-medium hover:bg-atlas-btn-bg-hover disabled:opacity-50 transition-colors">
               {taxaMut.isPending ? 'Salvando...' : 'Inserir Taxa'}
             </button>
           </div>
