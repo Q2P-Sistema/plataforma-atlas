@@ -260,6 +260,66 @@ export async function enviarAlertaAprovacaoPendente(args: {
 }
 
 /**
+ * EML-09: digest de aprovação pendente para um recebimento nacional inteiro.
+ * Antes, o recebimento disparava enviarAlertaAprovacaoPendente() por item — N
+ * itens × M gestores = N×M e-mails para a MESMA NF. Aqui os itens vão numa única
+ * tabela e cada gestor recebe 1 e-mail por NF.
+ */
+export async function enviarAlertaRecebimentoNacionalLote(args: {
+  notaFiscal: string;
+  nivel: 'gestor' | 'diretor';
+  itens: Array<{ produto: string; empresa: string; galpao: string; quantidadeKg: number }>;
+  detalhes?: string;
+}): Promise<void> {
+  if (args.itens.length === 0) return;
+  const destinatarios = await resolverEmailsAprovadores(args.nivel);
+  if (destinatarios.length === 0) return;
+  const config = getConfig();
+  const linkPainel = `${config.APP_URL}/stockbridge/aprovacoes`;
+  const n = args.itens.length;
+  const plural = n === 1 ? 'item' : 'itens';
+  const subject = `StockBridge — Recebimento nacional NF ${args.notaFiscal}: ${n} ${plural} aguardando aprovação`;
+  const linhas = args.itens
+    .map(
+      (it) => `<tr>
+        <td style="padding:6px 12px 6px 0;font-size:13px;color:#111827;">${escapeHtml(it.produto)}</td>
+        <td style="padding:6px 12px;font-size:13px;color:#6b7280;white-space:nowrap;">${escapeHtml(it.empresa.toUpperCase())} · ${escapeHtml(it.galpao)}</td>
+        <td style="padding:6px 0 6px 12px;font-size:13px;color:#111827;font-weight:600;text-align:right;white-space:nowrap;">${fmtKg(it.quantidadeKg)}</td>
+      </tr>`,
+    )
+    .join('');
+  const corpoHtml = `
+    <p>O recebimento nacional da <strong>NF ${escapeHtml(args.notaFiscal)}</strong> tem <strong>${n} ${plural}</strong> aguardando aprovação.</p>
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 16px;margin:16px 0;">
+      <table role="presentation" width="100%" style="border-collapse:collapse;">
+        <thead><tr>
+          <th style="text-align:left;padding:4px 12px 8px 0;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Produto</th>
+          <th style="text-align:left;padding:4px 12px 8px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Empresa · Galpão</th>
+          <th style="text-align:right;padding:4px 0 8px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Quantidade</th>
+        </tr></thead>
+        <tbody>${linhas}</tbody>
+      </table>
+    </div>
+    ${args.detalhes ? `<p style="color:#6b7280;font-size:13px;">${escapeHtml(args.detalhes)}</p>` : ''}
+  `;
+  const { html, text } = buildEmailLayout({
+    titulo: 'Recebimento nacional aguardando aprovação',
+    variante: 'info',
+    corpoHtml,
+    ctaLabel: 'Abrir aprovações pendentes',
+    ctaUrl: linkPainel,
+  });
+  try {
+    const results = await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html, text })));
+    const falhas = results.filter((r) => r.status === 'rejected').length;
+    if (falhas > 0) logger.error({ notaFiscal: args.notaFiscal, falhas }, 'Falha ao enviar parte do digest de recebimento nacional');
+    logger.info({ notaFiscal: args.notaFiscal, itens: n, destinatarios: destinatarios.length }, 'Digest de recebimento nacional enviado');
+  } catch (err) {
+    logger.error({ err, notaFiscal: args.notaFiscal }, 'Falha ao enviar digest de recebimento nacional');
+  }
+}
+
+/**
  * Notifica admin/gestor quando OMIE deixa uma movimentacao em estado parcial
  * (status_omie='pendente_q2p' ou 'pendente_acxe_faltando'). Acao esperada:
  * acessar painel de operacoes pendentes e retentar.
@@ -461,15 +521,9 @@ export async function enviarNotificacaoRecebimentoConcluido(args: {
   }
 }
 
-/**
- * Alerta de comodato vencido. Disparado pelo cron diario apenas nos dias de
- * notificacao definidos pela escala (D+1, D+15, D+30, D+45, ...).
- * Caller decide os destinatarios — D+1 vai pro operador+gestor; D>=15 escala
- * incluindo diretor.
- */
-export async function enviarAlertaComodatoVencido(args: {
+/** Item de um digest de comodatos vencidos (EML-13) — um por comodato em aberto. */
+export interface ComodatoVencidoDigestItem {
   movimentacaoId: string;
-  destinatarios: string[];
   cliente: string | null;
   produtoCodigoAcxe: number;
   produtoDescricao: string;
@@ -478,56 +532,64 @@ export async function enviarAlertaComodatoVencido(args: {
   dtSaida: string;
   dtPrevistaRetorno: string;
   diasVencido: number;
-  /** 'inicial' (D+1) ou 'escalada' (D>=15) — muda o tom do email. */
+  /** 'inicial' (D+1) ou 'escalada' (D>=15). */
   fase: 'inicial' | 'escalada';
+}
+
+/**
+ * EML-13: digest diário de comodatos vencidos por destinatário. Antes o cron
+ * disparava 1 e-mail por comodato — um gestor com 10 comodatos vencidos no mesmo
+ * dia de escala (D+15) recebia 10 e-mails. Aqui cada destinatário recebe 1
+ * e-mail com todos os comodatos em que ele é notificado.
+ */
+export async function enviarDigestComodatosVencidos(args: {
+  to: string;
+  comodatos: ComodatoVencidoDigestItem[];
 }): Promise<void> {
-  if (args.destinatarios.length === 0) {
-    logger.warn({ movimentacaoId: args.movimentacaoId }, 'Nenhum destinatario pro alerta de comodato vencido');
-    return;
-  }
+  if (args.comodatos.length === 0) return;
   const config = getConfig();
   const linkPainel = `${config.APP_URL}/stockbridge/comodato-retorno`;
   const fmtDataBr = (d: string) => {
     const m = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
     return m ? `${m[3]}/${m[2]}/${m[1]}` : d;
   };
-  const tagFase = args.fase === 'escalada' ? '[Escalado] ' : '';
-  const subject = `StockBridge — ${tagFase}Comodato vencido há ${args.diasVencido}d (${args.cliente ?? 'sem cliente'})`;
-  const escalada = args.fase === 'escalada'
-    ? emailActionBox(
-        'As notificações seguem ocorrendo a cada 15 dias enquanto o comodato permanecer em aberto.',
-        'Escalado para a diretoria — atraso acima de 15 dias',
-      )
-    : '';
+  const n = args.comodatos.length;
+  const temEscalada = args.comodatos.some((c) => c.fase === 'escalada');
+  const plural = n === 1 ? 'comodato vencido' : 'comodatos vencidos';
+  const subject = `StockBridge — ${temEscalada ? '[Escalado] ' : ''}${n} ${plural} aguardando retorno`;
+  const cards = [...args.comodatos]
+    .sort((a, b) => b.diasVencido - a.diasVencido)
+    .map(
+      (c) => `<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;margin:10px 0;">
+        <div style="font-size:14px;font-weight:600;color:#111827;">${escapeHtml(c.cliente ?? 'sem cliente informado')} · vencido há ${c.diasVencido} dia${c.diasVencido === 1 ? '' : 's'}${c.fase === 'escalada' ? ' <span style="color:#9a3412;font-weight:600;">(escalado)</span>' : ''}</div>
+        <div style="font-size:13px;color:#374151;margin-top:4px;">${escapeHtml(c.produtoDescricao)} (SKU ${escapeHtml(c.produtoCodigoAcxe)}) — ${fmtKg(c.quantidadeKg)}</div>
+        <div style="font-size:12px;color:#6b7280;margin-top:4px;">Galpão ${escapeHtml(c.galpaoOrigem)} · saída ${fmtDataBr(c.dtSaida)} · retorno previsto ${fmtDataBr(c.dtPrevistaRetorno)}</div>
+      </div>`,
+    )
+    .join('');
   const corpoHtml = `
-    <p>O comodato abaixo passou da data prevista de retorno e segue em aberto há <strong>${args.diasVencido} dia${args.diasVencido === 1 ? '' : 's'}</strong>.</p>
-    ${emailDataList([
-      { label: 'Cliente', valor: args.cliente ?? 'sem cliente informado' },
-      { label: 'Produto', valor: `${args.produtoDescricao} (SKU ${args.produtoCodigoAcxe})` },
-      { label: 'Quantidade', valor: fmtKg(args.quantidadeKg) },
-      { label: 'Galpão de origem', valor: args.galpaoOrigem },
-      { label: 'Saída em', valor: fmtDataBr(args.dtSaida) },
-      { label: 'Retorno previsto', valor: fmtDataBr(args.dtPrevistaRetorno) },
-    ])}
-    ${escalada}
-    <p style="color:#9ca3af;font-size:12px;margin-top:16px;">Detalhes técnicos — Movimentação: ${escapeHtml(args.movimentacaoId)}</p>
+    <p>Você tem <strong>${n} ${plural}</strong> em aberto além da data prevista de retorno.</p>
+    ${cards}
+    ${
+      temEscalada
+        ? emailActionBox(
+            'Um ou mais comodatos estão vencidos há mais de 15 dias e foram escalados para a diretoria. As notificações se repetem a cada 15 dias enquanto seguirem em aberto.',
+            'Escalado — atraso acima de 15 dias',
+          )
+        : ''
+    }
   `;
   const { html, text } = buildEmailLayout({
-    titulo: 'Comodato vencido — ação necessária',
+    titulo: n === 1 ? 'Comodato vencido — ação necessária' : 'Comodatos vencidos — ação necessária',
     variante: 'alerta',
     corpoHtml,
     ctaLabel: 'Abrir Retorno de Comodato',
     ctaUrl: linkPainel,
   });
   try {
-    const results = await Promise.allSettled(args.destinatarios.map((to) => sendEmail({ to, subject, html, text })));
-    const falhas = results.filter((r) => r.status === 'rejected').length;
-    if (falhas > 0) logger.error({ movimentacaoId: args.movimentacaoId, falhas }, 'Falha ao enviar parte dos alertas de comodato');
-    logger.info(
-      { movimentacaoId: args.movimentacaoId, diasVencido: args.diasVencido, destinatarios: args.destinatarios.length, fase: args.fase },
-      'Alerta de comodato vencido enviado',
-    );
+    await sendEmail({ to: args.to, subject, html, text });
+    logger.info({ to: args.to, comodatos: n, escalada: temEscalada }, 'Digest de comodatos vencidos enviado');
   } catch (err) {
-    logger.error({ err, movimentacaoId: args.movimentacaoId }, 'Falha ao enviar alerta comodato vencido');
+    logger.error({ err, to: args.to }, 'Falha ao enviar digest de comodatos vencidos');
   }
 }
