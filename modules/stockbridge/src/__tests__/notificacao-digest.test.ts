@@ -3,8 +3,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // EML-09/13: os e-mails de recebimento nacional e de comodato vencido passaram a
 // ser DIGESTS — 1 e-mail por destinatário em vez de 1 por item/comodato.
 
-const { sendEmailMock, config } = vi.hoisted(() => ({
+const { sendEmailMock, loggerMock, config } = vi.hoisted(() => ({
   sendEmailMock: vi.fn().mockResolvedValue(undefined),
+  loggerMock: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
   config: {
     APP_URL: 'https://atlas.local',
     MODULE_STOCKBRIDGE_ENABLED: true,
@@ -19,7 +20,7 @@ const gestoresMock = vi.fn().mockResolvedValue([
 ]);
 
 vi.mock('@atlas/core', () => ({
-  createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
+  createLogger: () => loggerMock,
   getConfig: () => config,
   getDb: () => ({
     select: () => ({ from: () => ({ innerJoin: () => ({ where: () => gestoresMock() }) }) }),
@@ -43,8 +44,11 @@ import {
 } from '../services/notificacao.service.js';
 
 beforeEach(() => {
-  sendEmailMock.mockClear();
+  sendEmailMock.mockReset();
+  sendEmailMock.mockResolvedValue(undefined);
   gestoresMock.mockClear();
+  loggerMock.info.mockClear();
+  loggerMock.error.mockClear();
 });
 
 describe('EML-09 — recebimento nacional: 1 e-mail por gestor (não N itens × M gestores)', () => {
@@ -78,6 +82,26 @@ describe('EML-09 — recebimento nacional: 1 e-mail por gestor (não N itens × 
   it('lista vazia → nenhum e-mail', async () => {
     await enviarAlertaRecebimentoNacionalLote({ notaFiscal: '9', nivel: 'gestor', itens: [] });
     expect(sendEmailMock).not.toHaveBeenCalled();
+  });
+
+  // EML-10: quando TODOS os envios falham, não pode logar "enviado" e cada
+  // destinatário que falhou tem de aparecer num error.
+  it('100% de falha → nenhum info de sucesso + 1 error por destinatário', async () => {
+    sendEmailMock.mockRejectedValue(new Error('SMTP 550'));
+    await enviarAlertaRecebimentoNacionalLote({
+      notaFiscal: '77',
+      nivel: 'gestor',
+      itens: [{ produto: 'PP', empresa: 'acxe', galpao: '11', quantidadeKg: 100 }],
+    });
+    // 2 gestores falharam → 2 errors por destinatário, motivo capturado.
+    const perDest = loggerMock.error.mock.calls.filter(
+      (c) => (c[1] as string) === 'Falha ao enviar e-mail para destinatário',
+    );
+    expect(perDest).toHaveLength(2);
+    expect((perDest[0]![0] as { motivo: string }).motivo).toBe('SMTP 550');
+    // Nenhum "enviado com sucesso".
+    const infoMsgs = loggerMock.info.mock.calls.map((c) => c[1] as string);
+    expect(infoMsgs).not.toContain('Digest de recebimento nacional enviado');
   });
 });
 

@@ -40,6 +40,27 @@ function fmtKg(kg: number): string {
   return `${kg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg`;
 }
 
+/**
+ * EML-10: inspeciona o resultado de um Promise.allSettled de envios e loga UM
+ * error por destinatário que falhou (com o motivo), em vez de só contar. Retorna
+ * o número de falhas — o caller usa pra decidir se ainda houve algum sucesso
+ * antes de logar o info (evita "enviado com sucesso" quando 100% falhou).
+ */
+function logFalhasEnvio(
+  results: PromiseSettledResult<unknown>[],
+  destinatarios: string[],
+  ctx: Record<string, unknown>,
+): number {
+  let falhas = 0;
+  results.forEach((r, i) => {
+    if (r.status !== 'rejected') return;
+    falhas += 1;
+    const reason = r.reason as Error | undefined;
+    logger.error({ ...ctx, to: destinatarios[i], motivo: reason?.message ?? String(r.reason) }, 'Falha ao enviar e-mail para destinatário');
+  });
+  return falhas;
+}
+
 function getAdminEmail(): string {
   const config = getConfig();
   return config.SEED_ADMIN_EMAIL ?? ADMIN_FALLBACK_EMAIL;
@@ -251,9 +272,10 @@ export async function enviarAlertaAprovacaoPendente(args: {
   try {
     // Envia 1 email por destinatario pra evitar vazar lista (To: ficaria visivel)
     const results = await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html, text })));
-    const falhas = results.filter((r) => r.status === 'rejected').length;
-    if (falhas > 0) logger.error({ aprovacaoId: args.aprovacaoId, falhas }, 'Falha ao enviar parte dos emails de aprovacao pendente');
-    logger.info({ aprovacaoId: args.aprovacaoId, destinatarios: destinatarios.length }, 'Alerta de aprovacao enviado');
+    const falhas = logFalhasEnvio(results, destinatarios, { aprovacaoId: args.aprovacaoId });
+    if (falhas < destinatarios.length) {
+      logger.info({ aprovacaoId: args.aprovacaoId, enviados: destinatarios.length - falhas, falhas }, 'Alerta de aprovacao enviado');
+    }
   } catch (err) {
     logger.error({ err, args }, 'Falha ao enviar email de aprovacao pendente');
   }
@@ -311,9 +333,10 @@ export async function enviarAlertaRecebimentoNacionalLote(args: {
   });
   try {
     const results = await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html, text })));
-    const falhas = results.filter((r) => r.status === 'rejected').length;
-    if (falhas > 0) logger.error({ notaFiscal: args.notaFiscal, falhas }, 'Falha ao enviar parte do digest de recebimento nacional');
-    logger.info({ notaFiscal: args.notaFiscal, itens: n, destinatarios: destinatarios.length }, 'Digest de recebimento nacional enviado');
+    const falhas = logFalhasEnvio(results, destinatarios, { notaFiscal: args.notaFiscal });
+    if (falhas < destinatarios.length) {
+      logger.info({ notaFiscal: args.notaFiscal, itens: n, enviados: destinatarios.length - falhas, falhas }, 'Digest de recebimento nacional enviado');
+    }
   } catch (err) {
     logger.error({ err, notaFiscal: args.notaFiscal }, 'Falha ao enviar digest de recebimento nacional');
   }
@@ -510,12 +533,13 @@ export async function enviarNotificacaoRecebimentoConcluido(args: {
   const { html, text } = buildEmailLayout({ titulo: 'Recebimento concluído', variante: 'sucesso', corpoHtml });
   try {
     const results = await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html, text })));
-    const falhas = results.filter((r) => r.status === 'rejected').length;
-    if (falhas > 0) logger.error({ notaFiscal: args.notaFiscal, falhas }, 'Falha ao enviar parte das confirmacoes de recebimento');
-    logger.info(
-      { notaFiscal: args.notaFiscal, destinatarios: destinatarios.length },
-      'Confirmacao de recebimento concluido enviada',
-    );
+    const falhas = logFalhasEnvio(results, destinatarios, { notaFiscal: args.notaFiscal });
+    if (falhas < destinatarios.length) {
+      logger.info(
+        { notaFiscal: args.notaFiscal, enviados: destinatarios.length - falhas, falhas },
+        'Confirmacao de recebimento concluido enviada',
+      );
+    }
   } catch (err) {
     logger.error({ err, args }, 'Falha ao enviar confirmacao de recebimento concluido');
   }
