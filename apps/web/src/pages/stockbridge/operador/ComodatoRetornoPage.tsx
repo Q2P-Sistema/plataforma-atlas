@@ -143,7 +143,7 @@ export function ComodatoRetornoPage() {
 
       {isLoading && <div className="text-sm text-atlas-muted">Carregando comodatos...</div>}
       {error && (
-        <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-800">
+        <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-sm text-red-800 dark:text-red-300">
           Erro: {error.message}
         </div>
       )}
@@ -187,13 +187,13 @@ export function ComodatoRetornoPage() {
               </div>
               <div className="font-mono">{fmtKg(c.quantidadeKg)}</div>
               <div className="text-atlas-muted">{fmtData(c.dtSaida)}</div>
-              <div className={c.vencido ? 'text-rose-700 font-semibold' : 'text-atlas-muted'}>
+              <div className={c.vencido ? 'text-rose-700 dark:text-rose-400 font-semibold' : 'text-atlas-muted'}>
                 {fmtData(c.dtPrevistaRetorno)}
               </div>
               <div className="text-center">
                 <span
                   className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                    c.vencido ? 'bg-rose-100 text-rose-800' : 'bg-slate-100 text-slate-700'
+                    c.vencido ? 'bg-rose-100 dark:bg-rose-900/30 text-rose-800 dark:text-rose-300' : 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
                   }`}
                 >
                   {c.diasEmAberto}d

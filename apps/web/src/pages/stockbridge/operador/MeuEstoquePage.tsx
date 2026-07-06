@@ -150,14 +150,14 @@ export function MeuEstoquePage() {
       </div>
 
       {semGalpao && (
-        <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 rounded text-sm text-amber-800 dark:text-amber-300">
+        <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-sm text-amber-800 dark:text-amber-300">
           Você não tem nenhum galpão vinculado. Solicite ao gestor para configurar via{' '}
           <code className="font-mono">stockbridge.user_galpao</code>.
         </div>
       )}
 
       {error && !semGalpao && (
-        <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 rounded text-sm text-red-800 dark:text-red-300">
+        <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-sm text-red-800 dark:text-red-300">
           {error.message}
         </div>
       )}
