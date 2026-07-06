@@ -35,7 +35,10 @@ router.get('/api/v1/forecast/familias', async (_req: Request, res: Response) => 
     ]);
 
     const result = familias.map((f) => {
-      const vendas12m = f.skus.reduce((s, sk) => s + (vendasMap.get(sk.codigo) ?? 0), 0);
+      // f.skus tem uma entrada por local — deduplicar por codigo antes de somar
+      // vendas, senao produto multi-local infla vendas12m 2x-4x (MOD-02).
+      const codigosUnicos = [...new Set(f.skus.map((sk) => sk.codigo))];
+      const vendas12m = codigosUnicos.reduce((s, codigo) => s + (vendasMap.get(codigo) ?? 0), 0);
       const vendaDiariaMedia = vendas12m > 0 ? Math.round(vendas12m / 365) : 0;
       const coberturaDias = vendaDiariaMedia > 0 ? Math.round(f.pool_total / vendaDiariaMedia) : 999;
       const status = coberturaDias <= 30 ? 'critico' : coberturaDias <= 60 ? 'atencao' : 'ok';
