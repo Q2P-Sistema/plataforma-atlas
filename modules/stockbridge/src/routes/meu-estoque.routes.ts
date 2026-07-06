@@ -36,15 +36,17 @@ router.get('/api/v1/stockbridge/meu-estoque', requireOperador, async (req: Reque
   const empresa: EmpresaFiltro = parsed.data.empresa ?? 'Q2P';
   const userId = req.user?.id;
   const role = req.user?.role ?? 'operador';
+  const galpaoOverride = parsed.data.galpao;
 
   let galpoes: string[];
 
-  if (parsed.data.galpao) {
-    // Override explicito
-    galpoes = [parsed.data.galpao];
-  } else if (role === 'operador' && userId) {
-    galpoes = await getGalpoesDoUsuario(userId);
-    if (galpoes.length === 0) {
+  if (role === 'operador') {
+    // SEG-03 (ACXEGDP-241): a checagem de vinculo vem ANTES do override. Antes, um
+    // ?galpao=XX era aceito para qualquer operador, permitindo ler o estoque de
+    // galpoes nao vinculados (IDOR). Agora o operador so enxerga os galpoes
+    // vinculados; se passar ?galpao=, ele precisa estar entre os vinculados.
+    const vinculados = userId ? await getGalpoesDoUsuario(userId) : [];
+    if (vinculados.length === 0) {
       res.status(403).json({
         data: null,
         error: {
@@ -54,10 +56,21 @@ router.get('/api/v1/stockbridge/meu-estoque', requireOperador, async (req: Reque
       });
       return;
     }
+    if (galpaoOverride && !vinculados.includes(galpaoOverride)) {
+      res.status(403).json({
+        data: null,
+        error: {
+          code: 'GALPAO_NAO_VINCULADO',
+          message: 'Galpao nao vinculado ao seu usuario.',
+        },
+      });
+      return;
+    }
+    galpoes = galpaoOverride ? [galpaoOverride] : vinculados;
   } else {
-    // gestor/diretor sem ?galpao= ve todos os galpoes fisicos cadastrados
-    // (sem isso a UI fica com seletor vazio — issue 2026-05-07).
-    galpoes = await listarGalpoesFisicos();
+    // gestor/diretor: override livre; sem ?galpao= ve todos os galpoes fisicos
+    // cadastrados (sem isso a UI fica com seletor vazio — issue 2026-05-07).
+    galpoes = galpaoOverride ? [galpaoOverride] : await listarGalpoesFisicos();
   }
 
   try {

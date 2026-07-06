@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import { eq } from 'drizzle-orm';
-import { getDb, createLogger, getRedis, sendEmail, buildPasswordResetEmail } from '@atlas/core';
+import { getDb, createLogger, getRedis, sendEmail, buildPasswordResetEmail, getConfig } from '@atlas/core';
 import { users } from '@atlas/db';
 import {
   verifyPassword,
@@ -352,9 +352,12 @@ router.post('/api/v1/auth/forgot-password', async (req: Request, res: Response) 
       })
       .where(eq(users.id, user.id));
 
-    // Build reset URL — use Origin header or fallback
-    const origin = req.headers.origin ?? req.headers.referer?.replace(/\/$/, '') ?? 'http://localhost:5173';
-    const resetUrl = `${origin}/reset-password/${resetToken}`;
+    // Build reset URL from the server-side APP_URL (allowlist). NUNCA derivar de
+    // headers Origin/Referer do request: sendo o endpoint publico e nao autenticado,
+    // um atacante pode forjar o Origin e fazer o link de reset (com token valido)
+    // apontar para o dominio dele, vazando o token da vitima (SEG-01, ACXEGDP-239).
+    const baseUrl = getConfig().APP_URL.replace(/\/$/, '');
+    const resetUrl = `${baseUrl}/reset-password/${resetToken}`;
 
     const emailContent = buildPasswordResetEmail(resetUrl);
     await sendEmail({
