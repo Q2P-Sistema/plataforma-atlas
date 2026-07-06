@@ -1,9 +1,10 @@
 import { sql } from 'drizzle-orm';
 import { getDb, createLogger } from '@atlas/core';
 import {
-  enviarAlertaComodatoVencido,
+  enviarDigestComodatosVencidos,
   resolverEmailOperador,
   resolverEmailsAprovadores,
+  type ComodatoVencidoDigestItem,
 } from './notificacao.service.js';
 
 const logger = createLogger('stockbridge:cron-comodato');
@@ -98,6 +99,12 @@ export async function processarAlertasComodatoVencido(): Promise<{
     const comodatos = await listarComodatosVencidos();
     total = comodatos.length;
 
+    // EML-13: agrupa por destinatário. Antes cada comodato virava 1 e-mail por
+    // destinatário — um gestor com 10 comodatos vencidos no mesmo dia de escala
+    // recebia 10 e-mails. Agora cada destinatário recebe 1 digest com todos os
+    // comodatos que lhe cabem.
+    const porDestinatario = new Map<string, ComodatoVencidoDigestItem[]>();
+
     for (const c of comodatos) {
       const dias = Number(c.dias_vencido);
       const decisao = decidirNotificacaoComodato(dias);
@@ -117,15 +124,13 @@ export async function processarAlertasComodatoVencido(): Promise<{
         for (const e of diretores) destinatariosSet.add(e);
       }
 
-      const destinatarios = Array.from(destinatariosSet);
-      if (destinatarios.length === 0) {
+      if (destinatariosSet.size === 0) {
         logger.warn({ movimentacaoId: c.movimentacao_id, dias }, 'Comodato vencido sem destinatários resolviveis');
         continue;
       }
 
-      await enviarAlertaComodatoVencido({
+      const item: ComodatoVencidoDigestItem = {
         movimentacaoId: c.movimentacao_id,
-        destinatarios,
         cliente: c.cliente,
         produtoCodigoAcxe: Number(c.produto_codigo_acxe),
         produtoDescricao: c.produto_descricao ?? `SKU ${c.produto_codigo_acxe}`,
@@ -135,12 +140,24 @@ export async function processarAlertasComodatoVencido(): Promise<{
         dtPrevistaRetorno: c.dt_prevista_retorno,
         diasVencido: dias,
         fase: decisao.fase,
-      });
-      notificados += 1;
+      };
+      for (const email of destinatariosSet) {
+        const lista = porDestinatario.get(email);
+        if (lista) lista.push(item);
+        else porDestinatario.set(email, [item]);
+      }
+      notificados += 1; // conta comodatos notificados (não e-mails)
     }
 
+    // 1 digest por destinatário
+    await Promise.allSettled(
+      Array.from(porDestinatario.entries()).map(([to, lista]) =>
+        enviarDigestComodatosVencidos({ to, comodatos: lista }),
+      ),
+    );
+
     logger.info(
-      { total, notificados, elapsedMs: Date.now() - inicio },
+      { total, notificados, destinatarios: porDestinatario.size, elapsedMs: Date.now() - inicio },
       'Cron de alerta comodato vencido executado',
     );
   } catch (err) {

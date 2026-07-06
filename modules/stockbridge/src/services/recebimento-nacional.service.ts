@@ -3,7 +3,7 @@ import Decimal from 'decimal.js';
 import { getDb, getPool, createLogger } from '@atlas/core';
 import { movimentacao, aprovacao } from '@atlas/db';
 import { converterParaKg } from './motor.service.js';
-import { enviarAlertaAprovacaoPendente } from './notificacao.service.js';
+import { enviarAlertaRecebimentoNacionalLote } from './notificacao.service.js';
 import type { UnidadeMedida, SubtipoMovimento } from '../types.js';
 
 const logger = createLogger('stockbridge:recebimento-nacional');
@@ -337,22 +337,23 @@ export async function processarRecebimentoNacional(
     return out;
   });
 
-  // Notifica gestor (uma vez por item — mantem rastreabilidade individual)
-  for (const r of itensProcessados) {
-    const chave = `${r.empresa}:${r.produtoCodigoAcxe}`;
-    const prod = produtosByCodigo.get(chave);
-    void enviarAlertaAprovacaoPendente({
-      aprovacaoId: r.aprovacaoId,
-      tipoAprovacao: 'entrada_manual',
-      nivel: 'gestor',
-      loteCodigo: `NF ${nfNorm} · ${r.empresa.toUpperCase()} ${r.galpao}`,
-      produto: prod?.descricao ?? `${r.produtoCodigoAcxe}`,
-      quantidadeKg: r.quantidadeKg,
-      detalhes: `Recebimento nacional · ${obsBase || 'sem observacao adicional'}`,
-    }).catch((err) =>
-      logger.error({ err, aprovacaoId: r.aprovacaoId }, 'Falha ao notificar gestor'),
-    );
-  }
+  // EML-09: 1 e-mail por gestor com todos os itens da NF (antes era 1 e-mail por
+  // item × gestor — N×M e-mails para a mesma NF). A rastreabilidade individual de
+  // cada item continua na tela de aprovações; o e-mail é só o gatilho.
+  void enviarAlertaRecebimentoNacionalLote({
+    notaFiscal: nfNorm,
+    nivel: 'gestor',
+    itens: itensProcessados.map((r) => {
+      const prod = produtosByCodigo.get(`${r.empresa}:${r.produtoCodigoAcxe}`);
+      return {
+        produto: prod?.descricao ?? `SKU ${r.produtoCodigoAcxe}`,
+        empresa: r.empresa,
+        galpao: r.galpao,
+        quantidadeKg: r.quantidadeKg,
+      };
+    }),
+    detalhes: `Recebimento nacional · ${obsBase || 'sem observação adicional'}`,
+  }).catch((err) => logger.error({ err, nf: nfNorm }, 'Falha ao notificar gestor (digest recebimento nacional)'));
 
   logger.info(
     { nf: nfNorm, qtdItens: itensProcessados.length, userId: input.userId },
