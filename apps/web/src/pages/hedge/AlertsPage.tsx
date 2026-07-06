@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { DataTable, type Column } from '@atlas/ui';
 import { useAuthStore } from '../../stores/auth.store.js';
+import { fmtBRL } from '../../lib/format.js';
+import { NDF_STATUS_LABEL, NDF_TIPO_LABEL, rotulo } from './labels.js';
 
 interface AlertaRow {
   id: string;
@@ -67,10 +69,10 @@ export function AlertsPage() {
 
   const ndfColumns: Column<NdfRow>[] = [
     { key: 'data_contratacao', header: 'Data', sortable: true, render: (r) => r.data_contratacao ? new Date(r.data_contratacao).toLocaleDateString('pt-BR') : '-' },
-    { key: 'tipo', header: 'Tipo' },
+    { key: 'tipo', header: 'Tipo', render: (r) => rotulo(NDF_TIPO_LABEL, r.tipo) },
     { key: 'empresa', header: 'Empresa', render: (r) => r.empresa.toUpperCase() },
     { key: 'notional_usd', header: 'Notional', sortable: true, render: (r) => fmtK(r.notional_usd) },
-    { key: 'taxa_ndf', header: 'Taxa', render: (r) => `R$ ${r.taxa_ndf.toFixed(4)}` },
+    { key: 'taxa_ndf', header: 'Taxa', render: (r) => fmtBRL(r.taxa_ndf, 4) },
     { key: 'custo_brl', header: 'Custo BRL', render: (r) => `R$ ${r.custo_brl.toLocaleString('pt-BR')}` },
     {
       key: 'resultado_brl', header: 'Resultado',
@@ -85,7 +87,7 @@ export function AlertsPage() {
           : r.status === 'liquidado' ? 'bg-blue-500/10 text-blue-600 border-blue-500/20'
           : r.status === 'cancelado' ? 'bg-red-500/10 text-red-600 border-red-500/20'
           : 'bg-amber-500/10 text-amber-600 border-amber-500/20';
-        return <span className={`inline-flex text-xs px-1.5 py-0.5 rounded border font-semibold ${cls}`}>{r.status}</span>;
+        return <span className={`inline-flex text-xs px-1.5 py-0.5 rounded border font-semibold ${cls}`}>{rotulo(NDF_STATUS_LABEL, r.status)}</span>;
       },
     },
   ];

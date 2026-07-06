@@ -6,6 +6,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
   LineChart, Line, ReferenceLine,
 } from 'recharts';
+import { fmtNum, fmtBRL, fmtMesRef, fmtDataBr } from '../../lib/format.js';
 
 interface PtaxQuote { dataRef: string; venda: number; compra: number; atualizada: boolean; }
 interface PtaxHistoricoItem { data_ref: string; venda: number; compra: number; }
@@ -47,10 +48,10 @@ interface Bucket {
 }
 
 
-const fmtM = (v: number) => '$' + (v / 1e6).toFixed(2) + 'M';
-const fmtBrlM = (v: number) => 'R$' + (v / 1e6).toFixed(1) + 'M';
-const fmtK = (v: number) => '$' + Math.round(v / 1000) + 'K';
-const fmtPct = (v: number) => v.toFixed(1) + '%';
+const fmtM = (v: number) => 'US$ ' + fmtNum(v / 1e6, 2) + 'M';
+const fmtBrlM = (v: number) => 'R$ ' + fmtNum(v / 1e6, 1) + 'M';
+const fmtK = (v: number) => 'US$ ' + Math.round(v / 1000).toLocaleString('pt-BR') + 'K';
+const fmtPct = (v: number) => fmtNum(v, 1) + '%';
 
 function SourceBadge({ src }: { src: 'acxe' | 'q2p' | 'bcb' | 'calc' | 'manual' }) {
   const styles: Record<string, string> = {
@@ -129,13 +130,13 @@ export function PositionDashboard() {
   // Donut: NDF Contratado vs Exp. Tatica vs Exp. Intencional
   const donutData = [
     { name: 'NDF Contratado', value: kpis.ndf_ativo_usd, color: '#7c3aed' },
-    { name: 'Exp. Tatica', value: Math.max(0, kpis.gap_usd * 0.4), color: '#d97706' },
+    { name: 'Exp. Tática', value: Math.max(0, kpis.gap_usd * 0.4), color: '#d97706' },
     { name: 'Exp. Intencional', value: Math.max(0, kpis.gap_usd * 0.6), color: '#dc2626' },
   ];
 
   // Bar: exposure vs NDF per bucket
   const barData = buckets.map(b => ({
-    mes: b.mes_ref.slice(0, 7),
+    mes: fmtMesRef(b.mes_ref),
     exposicao: b.exposicao_usd / 1e6,
     ndf: b.ndf_usd / 1e6,
   }));
@@ -146,7 +147,7 @@ export function PositionDashboard() {
   const ptaxNeutro = (ptaxAtual?.variacao_pct ?? 0) === 0;
   const ptaxColor = ptaxNeutro ? '#6b7280' : ptaxSubiu ? '#dc2626' : '#059669';
   const ptaxArrow = ptaxNeutro ? '' : ptaxSubiu ? '▲' : '▼';
-  const ptaxVarStr = ptaxAtual ? `${ptaxArrow} ${Math.abs(ptaxAtual.variacao_pct).toFixed(2)}%` : '';
+  const ptaxVarStr = ptaxAtual ? `${ptaxArrow} ${fmtNum(Math.abs(ptaxAtual.variacao_pct), 2)}%` : '';
 
   const MESES_PT = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
   const ptaxMiniData = (() => {
@@ -176,13 +177,13 @@ export function PositionDashboard() {
 
   // Bucket table columns
   const bucketColumns: Column<Bucket>[] = [
-    { key: 'mes_ref', header: 'Bucket', sortable: true, render: (r) => r.mes_ref.slice(0, 7) },
+    { key: 'mes_ref', header: 'Bucket', sortable: true, render: (r) => fmtMesRef(r.mes_ref) },
     { key: 'pagar_usd', header: 'A pagar USD', sortable: true, render: (r) => fmtK(r.pagar_usd) },
     { key: 'est_nao_pago_usd', header: 'Est. N/Pago', sortable: true, render: (r) => r.est_nao_pago_usd > 0 ? <span className="text-amber-600">{fmtK(r.est_nao_pago_usd)}</span> : '—' },
     { key: 'exposicao_usd', header: 'Exposição', sortable: true, render: (r) => <span className="font-semibold">{fmtK(r.exposicao_usd)}</span> },
     { key: 'ndf_usd', header: 'NDF Contrat.', sortable: true, render: (r) => <span className="text-purple-600">{fmtK(r.ndf_usd)}</span> },
     {
-      key: 'gap' as any, header: 'Liquido',
+      key: 'gap' as any, header: 'Líquido',
       render: (r) => {
         const liq = r.exposicao_usd - r.ndf_usd;
         return <span style={{ color: liq > 500000 ? '#dc2626' : '#059669' }}>{fmtK(liq)}</span>;
@@ -201,7 +202,7 @@ export function PositionDashboard() {
       key: 'status', header: 'Ação',
       render: (r) => {
         if (r.cobertura_pct >= 60) return <span className="text-emerald-600 text-xs font-semibold">OK</span>;
-        return <span className="text-red-600 text-xs font-semibold">NDF NEEDED</span>;
+        return <span className="text-red-600 dark:text-red-400 text-xs font-semibold">CONTRATAR NDF</span>;
       },
     },
   ];
@@ -221,7 +222,7 @@ export function PositionDashboard() {
       <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
         <KpiCard label="Exposição USD Total" value={fmtM(kpis.exposicao_usd_total)} color="#0077cc" src="acxe" sub="Títulos a pagar em aberto" />
         <KpiCard label="Receita USD Projetada" value={fmtM(kpis.recebiveis_usd)} color="#1a9944" src="q2p" sub="Contas a receber 90d" />
-        <KpiCard label="Estoque não pago" value={fmtPct(kpis.pct_nao_pago)} color="#d97706" src="calc" sub={`R$ ${(kpis.est_importado_brl / 1e6).toFixed(1)}M importado`} />
+        <KpiCard label="Estoque não pago" value={fmtPct(kpis.pct_nao_pago)} color="#d97706" src="calc" sub={`R$ ${fmtNum(kpis.est_importado_brl / 1e6, 1)}M importado`} />
         <KpiCard label="Cobertura NDF Ativa" value={fmtM(kpis.ndf_ativo_usd)} color="#7c3aed" src="manual" sub={fmtPct(kpis.cobertura_pct) + ' da exposição'} />
         <KpiCard label="Exposição Líquida" value={fmtM(kpis.gap_usd)} color="#1a9944" src="calc" sub="Residual descoberto" />
       </div>
@@ -258,8 +259,8 @@ export function PositionDashboard() {
             <BarChart data={barData}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" />
               <XAxis dataKey="mes" tick={{ fontSize: 9 }} />
-              <YAxis tick={{ fontSize: 9 }} tickFormatter={(v: number) => `$${v}M`} />
-              <Tooltip formatter={(v) => `$${Number(v).toFixed(2)}M`} />
+              <YAxis tick={{ fontSize: 9 }} tickFormatter={(v: number) => `US$ ${fmtNum(v, 1)}M`} />
+              <Tooltip formatter={(v) => `US$ ${fmtNum(Number(v), 2)}M`} />
               <Bar dataKey="exposicao" name="Exposição Total" fill="rgba(220,38,38,0.45)" radius={[3, 3, 0, 0]} />
               <Bar dataKey="ndf" name="NDF Contratado" fill="rgba(124,58,237,0.6)" radius={[3, 3, 0, 0]} />
             </BarChart>
@@ -274,7 +275,7 @@ export function PositionDashboard() {
             <>
               <div className="flex items-baseline gap-3 mb-1">
                 <span className="text-3xl font-bold" style={{ color: ptaxColor }}>
-                  R$ {ptaxAtual.venda.toFixed(4)}
+                  {fmtBRL(ptaxAtual.venda, 4)}
                 </span>
                 {!ptaxNeutro && (
                   <span className="text-sm font-semibold" style={{ color: ptaxColor }}>{ptaxVarStr}</span>
@@ -282,15 +283,15 @@ export function PositionDashboard() {
               </div>
               <div className="flex items-center gap-3 mb-3">
                 <span className="text-xs text-atlas-muted">
-                  Boletim BCB {formatBoletimBCB(ptaxAtual.fetchedAt)} · Ref. {ptaxAtual.dataRef}
+                  Boletim BCB {formatBoletimBCB(ptaxAtual.fetchedAt)} · Ref. {fmtDataBr(ptaxAtual.dataRef)}
                 </span>
               </div>
               <ResponsiveContainer width="100%" height={130}>
                 <LineChart data={ptaxMiniData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" />
                   <XAxis dataKey="data" tick={{ fontSize: 9 }} />
-                  <YAxis tick={{ fontSize: 9 }} domain={['auto', 'auto']} tickFormatter={(v: number) => v.toFixed(2)} width={38} />
-                  <Tooltip formatter={(v) => `R$ ${Number(v).toFixed(4)}`} />
+                  <YAxis tick={{ fontSize: 9 }} domain={['auto', 'auto']} tickFormatter={(v: number) => fmtNum(v, 2)} width={38} />
+                  <Tooltip formatter={(v) => `R$ ${fmtNum(Number(v), 4)}`} />
                   <ReferenceLine y={ptaxAtual.ptax_anterior} stroke="var(--atlas-muted)" strokeDasharray="4 2" />
                   <Line type="monotone" dataKey="venda" stroke={ptaxColor} strokeWidth={2} dot={false} />
                   <Line type="monotone" dataKey="tendencia" stroke="rgba(107,114,128,0.7)" strokeWidth={2} strokeDasharray="5 3" dot={false} />

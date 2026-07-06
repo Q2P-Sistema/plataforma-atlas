@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { DataTable, Modal, type Column } from '@atlas/ui';
 import { Plus } from 'lucide-react';
 import { useAuthStore } from '../../stores/auth.store.js';
+import { fmtNum, fmtDataBr } from '../../lib/format.js';
+import { NDF_STATUS_LABEL, rotulo } from './labels.js';
 
 interface NdfRow {
   id: string;
@@ -91,15 +93,15 @@ export function NDFListPage() {
   const columns: Column<NdfRow>[] = [
     { key: 'tipo', header: 'Tipo', sortable: true, render: (r) => r.tipo.toUpperCase() },
     { key: 'notional_usd', header: 'Valor USD', sortable: true, render: (r) => formatUsd(r.notional_usd) },
-    { key: 'taxa_ndf', header: 'Taxa', sortable: true, render: (r) => r.taxa_ndf.toFixed(4) },
-    { key: 'data_vencimento', header: 'Vencimento', sortable: true, render: (r) => r.data_vencimento },
+    { key: 'taxa_ndf', header: 'Taxa', sortable: true, render: (r) => fmtNum(r.taxa_ndf, 4) },
+    { key: 'data_vencimento', header: 'Vencimento', sortable: true, render: (r) => fmtDataBr(r.data_vencimento) },
     { key: 'custo_brl', header: 'Custo BRL', render: (r) => formatBrl(r.custo_brl) },
     { key: 'resultado_brl', header: 'Resultado', render: (r) => r.resultado_brl != null ? formatBrl(r.resultado_brl) : '-' },
     {
       key: 'status', header: 'Status', sortable: true,
-      render: (r) => <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLORS[r.status] ?? ''}`}>{r.status}</span>,
+      render: (r) => <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLORS[r.status] ?? ''}`}>{rotulo(NDF_STATUS_LABEL, r.status)}</span>,
     },
-    { key: 'empresa', header: 'Empresa' },
+    { key: 'empresa', header: 'Empresa', render: (r) => r.empresa.toUpperCase() },
     { key: 'banco', header: 'Banco', render: (r) => r.banco || '—' },
   ];
 
@@ -183,7 +185,7 @@ export function NDFListPage() {
               <option value="">Selecionar...</option>
               <option value="Banco do Brasil">Banco do Brasil</option>
               <option value="Bradesco">Bradesco</option>
-              <option value="Itau Unibanco">Itau Unibanco</option>
+              <option value="Itaú Unibanco">Itaú Unibanco</option>
               <option value="Santander">Santander</option>
               <option value="Safra">Safra</option>
               <option value="Banco Daycoval">Banco Daycoval</option>

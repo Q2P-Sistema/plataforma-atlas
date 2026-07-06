@@ -1,6 +1,7 @@
 import { useState, type ChangeEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../../stores/auth.store.js';
+import { fmtBRL } from '../../lib/format.js';
 
 interface ConfigRow { chave: string; valor: any; descricao: string | null; }
 
@@ -12,7 +13,7 @@ const PARAM_GROUPS: { title: string; src: string; srcColor: string; params: { ke
       { key: 'pct_custo_importado', label: '% Custo importado', desc: 'Proporção do custo em USD', unit: '%', step: 1, min: 0, max: 100 },
       { key: 'transit_medio_dias', label: 'Trânsito médio', desc: 'D0 ao desembarque', unit: 'dias', step: 5, min: 30, max: 180 },
       { key: 'giro_estoque_dias', label: 'Giro de estoque', desc: 'Dias médios no chão', unit: 'dias', step: 5, min: 15, max: 90 },
-      { key: 'prazo_recebimento', label: 'Prazo médio recebimento', desc: 'NF saída ao pagamento cliente', unit: 'dias', step: 1, min: 0, max: 90 },
+      { key: 'prazo_recebimento', label: 'Prazo médio recebimento', desc: 'Da NF de saída ao pagamento do cliente', unit: 'dias', step: 1, min: 0, max: 90 },
     ],
   },
   {
@@ -21,7 +22,7 @@ const PARAM_GROUPS: { title: string; src: string; srcColor: string; params: { ke
       { key: 'lambda_default', label: 'Lambda — Aversão ao risco', desc: '0 = minimiza custo - 1 = max. proteção', unit: '', step: 0.05, min: 0, max: 1 },
       { key: 'camada1_minima', label: 'Camada 1 mínima', desc: 'Hedge automático mínimo por bucket', unit: '%', step: 5, min: 30, max: 90 },
       { key: 'margem_floor', label: 'Margem floor', desc: 'Alerta se margem cair abaixo', unit: '%', step: 1, min: 5, max: 40 },
-      { key: 'estoque_bump_threshold', label: 'Threshold est. não pago', desc: 'Eleva L1 se acima', unit: '', step: 0.05, min: 0, max: 1 },
+      { key: 'estoque_bump_threshold', label: 'Limite est. não pago', desc: 'Eleva L1 se acima', unit: '', step: 0.05, min: 0, max: 1 },
       { key: 'cobertura_bump_pct', label: 'Ajuste L1 se est. alto', desc: 'Eleva Camada 1 automaticamente', unit: '%', step: 1, min: 60, max: 90 },
     ],
   },
@@ -166,7 +167,7 @@ export function ConfigPage() {
                     <>
                       <span className="text-xs font-mono text-atlas-text cursor-pointer hover:text-purple-600"
                         onClick={() => { setEditKey(key); setEditVal(val != null ? String(val) : ''); }}>
-                        {val != null ? `R$ ${Number(val).toFixed(2)}` : '—'}
+                        {val != null ? fmtBRL(Number(val)) : '—'}
                       </span>
                       <span className="text-xs text-atlas-muted">R$/USD</span>
                     </>
@@ -214,7 +215,7 @@ export function ConfigPage() {
       {/* Info insights */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="rounded-r p-3 text-xs leading-relaxed text-atlas-muted" style={{ borderLeft: '2px solid #0077cc', backgroundColor: 'rgba(0,119,204,0.07)' }}>
-          <strong className="text-atlas-text">Sincronização automática:</strong> BD VPS Acxe e Q2P sincronizam diariamente via n8n. PTAX BCB disponível via API pública — pull a cada 15 min em dias úteis.
+          <strong className="text-atlas-text">Sincronização automática:</strong> BD VPS Acxe e Q2P sincronizam diariamente via n8n. PTAX BCB disponível via API pública — atualização a cada 15 min em dias úteis.
         </div>
         <div className="rounded-r p-3 text-xs leading-relaxed text-atlas-muted" style={{ borderLeft: '2px solid #059669', backgroundColor: 'rgba(5,150,105,0.07)' }}>
           <strong className="text-atlas-text">Taxa NDF:</strong> Inserida manualmente — frequência recomendada: toda segunda-feira. Cotações obtidas com o banco parceiro.

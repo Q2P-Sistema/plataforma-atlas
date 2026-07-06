@@ -5,6 +5,7 @@ import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
 } from 'recharts';
+import { fmtNum } from '../../lib/format.js';
 
 interface EstoqueRow {
   localidade: string;
@@ -26,9 +27,9 @@ interface LocalidadeInfo {
   em_transito: boolean;
 }
 
-const fmtBrlM = (v: number) => 'R$' + (v / 1e6).toFixed(1) + 'M';
+const fmtBrlM = (v: number) => 'R$ ' + (v / 1e6).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + 'M';
 const fmtBrl = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
-const fmtUsd = (v: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v);
+const fmtUsd = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'USD' }).format(v);
 
 const ORIGEM_LABELS: Record<string, string> = {
   em_transito: 'Em Trânsito',
@@ -213,10 +214,10 @@ export function InventoryPage() {
       {/* KPI Strip — 5 fases */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
         <KpiCard label="Marítimo / Trânsito" value={fmtBrlM(transitoBrl)} color="#8492a6" src="acxe" sub="Câmbio ainda flutuante" />
-        <KpiCard label="Importado no Chao" value={fmtBrlM(importadoBrl)} color="#0077cc" src="acxe" sub="NF entrada emitida" />
+        <KpiCard label="Importado no Chão" value={fmtBrlM(importadoBrl)} color="#0077cc" src="acxe" sub="NF entrada emitida" />
         <KpiCard label="Nacional Q2P" value={fmtBrlM(nacionalBrl)} color="#1a9944" src="q2p" sub="Distribuição ativa" />
         <KpiCard label="Total Consolidado" value={fmtBrlM(totalBrl)} color="#059669" src="calc" sub={`${totalItens} produtos`} />
-        <KpiCard label="Localidades" value={String(estoque.length)} color="#7c3aed" src="calc" sub="Depots ativos" />
+        <KpiCard label="Localidades" value={String(estoque.length)} color="#7c3aed" src="calc" sub="Depósitos ativos" />
       </div>
 
       {/* Estados chart + Pie */}
@@ -226,9 +227,9 @@ export function InventoryPage() {
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={estadosData} layout="vertical">
               <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" />
-              <XAxis type="number" tick={{ fontSize: 9 }} tickFormatter={(v: number) => `R$${v}M`} />
+              <XAxis type="number" tick={{ fontSize: 9 }} tickFormatter={(v: number) => `R$ ${fmtNum(v, 1)}M`} />
               <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={140} />
-              <Tooltip formatter={(v) => `R$ ${Number(v).toFixed(1)}M`} />
+              <Tooltip formatter={(v) => `R$ ${fmtNum(Number(v), 1)}M`} />
               <Bar dataKey="value" name="Valor BRL" radius={[0, 4, 4, 0]}>
                 {estadosData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
               </Bar>
