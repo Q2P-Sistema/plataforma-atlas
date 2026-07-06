@@ -4,6 +4,7 @@ import { getDb, createLogger } from '@atlas/core';
 import { incluirAjusteEstoque } from '@atlas/integration-omie';
 import { localidade, localidadeCorrelacao } from '@atlas/db';
 import type { EmpresaSaida } from './saida-manual.service.js';
+import { formatarDataOmie } from './omie-shared.js';
 
 const logger = createLogger('stockbridge:omie-saida');
 
@@ -127,15 +128,6 @@ async function resolverCodigosLocaisTroca(): Promise<{ acxe: string | null; q2p:
   };
 }
 
-function dataAtualOmie(): string {
-  // OMIE espera dd/MM/yyyy
-  const d = new Date();
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const yyyy = d.getFullYear();
-  return `${dd}/${mm}/${yyyy}`;
-}
-
 interface ResultadoOmie {
   idMovest: string;
   idAjuste: string;
@@ -168,7 +160,7 @@ export async function executarSaidaOmieDual(
   const valor = Number(new Decimal(ctx.valorUnitario).toFixed(2));
   const qtd = Number(new Decimal(ctx.quantidadeKg).toFixed(3));
   const obs = ctx.observacao.slice(0, 240);
-  const data = dataAtualOmie();
+  const data = formatarDataOmie();
   const motivoLower = motivo.toLowerCase();
 
   let acxeRes: ResultadoOmie | null = null;
@@ -246,7 +238,7 @@ export async function executarTransferenciaIntraDual(
   const valor = Number(new Decimal(ctx.valorUnitario).toFixed(2));
   const qtd = Number(new Decimal(ctx.quantidadeKg).toFixed(3));
   const obs = ctx.observacao.slice(0, 240);
-  const data = dataAtualOmie();
+  const data = formatarDataOmie();
 
   let acxeRes: ResultadoOmie | null = null;
   let q2pRes: ResultadoOmie | null = null;
@@ -321,7 +313,7 @@ export async function executarComodatoOmieDual(
   const valor = Number(new Decimal(ctx.valorUnitario).toFixed(2));
   const qtd = Number(new Decimal(ctx.quantidadeKg).toFixed(3));
   const obs = ctx.observacao.slice(0, 240);
-  const data = dataAtualOmie();
+  const data = formatarDataOmie();
 
   let acxeRes: ResultadoOmie | null = null;
   let q2pRes: ResultadoOmie | null = null;
@@ -413,7 +405,7 @@ export async function executarRetornoComodatoOmieDual(args: {
   const corrTroca = await resolverCodigosLocaisTroca();
   const corrDestino = await resolverCorrelacaoCompletaGalpao(args.galpaoDestino);
   const obs = args.observacao.slice(0, 240);
-  const data = dataAtualOmie();
+  const data = formatarDataOmie();
   const qtdOrig = Number(new Decimal(args.quantidadeKgOriginal).toFixed(3));
   const qtdRec = Number(new Decimal(args.quantidadeKgRecebida).toFixed(3));
   const vOrig = Number(new Decimal(args.valorUnitarioOriginal).toFixed(2));

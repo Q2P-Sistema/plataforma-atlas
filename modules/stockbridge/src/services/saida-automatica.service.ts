@@ -1,4 +1,4 @@
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import Decimal from 'decimal.js';
 import { getDb, createLogger } from '@atlas/core';
 import { movimentacao, divergencia, localidadeCorrelacao, localidade } from '@atlas/db';
@@ -231,6 +231,3 @@ export function detectarDebitoCruzado(
   if (cnpjFisico === null) return false;
   return cnpjEmissor !== cnpjFisico;
 }
-
-// sql import usado para versao futura — marcar como usado evita warning de lint
-void sql;

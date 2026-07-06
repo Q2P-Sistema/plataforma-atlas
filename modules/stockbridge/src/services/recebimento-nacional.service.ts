@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
 import Decimal from 'decimal.js';
-import { getDb, createLogger } from '@atlas/core';
+import { getDb, getPool, createLogger } from '@atlas/core';
 import { movimentacao, aprovacao } from '@atlas/db';
 import { converterParaKg } from './motor.service.js';
 import { enviarAlertaAprovacaoPendente } from './notificacao.service.js';
@@ -382,17 +382,20 @@ async function resolverLocalidadesParaItens(
   const ids = Array.from(new Set(itens.map((i) => i.localidadeId)));
   if (ids.length === 0) return new Map();
 
-  // Busca cada localidade individualmente para evitar problemas de serialização de array
-  const db = getDb();
+  // STK-18: 1 query para todos os ids (era N+1 — uma por localidade). Usa
+  // pool.query + `= ANY($1::text[])`, o mesmo idioma provado no repo
+  // (cockpit/cmc/meu-estoque), que não depende da serialização de array do
+  // drizzle (a razão do loop original).
+  const pool = getPool();
   const map = new Map<string, LocalidadeResolvida>();
 
-  for (const localidadeId of ids) {
-    const result = await db.execute<{
-      id: string;
-      codigo: string;
-      codigo_acxe: string | null;
-      codigo_q2p: string | null;
-    }>(sql`
+  const { rows } = await pool.query<{
+    id: string;
+    codigo: string;
+    codigo_acxe: string | null;
+    codigo_q2p: string | null;
+  }>(
+    `
       SELECT
         l.id::text AS id,
         l.codigo AS codigo,
@@ -402,20 +405,21 @@ async function resolverLocalidadesParaItens(
       INNER JOIN stockbridge.localidade_correlacao lc ON lc.localidade_id = l.id
       WHERE l.ativo = true
         AND l.tipo NOT IN ('virtual_transito', 'virtual_ajuste')
-        AND l.id::text = ${localidadeId}
-    `);
+        AND l.id::text = ANY($1::text[])
+    `,
+    [ids],
+  );
 
-    for (const r of result.rows) {
-      const acxe = r.codigo_acxe;
-      const q2p = r.codigo_q2p;
-      // Ignora espelhadas (ambos preenchidos) — operador nao deveria selecionar mas
-      // defesa em profundidade contra payload manipulado.
-      if (acxe && q2p) continue;
-      if (acxe && !q2p) {
-        map.set(r.id, { id: r.id, codigo: r.codigo, empresa: 'acxe', codigoLocalEstoqueOmie: acxe });
-      } else if (q2p && !acxe) {
-        map.set(r.id, { id: r.id, codigo: r.codigo, empresa: 'q2p', codigoLocalEstoqueOmie: q2p });
-      }
+  for (const r of rows) {
+    const acxe = r.codigo_acxe;
+    const q2p = r.codigo_q2p;
+    // Ignora espelhadas (ambos preenchidos) — operador nao deveria selecionar mas
+    // defesa em profundidade contra payload manipulado.
+    if (acxe && q2p) continue;
+    if (acxe && !q2p) {
+      map.set(r.id, { id: r.id, codigo: r.codigo, empresa: 'acxe', codigoLocalEstoqueOmie: acxe });
+    } else if (q2p && !acxe) {
+      map.set(r.id, { id: r.id, codigo: r.codigo, empresa: 'q2p', codigoLocalEstoqueOmie: q2p });
     }
   }
   return map;
@@ -425,26 +429,35 @@ async function resolverLocalidadesParaItens(
 async function resolverProdutosNacionais(
   itens: ItemRecebimentoNacionalInput[],
 ): Promise<Map<string, { descricao: string }>> {
-  const db = getDb();
+  // STK-18: 2 queries (uma por catálogo) em vez de 1 por item. Agrupa os codigos
+  // por empresa e busca em lote com `= ANY($1::bigint[])`. Chave do mapa mantida
+  // idêntica: `${empresa}:${codigo}`.
+  const pool = getPool();
   const map = new Map<string, { descricao: string }>();
 
-  for (const it of itens) {
-    const codigo = it.empresa === 'acxe' ? it.produtoCodigoAcxe : it.produtoCodigoQ2p;
-    if (!codigo) continue;
-    const chave = `${it.empresa}:${codigo}`;
-    if (map.has(chave)) continue;
+  const acxeCodigos = Array.from(
+    new Set(itens.filter((i) => i.empresa === 'acxe' && i.produtoCodigoAcxe).map((i) => i.produtoCodigoAcxe!)),
+  );
+  const q2pCodigos = Array.from(
+    new Set(itens.filter((i) => i.empresa === 'q2p' && i.produtoCodigoQ2p).map((i) => i.produtoCodigoQ2p!)),
+  );
 
-    if (it.empresa === 'acxe') {
-      const result = await db.execute<{ descricao: string }>(sql`
-        SELECT descricao FROM public."tbl_produtos_ACXE" WHERE codigo_produto = ${codigo} LIMIT 1
-      `);
-      if (result.rows[0]) map.set(chave, { descricao: result.rows[0].descricao });
-    } else {
-      const result = await db.execute<{ descricao: string }>(sql`
-        SELECT descricao FROM public."tbl_produtos_Q2P" WHERE codigo_produto = ${codigo} LIMIT 1
-      `);
-      if (result.rows[0]) map.set(chave, { descricao: result.rows[0].descricao });
-    }
+  if (acxeCodigos.length > 0) {
+    const { rows } = await pool.query<{ codigo_produto: string; descricao: string }>(
+      `SELECT codigo_produto::text AS codigo_produto, descricao
+       FROM public."tbl_produtos_ACXE" WHERE codigo_produto = ANY($1::bigint[])`,
+      [acxeCodigos],
+    );
+    for (const r of rows) map.set(`acxe:${r.codigo_produto}`, { descricao: r.descricao });
+  }
+
+  if (q2pCodigos.length > 0) {
+    const { rows } = await pool.query<{ codigo_produto: string; descricao: string }>(
+      `SELECT codigo_produto::text AS codigo_produto, descricao
+       FROM public."tbl_produtos_Q2P" WHERE codigo_produto = ANY($1::bigint[])`,
+      [q2pCodigos],
+    );
+    for (const r of rows) map.set(`q2p:${r.codigo_produto}`, { descricao: r.descricao });
   }
 
   return map;

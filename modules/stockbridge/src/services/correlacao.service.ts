@@ -52,6 +52,10 @@ export async function getCorrelacao(
     WHERE a.codigo_produto = $1
       AND (a.inativo IS NULL OR a.inativo <> 'S')
       AND (q.inativo IS NULL OR q.inativo <> 'S')
+    -- STK-22: quando >1 produto Q2P casa a mesma descricao, LIMIT 1 sem ORDER BY
+    -- escolhia arbitrariamente (não-determinístico entre execuções/planos). ORDER
+    -- BY estável fixa a escolha no menor codigo Q2P. Sem efeito no caso 1:1 comum.
+    ORDER BY q.codigo_produto ASC
     LIMIT 1
   `;
   const result = await pool.query(sql, [codigoProdutoAcxe, codigoLocalEstoqueAcxe]);

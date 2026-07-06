@@ -11,6 +11,7 @@ import {
 import { getCorrelacao, CorrelacaoNaoEncontradaError } from './correlacao.service.js';
 import { converterParaKg, normalizarNumeroNf } from './motor.service.js';
 import { validarNfRecebivel } from './nf-validacao.service.js';
+import { formatarDataOmie } from './omie-shared.js';
 import {
   enviarAlertaProdutoSemCorrelato,
   enviarAlertaAprovacaoPendente,
@@ -637,7 +638,7 @@ export async function executarAjusteOmieDual(args: {
         codigoLocalEstoque: args.codigoLocalEstoqueAcxeOrigem,
         codigoLocalEstoqueDestino: String(args.codigoLocalEstoqueAcxeDestino),
         idProduto: args.codigoProdutoAcxe,
-        dataAtual: formatarDataBR(new Date()),
+        dataAtual: formatarDataOmie(),
         quantidade: args.quantidadeKg,
         observacao: `Recebimento NF ${args.notaFiscal} ${args.observacaoSufixo}`,
         origem: 'AJU',
@@ -659,7 +660,7 @@ export async function executarAjusteOmieDual(args: {
       {
         codigoLocalEstoque: String(args.codigoLocalEstoqueQ2p),
         idProduto: args.codigoProdutoQ2p,
-        dataAtual: formatarDataBR(new Date()),
+        dataAtual: formatarDataOmie(),
         quantidade: args.quantidadeKg,
         observacao: `Recebimento NF ${args.notaFiscal} ${args.observacaoSufixo}`,
         origem: 'AJU',
@@ -712,7 +713,7 @@ export async function transferirDiferencaAcxe(args: {
         codigoLocalEstoque: args.codigoLocalEstoqueOrigem,
         codigoLocalEstoqueDestino: args.codigoLocalEstoqueDiferenca,
         idProduto: args.codigoProdutoAcxe,
-        dataAtual: formatarDataBR(new Date()),
+        dataAtual: formatarDataOmie(),
         quantidade: args.quantidadeKg,
         observacao: `Recebimento NF ${args.notaFiscal} ${args.observacaoSufixo}`,
         origem: 'AJU',
@@ -748,13 +749,6 @@ export function calcularValorUnitarioQ2p(vNF: number, qtdNfKg: number): number {
 export function calcularValorUnitarioAcxe(vNF: number, qtdNfKg: number): number {
   if (!Number.isFinite(vNF) || !Number.isFinite(qtdNfKg) || qtdNfKg <= 0) return 0;
   return Math.round((vNF / qtdNfKg) * 100) / 100;
-}
-
-function formatarDataBR(d: Date): string {
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const yyyy = d.getFullYear();
-  return `${dd}/${mm}/${yyyy}`;
 }
 
 export function normalizarUnidade(raw: string): UnidadeMedida {
