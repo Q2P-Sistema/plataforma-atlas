@@ -50,7 +50,7 @@ function getCredentials(cnpj: OmieCnpj): OmieCredentials {
   return { apiUrl, appKey, appSecret };
 }
 
-export async function callOmie<TResponse = unknown>(
+async function executarChamadaOmie<TResponse = unknown>(
   cnpj: OmieCnpj,
   endpoint: OmieEndpoint,
 ): Promise<TResponse> {
@@ -124,6 +124,57 @@ export async function callOmie<TResponse = unknown>(
 
   logger.debug({ cnpj, endpoint: endpoint.endpoint, method: endpoint.method, elapsed }, 'OMIE ok');
   return body as TResponse;
+}
+
+export interface CallOmieOptions {
+  /**
+   * Nº de RE-tentativas em falhas TRANSIENTES (default 0 = sem retry). STK-23.
+   * Usar SOMENTE em leituras idempotentes (consultarNF, ListarAjusteEstoque) —
+   * NUNCA em escritas (IncluirAjusteEstoque/pedido), que dependem da idempotência
+   * por cod_int_ajuste + painel de operações pendentes para reprocessar.
+   */
+  retries?: number;
+}
+
+/**
+ * Só re-tenta falhas realmente transientes: erro de rede/timeout (httpStatus null)
+ * ou 502/503/504 (infra). NÃO re-tenta HTTP 500 — a OMIE devolve 500 para falhas
+ * de NEGÓCIO (com faultcode), que retry não resolve e só atrasa.
+ */
+function ehTransiente(err: unknown): boolean {
+  if (!(err instanceof OmieApiError)) return false;
+  return err.httpStatus === null || err.httpStatus === 502 || err.httpStatus === 503 || err.httpStatus === 504;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function callOmie<TResponse = unknown>(
+  cnpj: OmieCnpj,
+  endpoint: OmieEndpoint,
+  opts?: CallOmieOptions,
+): Promise<TResponse> {
+  const retries = Math.max(0, opts?.retries ?? 0);
+  let ultimoErro: unknown;
+  for (let tentativa = 0; tentativa <= retries; tentativa++) {
+    try {
+      return await executarChamadaOmie<TResponse>(cnpj, endpoint);
+    } catch (err) {
+      ultimoErro = err;
+      if (tentativa < retries && ehTransiente(err)) {
+        const backoff = 300 * (tentativa + 1); // 300ms, 600ms, ...
+        logger.warn(
+          { cnpj, endpoint: endpoint.endpoint, method: endpoint.method, tentativa: tentativa + 1, backoff },
+          'OMIE leitura falhou (transiente) — retry',
+        );
+        await sleep(backoff);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw ultimoErro;
 }
 
 export function isMockMode(): boolean {
