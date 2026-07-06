@@ -29,7 +29,7 @@ export async function consultarNF(cnpj: OmieCnpj, numeroNota: number): Promise<C
     endpoint: 'produtos/nfconsultar/',
     method: 'ConsultarNF',
     params: { nCodNF: 0, nNF: numeroNota },
-  });
+  }, { retries: 2 }); // STK-23: leitura idempotente — retry em falha transiente
 
   const det = raw.det?.[0];
   if (!det || !det.prod || !det.nfProdInt) {

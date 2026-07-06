@@ -10,6 +10,7 @@ import {
   calcularValorUnitarioQ2p,
   calcularValorUnitarioAcxe,
   transferirDiferencaAcxe,
+  inferirSubtipoPorNumeroNf,
   OmieAjusteError,
 } from './recebimento.service.js';
 import {
@@ -508,7 +509,10 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
         .values({
           notaFiscal: loteRow!.notaFiscal ?? `APR-${ap.id}`,
           tipoMovimento: 'entrada_nf',
-          subtipo: 'importacao',
+          // STK-21: infere o subtipo pela mesma heurística de número de NF do
+          // recebimento, em vez de hardcodar 'importacao'. NF nula → 'importacao'
+          // (idêntico ao comportamento anterior).
+          subtipo: inferirSubtipoPorNumeroNf(loteRow!.notaFiscal ?? ''),
           loteId: ap.loteId,
           quantidadeKg: String(Number(ap.quantidadeRecebidaKg ?? loteRow!.quantidadeFisicaKg)),
           mvAcxe: 1,
