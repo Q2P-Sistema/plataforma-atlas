@@ -97,10 +97,15 @@ export async function fetchPtaxHistorico(dias: number): Promise<PtaxQuote[]> {
     const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
     if (!res.ok) return [];
 
-    const data = await res.json() as Array<{ data: string; valor: number }>;
+    // MOD-20: o SGS devolve `valor` como STRING ("5.5023"), não number — o cast
+    // anterior mentia para o TS e propagava a string para PtaxQuote.venda, onde
+    // o consumidor no hedge faz `q.venda.toFixed(4)` e estoura. Coerção + guarda
+    // de NaN na fonte.
+    const data = await res.json() as Array<{ data: string; valor: string | number }>;
 
     return data
-      .filter((d) => d.valor >= SANITY_MIN && d.valor <= SANITY_MAX)
+      .map((d) => ({ data: d.data, valor: Number(d.valor) }))
+      .filter((d) => Number.isFinite(d.valor) && d.valor >= SANITY_MIN && d.valor <= SANITY_MAX)
       .map((d) => {
         const [day, month, year] = d.data.split('/');
         return { dataRef: `${year}-${month}-${day}`, venda: d.valor, compra: d.valor, atualizada: true };

@@ -4,6 +4,7 @@ import { getFamilias, type FamiliaEstoque } from './familia.service.js';
 import { getVendas12mByCodigo } from './vendas.service.js';
 import { getChegadasPorProduto } from './pedidos.service.js';
 import { getSazFactors } from './sazonalidade.service.js';
+import { dataLocalISO, mesLocalBR } from './datas.js';
 
 const logger = createLogger('forecast:engine');
 
@@ -85,7 +86,8 @@ function addDays(date: Date, days: number): Date {
 }
 
 function fmtDate(d: Date): string {
-  return d.toISOString().split('T')[0]!;
+  // MOD-21: formata no fuso BR (não UTC), alinhado ao CURRENT_DATE do Postgres.
+  return dataLocalISO(d);
 }
 
 /**
@@ -112,7 +114,7 @@ export async function buildForecastFamilia(
 
   // Sazonalidade — load all 12 months for this family
   const sazFactors = await getSazFactors(familia.familia_id);
-  const mesAtual = hoje.getMonth() + 1;
+  const mesAtual = mesLocalBR(hoje);
   const sazAtual = sazFactors.get(mesAtual) ?? 1.0;
   const vendaDiariaSaz = vendaDiariaMedia * (1 + config.variacao_anual_pct / 100) * sazAtual;
 
@@ -146,7 +148,7 @@ export async function buildForecastFamilia(
 
   for (let d = 0; d < horizonte; d++) {
     const dataD = addDays(hoje, d);
-    const mesD = dataD.getMonth() + 1;
+    const mesD = mesLocalBR(dataD);
     const sazD = sazFactors.get(mesD) ?? 1.0;
     const vendaDia = Math.round(vendaDiariaMedia * (1 + config.variacao_anual_pct / 100) * sazD);
 
@@ -196,7 +198,7 @@ export async function buildForecastFamilia(
   let soma30d = 0;
   for (let d = 0; d < 30; d++) {
     const dataD = addDays(hoje, d);
-    const mesD = dataD.getMonth() + 1;
+    const mesD = mesLocalBR(dataD);
     const sazD = sazFactors.get(mesD) ?? 1.0;
     soma30d += vendaDiariaMedia * (1 + config.variacao_anual_pct / 100) * sazD;
   }
@@ -208,7 +210,7 @@ export async function buildForecastFamilia(
   if (diaRuptura >= 0) {
     for (let d = 0; d < familia.lt_efetivo + config.horizonte_cobertura; d++) {
       const dataD = addDays(hoje, d);
-      const mesD = dataD.getMonth() + 1;
+      const mesD = mesLocalBR(dataD);
       const sazD = sazFactors.get(mesD) ?? 1.0;
       qtdBruta += Math.round(vendaDiariaMedia * (1 + config.variacao_anual_pct / 100) * sazD);
     }
