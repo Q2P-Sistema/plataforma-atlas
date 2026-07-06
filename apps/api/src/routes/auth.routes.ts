@@ -21,11 +21,18 @@ import {
   MODULE_KEYS,
 } from '@atlas/auth';
 import { sendSuccess, sendError } from '../envelope.js';
+import { createIpRateLimiter } from '../middleware/rate-limit.js';
 
 const logger = createLogger('auth');
 const SESSION_COOKIE = 'atlas_session';
 const TEMP_TOKEN_PREFIX = 'atlas:2fa:temp:';
 const TEMP_TOKEN_TTL = 300; // 5 minutes
+// SEG-04: contador de tentativas de 2FA por usuário — sem isso o tempToken
+// (5 min) aceitava tentativas ilimitadas de TOTP (brute-force viável).
+const TWOFA_ATTEMPTS_PREFIX = 'atlas:2fa:attempts:';
+const TWOFA_CONFIRM_ATTEMPTS_PREFIX = 'atlas:2fa:confirm-attempts:';
+const MAX_2FA_ATTEMPTS = 5;
+const TWOFA_ATTEMPTS_TTL = 900; // 15 min
 
 const router: Router = Router();
 
@@ -154,6 +161,19 @@ router.post('/api/v1/auth/verify-2fa', async (req: Request, res: Response) => {
 
     const { userId } = JSON.parse(stored) as { userId: string; email: string };
 
+    // SEG-04: INCR atômico antes de verificar (à prova de corrida com requisições
+    // paralelas). Contador por usuário — por tempToken permitiria renovar o limite
+    // relogando com a senha correta. Ao exceder, invalida o tempToken.
+    const attemptsKey = `${TWOFA_ATTEMPTS_PREFIX}${userId}`;
+    const attempts = await redis.incr(attemptsKey);
+    if (attempts === 1) await redis.expire(attemptsKey, TWOFA_ATTEMPTS_TTL);
+    if (attempts > MAX_2FA_ATTEMPTS) {
+      await redis.del(`${TEMP_TOKEN_PREFIX}${tempToken}`);
+      logger.warn({ userId }, '2FA brute-force lockout');
+      sendError(res, 'TOO_MANY_ATTEMPTS', 'Muitas tentativas de código. Aguarde 15 minutos e faça login novamente.', 429);
+      return;
+    }
+
     // Find user
     const db = getDb();
     const [user] = await db
@@ -174,8 +194,8 @@ router.post('/api/v1/auth/verify-2fa', async (req: Request, res: Response) => {
       return;
     }
 
-    // Delete temp token
-    await redis.del(`${TEMP_TOKEN_PREFIX}${tempToken}`);
+    // Delete temp token + zera o contador de tentativas (SEG-04)
+    await redis.del(`${TEMP_TOKEN_PREFIX}${tempToken}`, attemptsKey);
 
     // Create session
     const ipAddress =
@@ -225,6 +245,22 @@ router.post(
   async (req: Request, res: Response) => {
     try {
       const user = req.user!;
+
+      // SEG-10: re-setup com 2FA já habilitado exige a senha atual (step-up).
+      // Primeiro setup (totpEnabled=false) segue sem atrito — o usuário acabou
+      // de digitar a senha no login. Sem isto, uma sessão sequestrada (ou CSRF)
+      // reconfiguraria o 2FA da vítima silenciosamente.
+      if (user.totpEnabled) {
+        const password: unknown = req.body?.password;
+        if (
+          typeof password !== 'string' ||
+          !(await verifyPassword(user.passwordHash, password))
+        ) {
+          sendError(res, 'REAUTH_REQUIRED', 'Senha atual obrigatória para reconfigurar o 2FA', 401);
+          return;
+        }
+      }
+
       const db = getDb();
 
       // Generate new secret
@@ -266,6 +302,17 @@ router.post(
         return;
       }
 
+      // SEG-04: mesma proteção de brute-force do verify-2fa, contada por usuário.
+      const redis = getRedis();
+      const confirmAttemptsKey = `${TWOFA_CONFIRM_ATTEMPTS_PREFIX}${user.id}`;
+      const confirmAttempts = await redis.incr(confirmAttemptsKey);
+      if (confirmAttempts === 1) await redis.expire(confirmAttemptsKey, TWOFA_ATTEMPTS_TTL);
+      if (confirmAttempts > MAX_2FA_ATTEMPTS) {
+        logger.warn({ userId: user.id }, '2FA confirm brute-force lockout');
+        sendError(res, 'TOO_MANY_ATTEMPTS', 'Muitas tentativas de código. Aguarde 15 minutos.', 429);
+        return;
+      }
+
       // Re-fetch user to get current totp_secret
       const db = getDb();
       const [freshUser] = await db
@@ -292,7 +339,8 @@ router.post(
         return;
       }
 
-      // Enable 2FA
+      // Enable 2FA + zera o contador (SEG-04)
+      await redis.del(confirmAttemptsKey);
       await db
         .update(users)
         .set({ totpEnabled: true })
@@ -311,7 +359,12 @@ router.post(
 // POST /api/v1/auth/forgot-password
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
 
-router.post('/api/v1/auth/forgot-password', async (req: Request, res: Response) => {
+// SEG-09: rate limit por IP em forgot/reset (antes: flood de e-mails e brute
+// force do token de reset sem qualquer throttle por IP).
+const forgotPasswordLimiter = createIpRateLimiter({ prefix: 'forgot', windowMs: 15 * 60 * 1000, limit: 5 });
+const resetPasswordLimiter = createIpRateLimiter({ prefix: 'reset', windowMs: 15 * 60 * 1000, limit: 10 });
+
+router.post('/api/v1/auth/forgot-password', forgotPasswordLimiter, async (req: Request, res: Response) => {
   try {
     const { email } = req.body;
 
@@ -379,7 +432,7 @@ router.post('/api/v1/auth/forgot-password', async (req: Request, res: Response) 
 });
 
 // POST /api/v1/auth/reset-password
-router.post('/api/v1/auth/reset-password', async (req: Request, res: Response) => {
+router.post('/api/v1/auth/reset-password', resetPasswordLimiter, async (req: Request, res: Response) => {
   try {
     const { token, newPassword } = req.body;
 
