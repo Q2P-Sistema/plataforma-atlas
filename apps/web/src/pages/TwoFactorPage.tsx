@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, type FormEvent, type ChangeEvent, type KeyboardEvent } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ThemeToggle } from '@atlas/ui';
+import { AuthPageShell } from '@atlas/ui';
 import { useAuthStore } from '../stores/auth.store.js';
 
 const CODE_LENGTH = 6;
@@ -94,10 +94,7 @@ export function TwoFactorPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-atlas-bg p-4">
-      <div className="absolute top-4 right-4">
-        <ThemeToggle />
-      </div>
+    <AuthPageShell>
 
       <div className="w-full max-w-sm bg-atlas-card rounded-xl shadow-lg p-8 border border-atlas-border">
         <div className="text-center mb-8">
@@ -155,6 +152,6 @@ export function TwoFactorPage() {
           </button>
         </p>
       </div>
-    </div>
+    </AuthPageShell>
   );
 }

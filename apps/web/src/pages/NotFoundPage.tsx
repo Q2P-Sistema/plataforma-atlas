@@ -1,12 +1,9 @@
 import { Link } from 'react-router-dom';
-import { ThemeToggle } from '@atlas/ui';
+import { AuthPageShell } from '@atlas/ui';
 
 export function NotFoundPage() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-atlas-bg p-4">
-      <div className="absolute top-4 right-4">
-        <ThemeToggle />
-      </div>
+    <AuthPageShell>
 
       <div className="text-center">
         <p className="text-6xl font-heading font-bold text-atlas-muted mb-4">404</p>
@@ -23,6 +20,6 @@ export function NotFoundPage() {
           Voltar ao início
         </Link>
       </div>
-    </div>
+    </AuthPageShell>
   );
 }
