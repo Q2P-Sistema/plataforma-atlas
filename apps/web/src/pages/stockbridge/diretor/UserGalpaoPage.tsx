@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Badge } from '@atlas/ui';
+import { Badge, Modal } from '@atlas/ui';
 import { useAuthStore } from '../../../stores/auth.store.js';
 import { ROLE_LABEL, rotulo } from '../labels.js';
 
@@ -163,12 +163,32 @@ export function UserGalpaoPage() {
       </div>
 
       {editandoUser && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setEditandoUser(null)}>
-          <div className="bg-atlas-card rounded-lg p-6 max-w-lg w-full" onClick={(e) => e.stopPropagation()}>
-            <h2 className="font-serif text-lg text-atlas-ink mb-1">Galpões de {editandoUser.nome}</h2>
+        <Modal
+          open
+          onClose={() => setEditandoUser(null)}
+          title={`Galpões de ${editandoUser.nome}`}
+          maxWidth="lg"
+          footer={
+            <>
+              <button
+                onClick={() => setEditandoUser(null)}
+                className="px-3 py-1.5 text-sm border border-atlas-border rounded hover:bg-atlas-bg/60"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={salvar}
+                disabled={salvarMutation.isPending}
+                className="px-3 py-1.5 text-sm bg-atlas-btn-bg text-atlas-btn-text rounded hover:opacity-90 disabled:opacity-50"
+              >
+                {salvarMutation.isPending ? 'Salvando...' : 'Salvar'}
+              </button>
+            </>
+          }
+        >
             <p className="text-xs text-atlas-muted mb-4">{editandoUser.email} · {rotulo(ROLE_LABEL, editandoUser.role)}</p>
 
-            <div className="space-y-2 mb-5">
+            <div className="space-y-2">
               {galpoesDisponiveis.length === 0 && (
                 <div className="text-xs text-atlas-muted italic">Nenhum galpão cadastrado em stockbridge.localidade</div>
               )}
@@ -195,28 +215,11 @@ export function UserGalpaoPage() {
             </div>
 
             {salvarMutation.error && (
-              <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-800">
+              <div className="mt-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-800">
                 {(salvarMutation.error as Error).message}
               </div>
             )}
-
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setEditandoUser(null)}
-                className="px-3 py-1.5 text-sm border border-atlas-border rounded hover:bg-atlas-bg/60"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={salvar}
-                disabled={salvarMutation.isPending}
-                className="px-3 py-1.5 text-sm bg-atlas-btn-bg text-atlas-btn-text rounded hover:opacity-90 disabled:opacity-50"
-              >
-                {salvarMutation.isPending ? 'Salvando...' : 'Salvar'}
-              </button>
-            </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
   );
