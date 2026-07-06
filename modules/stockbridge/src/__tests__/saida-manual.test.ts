@@ -14,6 +14,8 @@ vi.mock('@atlas/core', () => ({
   getDb: vi.fn(),
   sendEmail: vi.fn().mockResolvedValue(undefined),
   buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
+  emailDataList: () => '',
+  emailActionBox: (html: string) => html,
   escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
 }));
 

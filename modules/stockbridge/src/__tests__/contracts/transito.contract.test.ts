@@ -46,6 +46,8 @@ vi.mock('@atlas/core', () => ({
   getConfig: () => ({ SEED_ADMIN_EMAIL: 'a@a' }),
   sendEmail: vi.fn(),
   buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
+  emailDataList: () => '',
+  emailActionBox: (html: string) => html,
   escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
 }));
 

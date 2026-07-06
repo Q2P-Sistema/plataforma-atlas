@@ -1,4 +1,4 @@
-import { sendEmail, createLogger, getConfig, getDb, buildEmailLayout, escapeHtml } from '@atlas/core';
+import { sendEmail, createLogger, getConfig, getDb, buildEmailLayout, escapeHtml, emailDataList, emailActionBox } from '@atlas/core';
 import { users, userModules } from '@atlas/db';
 import { eq, inArray, and, isNull } from 'drizzle-orm';
 
@@ -36,11 +36,6 @@ function labelTipoAprovacao(tipo: string | null | undefined): string {
 /** Formata quantidade em kg no padrão pt-BR (sem casas decimais). */
 function fmtKg(kg: number): string {
   return `${kg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg`;
-}
-
-/** Linha de item chave→valor; o valor dinâmico é escapado (EML-07). */
-function li(label: string, valor: string | number): string {
-  return `<li><strong>${escapeHtml(label)}:</strong> ${escapeHtml(valor)}</li>`;
 }
 
 function getAdminEmail(): string {
@@ -112,19 +107,20 @@ export async function enviarAlertaProdutoSemCorrelato(args: {
   const subject = `StockBridge — Produto sem correlato Q2P (NF ${args.notaFiscal})`;
   const corpoHtml = `
     <p>Durante o recebimento da <strong>NF ${escapeHtml(args.notaFiscal)}</strong>, o produto abaixo não possui correlato cadastrado na Q2P (correspondência por descrição textual).</p>
-    <ul>
-      ${li('Código ACXE', args.codigoProdutoAcxe)}
-      ${li('Descrição ACXE', args.descricaoProduto)}
-    </ul>
-    <p><strong>Ações esperadas:</strong></p>
-    <ol>
-      <li>Cadastrar o produto correspondente na Q2P com a <strong>descrição exata</strong> do ACXE.</li>
-      <li>Aguardar a sincronização (próximo ciclo do n8n).</li>
-      <li>Tentar novamente o recebimento no StockBridge.</li>
-    </ol>
+    ${emailDataList([
+      { label: 'Código ACXE', valor: args.codigoProdutoAcxe },
+      { label: 'Descrição ACXE', valor: args.descricaoProduto },
+    ])}
+    ${emailActionBox(`
+      <ol style="margin:0;padding-left:18px;">
+        <li>Cadastrar o produto correspondente na Q2P com a <strong>descrição exata</strong> do ACXE.</li>
+        <li>Aguardar a sincronização (próximo ciclo do n8n).</li>
+        <li>Tentar novamente o recebimento no StockBridge.</li>
+      </ol>`)}
   `;
   const { html, text } = buildEmailLayout({
-    titulo: 'Ação necessária: produto não encontrado na Q2P',
+    titulo: 'Produto não encontrado na Q2P',
+    variante: 'alerta',
     corpoHtml,
   });
   try {
@@ -149,15 +145,16 @@ export async function enviarAlertaNfIndeterminada(args: {
   const subject = `StockBridge — NF ${args.nf} recebida com dado indeterminado (${args.cnpj.toUpperCase()})`;
   const corpoHtml = `
     <p>O recebimento da <strong>NF ${escapeHtml(args.nf)}</strong> (${args.cnpj.toUpperCase()}) foi <strong>liberado</strong>, mas o sistema não conseguiu determinar com segurança um dos sinais da NF no OMIE.</p>
-    <ul>${li('Motivo', args.motivo)}</ul>
-    <p><strong>Ações esperadas:</strong></p>
-    <ol>
-      <li>Conferir no OMIE se a NF ${escapeHtml(args.nf)} está válida e foi emitida pela empresa correta.</li>
-      <li>Se houver irregularidade (cancelada ou emitente errado), estornar o recebimento no StockBridge.</li>
-    </ol>
+    ${emailDataList([{ label: 'Motivo', valor: args.motivo }])}
+    ${emailActionBox(`
+      <ol style="margin:0;padding-left:18px;">
+        <li>Conferir no OMIE se a NF ${escapeHtml(args.nf)} está válida e foi emitida pela empresa correta.</li>
+        <li>Se houver irregularidade (cancelada ou emitente errado), estornar o recebimento no StockBridge.</li>
+      </ol>`)}
   `;
   const { html, text } = buildEmailLayout({
-    titulo: 'Revisão necessária: NF recebida sem validação completa',
+    titulo: 'NF recebida sem validação completa',
+    variante: 'alerta',
     corpoHtml,
   });
   try {
@@ -183,17 +180,17 @@ export async function enviarAlertaDebitoCruzado(args: {
   const subject = `StockBridge — Débito cruzado (NF ${args.notaFiscal})`;
   const corpoHtml = `
     <p>Uma NF de saída gerou <strong>divergência cruzada</strong> entre o CNPJ emissor e o CNPJ onde está o estoque físico.</p>
-    <ul>
-      ${li('NF', args.notaFiscal)}
-      ${li('Emissor (faturou)', args.cnpjEmissor.toUpperCase())}
-      ${li('Físico (estoque real)', args.cnpjFisico.toUpperCase())}
-      ${li('Quantidade', fmtKg(args.quantidadeKg))}
-    </ul>
-    <p><strong>Ação esperada:</strong> o setor contábil deve emitir a NF de transferência
-    ${args.cnpjFisico.toUpperCase()} → ${args.cnpjEmissor.toUpperCase()} para regularizar a posição fiscal.
-    A divergência será fechada automaticamente quando a NF de regularização for processada.</p>
+    ${emailDataList([
+      { label: 'NF', valor: args.notaFiscal },
+      { label: 'Emissor (faturou)', valor: args.cnpjEmissor.toUpperCase() },
+      { label: 'Físico (estoque real)', valor: args.cnpjFisico.toUpperCase() },
+      { label: 'Quantidade', valor: fmtKg(args.quantidadeKg) },
+    ])}
+    ${emailActionBox(
+      `O setor contábil deve emitir a NF de transferência <strong>${args.cnpjFisico.toUpperCase()} → ${args.cnpjEmissor.toUpperCase()}</strong> para regularizar a posição fiscal. A divergência será fechada automaticamente quando a NF de regularização for processada.`,
+    )}
   `;
-  const { html, text } = buildEmailLayout({ titulo: 'Débito cruzado detectado', corpoHtml });
+  const { html, text } = buildEmailLayout({ titulo: 'Débito cruzado detectado', variante: 'alerta', corpoHtml });
   try {
     await sendEmail({ to, subject, html, text });
   } catch (err) {
@@ -220,12 +217,17 @@ export async function enviarAlertaAprovacaoPendente(args: {
   const tipoLabel = labelTipoAprovacao(args.tipoAprovacao);
   const subject = `StockBridge — Aprovação pendente (${args.nivel}) — ${tipoLabel}`;
   const corpoHtml = `
-    <p><strong>Tipo:</strong> ${escapeHtml(tipoLabel)}</p>
-    <p><strong>Item:</strong> ${escapeHtml(args.loteCodigo)} — ${escapeHtml(args.produto)} (${fmtKg(args.quantidadeKg)})</p>
-    ${args.detalhes ? `<p><strong>Detalhes:</strong> ${escapeHtml(args.detalhes)}</p>` : ''}
+    <p>Uma nova pendência aguarda sua aprovação no StockBridge.</p>
+    ${emailDataList([
+      { label: 'Tipo', valor: tipoLabel },
+      { label: 'Item', valor: `${args.loteCodigo} — ${args.produto}` },
+      { label: 'Quantidade', valor: fmtKg(args.quantidadeKg) },
+      { label: 'Detalhes', valor: args.detalhes ?? '' },
+    ])}
   `;
   const { html, text } = buildEmailLayout({
     titulo: 'Nova pendência de aprovação',
+    variante: 'info',
     corpoHtml,
     ctaLabel: 'Abrir aprovações pendentes',
     ctaUrl: linkPainel,
@@ -261,16 +263,17 @@ export async function enviarAlertaPendenciaOmie(args: {
   const subject = `StockBridge — Pendência OMIE (NF ${args.notaFiscal})`;
   const corpoHtml = `
     <p>O recebimento abaixo ficou em estado parcial — a chamada inicial teve sucesso, mas a continuação falhou. Nada foi perdido; basta retentar.</p>
-    <ul>
-      ${li('NF', args.notaFiscal)}
-      ${li('Lado pendente', ladoLabel)}
-      ${li('Tentativas já feitas', args.tentativas)}
-      ${li('Erro reportado', args.mensagemErro)}
-    </ul>
-    <p style="color:#6b7280;font-size:12px;margin-top:16px;">Movimentação: ${escapeHtml(args.movimentacaoId)} · op_id: ${escapeHtml(args.opId)}</p>
+    ${emailDataList([
+      { label: 'NF', valor: args.notaFiscal },
+      { label: 'Lado pendente', valor: ladoLabel },
+      { label: 'Tentativas já feitas', valor: args.tentativas },
+      { label: 'Erro reportado', valor: args.mensagemErro },
+    ])}
+    <p style="color:#9ca3af;font-size:12px;margin-top:16px;">Detalhes técnicos — Movimentação: ${escapeHtml(args.movimentacaoId)} · op_id: ${escapeHtml(args.opId)}</p>
   `;
   const { html, text } = buildEmailLayout({
     titulo: 'Operação OMIE pendente',
+    variante: 'erro',
     corpoHtml,
     ctaLabel: 'Abrir painel de operações pendentes',
     ctaUrl: linkPainel,
@@ -333,7 +336,7 @@ export async function enviarNotificacaoRejeicaoOperador(args: {
     <p>Corrija os dados e ${args.fluxo === 'recebimento' ? 'reenvie para nova aprovação' : 'lance novamente'}:</p>
     <p style="color:#6b7280;font-size:12px;margin-top:16px;">Você também pode abrir a tela de ${escapeHtml(paginaLabel)} no StockBridge e procurar pela seção "Lançamentos rejeitados". · Aprovação: ${escapeHtml(args.aprovacaoId)}</p>
   `;
-  const { html, text } = buildEmailLayout({ titulo: 'Lançamento rejeitado', corpoHtml, ctaLabel: acaoLabel, ctaUrl: link });
+  const { html, text } = buildEmailLayout({ titulo: 'Lançamento rejeitado', variante: 'erro', corpoHtml, ctaLabel: acaoLabel, ctaUrl: link });
   try {
     await sendEmail({ to, cc: config.STOCKBRIDGE_ADMIN_CC_EMAIL || undefined, subject, html, text });
   } catch (err) {
@@ -375,7 +378,7 @@ export async function enviarNotificacaoAprovacaoOperador(args: {
     ${extraDivergencia}
     <p style="color:#6b7280;font-size:12px;margin-top:16px;">Aprovação: ${escapeHtml(args.aprovacaoId)} · Lote: ${escapeHtml(args.loteId)}</p>
   `;
-  const { html, text } = buildEmailLayout({ titulo: 'Lançamento aprovado', corpoHtml });
+  const { html, text } = buildEmailLayout({ titulo: 'Lançamento aprovado', variante: 'sucesso', corpoHtml });
   try {
     const ccList = [
       ...new Set(
@@ -420,15 +423,15 @@ export async function enviarNotificacaoRecebimentoConcluido(args: {
   const subject = `StockBridge — Recebimento concluído (NF ${args.notaFiscal})`;
   const corpoHtml = `
     <p>O recebimento da <strong>NF ${escapeHtml(args.notaFiscal)}</strong> foi registrado no StockBridge sem divergências. O ajuste de estoque já foi aplicado no OMIE (ACXE + Q2P).</p>
-    <ul>
-      ${li('Lote', args.loteCodigo)}
-      ${li('Produto', args.produto)}
-      ${li('Quantidade recebida', fmtKg(args.quantidadeKg))}
-      ${li('Fornecedor', args.fornecedor ?? '—')}
-      ${li('Local de destino', args.localidade)}
-    </ul>
+    ${emailDataList([
+      { label: 'Lote', valor: args.loteCodigo },
+      { label: 'Produto', valor: args.produto },
+      { label: 'Quantidade recebida', valor: fmtKg(args.quantidadeKg) },
+      { label: 'Fornecedor', valor: args.fornecedor ?? '' },
+      { label: 'Local de destino', valor: args.localidade },
+    ])}
   `;
-  const { html, text } = buildEmailLayout({ titulo: 'Recebimento concluído', corpoHtml });
+  const { html, text } = buildEmailLayout({ titulo: 'Recebimento concluído', variante: 'sucesso', corpoHtml });
   try {
     const results = await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html, text })));
     const falhas = results.filter((r) => r.status === 'rejected').length;
@@ -475,23 +478,27 @@ export async function enviarAlertaComodatoVencido(args: {
   const tagFase = args.fase === 'escalada' ? '[Escalado] ' : '';
   const subject = `StockBridge — ${tagFase}Comodato vencido há ${args.diasVencido}d (${args.cliente ?? 'sem cliente'})`;
   const escalada = args.fase === 'escalada'
-    ? '<p style="color:#b91c1c;"><strong>Esta notificação foi escalada para a diretoria por ultrapassar 15 dias de atraso.</strong> As notificações seguem ocorrendo a cada 15 dias enquanto o comodato permanecer em aberto.</p>'
+    ? emailActionBox(
+        'As notificações seguem ocorrendo a cada 15 dias enquanto o comodato permanecer em aberto.',
+        'Escalado para a diretoria — atraso acima de 15 dias',
+      )
     : '';
   const corpoHtml = `
     <p>O comodato abaixo passou da data prevista de retorno e segue em aberto há <strong>${args.diasVencido} dia${args.diasVencido === 1 ? '' : 's'}</strong>.</p>
-    <ul>
-      ${li('Cliente', args.cliente ?? 'sem cliente informado')}
-      ${li('Produto', `${args.produtoDescricao} (SKU ${args.produtoCodigoAcxe})`)}
-      ${li('Quantidade', fmtKg(args.quantidadeKg))}
-      ${li('Galpão de origem', args.galpaoOrigem)}
-      ${li('Saída em', fmtDataBr(args.dtSaida))}
-      ${li('Retorno previsto', fmtDataBr(args.dtPrevistaRetorno))}
-    </ul>
+    ${emailDataList([
+      { label: 'Cliente', valor: args.cliente ?? 'sem cliente informado' },
+      { label: 'Produto', valor: `${args.produtoDescricao} (SKU ${args.produtoCodigoAcxe})` },
+      { label: 'Quantidade', valor: fmtKg(args.quantidadeKg) },
+      { label: 'Galpão de origem', valor: args.galpaoOrigem },
+      { label: 'Saída em', valor: fmtDataBr(args.dtSaida) },
+      { label: 'Retorno previsto', valor: fmtDataBr(args.dtPrevistaRetorno) },
+    ])}
     ${escalada}
-    <p style="color:#6b7280;font-size:12px;margin-top:16px;">Movimentação: ${escapeHtml(args.movimentacaoId)}</p>
+    <p style="color:#9ca3af;font-size:12px;margin-top:16px;">Detalhes técnicos — Movimentação: ${escapeHtml(args.movimentacaoId)}</p>
   `;
   const { html, text } = buildEmailLayout({
     titulo: 'Comodato vencido — ação necessária',
+    variante: 'alerta',
     corpoHtml,
     ctaLabel: 'Abrir Retorno de Comodato',
     ctaUrl: linkPainel,
