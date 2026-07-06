@@ -1,5 +1,15 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useAuthStore } from '../../stores/auth.store.js';
+
+// SEG-07: estas mutações usavam fetch direto sem o x-csrf-token (as demais
+// páginas usam useApiFetch, que já injeta). Com o csrfProtection montado nos
+// routers, sem o header elas passariam a levar 403. zustand getState fora de
+// componente é suportado.
+function csrfHeaders(): Record<string, string> {
+  const t = useAuthStore.getState().csrfToken;
+  return { 'Content-Type': 'application/json', ...(t ? { 'x-csrf-token': t } : {}) };
+}
 
 interface Params {
   empresa: 'acxe' | 'q2p';
@@ -50,7 +60,7 @@ async function putParams(p: Omit<Params, 'updated_at'>): Promise<void> {
   const r = await fetch('/api/v1/bp/params', {
     method: 'PUT',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: csrfHeaders(),
     body: JSON.stringify(p),
   });
   const j = await r.json();
@@ -65,7 +75,7 @@ async function putBanco(b: Banco): Promise<void> {
   const r = await fetch(`/api/v1/bp/bancos/${b.id}`, {
     method: 'PUT',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: csrfHeaders(),
     body: JSON.stringify({
       banco_nome: b.banco_nome,
       cor_hex: b.cor_hex,
@@ -84,14 +94,14 @@ async function putBanco(b: Banco): Promise<void> {
   if (!r.ok) throw new Error(j.error?.message ?? 'Falha ao salvar banco');
 }
 async function deleteBancoCall(id: string): Promise<void> {
-  const r = await fetch(`/api/v1/bp/bancos/${id}`, { method: 'DELETE', credentials: 'include' });
+  const r = await fetch(`/api/v1/bp/bancos/${id}`, { method: 'DELETE', credentials: 'include', headers: csrfHeaders() });
   if (!r.ok) throw new Error('Falha ao remover');
 }
 async function postBanco(b: Omit<Banco, 'id' | 'antecip_disp' | 'finimp_disp' | 'cheque_disp' | 'updated_at'>): Promise<void> {
   const r = await fetch('/api/v1/bp/bancos', {
     method: 'POST',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: csrfHeaders(),
     body: JSON.stringify(b),
   });
   const j = await r.json();
@@ -106,7 +116,7 @@ async function putConta(nCodCC: number, incluir: boolean): Promise<void> {
   const r = await fetch(`/api/v1/bp/contas/${nCodCC}`, {
     method: 'PUT',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: csrfHeaders(),
     body: JSON.stringify({ empresa: EMPRESA, incluir }),
   });
   if (!r.ok) throw new Error('Falha ao salvar toggle');

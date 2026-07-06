@@ -20,6 +20,7 @@ vi.mock('@atlas/core', () => ({
 }));
 
 vi.mock('@atlas/auth', () => ({
+  csrfProtection: (_req: any, _res: any, next: any) => next(),
   requireAuth: (req: Request, _res: Response, next: NextFunction) => {
     req.user = {
       id: '00000000-0000-0000-0000-000000000001',
@@ -125,6 +126,7 @@ describe('POST /api/v1/stockbridge/recebimento — erro estruturado OMIE (US2)',
     }));
 
     vi.doMock('@atlas/auth', () => ({
+      csrfProtection: (_req: Request, _res: Response, next: NextFunction) => next(),
       requireAuth: (req: Request, _res: Response, next: NextFunction) => {
         req.user = {
           id: '00000000-0000-0000-0000-000000000001',

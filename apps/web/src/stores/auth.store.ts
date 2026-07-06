@@ -92,8 +92,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
 
       const body = (await res.json()) as any;
+      // SEG-07: restaura o csrfToken após F5 — /me passou a devolvê-lo. Sem
+      // isso, o token se perdia no refresh e toda mutação falhava com 403.
       set({
         user: body.data,
+        csrfToken: body.data?.csrfToken ?? get().csrfToken,
         isAuthenticated: true,
         isLoading: false,
       });
