@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { AlertTriangle, Bell, CheckCircle2 } from 'lucide-react';
 import { Modal } from '@atlas/ui';
 import { useAuthStore } from '../../../stores/auth.store.js';
 
@@ -101,7 +102,7 @@ export function ComodatoRetornoPage() {
   }, [data, busca]);
 
   return (
-    <div className="p-6">
+    <div className="p-6 max-w-7xl">
       <div className="mb-5 flex items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-serif text-atlas-ink mb-1">Retorno de Comodato</h1>
@@ -122,7 +123,7 @@ export function ComodatoRetornoPage() {
               title="Roda agora o cron de alerta — normalmente roda às 08:00 BR todo dia"
               className="px-3 py-1.5 text-xs font-medium border border-atlas-border rounded hover:bg-atlas-bg/60 disabled:opacity-50"
             >
-              {dispararCronMut.isPending ? 'Rodando…' : '🔔 Disparar alerta agora'}
+              {dispararCronMut.isPending ? 'Rodando…' : (<><Bell size={12} className="inline -mt-0.5 mr-1" aria-hidden />Disparar alerta agora</>)}
             </button>
             {feedbackCron && (
               <div className="mt-1 text-[11px] text-atlas-muted max-w-[280px] text-right">
@@ -333,7 +334,7 @@ function RetornoModal({ comodato, onClose, onSuccess }: RetornoModalProps) {
 
         <div className="space-y-4">
           <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded p-3 text-xs text-amber-900 dark:text-amber-200">
-            ⚠ O retorno aceita SKU/quantidade diferentes. Diferenças geram divergência para
+            <AlertTriangle size={12} className="inline -mt-0.5 mr-1" aria-hidden />O retorno aceita SKU/quantidade diferentes. Diferenças geram divergência para
             justificativa do operador. Aprovação por <strong>gestor</strong>.
           </div>
 
@@ -346,7 +347,7 @@ function RetornoModal({ comodato, onClose, onSuccess }: RetornoModalProps) {
             />
             {skuMudou && (
               <div className="mt-1 text-[11px] text-amber-700">
-                ⚠ Produto diferente do original — vai gerar divergência
+                <AlertTriangle size={12} className="inline -mt-0.5 mr-1" aria-hidden />Produto diferente do original — vai gerar divergência
               </div>
             )}
           </div>
@@ -388,7 +389,7 @@ function RetornoModal({ comodato, onClose, onSuccess }: RetornoModalProps) {
             />
             {qtdMudou && (
               <div className="mt-1 text-[11px] text-amber-700">
-                ⚠ Diferença vs. original ({fmtKg(comodato.quantidadeKg)} kg): delta{' '}
+                <AlertTriangle size={12} className="inline -mt-0.5 mr-1" aria-hidden />Diferença vs. original ({fmtKg(comodato.quantidadeKg)} kg): delta{' '}
                 {(qtdNum - comodato.quantidadeKg > 0 ? '+' : '') +
                   (qtdNum - comodato.quantidadeKg).toLocaleString('pt-BR', { maximumFractionDigits: 3 })}{' '}
                 kg — vai gerar divergência
@@ -418,8 +419,8 @@ function RetornoModal({ comodato, onClose, onSuccess }: RetornoModalProps) {
           )}
 
           {mut.isSuccess && (
-            <div className="p-2 bg-green-50 border border-green-200 rounded text-xs text-green-800">
-              ✓ Retorno registrado. Aguardando aprovação do gestor.
+            <div className="p-2 bg-green-50 border border-green-200 rounded text-xs text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-200">
+              <CheckCircle2 size={12} className="inline -mt-0.5 mr-1" aria-hidden />Retorno registrado. Aguardando aprovação do gestor.
             </div>
           )}
         </div>

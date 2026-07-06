@@ -1,4 +1,4 @@
-import { useState, useRef, type FormEvent, type ChangeEvent, type KeyboardEvent } from 'react';
+import { useEffect, useState, useRef, type FormEvent, type ChangeEvent, type KeyboardEvent } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ThemeToggle } from '@atlas/ui';
 import { useAuthStore } from '../stores/auth.store.js';
@@ -16,8 +16,12 @@ export function TwoFactorPage() {
 
   const tempToken = (location.state as any)?.tempToken;
 
+  // navigate() durante o render é anti-pattern React (UI-E, ACXEGDP-265).
+  useEffect(() => {
+    if (!tempToken) navigate('/login', { replace: true });
+  }, [tempToken, navigate]);
+
   if (!tempToken) {
-    navigate('/login', { replace: true });
     return null;
   }
 
@@ -117,7 +121,7 @@ export function TwoFactorPage() {
                 value={digit}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => handleChange(i, e.target.value)}
                 onKeyDown={(e) => handleKeyDown(i, e)}
-                className="w-11 h-13 text-center text-xl font-mono rounded-lg border border-atlas-border bg-atlas-bg text-atlas-text focus:outline-none focus:ring-2 focus:ring-acxe"
+                className="w-11 h-14 text-center text-xl font-mono rounded-lg border border-atlas-border bg-atlas-bg text-atlas-text focus:outline-none focus:ring-2 focus:ring-acxe"
                 autoFocus={i === 0}
                 aria-label={`Dígito ${i + 1}`}
               />

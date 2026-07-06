@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ChangeEvent } from 'react';
+import { useEffect, useState, type FormEvent, type ChangeEvent } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '@atlas/ui';
 
@@ -11,8 +11,12 @@ export function ResetPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
 
+  // navigate() durante o render é anti-pattern React (UI-E, ACXEGDP-265).
+  useEffect(() => {
+    if (!token) navigate('/login', { replace: true });
+  }, [token, navigate]);
+
   if (!token) {
-    navigate('/login', { replace: true });
     return null;
   }
 

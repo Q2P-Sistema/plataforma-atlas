@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { Modal } from '@atlas/ui';
 import { useAuthStore } from '../../../stores/auth.store.js';
 
@@ -103,7 +104,13 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
     return (
       <Modal open title="Recebimento registrado" onClose={() => { onClose(); onSucesso(); }}>
         <div className="text-center py-6">
-          <div className="text-5xl mb-3">{sucesso.tipo === 'divergencia' ? '⚠' : '✓'}</div>
+          <div className="mb-3 flex justify-center">
+            {sucesso.tipo === 'divergencia' ? (
+              <AlertTriangle size={48} className="text-warn" aria-hidden />
+            ) : (
+              <CheckCircle2 size={48} className="text-success" aria-hidden />
+            )}
+          </div>
           <p className="text-sm text-atlas-muted mb-4">{sucesso.mensagem}</p>
           <button
             onClick={() => { onClose(); onSucesso(); }}

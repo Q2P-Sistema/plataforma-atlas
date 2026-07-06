@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ChangeEvent } from 'react';
+import { useEffect, useState, type FormEvent, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '@atlas/ui';
 import { useAuthStore } from '../stores/auth.store.js';
@@ -41,10 +41,16 @@ export function TwoFactorSetupPage() {
     }
   }
 
-  // Auto-init on mount when user is loaded
-  if (!isLoading && user && step === 'loading' && !qrCodeDataUrl && !error) {
-    initSetup();
-  }
+  // Auto-init quando o user carrega. Efeito com side-effect (fetch) durante
+  // o render é anti-pattern React — movido para useEffect (UI-E, ACXEGDP-265).
+  useEffect(() => {
+    if (!isLoading && user && step === 'loading' && !qrCodeDataUrl && !error) {
+      void initSetup();
+    }
+    // initSetup é estável o suficiente aqui (só depende de csrfToken via closure);
+    // as deps abaixo cobrem as condições de disparo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading, user, step, qrCodeDataUrl, error]);
 
   async function handleConfirm(e: FormEvent) {
     e.preventDefault();

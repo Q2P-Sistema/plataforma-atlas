@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { EmptyState, ErrorState } from '@atlas/ui';
 import { useAuthStore } from '../../../stores/auth.store.js';
 
 type Tipo = 'proprio' | 'tpl' | 'porto_seco' | 'virtual_transito' | 'virtual_ajuste';
@@ -38,7 +39,9 @@ const GRID_COLS = 'grid-cols-[1fr_3fr_1.2fr_1.5fr_1.5fr_1fr]';
 export function LocalidadesPage() {
   const apiFetch = useApiFetch();
 
-  const { data = [] } = useQuery<Localidade[]>({
+  // Era a única página sem tratamento de loading/erro/empty — falha rendia
+  // tabela vazia sem feedback (UI-E, ACXEGDP-265).
+  const { data = [], isLoading, error, refetch } = useQuery<Localidade[]>({
     queryKey: ['sb', 'localidades'],
     queryFn: async () => (await apiFetch('/api/v1/stockbridge/localidades')).data as Localidade[],
   });
@@ -66,6 +69,17 @@ export function LocalidadesPage() {
         </div>
 
         <div>
+          {isLoading && <div className="p-6 text-sm text-atlas-muted">Carregando...</div>}
+          {!isLoading && error && (
+            <div className="p-4">
+              <ErrorState message={(error as Error).message} retry={() => refetch()} />
+            </div>
+          )}
+          {!isLoading && !error && data.length === 0 && (
+            <div className="p-4">
+              <EmptyState>Nenhuma localidade cadastrada.</EmptyState>
+            </div>
+          )}
           {data.map((l) => (
             <div
               key={l.id}
