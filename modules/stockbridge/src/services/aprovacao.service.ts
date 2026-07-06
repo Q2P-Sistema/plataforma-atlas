@@ -29,6 +29,7 @@ import {
   type ResultadoDual,
 } from './omie-saida.service.js';
 import { incluirAjusteIdempotente } from './omie-idempotente.js';
+import { resolverDescricaoProdutoAcxe } from './produto-descricao.js';
 
 const logger = createLogger('stockbridge:aprovacao');
 
@@ -747,13 +748,17 @@ export async function resubmeter(input: ResubmeterInput): Promise<{ id: string; 
     };
   });
 
+  // EML-04: o campo "produto" do e-mail mostrava o FORNECEDOR (lote não guarda a
+  // descrição — só produto_codigo_acxe). Resolve a descrição real do SKU.
+  const descricaoProduto = await resolverDescricaoProdutoAcxe(db, resultado.lote.produtoCodigoAcxe);
+
   // Notifica gestor/diretor da nova pendencia (fora da transacao — email nao bloqueia commit)
   await enviarAlertaAprovacaoPendente({
     aprovacaoId: resultado.novaAprovacao.id,
     tipoAprovacao: resultado.novaAprovacao.tipoAprovacao,
     nivel: resultado.novaAprovacao.precisaNivel,
     loteCodigo: resultado.lote.codigo,
-    produto: resultado.lote.fornecedorNome,
+    produto: descricaoProduto,
     quantidadeKg: input.quantidadeRecebidaKg,
     detalhes: `Re-submetida pelo operador após rejeição. Motivo: ${input.observacoes}`,
   });

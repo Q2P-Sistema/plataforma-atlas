@@ -47,8 +47,10 @@ function criarDbMockSaldo(saldoKg: number, reservadoKg: number) {
     }),
   };
   return {
+    // A mesma row serve à query de saldo (lê saldo_omie_kg/reservado_kg) e à de
+    // descrição do produto (lê descricao) — EML-05.
     execute: vi.fn().mockResolvedValue({
-      rows: [{ saldo_omie_kg: String(saldoKg), reservado_kg: String(reservadoKg) }],
+      rows: [{ saldo_omie_kg: String(saldoKg), reservado_kg: String(reservadoKg), descricao: 'PP HOMOPOLIMERO H301' }],
     }),
     transaction: async (fn: (tx: typeof tx) => Promise<unknown>) => fn(tx),
   };
@@ -151,6 +153,19 @@ describe('saida-manual#registrarSaidaManual — validacoes', () => {
 
     const res = await registrarSaidaManual({ ...inputBase, quantidadeOriginal: 4000 });
     expect(res).toMatchObject({ status: 'aguardando_aprovacao' });
+  });
+
+  // EML-05: o e-mail de aprovação deve receber a DESCRIÇÃO do produto, não o SKU cru.
+  it('notifica aprovação com a descrição do produto (não o SKU cru)', async () => {
+    const { getDb } = await import('@atlas/core');
+    const { enviarAlertaAprovacaoPendente } = await import('../services/notificacao.service.js');
+    vi.mocked(getDb).mockReturnValue(criarDbMockSaldo(5000, 0) as never);
+
+    await registrarSaidaManual({ ...inputBase, quantidadeOriginal: 4000 });
+
+    const arg = vi.mocked(enviarAlertaAprovacaoPendente).mock.calls[0]![0];
+    expect(arg.produto).toBe('PP HOMOPOLIMERO H301');
+    expect(arg.loteCodigo).not.toContain(String(inputBase.produtoCodigoAcxe));
   });
 
   it('transf_intra_cnpj exige galpao destino diferente da origem', async () => {

@@ -4,6 +4,7 @@ import { getDb, createLogger } from '@atlas/core';
 import { movimentacao, aprovacao, divergencia, reservaSaldo } from '@atlas/db';
 import { converterParaKg } from './motor.service.js';
 import { enviarAlertaAprovacaoPendente } from './notificacao.service.js';
+import { resolverDescricaoProdutoAcxe } from './produto-descricao.js';
 import { NIVEL_APROVACAO_POR_SUBTIPO, type SubtipoMovimento, type UnidadeMedida } from '../types.js';
 
 const logger = createLogger('stockbridge:saida-manual');
@@ -306,12 +307,15 @@ export async function registrarSaidaManual(
     return { movimentacaoId: mov!.id, aprovacaoId: apr!.id, reservaId: rsv!.id, divergenciaId: divId };
   });
 
+  // EML-05: o e-mail mostrava só o número do SKU cru ("Item: SKU 819 @ G01 — 819").
+  // Resolve a descrição real e evita duplicar o SKU no rótulo.
+  const descricaoProduto = await resolverDescricaoProdutoAcxe(db, input.produtoCodigoAcxe);
   await enviarAlertaAprovacaoPendente({
     aprovacaoId: resultado.aprovacaoId,
     tipoAprovacao,
     nivel,
-    loteCodigo: `SKU ${input.produtoCodigoAcxe} @ ${input.galpao}`,
-    produto: `${input.produtoCodigoAcxe}`,
+    loteCodigo: `Galpão ${input.galpao}`,
+    produto: descricaoProduto,
     quantidadeKg,
     detalhes: `Saída manual ${input.subtipo} — ${input.observacoes}`,
   }).catch((err) => logger.error({ err }, 'Falha ao notificar aprovação pendente'));
@@ -642,12 +646,14 @@ export async function registrarRetornoComodato(
     };
   });
 
+  // EML-05: descrição real do produto recebido no lugar do SKU cru.
+  const descricaoRecebido = await resolverDescricaoProdutoAcxe(db, input.produtoCodigoAcxeRecebido);
   await enviarAlertaAprovacaoPendente({
     aprovacaoId: resultado.aprovacaoId,
     tipoAprovacao: 'retorno_comodato',
     nivel: 'gestor',
     loteCodigo: `Retorno comodato ${movOrigem.id.slice(0, 8)}`,
-    produto: `${input.produtoCodigoAcxeRecebido}`,
+    produto: descricaoRecebido,
     quantidadeKg: qtdRecebidaKg,
     detalhes: `Retorno de comodato — ${input.observacoes}${skuMudou || qtdMudou ? ' [DIVERGENTE]' : ''}`,
   }).catch((err) => logger.error({ err }, 'Falha ao notificar retorno comodato'));
