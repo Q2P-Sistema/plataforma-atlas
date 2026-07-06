@@ -757,18 +757,30 @@ export function normalizarUnidade(raw: string): UnidadeMedida {
   if (u === 'kg' || u === 'quilo') return 'kg';
   if (u.includes('saco')) return 'saco';
   if (u.includes('big')) return 'bigbag';
-  // Default para kg (mais seguro para granel importado)
+  // STK-20: unidade não reconhecida cai em kg (default seguro p/ granel importado),
+  // mas agora LOGA — antes sumia silenciosamente e um 't' abreviado esquisito viraria
+  // kg sem rastro (risco de erro de 1000×). Decisão: manter kg + warn p/ revisão.
+  logger.warn({ unidadeOriginal: raw }, 'Unidade OMIE desconhecida — assumindo kg');
   return 'kg';
 }
 
-function inferirSubtipoEntrada(omie: ConsultarNFResponse): SubtipoMovimento {
-  // OMIE nao retorna tipo de NF estruturado — heuristica pelo numero/origem.
-  // No MVP, qualquer NF que caia na fila e tratada como importacao; refinar quando
-  // a fila real for wireada e trouxer o tipo explicito.
-  if (/^IMP[-/]/.test(String(omie.nNF))) return 'importacao';
-  if (/^DEV[-/]/.test(String(omie.nNF))) return 'devolucao_cliente';
-  if (/^CN[-/]/.test(String(omie.nNF))) return 'compra_nacional';
+/**
+ * Heurística de subtipo de entrada pelo NÚMERO da NF (a OMIE não devolve tipo
+ * estruturado). Exportada porque é usada em DOIS caminhos: o recebimento (via
+ * inferirSubtipoEntrada) e a aprovação de divergência (STK-21) — que antes
+ * hardcodava 'importacao', divergindo desta regra. Como só depende do número da
+ * NF (persistido em lote.notaFiscal), o resultado é idêntico ao que uma coluna
+ * subtipo no lote guardaria — daí o fix não precisar de migration.
+ */
+export function inferirSubtipoPorNumeroNf(nf: string): SubtipoMovimento {
+  if (/^IMP[-/]/.test(nf)) return 'importacao';
+  if (/^DEV[-/]/.test(nf)) return 'devolucao_cliente';
+  if (/^CN[-/]/.test(nf)) return 'compra_nacional';
   return 'importacao';
+}
+
+function inferirSubtipoEntrada(omie: ConsultarNFResponse): SubtipoMovimento {
+  return inferirSubtipoPorNumeroNf(String(omie.nNF));
 }
 
 async function proximoCodigoLote(

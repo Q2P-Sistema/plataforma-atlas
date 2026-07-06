@@ -88,7 +88,7 @@ export async function listarAjusteEstoque(
     endpoint: 'estoque/ajuste/',
     method: 'ListarAjusteEstoque',
     params,
-  });
+  }, { retries: 2 }); // STK-23: leitura idempotente — retry em falha transiente
 
   return {
     pagina: raw.pagina,
