@@ -1,5 +1,5 @@
 import Decimal from 'decimal.js';
-import { eq, inArray } from 'drizzle-orm';
+import { desc, eq, inArray } from 'drizzle-orm';
 import { getDb, getPool, createLogger } from '@atlas/core';
 import { bucketMensal, configMotor, ndfTaxas } from '@atlas/db';
 
@@ -56,7 +56,7 @@ interface MotorConfig {
 /**
  * Carrega parametros configurados do banco (config_motor + taxas NDF).
  */
-async function loadMotorConfig(): Promise<MotorConfig> {
+export async function loadMotorConfig(): Promise<MotorConfig> {
   const db = getDb();
 
   const keys = ['cobertura_base_pct', 'cobertura_bump_pct', 'estoque_bump_threshold'];
@@ -72,19 +72,20 @@ async function loadMotorConfig(): Promise<MotorConfig> {
   // camada1_ajuste_ep = bump - base (legacy: 68 - 60 = 8)
   const camada1_ajuste_ep = cobertura_bump - camada1_minima;
 
-  // Load latest NDF rates
+  // Load latest NDF rates. ORDER BY data_ref DESC → a cotacao mais recente vem
+  // primeiro; o first-wins abaixo fixa a taxa mais nova por prazo. (Antes: ASC +
+  // limit(10) truncava nas datas MAIS ANTIGAS e congelava as taxas — MOD-01.)
   const taxaRows = await db
     .select()
     .from(ndfTaxas)
-    .orderBy(ndfTaxas.dataRef, ndfTaxas.prazoDias)
-    .limit(10);
+    .orderBy(desc(ndfTaxas.dataRef), ndfTaxas.prazoDias)
+    .limit(30);
 
-  // Use most recent rate per prazo
+  // Use most recent rate per prazo — first wins (rows em data_ref desc)
   const ndf_rates: Record<string, number> = {};
   for (const row of taxaRows) {
     const key = `ndf_${row.prazoDias}d`;
-    // Last wins (rows ordered by dataRef asc, so latest overwrites)
-    ndf_rates[key] = Number(row.taxa);
+    if (!(key in ndf_rates)) ndf_rates[key] = Number(row.taxa);
   }
 
   return { camada1_minima, camada1_ajuste_ep, estoque_bump_threshold, ndf_rates };
