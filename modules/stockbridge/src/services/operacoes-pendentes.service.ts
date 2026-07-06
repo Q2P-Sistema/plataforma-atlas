@@ -6,6 +6,7 @@ import type { Perfil, StatusOmie } from '../types.js';
 import { COD_INT_AJUSTE_SUFIXO, buildCodIntAjuste } from '../types.js';
 import { incluirAjusteIdempotente } from './omie-idempotente.js';
 import { calcularValorUnitarioQ2p, calcularValorUnitarioAcxe } from './recebimento.service.js';
+import { formatarDataOmie } from './omie-shared.js';
 import { resolverEstoqueDiferencaAcxe } from './estoques-especiais-acxe.js';
 
 const logger = createLogger('stockbridge:operacoes-pendentes');
@@ -288,7 +289,7 @@ async function retentarQ2p(args: {
       {
         codigoLocalEstoque: String(corr.codigoLocalEstoqueQ2p),
         idProduto: Number(loteRow.produtoCodigoQ2p),
-        dataAtual: formatarDataBR(new Date()),
+        dataAtual: formatarDataOmie(),
         quantidade: new Decimal(qtdKg).toNumber(),
         observacao: `Retry Q2P NF ${args.mov.notaFiscal} (op ${args.mov.opId})`,
         origem: 'AJU',
@@ -420,7 +421,7 @@ async function retentarAcxeFaltando(args: {
         codigoLocalEstoque: loteRow.codigoLocalEstoqueOrigemAcxe,
         codigoLocalEstoqueDestino: codigoLocalEstoqueDiferenca,
         idProduto: Number(loteRow.produtoCodigoAcxe),
-        dataAtual: formatarDataBR(new Date()),
+        dataAtual: formatarDataOmie(),
         quantidade: qtdDiferencaKg,
         observacao: `Retry ACXE-faltando NF ${loteRow.notaFiscal} (op ${args.mov.opId}, ${apr.tipoDivergencia})`,
         origem: 'AJU',
@@ -486,11 +487,4 @@ async function retentarAcxeFaltando(args: {
     );
     throw err;
   }
-}
-
-function formatarDataBR(d: Date): string {
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const yyyy = d.getFullYear();
-  return `${dd}/${mm}/${yyyy}`;
 }

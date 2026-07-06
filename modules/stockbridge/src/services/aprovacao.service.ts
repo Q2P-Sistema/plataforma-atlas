@@ -4,6 +4,7 @@ import { getDb, createLogger } from '@atlas/core';
 import { aprovacao, lote, movimentacao, localidadeCorrelacao, reservaSaldo, users } from '@atlas/db';
 import type { Perfil, TipoAprovacao } from '../types.js';
 import { NIVEL_APROVACAO_POR_SUBTIPO } from '../types.js';
+import { formatarDataOmie } from './omie-shared.js';
 import {
   executarAjusteOmieDual,
   calcularValorUnitarioQ2p,
@@ -878,10 +879,7 @@ async function aprovarEntradaNacional(
   const observacaoOmie = (ap.observacoes ?? `Recebimento nacional ${ap.id}`).slice(0, 240);
   const codInt = `${mov.opId}:nacional-${empresa}`;
 
-  const dataAtual = (() => {
-    const d = new Date();
-    return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
-  })();
+  const dataAtual = formatarDataOmie();
 
   let omieRes: { idMovest: string; idAjuste: string };
   try {
