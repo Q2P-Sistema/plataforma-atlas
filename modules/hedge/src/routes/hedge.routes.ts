@@ -357,19 +357,19 @@ router.get('/api/v1/hedge/alertas', async (req: Request, res: Response) => {
 
 router.patch('/api/v1/hedge/alertas/:id/lido', async (req: Request, res: Response) => {
   try { await marcarLido(req.params.id as string); sendSuccess(res, { lido: true }); }
-  catch (err) { sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
+  catch (err) { logger.error({ err }, 'Erro ao marcar alerta como lido'); sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
 });
 
 router.patch('/api/v1/hedge/alertas/:id/resolver', async (req: Request, res: Response) => {
   try { await resolver(req.params.id as string); sendSuccess(res, { resolvido: true }); }
-  catch (err) { sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
+  catch (err) { logger.error({ err }, 'Erro ao resolver alerta'); sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
 });
 
 // ── Config ─────────────────────────────────────────────────
 
 router.get('/api/v1/hedge/config', async (_req: Request, res: Response) => {
   try { sendSuccess(res, await getConfig()); }
-  catch (err) { sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
+  catch (err) { logger.error({ err }, 'Erro ao buscar config do hedge'); sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
 });
 
 router.patch('/api/v1/hedge/config', requireRole('diretor'), async (req: Request, res: Response) => {
@@ -377,14 +377,14 @@ router.patch('/api/v1/hedge/config', requireRole('diretor'), async (req: Request
     const { chave, valor } = req.body;
     await updateConfig(chave, valor);
     sendSuccess(res, { chave, valor });
-  } catch (err) { sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
+  } catch (err) { logger.error({ err }, 'Erro ao atualizar config do hedge'); sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
 });
 
 router.get('/api/v1/hedge/taxas-ndf', async (req: Request, res: Response) => {
   try {
     const dataRef = req.query.data_ref as string | undefined;
     sendSuccess(res, await getTaxasNdf(dataRef));
-  } catch (err) { sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
+  } catch (err) { logger.error({ err }, 'Erro ao buscar taxas NDF'); sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
 });
 
 router.post('/api/v1/hedge/taxas-ndf', requireRole('gestor', 'diretor'), async (req: Request, res: Response) => {
@@ -392,7 +392,7 @@ router.post('/api/v1/hedge/taxas-ndf', requireRole('gestor', 'diretor'), async (
     const { data_ref, prazo_dias, taxa } = req.body;
     await inserirTaxaNdf(data_ref, prazo_dias, taxa);
     sendSuccess(res, { data_ref, prazo_dias, taxa }, 201);
-  } catch (err) { sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
+  } catch (err) { logger.error({ err }, 'Erro ao inserir taxa NDF'); sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
 });
 
 export default router;

@@ -115,7 +115,9 @@ router.patch('/api/v1/forecast/sazonalidade', async (req: Request, res: Response
       sendError(res, 'VALIDATION_ERROR', 'fator deve estar entre 0.1 e 3.0');
       return;
     }
-    const result = await updateSazFactor(familia_id, mes, fator);
+    // MOD-25: passa o usuário para a trilha de auditoria (sazonalidade_log.usuario);
+    // sem isso todo ajuste manual de sazonalidade ficava gravado como usuario=null.
+    const result = await updateSazFactor(familia_id, mes, fator, req.user?.id);
     sendSuccess(res, { familia_id, mes, ...result });
   } catch (err) {
     sendError(res, 'INTERNAL_ERROR', 'Erro ao atualizar sazonalidade', 500);
