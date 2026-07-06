@@ -5,6 +5,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceLine, Legend,
 } from 'recharts';
+import { fmtToneladas as fmtT, fmtDataBrCurta } from '../../lib/format.js';
 
 interface ForecastResult {
   familia_id: string; familia_nome: string; is_internacional: boolean; lt_efetivo: number;
@@ -18,7 +19,6 @@ interface ForecastResult {
   pedidos_em_rota: Array<{ codigo: string; qtd_pendente: number; data_chegada: string }>;
 }
 
-const fmtT = (kg: number) => kg >= 1000 ? `${(kg / 1000).toFixed(1)}t` : `${kg}kg`;
 const fmtBrl = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
 
@@ -63,7 +63,7 @@ export function RollingForecastPage() {
     : results[0];
 
   const chartData = selected?.serie.map((s) => ({
-    data: s.data.slice(5), // MM-DD
+    data: fmtDataBrCurta(s.data), // DD/MM
     estoque: s.estoque,
     chegada: s.chegada > 0 ? s.chegada : undefined,
   })) ?? [];
@@ -125,7 +125,7 @@ export function RollingForecastPage() {
                 <div><span className="text-atlas-muted">Abrir pedido em</span><p className="font-bold text-red-600">Dia {selected.compra_local.dia_abrir}</p></div>
                 <div><span className="text-atlas-muted">Gap sem estoque</span><p className="font-bold">{selected.compra_local.gap_dias} dias</p></div>
                 <div><span className="text-atlas-muted">Qtd local (MOQ 12t)</span><p className="font-bold">{fmtT(selected.compra_local.qtd_local)}</p></div>
-                <div><span className="text-atlas-muted">Custo oportunidade</span><p className="font-bold text-red-600">{fmtBrl(selected.compra_local.custo_oportunidade)}</p></div>
+                <div><span className="text-atlas-muted">Custo de oportunidade</span><p className="font-bold text-red-600">{fmtBrl(selected.compra_local.custo_oportunidade)}</p></div>
               </div>
             </div>
           )}
@@ -147,7 +147,7 @@ export function RollingForecastPage() {
                     <th className="px-2 py-1.5 text-left text-xs text-atlas-muted">Código</th>
                     <th className="px-2 py-1.5 text-left text-xs text-atlas-muted">Descrição</th>
                     <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Disp.</th>
-                    <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Transit.</th>
+                    <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Trâns.</th>
                     <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Total</th>
                     <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Venda/dia</th>
                     <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Cobert.</th>

@@ -2,14 +2,14 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart,
 } from 'recharts';
+import { fmtToneladas as fmtT, fmtNum, fmtBRL } from '../../lib/format.js';
 
 interface Fornecedor { fornecedor: string; pais_origem: string; familias: string[]; lt_efetivo_dias: number; total_importacoes: number; ultimo_embarque: string; }
 interface ScoreCOMEX { mes: string; score: number; classificacao: string; preco_ton_usd: number; volume_kg: number; taxa_dolar: number; }
 interface HistImport { mes: string; volume_kg: number; valor_usd: number; preco_ton_usd: number; taxa_dolar: number; }
 interface InsightsData { fornecedores: Fornecedor[]; score_comex: ScoreCOMEX[]; historico_importacao: HistImport[]; }
 
-const fmtT = (kg: number) => kg >= 1000 ? `${(kg / 1000).toFixed(1)}t` : `${kg}kg`;
-const fmtK = (v: number) => `$${Math.round(v / 1000)}K`;
+const fmtK = (v: number) => `US$ ${Math.round(v / 1000).toLocaleString('pt-BR')} mil`;
 
 const SCORE_STYLE: Record<string, { bg: string; text: string; border: string }> = {
   COMPRAR: { bg: 'bg-emerald-500/10', text: 'text-emerald-600', border: 'border-emerald-500/20' },
@@ -41,7 +41,7 @@ export function BusinessInsightsPage() {
 
   return (
     <div className="space-y-5">
-      <h1 className="text-2xl font-heading font-bold text-atlas-text">Business Insights</h1>
+      <h1 className="text-2xl font-heading font-bold text-atlas-text">Insights de Negócio</h1>
 
       {/* Score COMEX cards */}
       {data.score_comex.length > 0 && (
@@ -66,8 +66,8 @@ export function BusinessInsightsPage() {
                     }} />
                   </div>
                   <div className="flex justify-between text-xs text-atlas-muted mt-2">
-                    <span>${s.preco_ton_usd}/t</span>
-                    <span>R$ {s.taxa_dolar.toFixed(2)}</span>
+                    <span>US$ {fmtNum(s.preco_ton_usd, 0)}/t</span>
+                    <span>{fmtBRL(s.taxa_dolar)}</span>
                   </div>
                 </div>
               );
@@ -123,8 +123,8 @@ export function BusinessInsightsPage() {
               <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" />
               <XAxis dataKey="mes" tick={{ fontSize: 10 }} />
               <YAxis yAxisId="vol" tick={{ fontSize: 9 }} tickFormatter={(v: number) => fmtT(v)} />
-              <YAxis yAxisId="preco" orientation="right" tick={{ fontSize: 9 }} tickFormatter={(v: number) => `$${v}`} />
-              <Tooltip formatter={(v, name) => name === 'Volume (kg)' ? fmtT(Number(v)) : name === 'Valor USD' ? fmtK(Number(v)) : `$${Number(v).toFixed(0)}/t`} />
+              <YAxis yAxisId="preco" orientation="right" tick={{ fontSize: 9 }} tickFormatter={(v: number) => `US$ ${fmtNum(v, 0)}`} />
+              <Tooltip formatter={(v, name) => name === 'Volume (kg)' ? fmtT(Number(v)) : name === 'Valor USD' ? fmtK(Number(v)) : `US$ ${fmtNum(Number(v), 0)}/t`} />
               <Legend />
               <Bar yAxisId="vol" dataKey="volume_kg" name="Volume (kg)" fill="#3b82f6" opacity={0.7} />
               <Line yAxisId="preco" type="monotone" dataKey="preco_ton_usd" name="Preço/ton USD" stroke="#dc2626" strokeWidth={2} dot={{ r: 3 }} />
