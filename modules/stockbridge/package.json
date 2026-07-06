@@ -20,7 +20,7 @@
     "@atlas/integration-bcb": "workspace:*",
     "@atlas/integration-omie": "workspace:*",
     "decimal.js": "^10.4.0",
-    "drizzle-orm": "^0.38.0",
+    "drizzle-orm": "^0.45.2",
     "express": "^4.21.0",
     "node-cron": "^4.2.1",
     "zod": "^3.24.0"

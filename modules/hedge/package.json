@@ -10,7 +10,7 @@
   },
   "description": "Motor de hedge cambial USD/BRL — buckets, NDFs, MV, mark-to-market",
   "dependencies": {
-    "drizzle-orm": "^0.38.0",
+    "drizzle-orm": "^0.45.2",
     "decimal.js": "^10.4.0",
     "zod": "^3.24.0",
     "express": "^4.21.0",
