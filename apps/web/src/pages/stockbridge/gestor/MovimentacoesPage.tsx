@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '../../../stores/auth.store.js';
+import { TIPO_MOVIMENTO_LABEL, SUBTIPO_LABEL, rotulo } from '../labels.js';
 
 interface LadoCnpj {
   status: string | null;
@@ -218,7 +219,7 @@ export function MovimentacoesPage() {
                             <span
                               className={`text-[10px] px-2 py-0.5 rounded border ${TIPO_COLOR[m.tipoMovimento] ?? 'bg-slate-50 text-slate-700 border-slate-200'}`}
                             >
-                              {m.tipoMovimento}{m.subtipo ? ` · ${m.subtipo}` : ''}
+                              {rotulo(TIPO_MOVIMENTO_LABEL, m.tipoMovimento)}{m.subtipo ? ` · ${rotulo(SUBTIPO_LABEL, m.subtipo)}` : ''}
                             </span>
                           </div>
                         </div>
@@ -226,7 +227,7 @@ export function MovimentacoesPage() {
                         <span
                           className={`text-[10px] px-2 py-0.5 rounded border ${TIPO_COLOR[m.tipoMovimento] ?? 'bg-slate-50 text-slate-700 border-slate-200'}`}
                         >
-                          {m.tipoMovimento}{m.subtipo ? ` · ${m.subtipo}` : ''}
+                          {rotulo(TIPO_MOVIMENTO_LABEL, m.tipoMovimento)}{m.subtipo ? ` · ${rotulo(SUBTIPO_LABEL, m.subtipo)}` : ''}
                         </span>
                       )}
                     </td>

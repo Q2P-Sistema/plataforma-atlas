@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../../../stores/auth.store.js';
+import { ROLE_LABEL, rotulo } from '../labels.js';
 
 interface UserComGalpoes {
   userId: string;
@@ -136,7 +137,7 @@ export function UserGalpaoPage() {
               <div className="text-atlas-muted truncate" title={u.email}>{u.email}</div>
               <div>
                 <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${ROLE_COLOR[u.role] ?? 'bg-slate-100 text-slate-700'}`}>
-                  {u.role}
+                  {rotulo(ROLE_LABEL, u.role)}
                 </span>
               </div>
               <div className="flex flex-wrap gap-1">
@@ -169,7 +170,7 @@ export function UserGalpaoPage() {
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setEditandoUser(null)}>
           <div className="bg-white dark:bg-slate-800 rounded-lg p-6 max-w-lg w-full" onClick={(e) => e.stopPropagation()}>
             <h2 className="font-serif text-lg text-atlas-ink mb-1">Galpões de {editandoUser.nome}</h2>
-            <p className="text-xs text-atlas-muted mb-4">{editandoUser.email} · {editandoUser.role}</p>
+            <p className="text-xs text-atlas-muted mb-4">{editandoUser.email} · {rotulo(ROLE_LABEL, editandoUser.role)}</p>
 
             <div className="space-y-2 mb-5">
               {galpoesDisponiveis.length === 0 && (
