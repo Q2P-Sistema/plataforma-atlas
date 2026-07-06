@@ -39,7 +39,9 @@ export async function sendEmail(options: EmailOptions): Promise<void> {
   await sgMail.default.send({
     to: options.to,
     cc,
-    from: config.SENDGRID_FROM_EMAIL,
+    // EML-21: remetente com nome amigável (alinha ao padrão dos workflows n8n).
+    // O guard acima já estreitou SENDGRID_FROM_EMAIL para string.
+    from: { email: config.SENDGRID_FROM_EMAIL, name: 'Plataforma Atlas' },
     subject: options.subject,
     html: options.html,
     text: options.text,
