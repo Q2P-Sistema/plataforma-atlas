@@ -76,7 +76,7 @@ export function ForecastConfigPage() {
                     <input type="number" value={editVal} onChange={(e: ChangeEvent<HTMLInputElement>) => setEditVal(e.target.value)}
                       className="w-20 px-2 py-1 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-xs text-right font-mono" />
                     <button onClick={() => configMut.mutate({ chave: c.chave, valor: editVal })}
-                      className="text-xs px-2 py-1 rounded bg-q2p text-white">OK</button>
+                      className="text-xs px-2 py-1 rounded bg-atlas-btn-bg text-atlas-btn-text">OK</button>
                     <button onClick={() => setEditKey(null)} className="text-xs px-2 py-1 rounded bg-atlas-border text-atlas-text">X</button>
                   </>
                 ) : (

@@ -119,7 +119,7 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
   return (
     <Modal open title={`Conferência — ${item.produto.nome}`} onClose={onClose}>
       <div className="space-y-4">
-        <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded text-sm">
+        <div className="p-3 bg-atlas-bg rounded text-sm">
           <div className="flex justify-between mb-1"><span className="text-atlas-muted">NF:</span><span className="font-mono">{item.nf}</span></div>
           <div className="flex justify-between mb-1"><span className="text-atlas-muted">CNPJ:</span><span>{item.cnpj.toUpperCase()}</span></div>
           <div className="flex justify-between"><span className="text-atlas-muted">Qtd NF:</span><span className="font-semibold">{item.qtdKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg <span className="text-xs text-atlas-muted font-normal">({(item.qtdKg / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 3 })} t)</span></span></div>
@@ -132,12 +132,12 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
               value={qtdInput}
               onChange={(e) => setQtdInput(e.target.value)}
               autoFocus
-              className={`w-full px-3 py-2 border rounded text-lg font-serif outline-none ${temDivergencia && qtdFisicaKg > 0 ? 'border-amber-400 bg-amber-50 dark:bg-amber-900/20' : 'border-slate-300 dark:border-slate-600'}`}
+              className={`w-full px-3 py-2 border rounded text-lg font-serif outline-none ${temDivergencia && qtdFisicaKg > 0 ? 'border-amber-400 bg-amber-50 dark:bg-amber-900/20' : 'border-atlas-border'}`}
             />
             <select
               value={unidadeInput}
               onChange={(e) => setUnidadeInput(e.target.value as Unidade)}
-              className="px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm outline-none"
+              className="px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm outline-none"
             >
               <option value="t">t (tonelada)</option>
               <option value="kg">kg</option>
@@ -152,15 +152,15 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
 
         {qtdFisicaKg > 0 && (
           <div className="grid grid-cols-3 gap-2 text-center">
-            <div className="p-2 bg-slate-50 dark:bg-slate-800 rounded">
+            <div className="p-2 bg-atlas-bg rounded">
               <div className="text-xs text-atlas-muted">NF</div>
               <div className="font-serif text-sm">{item.qtdKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg</div>
             </div>
-            <div className="p-2 bg-slate-50 dark:bg-slate-800 rounded">
+            <div className="p-2 bg-atlas-bg rounded">
               <div className="text-xs text-atlas-muted">Recebido</div>
               <div className={`font-serif text-sm ${temDivergencia ? 'text-amber-700 dark:text-amber-400' : 'text-green-700 dark:text-green-400'}`}>{qtdFisicaKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg</div>
             </div>
-            <div className="p-2 bg-slate-50 dark:bg-slate-800 rounded">
+            <div className="p-2 bg-atlas-bg rounded">
               <div className="text-xs text-atlas-muted">Delta</div>
               <div className={`font-serif text-sm ${Math.abs(deltaKg) < 1 ? 'text-green-700 dark:text-green-400' : deltaKg > 0 ? 'text-amber-700 dark:text-amber-400' : 'text-red-700 dark:text-red-400'}`}>
                 {deltaKg > 0 ? '+' : ''}{deltaKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg
@@ -174,7 +174,7 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
           <select
             value={localidadeId}
             onChange={(e) => setLocalidadeId(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+            className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
           >
             <option value="">— Selecione —</option>
             {localidades.filter((l) => l.ativo).map((l) => (
@@ -194,7 +194,7 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
             <select
               value={tipoDivergencia}
               onChange={(e) => setTipoDivergencia(e.target.value as 'faltando' | 'varredura')}
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+              className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
             >
               <option value="faltando">Faltando — material não chegou (vai para ACXE-COMEX-FALTANDO)</option>
               <option value="varredura">Varredura — material para inspeção (vai para ACXE-VARREDURA)</option>
@@ -220,7 +220,7 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
             onChange={(e) => setObs(e.target.value)}
             rows={3}
             placeholder={motivoObrigatorio ? 'Ex: 2 big bags avariados na conferência física' : 'Material conferido, embalagens íntegras'}
-            className={`w-full px-3 py-2 border rounded text-sm outline-none ${motivoObrigatorio && !obs.trim() ? 'border-red-300' : 'border-slate-300 dark:border-slate-600'}`}
+            className={`w-full px-3 py-2 border rounded text-sm outline-none ${motivoObrigatorio && !obs.trim() ? 'border-red-300' : 'border-atlas-border'}`}
           />
         </div>
 
@@ -231,11 +231,11 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
         )}
 
         <div className="flex gap-2 justify-end">
-          <button onClick={onClose} className="px-4 py-2 border border-slate-300 dark:border-slate-600 rounded text-sm">Cancelar</button>
+          <button onClick={onClose} className="px-4 py-2 border border-atlas-border rounded text-sm">Cancelar</button>
           <button
             onClick={() => recebimentoMut.mutate()}
             disabled={!podeConfirmar || recebimentoMut.isPending}
-            className={`px-5 py-2 rounded text-sm font-medium ${podeConfirmar && !recebimentoMut.isPending ? 'bg-atlas-btn-bg text-atlas-btn-text hover:opacity-90' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
+            className={`px-5 py-2 rounded text-sm font-medium ${podeConfirmar && !recebimentoMut.isPending ? 'bg-atlas-btn-bg text-atlas-btn-text hover:opacity-90' : 'bg-atlas-muted/20 text-atlas-muted cursor-not-allowed'}`}
           >
             {recebimentoMut.isPending ? 'Enviando...' : temDivergencia ? 'Registrar com divergência' : 'Confirmar recebimento'}
           </button>

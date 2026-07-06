@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Badge } from '@atlas/ui';
 import { useAuthStore } from '../../../stores/auth.store.js';
 import { ROLE_LABEL, rotulo } from '../labels.js';
 
@@ -32,11 +33,6 @@ function useApiFetch() {
   };
 }
 
-const ROLE_COLOR: Record<string, string> = {
-  operador: 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
-  gestor: 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
-  diretor: 'bg-violet-50 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300',
-};
 
 export function UserGalpaoPage() {
   const apiFetch = useApiFetch();
@@ -111,11 +107,11 @@ export function UserGalpaoPage() {
         value={busca}
         onChange={(e) => setBusca(e.target.value)}
         placeholder="Buscar por nome ou email..."
-        className="w-full mb-4 px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+        className="w-full mb-4 px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
       />
 
-      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-y-auto" style={{ maxHeight: 'calc(100vh - 240px)' }}>
-        <div className="sticky top-0 z-10 bg-slate-100 dark:bg-slate-900 border-b-2 border-slate-300 dark:border-slate-600 grid grid-cols-[2.5fr_3fr_1fr_2fr_0.8fr] text-xs text-atlas-muted font-semibold px-3 py-2">
+      <div className="bg-atlas-card border border-atlas-border rounded-lg overflow-y-auto" style={{ maxHeight: 'calc(100vh - 240px)' }}>
+        <div className="sticky top-0 z-10 bg-atlas-bg border-b-2 border-atlas-border grid grid-cols-[2.5fr_3fr_1fr_2fr_0.8fr] text-xs text-atlas-muted font-semibold px-3 py-2">
           <div>Nome</div>
           <div>Email</div>
           <div>Perfil</div>
@@ -131,14 +127,14 @@ export function UserGalpaoPage() {
           {usuariosFiltrados.map((u) => (
             <div
               key={u.userId}
-              className="grid grid-cols-[2.5fr_3fr_1fr_2fr_0.8fr] text-xs border-b border-slate-100 dark:border-slate-700/60 px-3 py-2 hover:bg-slate-50/60 dark:hover:bg-slate-900/30 items-center"
+              className="grid grid-cols-[2.5fr_3fr_1fr_2fr_0.8fr] text-xs border-b border-atlas-border/60 px-3 py-2 hover:bg-atlas-bg/60 items-center"
             >
               <div className="font-medium text-atlas-ink truncate" title={u.nome}>{u.nome}</div>
               <div className="text-atlas-muted truncate" title={u.email}>{u.email}</div>
               <div>
-                <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${ROLE_COLOR[u.role] ?? 'bg-slate-100 text-slate-700'}`}>
+                <Badge variant={(u.role === 'gestor' || u.role === 'diretor' ? u.role : 'operador')}>
                   {rotulo(ROLE_LABEL, u.role)}
-                </span>
+                </Badge>
               </div>
               <div className="flex flex-wrap gap-1">
                 {u.galpoes.length === 0 ? (
@@ -156,7 +152,7 @@ export function UserGalpaoPage() {
               <div className="text-right">
                 <button
                   onClick={() => abrirEdicao(u)}
-                  className="text-[10px] px-2 py-1 rounded border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700"
+                  className="text-[10px] px-2 py-1 rounded border border-atlas-border hover:bg-atlas-bg/60"
                 >
                   Editar
                 </button>
@@ -168,7 +164,7 @@ export function UserGalpaoPage() {
 
       {editandoUser && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setEditandoUser(null)}>
-          <div className="bg-white dark:bg-slate-800 rounded-lg p-6 max-w-lg w-full" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-atlas-card rounded-lg p-6 max-w-lg w-full" onClick={(e) => e.stopPropagation()}>
             <h2 className="font-serif text-lg text-atlas-ink mb-1">Galpões de {editandoUser.nome}</h2>
             <p className="text-xs text-atlas-muted mb-4">{editandoUser.email} · {rotulo(ROLE_LABEL, editandoUser.role)}</p>
 
@@ -181,7 +177,7 @@ export function UserGalpaoPage() {
                 return (
                   <label
                     key={g.galpao}
-                    className="flex items-start gap-3 p-2 rounded hover:bg-slate-50 dark:hover:bg-slate-900/30 cursor-pointer"
+                    className="flex items-start gap-3 p-2 rounded hover:bg-atlas-bg/60 cursor-pointer"
                   >
                     <input
                       type="checkbox"
@@ -207,7 +203,7 @@ export function UserGalpaoPage() {
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setEditandoUser(null)}
-                className="px-3 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded hover:bg-slate-100 dark:hover:bg-slate-700"
+                className="px-3 py-1.5 text-sm border border-atlas-border rounded hover:bg-atlas-bg/60"
               >
                 Cancelar
               </button>

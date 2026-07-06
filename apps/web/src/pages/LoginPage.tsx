@@ -102,7 +102,7 @@ export function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-2.5 rounded-lg bg-acxe text-white font-medium hover:bg-acxe/90 focus:outline-none focus:ring-2 focus:ring-acxe focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="w-full py-2.5 rounded-lg bg-atlas-btn-bg text-atlas-btn-text font-medium hover:bg-atlas-btn-bg-hover focus:outline-none focus:ring-2 focus:ring-atlas-btn-bg focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {loading ? 'Entrando...' : 'Entrar'}
           </button>

@@ -42,7 +42,7 @@ type TransitoData = Record<EstagioTransito, LoteTransito[]> & { reservado?: Lote
 //   01 → aguardando_embarque  02 → transito_intl
 //   03/etapa(20/30/31) → no_porto  03/etapa(21/22) → transito_local
 const COLUNAS: Array<{ key: EstagioTransito; label: string; subtitle: string; accent: string }> = [
-  { key: 'aguardando_embarque', label: 'Aguardando Embarque', subtitle: 'Booking pendente',                accent: 'border-slate-300 bg-slate-50/50 dark:bg-slate-900/10' },
+  { key: 'aguardando_embarque', label: 'Aguardando Embarque', subtitle: 'Booking pendente',                accent: 'border-atlas-border bg-atlas-bg/50' },
   { key: 'transito_intl',       label: 'Em Águas',            subtitle: 'Embarcado, em rota',              accent: 'border-violet-300 bg-violet-50/50 dark:bg-violet-900/10' },
   { key: 'no_porto',            label: 'No Porto',            subtitle: 'DTA aberta, NF pendente',         accent: 'border-amber-300 bg-amber-50/50 dark:bg-amber-900/10' },
   { key: 'transito_local',      label: 'Em Trânsito Local',   subtitle: 'NF emitida, a caminho do galpão', accent: 'border-orange-300 bg-orange-50/50 dark:bg-orange-900/10' },
@@ -163,7 +163,7 @@ export function TransitoPage() {
                     return (
                       <div
                         key={l.id}
-                        className={`bg-white dark:bg-slate-800 border rounded p-2.5 text-xs space-y-1 ${atrasado ? 'border-red-400 ring-1 ring-red-200 dark:ring-red-800' : 'border-slate-200 dark:border-slate-700'}`}
+                        className={`bg-atlas-card border rounded p-2.5 text-xs space-y-1 ${atrasado ? 'border-red-400 ring-1 ring-red-200 dark:ring-red-800' : 'border-atlas-border'}`}
                       >
                         <div className="flex justify-between items-center">
                           <span className="font-mono text-xs font-semibold text-atlas-ink">
@@ -202,7 +202,7 @@ export function TransitoPage() {
                           </div>
                         )}
 
-                        <div className="text-[10px] text-atlas-muted leading-snug grid grid-cols-2 gap-x-2 pt-1 border-t border-slate-100 dark:border-slate-700/40">
+                        <div className="text-[10px] text-atlas-muted leading-snug grid grid-cols-2 gap-x-2 pt-1 border-t border-atlas-border/40">
                           {l.etd && <span>ETD {fmtDate(l.etd)}</span>}
                           {l.eta && <span>ETA {fmtDate(l.eta)}</span>}
                           {l.dataDesembarque && <span>Desemb {fmtDate(l.dataDesembarque)}</span>}

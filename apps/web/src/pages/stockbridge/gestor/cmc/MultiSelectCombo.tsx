@@ -64,7 +64,7 @@ export function MultiSelectCombo({
         title={title}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-600 dark:bg-slate-900 text-xs flex items-center gap-2 hover:border-slate-400 dark:hover:border-slate-500 transition"
+        className="px-3 py-1.5 rounded border border-atlas-border bg-atlas-bg text-xs flex items-center gap-2 hover:border-atlas-muted transition"
       >
         <span className={selected.length > 0 ? 'text-atlas-ink' : 'text-atlas-muted'}>{triggerLabel}</span>
         {selected.length > 0 && (
@@ -83,14 +83,14 @@ export function MultiSelectCombo({
         <ChevronDown size={12} className="text-atlas-muted" />
       </button>
       {open && (
-        <div className="absolute left-0 top-full mt-1 z-20 min-w-[240px] max-h-[340px] overflow-y-auto bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg text-xs">
-          <div className="p-2 border-b border-slate-200 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800">
+        <div className="absolute left-0 top-full mt-1 z-20 min-w-[240px] max-h-[340px] overflow-y-auto bg-atlas-card border border-atlas-border rounded-lg shadow-lg text-xs">
+          <div className="p-2 border-b border-atlas-border sticky top-0 bg-atlas-card">
             <input
               type="text"
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
               placeholder={`Buscar ${label.toLowerCase()}...`}
-              className="w-full px-2 py-1 rounded border border-slate-300 dark:border-slate-600 dark:bg-slate-900 text-xs focus:outline-none focus:ring-1 focus:ring-acxe"
+              className="w-full px-2 py-1 rounded border border-atlas-border bg-atlas-bg text-xs focus:outline-none focus:ring-1 focus:ring-acxe"
             />
           </div>
           {filtradas.length === 0 ? (
@@ -102,7 +102,7 @@ export function MultiSelectCombo({
                 return (
                   <label
                     key={opt.value}
-                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer"
+                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-atlas-bg/60 cursor-pointer"
                   >
                     <input
                       type="checkbox"
@@ -115,7 +115,7 @@ export function MultiSelectCombo({
                 );
               })}
               {selected.length > 0 && (
-                <div className="border-t border-slate-200 dark:border-slate-700 px-3 py-2 flex justify-end">
+                <div className="border-t border-atlas-border px-3 py-2 flex justify-end">
                   <button
                     type="button"
                     onClick={() => onChange([])}

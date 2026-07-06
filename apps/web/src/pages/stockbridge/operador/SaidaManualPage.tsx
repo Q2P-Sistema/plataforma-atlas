@@ -310,7 +310,7 @@ export function SaidaManualPage() {
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <div>
           <label className="block text-xs font-semibold text-atlas-muted mb-1">Empresa</label>
-          <div className="flex gap-1 bg-slate-100 dark:bg-slate-800 rounded p-1">
+          <div className="flex gap-1 bg-atlas-bg rounded p-1">
             {(['acxe', 'q2p'] as Empresa[]).map((e) => (
               <button
                 key={e}
@@ -319,7 +319,7 @@ export function SaidaManualPage() {
                   setGalpaoSelecionado('');
                 }}
                 className={`px-3 py-1 text-xs rounded font-medium ${
-                  empresa === e ? 'bg-white dark:bg-slate-700 shadow-sm' : 'text-atlas-muted'
+                  empresa === e ? 'bg-atlas-card shadow-sm' : 'text-atlas-muted'
                 }`}
               >
                 {e.toUpperCase()}
@@ -333,7 +333,7 @@ export function SaidaManualPage() {
           <select
             value={galpaoSelecionado}
             onChange={(e) => setGalpaoSelecionado(e.target.value)}
-            className="px-3 py-1.5 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+            className="px-3 py-1.5 border border-atlas-border bg-atlas-bg rounded text-sm"
             disabled={!meuEstoque.data}
           >
             <option value="">— selecione —</option>
@@ -351,7 +351,7 @@ export function SaidaManualPage() {
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
             placeholder="código, descrição ou família"
-            className="w-full px-3 py-1.5 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+            className="w-full px-3 py-1.5 border border-atlas-border bg-atlas-bg rounded text-sm"
           />
         </div>
       </div>
@@ -365,10 +365,10 @@ export function SaidaManualPage() {
 
       {meuEstoque.data && (
         <div
-          className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-y-auto"
+          className="bg-atlas-card border border-atlas-border rounded-lg overflow-y-auto"
           style={{ maxHeight: 'calc(100vh - 280px)' }}
         >
-          <div className="sticky top-0 z-10 bg-slate-100 dark:bg-slate-900 border-b-2 border-slate-300 dark:border-slate-600 grid grid-cols-[3fr_1.5fr_1fr_1fr] text-xs text-atlas-muted font-semibold px-3 py-2">
+          <div className="sticky top-0 z-10 bg-atlas-bg border-b-2 border-atlas-border grid grid-cols-[3fr_1.5fr_1fr_1fr] text-xs text-atlas-muted font-semibold px-3 py-2">
             <div>Produto</div>
             <div>Família</div>
             <div className="text-right">Saldo (kg)</div>
@@ -384,7 +384,7 @@ export function SaidaManualPage() {
           {skusAgrupados.map((s) => (
             <div
               key={s.codigoProdutoAcxe}
-              className="grid grid-cols-[3fr_1.5fr_1fr_1fr] text-xs border-b border-slate-100 dark:border-slate-700/60 px-3 py-2 hover:bg-slate-50/60 dark:hover:bg-slate-900/30 items-center"
+              className="grid grid-cols-[3fr_1.5fr_1fr_1fr] text-xs border-b border-atlas-border/60 px-3 py-2 hover:bg-atlas-bg/60 items-center"
             >
               <div>
                 <div className="font-medium text-atlas-ink truncate" title={s.descricaoProduto}>
@@ -444,7 +444,7 @@ export function SaidaManualPage() {
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-baseline gap-2 mb-0.5 flex-wrap">
-                    <span className="text-xs font-semibold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-700">
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded bg-atlas-muted/20">
                       {TIPO_APROVACAO_LABEL[r.tipoAprovacao] ?? r.tipoAprovacao}
                     </span>
                     <span className="font-serif text-base text-atlas-ink truncate">{r.fornecedor}</span>
@@ -479,7 +479,7 @@ export function SaidaManualPage() {
                       }
                     }}
                     disabled={dispensarMut.isPending}
-                    className="px-3 py-1.5 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 rounded text-xs font-medium hover:bg-slate-50 dark:hover:bg-slate-800"
+                    className="px-3 py-1.5 border border-atlas-border text-atlas-ink rounded text-xs font-medium hover:bg-atlas-bg/60"
                   >
                     Descartar
                   </button>
@@ -575,10 +575,10 @@ function SaidaManualModal({ sku, onClose, onSuccess, galpoesDisponiveis }: Saida
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div
-        className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl max-w-xl w-full max-h-[90vh] overflow-y-auto"
+        className="bg-atlas-card border border-atlas-border rounded-lg shadow-xl max-w-xl w-full max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="p-5 border-b border-slate-200 dark:border-slate-700">
+        <div className="p-5 border-b border-atlas-border">
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-serif text-atlas-ink mb-1">Registrar saída</h2>
@@ -598,11 +598,11 @@ function SaidaManualModal({ sku, onClose, onSuccess, galpoesDisponiveis }: Saida
           </div>
 
           <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-            <div className="bg-slate-50 dark:bg-slate-900 rounded p-2">
+            <div className="bg-atlas-bg rounded p-2">
               <div className="text-[10px] text-atlas-muted">Saldo OMIE</div>
               <div className="font-mono font-medium">{fmtKg(saldoQuery.data?.saldoOmieKg ?? sku.saldoOmieKg)} kg</div>
             </div>
-            <div className="bg-slate-50 dark:bg-slate-900 rounded p-2">
+            <div className="bg-atlas-bg rounded p-2">
               <div className="text-[10px] text-atlas-muted">Reservado (pendentes)</div>
               <div className="font-mono font-medium">{fmtKg(saldoQuery.data?.reservadoKg ?? 0)} kg</div>
             </div>
@@ -621,7 +621,7 @@ function SaidaManualModal({ sku, onClose, onSuccess, galpoesDisponiveis }: Saida
             <select
               value={subtipo}
               onChange={(e) => setSubtipo(e.target.value as Subtipo)}
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+              className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
             >
               {subtiposPermitidos.map((s) => (
                 <option key={s} value={s}>
@@ -642,10 +642,10 @@ function SaidaManualModal({ sku, onClose, onSuccess, galpoesDisponiveis }: Saida
                 value={quantidade}
                 onChange={(e) => setQuantidade(e.target.value)}
                 placeholder="0,000"
-                className={`w-full px-3 py-2 border rounded text-sm font-serif dark:bg-slate-900 ${
+                className={`w-full px-3 py-2 border rounded text-sm font-serif bg-atlas-bg ${
                   qtdEmKg > saldoDisponivelKg && qtdEmKg > 0
                     ? 'border-red-400'
-                    : 'border-slate-300 dark:border-slate-600'
+                    : 'border-atlas-border'
                 }`}
               />
             </div>
@@ -654,7 +654,7 @@ function SaidaManualModal({ sku, onClose, onSuccess, galpoesDisponiveis }: Saida
               <select
                 value={unidade}
                 onChange={(e) => setUnidade(e.target.value as Unidade)}
-                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+                className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
               >
                 <option value="kg">kg</option>
                 <option value="t">t</option>
@@ -677,7 +677,7 @@ function SaidaManualModal({ sku, onClose, onSuccess, galpoesDisponiveis }: Saida
               <select
                 value={galpaoDestino}
                 onChange={(e) => setGalpaoDestino(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+                className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
               >
                 <option value="">— selecione —</option>
                 {galpoesDisponiveis
@@ -699,7 +699,7 @@ function SaidaManualModal({ sku, onClose, onSuccess, galpoesDisponiveis }: Saida
                   value={cliente}
                   onChange={(e) => setCliente(e.target.value)}
                   placeholder="Nome do cliente"
-                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+                  className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
                 />
               </div>
               <div>
@@ -709,7 +709,7 @@ function SaidaManualModal({ sku, onClose, onSuccess, galpoesDisponiveis }: Saida
                   value={dtPrevistaRetorno}
                   onChange={(e) => setDtPrevistaRetorno(e.target.value)}
                   min={new Date().toISOString().slice(0, 10)}
-                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+                  className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
                 />
               </div>
             </>
@@ -722,7 +722,7 @@ function SaidaManualModal({ sku, onClose, onSuccess, galpoesDisponiveis }: Saida
               onChange={(e) => setObservacoes(e.target.value)}
               rows={3}
               placeholder="Explique o motivo da saída (obrigatório)"
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+              className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
             />
           </div>
 
@@ -739,10 +739,10 @@ function SaidaManualModal({ sku, onClose, onSuccess, galpoesDisponiveis }: Saida
           )}
         </div>
 
-        <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-2">
+        <div className="px-5 py-3 border-t border-atlas-border flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded text-sm border border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700"
+            className="px-4 py-2 rounded text-sm border border-atlas-border hover:bg-atlas-bg/60"
           >
             Cancelar
           </button>
@@ -752,7 +752,7 @@ function SaidaManualModal({ sku, onClose, onSuccess, galpoesDisponiveis }: Saida
             className={`px-5 py-2 rounded text-sm font-medium ${
               podeEnviar
                 ? 'bg-atlas-btn-bg text-atlas-btn-text hover:opacity-90'
-                : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                : 'bg-atlas-muted/20 text-atlas-muted cursor-not-allowed'
             }`}
           >
             {mut.isPending ? 'Enviando...' : 'Registrar saída'}

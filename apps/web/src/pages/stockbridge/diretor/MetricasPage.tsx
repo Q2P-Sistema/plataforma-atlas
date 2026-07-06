@@ -80,7 +80,7 @@ export function MetricasPage() {
       )}
 
       {evolucaoAgrupada.length > 0 && (
-        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-5 mb-6">
+        <div className="bg-atlas-card border border-atlas-border rounded-lg p-5 mb-6">
           <h2 className="font-serif text-sm text-atlas-ink mb-3">Evolução — últimos 6 meses</h2>
           <div className="flex items-end gap-2 h-32">
             {evolucaoAgrupada.map((e) => {
@@ -221,8 +221,8 @@ function TabelaAnalitica({ analitica }: { analitica: AnaliticaSku[] }) {
   }
 
   return (
-    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
-      <div className="p-3 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+    <div className="bg-atlas-card border border-atlas-border rounded-lg overflow-hidden">
+      <div className="p-3 border-b border-atlas-border flex items-center gap-3">
         <div className="font-serif text-sm text-atlas-ink">Tabela Analítica por SKU</div>
         <span className="text-xs text-atlas-muted">{filtrada.length} de {analitica.length}</span>
         {filtrosAtivos && (
@@ -237,7 +237,7 @@ function TabelaAnalitica({ analitica }: { analitica: AnaliticaSku[] }) {
           value={busca}
           onChange={(e) => setBusca(e.target.value)}
           placeholder="Buscar por SKU, código ou família..."
-          className="ml-auto px-3 py-1.5 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-xs w-72"
+          className="ml-auto px-3 py-1.5 border border-atlas-border bg-atlas-bg rounded text-xs w-72"
         />
       </div>
       <div
@@ -246,12 +246,12 @@ function TabelaAnalitica({ analitica }: { analitica: AnaliticaSku[] }) {
       >
       <table className="w-full text-xs border-collapse">
         <thead>
-          <tr className="sticky top-0 z-20 bg-slate-100 dark:bg-slate-900 border-b-2 border-slate-300 dark:border-slate-600">
+          <tr className="sticky top-0 z-20 bg-atlas-bg border-b-2 border-atlas-border">
             {colunas.map((c, i) => (
               <th
                 key={c.key}
                 onClick={() => clickHeader(c.key)}
-                className={`px-3 py-2 font-semibold text-atlas-muted cursor-pointer select-none hover:text-atlas-ink text-${c.align ?? 'left'} ${i < colunas.length - 1 ? 'border-r border-slate-200 dark:border-slate-700' : ''}`}
+                className={`px-3 py-2 font-semibold text-atlas-muted cursor-pointer select-none hover:text-atlas-ink text-${c.align ?? 'left'} ${i < colunas.length - 1 ? 'border-r border-atlas-border' : ''}`}
               >
                 {c.label}
                 {sortKey === c.key && <span className="ml-1 text-atlas-ink">{sortDir === 'asc' ? '▲' : '▼'}</span>}
@@ -259,16 +259,16 @@ function TabelaAnalitica({ analitica }: { analitica: AnaliticaSku[] }) {
             ))}
           </tr>
           {/* Linha de filtros por coluna (sticky logo abaixo do header) */}
-          <tr className="sticky top-[33px] z-20 bg-slate-50 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-700">
-            <th className="px-2 py-1 border-r border-slate-200 dark:border-slate-700">
+          <tr className="sticky top-[33px] z-20 bg-atlas-bg border-b border-atlas-border">
+            <th className="px-2 py-1 border-r border-atlas-border">
               <input
                 value={filtros.nome}
                 onChange={(e) => setF('nome', e.target.value)}
                 placeholder="contém..."
-                className="w-full px-1.5 py-0.5 text-[11px] border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded"
+                className="w-full px-1.5 py-0.5 text-[11px] border border-atlas-border bg-atlas-bg rounded"
               />
             </th>
-            <th className="px-2 py-1 border-r border-slate-200 dark:border-slate-700">
+            <th className="px-2 py-1 border-r border-atlas-border">
               <select
                 value=""
                 onChange={(e) => {
@@ -278,7 +278,7 @@ function TabelaAnalitica({ analitica }: { analitica: AnaliticaSku[] }) {
                   if (novo.has(v)) novo.delete(v); else novo.add(v);
                   setF('familias', novo);
                 }}
-                className="w-full px-1.5 py-0.5 text-[11px] border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded"
+                className="w-full px-1.5 py-0.5 text-[11px] border border-atlas-border bg-atlas-bg rounded"
                 title="Selecione uma ou mais (clique de novo pra remover)"
               >
                 <option value="">{filtros.familias.size === 0 ? 'todas' : `${filtros.familias.size} selecionadas`}</option>
@@ -287,31 +287,31 @@ function TabelaAnalitica({ analitica }: { analitica: AnaliticaSku[] }) {
                 ))}
               </select>
             </th>
-            <th className="px-2 py-1 border-r border-slate-200 dark:border-slate-700">
+            <th className="px-2 py-1 border-r border-atlas-border">
               <input
                 value={filtros.ncm}
                 onChange={(e) => setF('ncm', e.target.value)}
                 placeholder="contém..."
-                className="w-full px-1.5 py-0.5 text-[11px] border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded"
+                className="w-full px-1.5 py-0.5 text-[11px] border border-atlas-border bg-atlas-bg rounded"
               />
             </th>
-            <th className="px-2 py-1 border-r border-slate-200 dark:border-slate-700">
+            <th className="px-2 py-1 border-r border-atlas-border">
               <RangeInputs min={filtros.qtdMin} max={filtros.qtdMax} onMin={(v) => setF('qtdMin', v)} onMax={(v) => setF('qtdMax', v)} />
             </th>
-            <th className="px-2 py-1 border-r border-slate-200 dark:border-slate-700">
+            <th className="px-2 py-1 border-r border-atlas-border">
               <RangeInputs min={filtros.cmpMin} max={filtros.cmpMax} onMin={(v) => setF('cmpMin', v)} onMax={(v) => setF('cmpMax', v)} />
             </th>
-            <th className="px-2 py-1 border-r border-slate-200 dark:border-slate-700">
+            <th className="px-2 py-1 border-r border-atlas-border">
               <RangeInputs min={filtros.valorMin} max={filtros.valorMax} onMin={(v) => setF('valorMin', v)} onMax={(v) => setF('valorMax', v)} />
             </th>
-            <th className="px-2 py-1 border-r border-slate-200 dark:border-slate-700">
+            <th className="px-2 py-1 border-r border-atlas-border">
               <RangeInputs min={filtros.cobMin} max={filtros.cobMax} onMin={(v) => setF('cobMin', v)} onMax={(v) => setF('cobMax', v)} />
             </th>
             <th className="px-2 py-1">
               <select
                 value={filtros.divMode}
                 onChange={(e) => setF('divMode', e.target.value as ColFiltros['divMode'])}
-                className="w-full px-1.5 py-0.5 text-[11px] border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded"
+                className="w-full px-1.5 py-0.5 text-[11px] border border-atlas-border bg-atlas-bg rounded"
               >
                 <option value="todos">todos</option>
                 <option value="so_com_div">só com div.</option>
@@ -322,14 +322,14 @@ function TabelaAnalitica({ analitica }: { analitica: AnaliticaSku[] }) {
         </thead>
         <tbody>
           {filtrada.map((s) => (
-            <tr key={s.codigoAcxe} className="border-b border-slate-100 dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-900/30">
-              <td className="px-3 py-2 font-medium border-r border-slate-100 dark:border-slate-700/40">{s.nome}</td>
-              <td className="px-3 py-2 text-atlas-muted border-r border-slate-100 dark:border-slate-700/40">{s.familia ?? '—'}</td>
-              <td className="px-3 py-2 font-mono text-[11px] text-atlas-muted border-r border-slate-100 dark:border-slate-700/40">{s.ncm ?? '—'}</td>
-              <td className="px-3 py-2 text-right border-r border-slate-100 dark:border-slate-700/40">{s.quantidadeKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}</td>
-              <td className="px-3 py-2 text-right border-r border-slate-100 dark:border-slate-700/40">{s.cmpBrlKg > 0 ? s.cmpBrlKg.toFixed(2) : '—'}</td>
-              <td className="px-3 py-2 text-right border-r border-slate-100 dark:border-slate-700/40">{fmtBRL(s.valorBrl)}</td>
-              <td className="px-3 py-2 text-right border-r border-slate-100 dark:border-slate-700/40">{s.coberturaDias != null ? `${s.coberturaDias}d` : '—'}</td>
+            <tr key={s.codigoAcxe} className="border-b border-atlas-border/60 hover:bg-atlas-bg/60">
+              <td className="px-3 py-2 font-medium border-r border-atlas-border/60">{s.nome}</td>
+              <td className="px-3 py-2 text-atlas-muted border-r border-atlas-border/60">{s.familia ?? '—'}</td>
+              <td className="px-3 py-2 font-mono text-[11px] text-atlas-muted border-r border-atlas-border/60">{s.ncm ?? '—'}</td>
+              <td className="px-3 py-2 text-right border-r border-atlas-border/60">{s.quantidadeKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}</td>
+              <td className="px-3 py-2 text-right border-r border-atlas-border/60">{s.cmpBrlKg > 0 ? s.cmpBrlKg.toFixed(2) : '—'}</td>
+              <td className="px-3 py-2 text-right border-r border-atlas-border/60">{fmtBRL(s.valorBrl)}</td>
+              <td className="px-3 py-2 text-right border-r border-atlas-border/60">{s.coberturaDias != null ? `${s.coberturaDias}d` : '—'}</td>
               <td className="px-3 py-2 text-center">
                 <span className={`px-1.5 py-0.5 rounded ${s.divergencias > 0 ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
                   {s.divergencias > 0 ? s.divergencias : '✓'}
@@ -354,14 +354,14 @@ function RangeInputs({
         value={min}
         onChange={(e) => onMin(e.target.value)}
         placeholder="≥ min"
-        className="w-full px-1 py-0.5 text-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-right"
+        className="w-full px-1 py-0.5 text-[10px] border border-atlas-border bg-atlas-bg rounded text-right"
       />
       <input
         type="number"
         value={max}
         onChange={(e) => onMax(e.target.value)}
         placeholder="≤ max"
-        className="w-full px-1 py-0.5 text-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-right"
+        className="w-full px-1 py-0.5 text-[10px] border border-atlas-border bg-atlas-bg rounded text-right"
       />
     </div>
   );
@@ -369,7 +369,7 @@ function RangeInputs({
 
 function Card({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
   return (
-    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3">
+    <div className="bg-atlas-card border border-atlas-border rounded-lg p-3">
       <div className="text-xs text-atlas-muted">{label}</div>
       <div className={`font-serif text-lg ${accent ?? 'text-atlas-ink'}`}>{value}</div>
       {sub && <div className="text-sm text-atlas-muted mt-0.5">{sub}</div>}
@@ -395,7 +395,7 @@ function GiroMedioPanel({ giro }: { giro: Record<string, number> }) {
     : 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-900/30 dark:text-sky-300 dark:border-sky-800';
 
   return (
-    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 mb-6">
+    <div className="bg-atlas-card border border-atlas-border rounded-lg p-3 mb-6">
       <div className="text-xs text-atlas-muted mb-2">
         <span title="Para cada SKU com consumo > 0: cobertura = saldo_OMIE / consumo_medio_diario. Giro família = média entre os SKUs.">
           Giro Médio (cobertura em dias por família)

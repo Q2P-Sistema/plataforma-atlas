@@ -63,10 +63,10 @@ function TabelaEstoque({
 }) {
   return (
     <div
-      className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-y-auto"
+      className="bg-atlas-card border border-atlas-border rounded-lg overflow-y-auto"
       style={{ maxHeight: 'calc(100vh - 320px)' }}
     >
-      <div className={`sticky top-0 z-10 bg-slate-100 dark:bg-slate-900 border-b-2 border-slate-300 dark:border-slate-600 grid ${GRID_COLS} text-xs text-atlas-muted font-semibold px-3 py-2`}>
+      <div className={`sticky top-0 z-10 bg-atlas-bg border-b-2 border-atlas-border grid ${GRID_COLS} text-xs text-atlas-muted font-semibold px-3 py-2`}>
         <div>Produto</div>
         <div>Família</div>
         <div>Empresa</div>
@@ -82,7 +82,7 @@ function TabelaEstoque({
         {itens.map((p) => (
           <div
             key={`${p.empresa}-${p.codigoEstoque}-${p.codigoProduto}`}
-            className={`grid ${GRID_COLS} text-xs border-b border-slate-100 dark:border-slate-700/60 px-3 py-2 hover:bg-slate-50/60 dark:hover:bg-slate-900/30 items-center`}
+            className={`grid ${GRID_COLS} text-xs border-b border-atlas-border/60 px-3 py-2 hover:bg-atlas-bg/60 items-center`}
           >
             <div>
               <div className="font-medium text-atlas-ink truncate" title={p.descricaoProduto}>{p.descricaoProduto}</div>
@@ -169,12 +169,12 @@ export function MeuEstoquePage() {
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
               placeholder="Buscar por nome, código ou família..."
-              className="flex-1 px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+              className="flex-1 px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
             />
             <select
               value={empresa}
               onChange={(e) => setEmpresa(e.target.value as Empresa)}
-              className="px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-900 rounded text-sm"
+              className="px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
             >
               <option value="Q2P">Q2P</option>
               <option value="ACXE">ACXE</option>

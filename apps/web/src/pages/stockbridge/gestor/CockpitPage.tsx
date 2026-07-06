@@ -244,7 +244,7 @@ export function CockpitPage() {
     const r = data?.resumo;
     if (!r) return null;
     return [
-      { label: 'Ag. Embarque',  value: r.aguardandoEmbarqueKg, color: 'text-slate-600',  bg: 'bg-slate-50 dark:bg-slate-900/20' },
+      { label: 'Ag. Embarque',  value: r.aguardandoEmbarqueKg, color: 'text-atlas-muted',  bg: 'bg-atlas-border/30' },
       { label: 'Em Águas',      value: r.transitoIntlKg,       color: 'text-violet-700', bg: 'bg-violet-50 dark:bg-violet-900/20' },
       { label: 'No Porto',      value: r.noPortoKg,            color: 'text-amber-700',  bg: 'bg-amber-50 dark:bg-amber-900/20' },
       { label: 'Tr. p/ Galpão', value: r.transitoLocalKg,           color: 'text-orange-700', bg: 'bg-orange-50 dark:bg-orange-900/20' },
@@ -264,12 +264,12 @@ export function CockpitPage() {
       </div>
 
       <div className="flex items-center gap-3 mb-5 text-sm flex-wrap">
-        <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded">
+        <div className="flex gap-1 p-1 bg-atlas-bg rounded">
           {(['ambos', 'acxe', 'q2p'] as const).map((v) => (
             <button
               key={v}
               onClick={() => setCnpjFilter(v)}
-              className={`px-3 py-1 rounded text-xs font-medium transition ${cnpjFilter === v ? 'bg-white dark:bg-slate-900 shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
+              className={`px-3 py-1 rounded text-xs font-medium transition ${cnpjFilter === v ? 'bg-atlas-card shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
             >
               {v === 'ambos' ? 'Ambos CNPJs' : v.toUpperCase()}
             </button>
@@ -301,12 +301,12 @@ export function CockpitPage() {
           onChange={setGalpoesFilter}
           title="Filtrar por um ou mais galpões físicos (afeta apenas saldo OMIE; trânsito e provisório seguem agregando todos)"
         />
-        <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded">
+        <div className="flex gap-1 p-1 bg-atlas-bg rounded">
           {(['todas', 'critico', 'alerta', 'ok', 'excesso'] as const).map((v) => (
             <button
               key={v}
               onClick={() => setCritFilter(v)}
-              className={`px-3 py-1 rounded text-xs font-medium transition ${critFilter === v ? 'bg-white dark:bg-slate-900 shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
+              className={`px-3 py-1 rounded text-xs font-medium transition ${critFilter === v ? 'bg-atlas-card shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
               title={
                 v === 'critico' ? 'Cobertura < 50% do lead time'
                 : v === 'alerta' ? 'Cobertura entre 50% e 120% do lead time'
@@ -323,12 +323,12 @@ export function CockpitPage() {
 
       <div className="flex items-center gap-3 mb-5 text-sm flex-wrap">
         <span className="text-[11px] uppercase tracking-wide text-atlas-muted/70 font-medium">Drill-down:</span>
-        <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded">
+        <div className="flex gap-1 p-1 bg-atlas-bg rounded">
           {(['todas', 'divergencia', 'aprovacao', 'provisorio'] as const).map((v) => (
             <button
               key={v}
               onClick={() => setPendenciaFilter(v)}
-              className={`px-3 py-1 rounded text-xs font-medium transition ${pendenciaFilter === v ? 'bg-white dark:bg-slate-900 shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
+              className={`px-3 py-1 rounded text-xs font-medium transition ${pendenciaFilter === v ? 'bg-atlas-card shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
               title={
                 v === 'divergencia' ? 'SKUs com pelo menos uma divergência aberta'
                 : v === 'aprovacao' ? 'SKUs com pelo menos uma aprovação pendente'
@@ -340,7 +340,7 @@ export function CockpitPage() {
             </button>
           ))}
         </div>
-        <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded">
+        <div className="flex gap-1 p-1 bg-atlas-bg rounded">
           {([
             { v: 'todos',               label: 'Sem filtro',      title: 'Sem filtro de estágio' },
             { v: 'aguardando_embarque', label: 'Ag. Embarque',    title: 'SKUs aguardando booking de embarque' },
@@ -351,7 +351,7 @@ export function CockpitPage() {
             <button
               key={v}
               onClick={() => setEstagioFilter(v)}
-              className={`px-3 py-1 rounded text-xs font-medium transition ${estagioFilter === v ? 'bg-white dark:bg-slate-900 shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
+              className={`px-3 py-1 rounded text-xs font-medium transition ${estagioFilter === v ? 'bg-atlas-card shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
               title={title}
             >
               {label}
@@ -380,7 +380,7 @@ export function CockpitPage() {
           <div className="flex items-stretch gap-1 overflow-x-auto">
             {esteira.map((stage, i) => (
               <div key={stage.label} className="flex items-center gap-1 flex-1 min-w-[140px]">
-                <div className={`flex-1 rounded-lg border border-slate-200 dark:border-slate-700 p-3 ${stage.bg}`}>
+                <div className={`flex-1 rounded-lg border border-atlas-border p-3 ${stage.bg}`}>
                   <div className={`text-[11px] font-medium ${stage.color}`}>{stage.label}</div>
                   <div className="font-serif text-base text-atlas-ink mt-0.5">{fmtKg(stage.value)} kg</div>
                 </div>
@@ -420,7 +420,7 @@ export function CockpitPage() {
       {isLoading && <div className="p-6 text-sm text-atlas-muted">Carregando...</div>}
 
       {data && data.skus.length === 0 && !isLoading && (
-        <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
+        <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-atlas-border rounded-lg">
           Nenhum SKU com saldo encontrado neste filtro. Em dev sem sync OMIE, essa lista fica vazia.
         </div>
       )}
@@ -434,17 +434,17 @@ export function CockpitPage() {
           <h2 className="text-xs uppercase tracking-wide text-atlas-muted font-medium">
             SKUs <span className="text-atlas-muted/70 normal-case">— {data.skus.length} item{data.skus.length === 1 ? '' : 's'} {data.skus.length !== rawData?.skus.length ? `(${rawData?.skus.length} no total)` : ''}, ordem por criticidade</span>
           </h2>
-          <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded">
+          <div className="flex gap-1 p-1 bg-atlas-bg rounded">
             <button
               onClick={() => setViewMode('tabela')}
-              className={`px-2 py-1 rounded text-xs font-medium transition flex items-center gap-1 ${viewMode === 'tabela' ? 'bg-white dark:bg-slate-900 shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
+              className={`px-2 py-1 rounded text-xs font-medium transition flex items-center gap-1 ${viewMode === 'tabela' ? 'bg-atlas-card shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
               title="Tabela executiva densa"
             >
               <Table2 size={12} /> Tabela
             </button>
             <button
               onClick={() => setViewMode('cards')}
-              className={`px-2 py-1 rounded text-xs font-medium transition flex items-center gap-1 ${viewMode === 'cards' ? 'bg-white dark:bg-slate-900 shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
+              className={`px-2 py-1 rounded text-xs font-medium transition flex items-center gap-1 ${viewMode === 'cards' ? 'bg-atlas-card shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
               title="Cards visuais"
             >
               <LayoutGrid size={12} /> Cards
@@ -465,7 +465,7 @@ export function CockpitPage() {
               ? Math.min(100, (sku.coberturaDias / (sku.leadTimeDias * 4)) * 100)
               : 0;
             return (
-              <div key={sku.codigoAcxe} className={`bg-white dark:bg-slate-800 border rounded-lg p-4 ${crit.bg} border-slate-200 dark:border-slate-700`}>
+              <div key={sku.codigoAcxe} className={`bg-atlas-card border rounded-lg p-4 ${crit.bg} border-atlas-border`}>
                 <div className="flex justify-between items-start mb-3">
                   <div className="flex-1 min-w-0">
                     <div className="font-serif text-base text-atlas-ink truncate">{sku.nome}</div>
@@ -480,7 +480,7 @@ export function CockpitPage() {
                   <Cell label="Físico" value={`${fmtKg(sku.fisicaKg)} kg`} />
                   <Cell label="Fiscal" value={`${fmtKg(sku.fiscalKg)} kg`} accent={Math.abs(sku.fisicaKg - sku.fiscalKg) > 1 ? 'text-red-700' : undefined} />
                   <Cell label="Provisório" value={`${fmtKg(sku.provisorioKg)} kg`} accent="text-amber-700" />
-                  <Cell label="Ag. Embarque" value={`${fmtKg(sku.aguardandoEmbarqueKg)} kg`} accent="text-slate-600" />
+                  <Cell label="Ag. Embarque" value={`${fmtKg(sku.aguardandoEmbarqueKg)} kg`} accent="text-atlas-muted" />
                   <Cell label="Em Águas" value={`${fmtKg(sku.transitoIntlKg)} kg`} accent="text-violet-700" />
                   <Cell label="No Porto" value={`${fmtKg(sku.noPortoKg)} kg`} accent="text-amber-700" />
                   <Cell label="Tr. Galpão" value={`${fmtKg(sku.transitoLocalKg)} kg`} accent="text-orange-700" />
@@ -493,7 +493,7 @@ export function CockpitPage() {
                       {sku.coberturaDias != null ? `${sku.coberturaDias}d` : 'sem consumo médio'}
                     </span>
                   </div>
-                  <div className="h-1.5 bg-slate-200 dark:bg-slate-700 rounded overflow-hidden">
+                  <div className="h-1.5 bg-atlas-border rounded overflow-hidden">
                     <div className={`h-full ${crit.bar} transition-all`} style={{ width: `${pctCobertura}%` }} />
                   </div>
                   <div className="flex justify-between text-[10px] text-atlas-muted mt-0.5">
@@ -580,8 +580,8 @@ function TopRiscos({ topRiscos }: { topRiscos: { ruptura: CockpitSku[]; excesso:
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-2">
         {blocos.map((b) => (
-          <div key={b.titulo} className={`border border-slate-200 dark:border-slate-700 rounded-lg ${b.bg}`}>
-            <div className="px-3 py-2 border-b border-slate-200/60 dark:border-slate-700/60">
+          <div key={b.titulo} className={`border border-atlas-border rounded-lg ${b.bg}`}>
+            <div className="px-3 py-2 border-b border-atlas-border/60">
               <div className={`text-xs font-semibold ${b.color}`}>{b.titulo}</div>
               <div className="text-[10px] text-atlas-muted">{b.subtitulo}</div>
             </div>
@@ -605,9 +605,9 @@ function TopRiscos({ topRiscos }: { topRiscos: { ruptura: CockpitSku[]; excesso:
 
 function TabelaSkus({ skus }: { skus: CockpitSku[] }) {
   return (
-    <div className="overflow-x-auto border border-slate-200 dark:border-slate-700 rounded-lg">
+    <div className="overflow-x-auto border border-atlas-border rounded-lg">
       <table className="min-w-full text-xs">
-        <thead className="bg-slate-50 dark:bg-slate-800/50 text-[10px] uppercase tracking-wide text-atlas-muted">
+        <thead className="bg-atlas-bg text-[10px] uppercase tracking-wide text-atlas-muted">
           <tr>
             <th className="text-left px-3 py-2">Status</th>
             <th className="text-left px-3 py-2">Produto</th>
@@ -627,7 +627,7 @@ function TabelaSkus({ skus }: { skus: CockpitSku[] }) {
           {skus.map((s) => {
             const crit = CRIT_CFG[s.criticidade];
             return (
-              <tr key={s.codigoAcxe} className="border-t border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/30">
+              <tr key={s.codigoAcxe} className="border-t border-atlas-border hover:bg-atlas-bg/60">
                 <td className="px-3 py-2">
                   <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${crit.bg} ${crit.text}`}>
                     {s.criticidade === 'critico' ? 'Ruptura' : s.criticidade === 'alerta' ? 'Atenção' : crit.label}
@@ -636,7 +636,7 @@ function TabelaSkus({ skus }: { skus: CockpitSku[] }) {
                 <td className="px-3 py-2 text-atlas-ink max-w-[220px] truncate" title={s.nome}>{s.nome}</td>
                 <td className="px-3 py-2 text-atlas-muted">{s.familia ?? '—'}</td>
                 <td className="px-3 py-2 text-right font-mono text-atlas-ink">{fmtKg(s.fisicaKg)}</td>
-                <td className={`px-3 py-2 text-right font-mono ${s.aguardandoEmbarqueKg > 0 ? 'text-slate-600' : 'text-atlas-muted/50'}`}>{fmtKg(s.aguardandoEmbarqueKg)}</td>
+                <td className={`px-3 py-2 text-right font-mono ${s.aguardandoEmbarqueKg > 0 ? 'text-atlas-muted' : 'text-atlas-muted/50'}`}>{fmtKg(s.aguardandoEmbarqueKg)}</td>
                 <td className={`px-3 py-2 text-right font-mono ${s.transitoIntlKg > 0 ? 'text-violet-700' : 'text-atlas-muted/50'}`}>{fmtKg(s.transitoIntlKg)}</td>
                 <td className={`px-3 py-2 text-right font-mono ${s.noPortoKg > 0 ? 'text-amber-700' : 'text-atlas-muted/50'}`}>{fmtKg(s.noPortoKg)}</td>
                 <td className={`px-3 py-2 text-right font-mono ${s.transitoLocalKg > 0 ? 'text-orange-700' : 'text-atlas-muted/50'}`}>{fmtKg(s.transitoLocalKg)}</td>
@@ -685,7 +685,7 @@ function ResumoBloco({
         {cards.map((c) => (
           <div
             key={c.label}
-            className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3"
+            className="bg-atlas-card border border-atlas-border rounded-lg p-3"
           >
             <div className="flex items-center justify-between mb-1">
               <div className="text-xs text-atlas-muted">{c.label}</div>
@@ -718,7 +718,7 @@ function CardHorizontal({
   hint?: string;
 }) {
   return (
-    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 flex items-center gap-4">
+    <div className="bg-atlas-card border border-atlas-border rounded-lg p-3 flex items-center gap-4">
       <div className="flex items-center gap-1 shrink-0">
         <span className="text-xs uppercase tracking-wide text-atlas-muted font-medium">{label}</span>
         <span className="inline-flex cursor-help" title={info}>
@@ -735,7 +735,7 @@ function CardHorizontal({
 
 function Cell({ label, value, accent }: { label: string; value: string; accent?: string }) {
   return (
-    <div className="bg-slate-50 dark:bg-slate-900/40 rounded p-2">
+    <div className="bg-atlas-bg rounded p-2">
       <div className="text-[10px] text-atlas-muted">{label}</div>
       <div className={`font-serif text-sm ${accent ?? 'text-atlas-ink'}`}>{value}</div>
     </div>
@@ -794,7 +794,7 @@ function MultiSelectDropdown({
         type="button"
         onClick={() => setOpen((o) => !o)}
         title={title}
-        className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-600 dark:bg-slate-900 text-xs flex items-center gap-2 hover:border-slate-400 dark:hover:border-slate-500 transition"
+        className="px-3 py-1.5 rounded border border-atlas-border bg-atlas-bg text-xs flex items-center gap-2 hover:border-atlas-muted transition"
       >
         <span className={selected.length > 0 ? 'text-atlas-ink' : 'text-atlas-muted'}>
           {triggerLabel}
@@ -815,7 +815,7 @@ function MultiSelectDropdown({
         <ChevronDown size={12} className="text-atlas-muted" />
       </button>
       {open && (
-        <div className="absolute left-0 top-full mt-1 z-20 min-w-[220px] max-h-[320px] overflow-y-auto bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg text-xs">
+        <div className="absolute left-0 top-full mt-1 z-20 min-w-[220px] max-h-[320px] overflow-y-auto bg-atlas-card border border-atlas-border rounded-lg shadow-lg text-xs">
           {options.length === 0 ? (
             <div className="px-3 py-2 text-atlas-muted">Sem opções disponíveis</div>
           ) : (
@@ -825,7 +825,7 @@ function MultiSelectDropdown({
                 return (
                   <label
                     key={opt.value}
-                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer"
+                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-atlas-bg/60 cursor-pointer"
                   >
                     <input
                       type="checkbox"
@@ -840,7 +840,7 @@ function MultiSelectDropdown({
                 );
               })}
               {selected.length > 0 && (
-                <div className="border-t border-slate-200 dark:border-slate-700 px-3 py-2 flex justify-end">
+                <div className="border-t border-atlas-border px-3 py-2 flex justify-end">
                   <button
                     type="button"
                     onClick={() => onChange([])}

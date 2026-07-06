@@ -78,7 +78,7 @@ export function MarginSimulationPage() {
       </div>
 
       <button onClick={() => simMutation.mutate()} disabled={simMutation.isPending}
-        className="px-5 py-2 rounded bg-q2p text-white text-xs font-mono tracking-wider hover:bg-q2p-dark disabled:opacity-50 transition-colors">
+        className="px-5 py-2 rounded bg-atlas-btn-bg text-atlas-btn-text text-xs font-mono tracking-wider hover:bg-atlas-btn-bg-hover disabled:opacity-50 transition-colors">
         {simMutation.isPending ? 'Calculando...' : 'Simular 13 cenários'}
       </button>
 
