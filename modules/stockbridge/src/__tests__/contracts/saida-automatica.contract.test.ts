@@ -53,7 +53,8 @@ const payloadBase = {
   quantidade_original: 25,
   unidade: 't',
   localidade_origem_codigo: 4498926337,
-  dt_emissao: '2026-04-20',
+  // OMIE emite a data como dd/MM/aaaa (dEmi) — nao ISO. Usar o formato real do OMIE.
+  dt_emissao: '20/04/2026',
   id_movest_omie: '7777777',
 };
 
@@ -123,5 +124,49 @@ describe('POST /saida-automatica/processar — contratos', () => {
     expect(res.status).toBe(200);
     expect(res.body.data.debitoCruzado).toBe(true);
     expect(res.body.data.subtipo).toBe('debito_cruzado');
+  });
+
+  // STK-05 (ACXEGDP-285): OMIE envia uCom em MAIUSCULA ("KG"); antes caia em 400.
+  it('200 aceita unidade em maiuscula (KG) vinda crua do OMIE', async () => {
+    const res = await request(app)
+      .post('/api/v1/stockbridge/saida-automatica/processar')
+      .set('X-Atlas-Integration-Key', INTEGRATION_KEY)
+      .send({ ...payloadBase, unidade: 'KG', quantidade_original: 500 });
+    expect(res.status).toBe(200);
+    expect(res.body.data.idempotente).toBe(false);
+  });
+
+  it('400 rejeita unidade desconhecida (nao cai em kg silenciosamente)', async () => {
+    const res = await request(app)
+      .post('/api/v1/stockbridge/saida-automatica/processar')
+      .set('X-Atlas-Integration-Key', INTEGRATION_KEY)
+      .send({ ...payloadBase, unidade: 'litro' });
+    expect(res.status).toBe(400);
+  });
+
+  // STK-04 (ACXEGDP-284): data dd/MM/aaaa com dia>12 dava 500 (Invalid Date).
+  it('200 processa data dd/MM/aaaa com dia > 12', async () => {
+    const res = await request(app)
+      .post('/api/v1/stockbridge/saida-automatica/processar')
+      .set('X-Atlas-Integration-Key', INTEGRATION_KEY)
+      .send({ ...payloadBase, dt_emissao: '25/03/2026' });
+    expect(res.status).toBe(200);
+  });
+
+  it('400 rejeita dt_emissao em formato ISO (nao dd/MM/aaaa)', async () => {
+    const res = await request(app)
+      .post('/api/v1/stockbridge/saida-automatica/processar')
+      .set('X-Atlas-Integration-Key', INTEGRATION_KEY)
+      .send({ ...payloadBase, dt_emissao: '2026-04-20' });
+    expect(res.status).toBe(400);
+  });
+
+  // OMIE pode enviar codigos numericos como string — coerce deve aceitar.
+  it('200 aceita produto_codigo/localidade como string numerica', async () => {
+    const res = await request(app)
+      .post('/api/v1/stockbridge/saida-automatica/processar')
+      .set('X-Atlas-Integration-Key', INTEGRATION_KEY)
+      .send({ ...payloadBase, produto_codigo: '123', localidade_origem_codigo: '4498926337' });
+    expect(res.status).toBe(200);
   });
 });

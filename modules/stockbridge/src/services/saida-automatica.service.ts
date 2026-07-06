@@ -21,6 +21,25 @@ const TIPO_OMIE_PARA_SUBTIPO: Record<TipoOmieSaida, SubtipoMovimento> = {
   devolucao_fornecedor: 'devolucao_fornecedor',
 };
 
+/**
+ * Converte a data de emissao do OMIE (dd/MM/aaaa, ex.: "25/03/2026") para Date local.
+ * `new Date("25/03/2026")` retornaria Invalid Date para dia>12, ou trocaria dia/mes
+ * silenciosamente para dia<=12 (STK-04, ACXEGDP-284) — por isso o parse e explicito.
+ */
+function parseDataEmissaoOmie(raw: string): Date {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(raw.trim());
+  if (!m) throw new Error(`Data de emissão inválida (esperado dd/MM/aaaa): ${raw}`);
+  const dia = Number(m[1]);
+  const mes = Number(m[2]);
+  const ano = Number(m[3]);
+  const d = new Date(ano, mes - 1, dia);
+  // Date normaliza overflow (ex.: 31/02 vira 03/03); rejeitamos para nao gravar data errada.
+  if (d.getFullYear() !== ano || d.getMonth() !== mes - 1 || d.getDate() !== dia) {
+    throw new Error(`Data de emissão inválida: ${raw}`);
+  }
+  return d;
+}
+
 export interface ProcessarSaidaInput {
   nf: string;
   tipoOmie: TipoOmieSaida;
@@ -92,6 +111,8 @@ export async function processarSaidaAutomatica(
   const tipoMov: TipoMovimento = debitoCruzado ? 'debito_cruzado' : 'saida_automatica';
   const subtipo: SubtipoMovimento = debitoCruzado ? 'debito_cruzado' : TIPO_OMIE_PARA_SUBTIPO[input.tipoOmie];
 
+  const dtEmissaoDate = parseDataEmissaoOmie(input.dtEmissao);
+
   // 3. Persiste movimentacao (lado correspondente ao CNPJ emissor preenchido)
   const resultado = await db.transaction(async (tx) => {
     const [movCriada] = await tx
@@ -102,11 +123,11 @@ export async function processarSaidaAutomatica(
         subtipo,
         quantidadeKg: String(-Math.abs(quantidadeKg)), // saida = negativo
         mvAcxe: input.cnpjEmissor === 'acxe' ? 1 : null,
-        dtAcxe: input.cnpjEmissor === 'acxe' ? new Date(input.dtEmissao) : null,
+        dtAcxe: input.cnpjEmissor === 'acxe' ? dtEmissaoDate : null,
         idMovestAcxe: input.cnpjEmissor === 'acxe' ? input.idMovestOmie : null,
         idAjusteAcxe: input.cnpjEmissor === 'acxe' ? input.idAjusteOmie ?? null : null,
         mvQ2p: input.cnpjEmissor === 'q2p' ? 1 : null,
-        dtQ2p: input.cnpjEmissor === 'q2p' ? new Date(input.dtEmissao) : null,
+        dtQ2p: input.cnpjEmissor === 'q2p' ? dtEmissaoDate : null,
         idMovestQ2p: input.cnpjEmissor === 'q2p' ? input.idMovestOmie : null,
         idAjusteQ2p: input.cnpjEmissor === 'q2p' ? input.idAjusteOmie ?? null : null,
         observacoes: debitoCruzado
