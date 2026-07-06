@@ -80,6 +80,18 @@ function fmtData(d: Date): string {
   return `${dia} ${meses[d.getMonth()]}`;
 }
 
+// MOD-22: regras de negócio do motor extraídas de números mágicos para constantes
+// nomeadas (mesmos valores — sem mudança de comportamento). Documentam a intenção
+// e concentram num só lugar caso virem configuráveis no futuro (como o hedge faz
+// em config_motor). Enquanto não há decisão de produto sobre editabilidade, ficam
+// como constantes de regra.
+/** Fração do estoque disponível que se assume liquidável (vendável) por semana, a partir da 2ª semana. */
+const FRACAO_ESTOQUE_LIQUIDAVEL_SEMANA = 0.18;
+/** Limiar de FINIMP sobre o pagamento da semana para classificar a semana como tipo 'FINIMP'. */
+const LIMIAR_FINIMP_SOBRE_PAGAMENTO = 0.5;
+/** Reserva obrigatória de caixa como múltiplo do pagamento da semana (120%). */
+const FATOR_RESERVA_OBRIGATORIA = 1.2;
+
 export function calcular(input: MotorInput): MotorOutput {
   const { dados, data_base } = input;
   const {
@@ -118,14 +130,14 @@ export function calcular(input: MotorInput): MotorOutput {
     let tipo: 'Fornecedor' | 'FINIMP' | 'Op.Corrente';
     if (cat_finimp_cod_nulo) {
       tipo = 'Op.Corrente';
-    } else if (hasFinimp && finimpNaSemana >= pagamento * 0.5) {
+    } else if (hasFinimp && finimpNaSemana >= pagamento * LIMIAR_FINIMP_SOBRE_PAGAMENTO) {
       tipo = 'FINIMP';
     } else {
       tipo = 'Fornecedor';
     }
 
     const recDup = rec.total;
-    const recEstoque = w >= 2 && estoqueDisp > 0 ? Math.min(estoqueDisp * 0.18, estoqueDisp) : 0;
+    const recEstoque = w >= 2 && estoqueDisp > 0 ? Math.min(estoqueDisp * FRACAO_ESTOQUE_LIQUIDAVEL_SEMANA, estoqueDisp) : 0;
     estoqueDisp = Math.max(0, estoqueDisp - recEstoque);
 
     const amortFinimp = hasFinimp ? amortPorSemana : 0;
@@ -140,7 +152,7 @@ export function calcular(input: MotorInput): MotorOutput {
     const liquidezTotal = saldoCC + antecipDisp + recDup + recEstoque;
     const gap = liquidezTotal - pagamento;
 
-    const reservaObrig = pagamento * 1.2;
+    const reservaObrig = pagamento * FATOR_RESERVA_OBRIGATORIA;
     const capCompra = Math.max(0, saldoCC + antecipDisp + finimpDisp - reservaObrig);
 
     const saldoCCProximo = saldoCC + recDup + recEstoque - pagamento;
