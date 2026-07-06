@@ -221,7 +221,7 @@ describe('POST /api/v1/stockbridge/recebimento — erro estruturado OMIE (US2)',
       retryable: true,
       stateClean: true,
     });
-    expect(res.body.error.userMessage).toMatch(/indisponivel/i);
+    expect(res.body.error.userMessage).toMatch(/indispon[íi]vel/i);
     expect(res.body.error.movimentacaoId).toBeUndefined();
   });
 });

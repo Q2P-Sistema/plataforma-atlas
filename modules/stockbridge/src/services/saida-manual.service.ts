@@ -10,21 +10,21 @@ const logger = createLogger('stockbridge:saida-manual');
 
 export class SaldoInsuficienteError extends Error {
   constructor(public readonly disponivelKg: number, public readonly solicitadoKg: number) {
-    super(`Saldo insuficiente: disponivel ${disponivelKg} kg, solicitado ${solicitadoKg} kg`);
+    super(`Saldo insuficiente: disponível ${disponivelKg} kg, solicitado ${solicitadoKg} kg`);
     this.name = 'SaldoInsuficienteError';
   }
 }
 
 export class SubtipoInvalidoError extends Error {
   constructor(public readonly subtipo: string) {
-    super(`Subtipo ${subtipo} nao e valido para saida manual`);
+    super(`Subtipo ${subtipo} não é válido para saída manual`);
     this.name = 'SubtipoInvalidoError';
   }
 }
 
 export class ComodatoDadosObrigatoriosError extends Error {
   constructor(public readonly campo: string) {
-    super(`Campo "${campo}" obrigatorio para subtipo=comodato`);
+    super(`Campo "${campo}" obrigatório para subtipo=comodato`);
     this.name = 'ComodatoDadosObrigatoriosError';
   }
 }
@@ -179,7 +179,7 @@ export async function registrarSaidaManual(
     throw new SubtipoInvalidoError(input.subtipo);
   }
   if (!input.observacoes || input.observacoes.trim().length === 0) {
-    throw new Error('Motivo/observacao obrigatorio para saida manual');
+    throw new Error('Motivo/observacao obrigatório para saída manual');
   }
   if (input.subtipo === 'comodato') {
     // Comodato agora suporta ACXE e Q2P (TROCA criada em ambos no OMIE — migration 0027).
@@ -189,7 +189,7 @@ export async function registrarSaidaManual(
     }
   }
   if (input.subtipo === 'transf_intra_cnpj' && (!input.galpaoDestino || input.galpaoDestino === input.galpao)) {
-    throw new Error('Galpao destino obrigatorio e diferente da origem para transf_intra_cnpj');
+    throw new Error('Galpão destino obrigatório e diferente da origem para transf_intra_cnpj');
   }
 
   const quantidadeKg = Number(new Decimal(converterParaKg(input.quantidadeOriginal, input.unidade)).toFixed(3));
@@ -297,7 +297,7 @@ export async function registrarSaidaManual(
           tipo: 'fiscal_pendente',
           quantidadeDeltaKg: String(-quantidadeKg),
           status: 'aberta',
-          observacoes: `Saida manual tipo ${input.subtipo} — aguarda regularizacao fiscal`,
+          observacoes: `Saída manual tipo ${input.subtipo} — aguarda regularização fiscal`,
         })
         .returning();
       divId = div!.id;
@@ -313,8 +313,8 @@ export async function registrarSaidaManual(
     loteCodigo: `SKU ${input.produtoCodigoAcxe} @ ${input.galpao}`,
     produto: `${input.produtoCodigoAcxe}`,
     quantidadeKg,
-    detalhes: `Saida manual ${input.subtipo} — ${input.observacoes}`,
-  }).catch((err) => logger.error({ err }, 'Falha ao notificar aprovacao pendente'));
+    detalhes: `Saída manual ${input.subtipo} — ${input.observacoes}`,
+  }).catch((err) => logger.error({ err }, 'Falha ao notificar aprovação pendente'));
 
   logger.info(
     {
@@ -326,7 +326,7 @@ export async function registrarSaidaManual(
       nivel,
       quantidadeKg,
     },
-    'Saida manual registrada, aguarda aprovacao',
+    'Saída manual registrada, aguarda aprovação',
   );
 
   return {
@@ -354,7 +354,7 @@ function extrairClienteDaObservacao(obs: string | null | undefined): string | nu
 function construirObservacao(input: RegistrarSaidaManualInput): string {
   const partes = [input.observacoes.trim()];
   if (input.subtipo === 'transf_intra_cnpj' && input.galpaoDestino) {
-    partes.push(`Destino: galpao ${input.galpaoDestino}`);
+    partes.push(`Destino: galpão ${input.galpaoDestino}`);
   }
   if (input.subtipo === 'comodato') {
     if (input.cliente) partes.push(`Cliente: ${input.cliente.trim()}`);
@@ -507,7 +507,7 @@ export async function registrarRetornoComodato(
   input: RegistrarRetornoComodatoInput,
 ): Promise<RegistrarRetornoComodatoResult> {
   if (!input.observacoes || input.observacoes.trim().length === 0) {
-    throw new Error('Motivo/observacao obrigatorio para retorno de comodato');
+    throw new Error('Motivo/observacao obrigatório para retorno de comodato');
   }
   if (input.quantidadeKgRecebida <= 0) {
     throw new Error('Quantidade recebida deve ser positiva');
@@ -520,15 +520,15 @@ export async function registrarRetornoComodato(
     .from(movimentacao)
     .where(and(eq(movimentacao.id, input.movimentacaoOrigemId), eq(movimentacao.ativo, true)))
     .limit(1);
-  if (!movOrigem) throw new Error(`Comodato ${input.movimentacaoOrigemId} nao encontrado`);
+  if (!movOrigem) throw new Error(`Comodato ${input.movimentacaoOrigemId} não encontrado`);
   if (movOrigem.subtipo !== 'comodato' || movOrigem.tipoMovimento !== 'saida_manual') {
-    throw new Error('Movimentacao origem nao e um comodato valido');
+    throw new Error('Movimentação origem não é um comodato valido');
   }
   if (movOrigem.empresa !== 'q2p') {
     throw new Error('Comodato origem deve ser Q2P (regra de negocio)');
   }
   if (!movOrigem.produtoCodigoAcxe || !movOrigem.galpao) {
-    throw new Error('Comodato origem sem SKU/galpao — registro inconsistente');
+    throw new Error('Comodato origem sem SKU/galpão — registro inconsistente');
   }
 
   // Verifica se ja existe retorno
@@ -543,7 +543,7 @@ export async function registrarRetornoComodato(
       ),
     )
     .limit(1);
-  if (existeRetorno) throw new Error('Comodato ja foi retornado');
+  if (existeRetorno) throw new Error('Comodato já foi retornado');
 
   const qtdOriginalKg = Math.abs(Number(movOrigem.quantidadeKg));
   const qtdRecebidaKg = Number(new Decimal(input.quantidadeKgRecebida).toFixed(3));
@@ -554,7 +554,7 @@ export async function registrarRetornoComodato(
   // movimentacao_origem_id (rastreio), nao precisa poluir o campo de observacao.
   const clienteOrigem = extrairClienteDaObservacao(movOrigem.observacoes);
   const dtSaidaOrigem = new Date(movOrigem.createdAt).toLocaleDateString('pt-BR');
-  const cabecalhoObs = `Retorno comodato${clienteOrigem ? ` cliente ${clienteOrigem}` : ''} (saida ${dtSaidaOrigem}, ${qtdOriginalKg} kg)`;
+  const cabecalhoObs = `Retorno comodato${clienteOrigem ? ` cliente ${clienteOrigem}` : ''} (saída ${dtSaidaOrigem}, ${qtdOriginalKg} kg)`;
 
   const resultado = await db.transaction(async (tx) => {
     // 1) Baixa do TROCA — SKU original × qtd ORIGINAL (devolve o que saiu)

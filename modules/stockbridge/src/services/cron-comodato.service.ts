@@ -119,7 +119,7 @@ export async function processarAlertasComodatoVencido(): Promise<{
 
       const destinatarios = Array.from(destinatariosSet);
       if (destinatarios.length === 0) {
-        logger.warn({ movimentacaoId: c.movimentacao_id, dias }, 'Comodato vencido sem destinatarios resolviveis');
+        logger.warn({ movimentacaoId: c.movimentacao_id, dias }, 'Comodato vencido sem destinatários resolviveis');
         continue;
       }
 

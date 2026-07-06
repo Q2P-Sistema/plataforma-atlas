@@ -36,7 +36,7 @@ router.get(
       });
       res.json({ data, error: null });
     } catch (err) {
-      logger.error({ err }, 'Erro ao listar pendencias fiscais');
+      logger.error({ err }, 'Erro ao listar pendências fiscais');
       res.status(500).json({
         data: null,
         error: { code: 'PENDENCIAS_FISCAIS_FAIL', message: (err as Error).message },

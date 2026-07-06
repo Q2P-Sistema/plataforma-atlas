@@ -28,7 +28,7 @@ router.get('/api/v1/stockbridge/operacoes-pendentes', requireGestor, async (_req
     const data = await listarPendentes();
     res.json({ data, error: null });
   } catch (err) {
-    logger.error({ err }, 'Erro ao listar operacoes pendentes');
+    logger.error({ err }, 'Erro ao listar operações pendentes');
     res.status(500).json({
       data: null,
       error: { code: 'LISTAR_PENDENTES_FAIL', message: (err as Error).message },
@@ -57,14 +57,14 @@ router.post(
     if (!body.success) {
       res.status(400).json({
         data: null,
-        error: { code: 'INVALID_INPUT', message: 'motivo e obrigatorio' },
+        error: { code: 'INVALID_INPUT', message: 'motivo é obrigatório' },
       });
       return;
     }
     const userId = req.user?.id;
     const role = (req.user?.role ?? 'gestor') as Perfil;
     if (!userId) {
-      res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessao invalida' } });
+      res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessão inválida' } });
       return;
     }
     try {
@@ -89,7 +89,7 @@ router.post(
         });
         return;
       }
-      logger.error({ err, movimentacaoId: params.data.id }, 'Erro ao marcar operacao como falha');
+      logger.error({ err, movimentacaoId: params.data.id }, 'Erro ao marcar operação como falha');
       res.status(500).json({
         data: null,
         error: { code: 'MARCAR_FALHA_FAIL', message: (err as Error).message },
@@ -122,7 +122,7 @@ router.post(
     const userId = req.user?.id;
     const role = (req.user?.role ?? 'operador') as Perfil;
     if (!userId) {
-      res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessao invalida' } });
+      res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessão inválida' } });
       return;
     }
 
@@ -153,7 +153,7 @@ router.post(
           error: {
             code: 'OPERADOR_SEM_RETENTATIVAS',
             message: err.message,
-            userMessage: 'Voce ja esgotou as retentativas permitidas. Acione um gestor/diretor.',
+            userMessage: 'Você já esgotou as retentativas permitidas. Acione um gestor/diretor.',
             userAction: 'contact_admin',
             retryable: false,
           },
@@ -165,7 +165,7 @@ router.post(
         res.status(httpStatus).json({ data: null, error: body });
         return;
       }
-      logger.error({ err, movimentacaoId: params.data.id }, 'Erro inesperado em retentar operacao pendente');
+      logger.error({ err, movimentacaoId: params.data.id }, 'Erro inesperado em retentar operação pendente');
       res.status(500).json({
         data: null,
         error: { code: 'RETENTAR_FAIL', message: (err as Error).message },

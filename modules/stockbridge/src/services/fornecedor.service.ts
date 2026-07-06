@@ -16,14 +16,14 @@ export interface FornecedorExclusaoItem {
 
 export class FornecedorJaExcluidoError extends Error {
   constructor(public readonly cnpj: string) {
-    super(`Fornecedor CNPJ ${cnpj} ja esta excluido`);
+    super(`Fornecedor CNPJ ${cnpj} já está excluido`);
     this.name = 'FornecedorJaExcluidoError';
   }
 }
 
 export class ExclusaoNaoEncontradaError extends Error {
   constructor(public readonly cnpj: string) {
-    super(`Nao ha exclusao ativa para CNPJ ${cnpj}`);
+    super(`Não ha exclusão ativa para CNPJ ${cnpj}`);
     this.name = 'ExclusaoNaoEncontradaError';
   }
 }

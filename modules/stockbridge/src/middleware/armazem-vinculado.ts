@@ -15,7 +15,7 @@ export async function requireArmazemVinculado(
 ): Promise<void> {
   const user = req.user;
   if (!user) {
-    res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessao nao encontrada' } });
+    res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessão não encontrada' } });
     return;
   }
 
@@ -34,7 +34,7 @@ export async function requireArmazemVinculado(
         data: null,
         error: {
           code: 'OPERADOR_ARMAZEM_NAO_VINCULADO',
-          message: 'Operador nao esta vinculado a um armazem. Contate o administrador.',
+          message: 'Operador não está vinculado a um armazem. Contate o administrador.',
         },
       });
       return;

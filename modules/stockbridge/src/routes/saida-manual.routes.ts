@@ -32,7 +32,7 @@ const SaidaSchema = z.object({
 router.post('/api/v1/stockbridge/saida-manual', requireOperador, async (req: Request, res: Response) => {
   const userId = req.user?.id;
   if (!userId) {
-    res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessao sem usuario' } });
+    res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessão sem usuário' } });
     return;
   }
   const parsed = SaidaSchema.safeParse(req.body);
@@ -74,7 +74,7 @@ router.post('/api/v1/stockbridge/saida-manual', requireOperador, async (req: Req
       res.status(400).json({ data: null, error: { code: 'COMODATO_DADOS_OBRIGATORIOS', message: err.message } });
       return;
     }
-    logger.error({ err }, 'Erro em saida manual');
+    logger.error({ err }, 'Erro em saída manual');
     res.status(500).json({ data: null, error: { code: 'SAIDA_MANUAL_FAIL', message: (err as Error).message } });
   }
 });
@@ -106,7 +106,7 @@ router.get(
       );
       res.json({ data, error: null });
     } catch (err) {
-      logger.error({ err }, 'Erro ao consultar saldo disponivel');
+      logger.error({ err }, 'Erro ao consultar saldo disponível');
       res.status(500).json({ data: null, error: { code: 'SALDO_QUERY_FAIL', message: (err as Error).message } });
     }
   },
@@ -169,7 +169,7 @@ router.post(
     const userId = req.user?.id;
     const movimentacaoId = req.params.movimentacao_id as string | undefined;
     if (!userId || !movimentacaoId) {
-      res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', message: 'dados invalidos' } });
+      res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', message: 'dados inválidos' } });
       return;
     }
     const parsed = RetornoSchema.safeParse(req.body);

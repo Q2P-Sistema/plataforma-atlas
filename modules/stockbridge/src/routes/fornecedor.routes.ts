@@ -29,12 +29,12 @@ router.post('/api/v1/stockbridge/fornecedores/:cnpj/excluir', requireDiretor, as
   const cnpj = req.params.cnpj as string | undefined;
   const userId = req.user?.id;
   if (!cnpj || !userId) {
-    res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', message: 'cnpj/usuario invalidos' } });
+    res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', message: 'cnpj/usuário inválidos' } });
     return;
   }
   const parsed = ExcluirSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
-    res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', message: 'payload invalido' } });
+    res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', message: 'payload inválido' } });
     return;
   }
   try {
@@ -59,7 +59,7 @@ router.post('/api/v1/stockbridge/fornecedores/:cnpj/reincluir', requireDiretor, 
   const cnpj = req.params.cnpj as string | undefined;
   const userId = req.user?.id;
   if (!cnpj || !userId) {
-    res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', message: 'cnpj/usuario invalidos' } });
+    res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', message: 'cnpj/usuário inválidos' } });
     return;
   }
   try {

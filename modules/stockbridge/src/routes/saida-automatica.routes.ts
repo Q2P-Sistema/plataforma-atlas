@@ -76,7 +76,7 @@ router.post(
       });
       res.json({ data: result, error: null });
     } catch (err) {
-      logger.error({ err, nf: parsed.data.nf }, 'Erro ao processar saida automatica');
+      logger.error({ err, nf: parsed.data.nf }, 'Erro ao processar saída automática');
       res.status(500).json({
         data: null,
         error: { code: 'SAIDA_AUTOMATICA_FAIL', message: (err as Error).message },

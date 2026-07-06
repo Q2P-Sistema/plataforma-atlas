@@ -27,7 +27,7 @@ const logger = createLogger('stockbridge:recebimento');
 
 export class NotaFiscalJaProcessadaError extends Error {
   constructor(public readonly notaFiscal: string) {
-    super(`NF ${notaFiscal} ja foi processada — idempotencia impede reprocessamento.`);
+    super(`NF ${notaFiscal} já foi processada — idempotência impede reprocessamento.`);
     this.name = 'NotaFiscalJaProcessadaError';
   }
 }
@@ -35,7 +35,7 @@ export class NotaFiscalJaProcessadaError extends Error {
 /** Feature 012 (ACXEGDP-204): NF cancelada/inutilizada/denegada não pode ser recebida. */
 export class NotaFiscalCanceladaError extends Error {
   constructor(public readonly notaFiscal: string) {
-    super(`A NF ${notaFiscal} esta cancelada no OMIE e nao pode ser recebida.`);
+    super(`A NF ${notaFiscal} está cancelada no OMIE e não pode ser recebida.`);
     this.name = 'NotaFiscalCanceladaError';
   }
 }
@@ -44,7 +44,7 @@ export class NotaFiscalCanceladaError extends Error {
 export class NotaFiscalNaoEmitidaPelaAcxeError extends Error {
   constructor(public readonly notaFiscal: string) {
     super(
-      `A NF ${notaFiscal} nao foi emitida pela ACXE (consta como nota de entrada de outro fornecedor). Verifique o numero.`,
+      `A NF ${notaFiscal} não foi emitida pela ACXE (consta como nota de entrada de outro fornecedor). Verifique o número.`,
     );
     this.name = 'NotaFiscalNaoEmitidaPelaAcxeError';
   }
@@ -328,7 +328,7 @@ export async function processarRecebimento(
     .where(and(eq(localidade.id, input.localidadeId), eq(localidade.ativo, true)))
     .limit(1);
   if (!loc) {
-    throw new Error(`Localidade ${input.localidadeId} nao encontrada ou inativa`);
+    throw new Error(`Localidade ${input.localidadeId} não encontrada ou inativa`);
   }
 
   const [corr] = await db
@@ -338,7 +338,7 @@ export async function processarRecebimento(
     .limit(1);
   if (!corr || !corr.codigoLocalEstoqueAcxe || !corr.codigoLocalEstoqueQ2p) {
     throw new Error(
-      `Localidade ${loc.codigo} nao tem correlacao ACXE↔Q2P completa. Configure em stockbridge.localidade_correlacao.`,
+      `Localidade ${loc.codigo} não tem correlação ACXE↔Q2P completa. Configure em stockbridge.localidade_correlacao.`,
     );
   }
 
@@ -360,16 +360,16 @@ export async function processarRecebimento(
   // 5. Se tem divergencia: fluxo de aprovacao (nao toca OMIE ainda)
   if (temDivergencia) {
     if (!input.observacoes || input.observacoes.trim().length === 0) {
-      throw new Error('Motivo da divergencia e obrigatorio');
+      throw new Error('Motivo da divergência é obrigatório');
     }
     if (!input.tipoDivergencia) {
-      throw new Error('Tipo de divergencia (faltando/varredura) e obrigatorio quando ha delta');
+      throw new Error('Tipo de divergência (faltando/varredura) é obrigatório quando ha delta');
     }
     // Fiel ao legado (NotaFiscalController.php:307): so aceita "recebido < NF".
     // Excedente nao e tratado — operador deveria registrar a entrada normal e
     // depois lancar uma entrada manual da diferenca.
     if (deltaKg > 0) {
-      throw new Error('Quantidade recebida nao pode ser maior que a quantidade da NF');
+      throw new Error('Quantidade recebida não pode ser maior que a quantidade da NF');
     }
     return processarRecebimentoComDivergencia({
       input,
@@ -404,7 +404,7 @@ export async function processarRecebimento(
       valorUnitarioAcxe: calcularValorUnitarioAcxe(omieData.vNF, qtdNfKg),
       valorUnitarioQ2p: calcularValorUnitarioQ2p(omieData.vNF, qtdNfKg),
       notaFiscal: input.nf,
-      observacaoSufixo: 'sem divergencias',
+      observacaoSufixo: 'sem divergências',
     });
     idACXE = dualRes.idACXE;
     idQ2P = dualRes.idQ2P;
@@ -585,7 +585,7 @@ async function processarRecebimentoComDivergencia(args: {
     loteCodigo: resultado.loteCodigo,
     produto: correlacao.descricao,
     quantidadeKg: qtdFisicaKg,
-    detalhes: `Divergencia ${tipoDivergencia} de ${Math.abs(deltaKg).toFixed(3)} kg — ${input.observacoes ?? ''}`,
+    detalhes: `Divergência ${tipoDivergencia} de ${Math.abs(deltaKg).toFixed(3)} kg — ${input.observacoes ?? ''}`,
   });
 
   return {
@@ -674,7 +674,7 @@ export async function executarAjusteOmieDual(args: {
   } catch (err) {
     logger.error(
       { nf: args.notaFiscal, opId: args.opId, idACXE, err },
-      'ALERTA: ajuste ACXE sucesso mas Q2P falhou. Persistira movimentacao parcial.',
+      'ALERTA: ajuste ACXE sucesso mas Q2P falhou. Persistirá movimentação parcial.',
     );
     throw new OmieAjusteError('q2p', err, {
       idACXE,

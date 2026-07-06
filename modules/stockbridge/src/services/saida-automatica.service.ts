@@ -90,7 +90,7 @@ export async function processarSaidaAutomatica(
     )
     .limit(1);
   if (existente) {
-    logger.info({ nf: input.nf }, 'Saida automatica ja processada — idempotente');
+    logger.info({ nf: input.nf }, 'Saída automática já processada — idempotente');
     return {
       movimentacaoId: existente.id,
       subtipo: TIPO_OMIE_PARA_SUBTIPO[input.tipoOmie],
@@ -131,7 +131,7 @@ export async function processarSaidaAutomatica(
         idMovestQ2p: input.cnpjEmissor === 'q2p' ? input.idMovestOmie : null,
         idAjusteQ2p: input.cnpjEmissor === 'q2p' ? input.idAjusteOmie ?? null : null,
         observacoes: debitoCruzado
-          ? `Debito cruzado: NF emitida por ${input.cnpjEmissor.toUpperCase()} mas estoque fisico em ${cnpjFisico!.toUpperCase()}`
+          ? `Débito cruzado: NF emitida por ${input.cnpjEmissor.toUpperCase()} mas estoque físico em ${cnpjFisico!.toUpperCase()}`
           : null,
       })
       .returning();
@@ -145,7 +145,7 @@ export async function processarSaidaAutomatica(
           tipo: 'cruzada',
           quantidadeDeltaKg: String(quantidadeKg),
           status: 'aberta',
-          observacoes: `Emissor: ${input.cnpjEmissor}; fisico: ${cnpjFisico} — aguarda NF de transferencia de regularizacao`,
+          observacoes: `Emissor: ${input.cnpjEmissor}; físico: ${cnpjFisico} — aguarda NF de transferência de regularização`,
         })
         .returning();
       divergenciaId = divCriada!.id;
@@ -167,7 +167,7 @@ export async function processarSaidaAutomatica(
 
   logger.info(
     { nf: input.nf, tipoMov, subtipo, debitoCruzado, movimentacaoId: resultado.movimentacaoId },
-    'Saida automatica processada',
+    'Saída automática processada',
   );
 
   return {

@@ -21,14 +21,14 @@ const LIMITE_TENTATIVAS_OPERADOR_Q2P = 2;
 
 export class OperacaoPendenteNaoEncontradaError extends Error {
   constructor(public readonly id: string) {
-    super(`Movimentacao ${id} nao encontrada ou ja concluida`);
+    super(`Movimentação ${id} não encontrada ou já concluída`);
     this.name = 'OperacaoPendenteNaoEncontradaError';
   }
 }
 
 export class OperacaoNaoPendenteError extends Error {
   constructor(public readonly id: string, public readonly statusOmie: string) {
-    super(`Movimentacao ${id} esta com status_omie='${statusOmie}' — nao requer retry`);
+    super(`Movimentação ${id} está com status_omie='${statusOmie}' — não requer retry`);
     this.name = 'OperacaoNaoPendenteError';
   }
 }
@@ -36,7 +36,7 @@ export class OperacaoNaoPendenteError extends Error {
 export class OperadorSemRetentativasError extends Error {
   constructor(public readonly id: string, public readonly tentativasFeitas: number) {
     super(
-      `Operador ja esgotou as ${tentativasFeitas} tentativas de retry. ` +
+      `Operador já esgotou as ${tentativasFeitas} tentativas de retry. ` +
         'Acione um gestor/diretor para continuar.',
     );
     this.name = 'OperadorSemRetentativasError';
@@ -144,7 +144,7 @@ export async function marcarComoFalhaDefinitiva(input: MarcarFalhaInput): Promis
     throw new OperadorSemRetentativasError(input.movimentacaoId, -1);
   }
   if (!input.motivo || input.motivo.trim().length === 0) {
-    throw new Error('Motivo obrigatorio para marcar operacao como falha');
+    throw new Error('Motivo obrigatório para marcar operação como falha');
   }
   const db = getDb();
   const [mov] = await db
@@ -172,7 +172,7 @@ export async function marcarComoFalhaDefinitiva(input: MarcarFalhaInput): Promis
 
   logger.info(
     { movimentacaoId: input.movimentacaoId, ator: input.ator, motivo: input.motivo },
-    'Movimentacao marcada como falha definitiva',
+    'Movimentação marcada como falha definitiva',
   );
 
   return { id: input.movimentacaoId };
@@ -253,12 +253,12 @@ async function retentarQ2p(args: {
 }): Promise<RetentarResult> {
   const db = getDb();
   if (!args.mov.loteId) {
-    throw new Error(`Movimentacao ${args.mov.id} sem loteId — nao e possivel retentar`);
+    throw new Error(`Movimentação ${args.mov.id} sem loteId — não é possível retentar`);
   }
   const [loteRow] = await db.select().from(lote).where(eq(lote.id, args.mov.loteId)).limit(1);
-  if (!loteRow) throw new Error(`Lote ${args.mov.loteId} nao encontrado`);
+  if (!loteRow) throw new Error(`Lote ${args.mov.loteId} não encontrado`);
   if (!loteRow.localidadeId) {
-    throw new Error(`Lote ${loteRow.codigo} sem localidade — nao e possivel retentar Q2P`);
+    throw new Error(`Lote ${loteRow.codigo} sem localidade — não é possível retentar Q2P`);
   }
   const [corr] = await db
     .select()
@@ -273,7 +273,7 @@ async function retentarQ2p(args: {
   }
   if (!loteRow.valorTotalNfBrl || !loteRow.quantidadeFiscalKg) {
     throw new Error(
-      `Lote ${loteRow.codigo} sem dados de NF persistidos — nao e possivel calcular valor unitario Q2P`,
+      `Lote ${loteRow.codigo} sem dados de NF persistidos — não é possível calcular valor unitario Q2P`,
     );
   }
 
@@ -322,7 +322,7 @@ async function retentarQ2p(args: {
         ator: args.ator,
         jaExistia: res.jaExistia,
       },
-      'Operacao pendente Q2P concluida via retry',
+      'Operação pendente Q2P concluída via retry',
     );
 
     return {
@@ -366,10 +366,10 @@ async function retentarAcxeFaltando(args: {
 }): Promise<RetentarResult> {
   const db = getDb();
   if (!args.mov.loteId) {
-    throw new Error(`Movimentacao ${args.mov.id} sem loteId — nao e possivel retentar`);
+    throw new Error(`Movimentação ${args.mov.id} sem loteId — não é possível retentar`);
   }
   const [loteRow] = await db.select().from(lote).where(eq(lote.id, args.mov.loteId)).limit(1);
-  if (!loteRow) throw new Error(`Lote ${args.mov.loteId} nao encontrado`);
+  if (!loteRow) throw new Error(`Lote ${args.mov.loteId} não encontrado`);
   if (
     !loteRow.codigoLocalEstoqueOrigemAcxe ||
     !loteRow.notaFiscal ||
@@ -396,7 +396,7 @@ async function retentarAcxeFaltando(args: {
     .limit(1);
   if (!apr || !apr.tipoDivergencia || (apr.tipoDivergencia !== 'faltando' && apr.tipoDivergencia !== 'varredura')) {
     throw new Error(
-      `Aprovacao do lote ${loteRow.codigo} nao indica tipoDivergencia faltando/varredura — nao e possivel retentar`,
+      `Aprovação do lote ${loteRow.codigo} não indica tipoDivergencia faltando/varredura — não é possível retentar`,
     );
   }
 
@@ -404,7 +404,7 @@ async function retentarAcxeFaltando(args: {
   const qtdNfKg = Number(loteRow.quantidadeFiscalKg);
   const qtdDiferencaKg = Number(new Decimal(qtdNfKg).minus(qtdAprovadaKg).toFixed(3));
   if (qtdDiferencaKg <= 0) {
-    throw new Error(`Lote ${loteRow.codigo} sem diferenca a transferir`);
+    throw new Error(`Lote ${loteRow.codigo} sem diferença a transferir`);
   }
   const vNF = Number(loteRow.valorTotalNfBrl);
   const valorUnitAcxe = calcularValorUnitarioAcxe(vNF, qtdNfKg);
@@ -451,7 +451,7 @@ async function retentarAcxeFaltando(args: {
         qtdDiferencaKg,
         tipoDivergencia: apr.tipoDivergencia,
       },
-      'Operacao pendente acxe-faltando concluida via retry',
+      'Operação pendente acxe-faltando concluída via retry',
     );
 
     return {

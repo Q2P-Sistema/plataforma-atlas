@@ -335,8 +335,8 @@ describe('processarRecebimento — recebimento limpo notifica operador + Comex',
 
     const sendEmailMock = vi.mocked(core.sendEmail);
     const destinos = sendEmailMock.mock.calls.map((c) => (c[0] as { to: string; subject: string }));
-    // Todos os emails desse fluxo sao "Recebimento concluido"
-    expect(destinos.every((d) => d.subject.includes('Recebimento concluido'))).toBe(true);
+    // Todos os emails desse fluxo sao "Recebimento concluído"
+    expect(destinos.every((d) => /Recebimento conclu[íi]do/.test(d.subject))).toBe(true);
     const tos = destinos.map((d) => d.to);
     expect(tos).toContain('operador@acxe.local');
     expect(tos).toContain('comex_acxe@acxe-polimeros.com.br');

@@ -39,7 +39,7 @@ export async function incluirAjusteIdempotente(
     if (existente) {
       logger.info(
         { cnpj, codIntAjuste, idMovest: existente.idMovest, idAjuste: existente.idAjuste },
-        'Ajuste ja existia no OMIE — pulando IncluirAjusteEstoque (idempotente)',
+        'Ajuste já existia no OMIE — pulando IncluirAjusteEstoque (idempotente)',
       );
       return {
         idMovest: existente.idMovest,

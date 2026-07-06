@@ -16,7 +16,7 @@ export class CorrelacaoNaoEncontradaError extends Error {
     public readonly codigoLocalEstoqueAcxe: number,
   ) {
     super(
-      `Produto ACXE ${codigoProdutoAcxe} nao tem correlato na Q2P (match por descricao). ` +
+      `Produto ACXE ${codigoProdutoAcxe} não tem correlato na Q2P (match por descrição). ` +
         `Local de estoque destino: ${codigoLocalEstoqueAcxe}.`,
     );
     this.name = 'CorrelacaoNaoEncontradaError';
@@ -62,7 +62,7 @@ export async function getCorrelacao(
   if (result.rows.length === 0) {
     logger.warn(
       { codigoProdutoAcxe, codigoLocalEstoqueAcxe },
-      'Correlacao ACXE→Q2P nao encontrada',
+      'Correlação ACXE→Q2P não encontrada',
     );
     throw new CorrelacaoNaoEncontradaError(codigoProdutoAcxe, codigoLocalEstoqueAcxe);
   }

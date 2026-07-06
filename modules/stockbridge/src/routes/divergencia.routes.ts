@@ -36,7 +36,7 @@ router.get('/api/v1/stockbridge/divergencias', requireGestor, async (req: Reques
     });
     res.json({ data, error: null });
   } catch (err) {
-    logger.error({ err }, 'Erro ao listar divergencias');
+    logger.error({ err }, 'Erro ao listar divergências');
     res.status(500).json({
       data: null,
       error: { code: 'DIVERGENCIAS_FAIL', message: (err as Error).message },

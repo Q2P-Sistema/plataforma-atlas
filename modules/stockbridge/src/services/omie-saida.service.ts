@@ -12,7 +12,7 @@ const CODIGO_TROCA_Q2P = '90.0.1';
 
 export class CorrelacaoOmieAusenteError extends Error {
   constructor(public readonly contexto: string) {
-    super(`Correlacao OMIE ausente: ${contexto}`);
+    super(`Correlação OMIE ausente: ${contexto}`);
     this.name = 'CorrelacaoOmieAusenteError';
   }
 }
@@ -55,7 +55,7 @@ export async function resolverCorrelacaoCompletaGalpao(
   const row = result.rows[0];
   if (!row || (!row.acxe && !row.q2p)) {
     throw new CorrelacaoOmieAusenteError(
-      `galpao=${galpao} sem correlacao OMIE em stockbridge.localidade_correlacao`,
+      `galpao=${galpao} sem correlação OMIE em stockbridge.localidade_correlacao`,
     );
   }
   return { acxe: row.acxe, q2p: row.q2p };
@@ -74,7 +74,7 @@ export async function resolverCodigoLocalEstoque(
   const codigo = empresa === 'acxe' ? correlacao.acxe : correlacao.q2p;
   if (!codigo) {
     throw new CorrelacaoOmieAusenteError(
-      `galpao=${galpao} empresa=${empresa} — sem correlacao OMIE`,
+      `galpao=${galpao} empresa=${empresa} — sem correlação OMIE`,
     );
   }
   return codigo;
@@ -105,7 +105,7 @@ export async function resolverCodigoProdutoOmie(
   const codigo = result.rows[0]?.codigo_q2p;
   if (!codigo) {
     throw new CorrelacaoOmieAusenteError(
-      `produto ACXE ${codigoAcxe} nao tem correlato Q2P (match por descricao em tbl_produtos_Q2P)`,
+      `produto ACXE ${codigoAcxe} não tem correlato Q2P (match por descrição em tbl_produtos_Q2P)`,
     );
   }
   return Number(codigo);
@@ -213,7 +213,7 @@ export async function executarSaidaOmieDual(
         // ACXE ja foi — registra pendencia pra retry
         logger.error(
           { err, acxeRes, opId: ctx.opId },
-          'OMIE Q2P falhou apos ACXE ok — pendencia recuperavel',
+          'OMIE Q2P falhou após ACXE ok — pendência recuperavel',
         );
         pendenciaQ2p = { mensagem: (err as Error).message ?? 'erro Q2P desconhecido' };
       } else {
@@ -376,7 +376,7 @@ export async function executarComodatoOmieDual(
 
   if (!acxeRes && !q2pRes) {
     throw new CorrelacaoOmieAusenteError(
-      `comodato: galpao=${ctx.galpao} e/ou TROCA sem correlacao OMIE — nada foi feito`,
+      `comodato: galpão=${ctx.galpao} e/ou TROCA sem correlação OMIE — nada foi feito`,
     );
   }
 
@@ -498,7 +498,7 @@ export async function executarRetornoComodatoOmieDual(args: {
   }
 
   if (!acxe && !q2p) {
-    throw new CorrelacaoOmieAusenteError(`retorno comodato: nem ACXE nem Q2P tinham correlacao TROCA+destino`);
+    throw new CorrelacaoOmieAusenteError(`retorno comodato: nem ACXE nem Q2P tinham correlação TROCA+destino`);
   }
 
   return { acxe, q2p, pendenciaQ2p };

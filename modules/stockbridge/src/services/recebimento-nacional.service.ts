@@ -10,14 +10,14 @@ const logger = createLogger('stockbridge:recebimento-nacional');
 
 export class LocalidadeNaoElegivelError extends Error {
   constructor(public readonly localidadeId: string, motivo: string) {
-    super(`Localidade ${localidadeId} nao elegivel para recebimento nacional: ${motivo}`);
+    super(`Localidade ${localidadeId} não elegivel para recebimento nacional: ${motivo}`);
     this.name = 'LocalidadeNaoElegivelError';
   }
 }
 
 export class ProdutoNaoEncontradoError extends Error {
   constructor(public readonly codigoProdutoAcxe: number) {
-    super(`Produto ${codigoProdutoAcxe} nao encontrado em tbl_produtos_ACXE`);
+    super(`Produto ${codigoProdutoAcxe} não encontrado em tbl_produtos_ACXE`);
     this.name = 'ProdutoNaoEncontradoError';
   }
 }
@@ -220,7 +220,7 @@ export async function processarRecebimentoNacional(
   input: ProcessarRecebimentoNacionalInput,
 ): Promise<ProcessarRecebimentoNacionalResult> {
   if (!input.notaFiscal || input.notaFiscal.trim().length === 0) {
-    throw new Error('Numero da NF eh obrigatorio');
+    throw new Error('Número da NF é obrigatório');
   }
   if (!input.itens || input.itens.length === 0) {
     throw new Error('Recebimento precisa de pelo menos 1 item');
@@ -230,7 +230,7 @@ export async function processarRecebimentoNacional(
   for (const it of input.itens) {
     const codigoProduto = it.empresa === 'acxe' ? it.produtoCodigoAcxe : it.produtoCodigoQ2p;
     if (!Number.isFinite(codigoProduto) || (codigoProduto ?? 0) <= 0) {
-      throw new Error(`Item invalido: codigo de produto deve ser numero positivo para empresa ${it.empresa}`);
+      throw new Error(`Item inválido: código de produto deve ser número positivo para empresa ${it.empresa}`);
     }
     if (!Number.isFinite(it.quantidade) || it.quantidade <= 0) {
       throw new Error(`Item (${it.empresa} cod ${codigoProduto}): quantidade deve ser positiva`);
@@ -251,13 +251,13 @@ export async function processarRecebimentoNacional(
       if (!loc) {
         throw new LocalidadeNaoElegivelError(
           it.localidadeId,
-          'nao encontrada ou e espelhada (ACXE+Q2P) — nacional nao aceita espelhados',
+          'não encontrada ou e espelhada (ACXE+Q2P) — nacional não aceita espelhados',
         );
       }
       if (loc.empresa !== it.empresa) {
         throw new LocalidadeNaoElegivelError(
           it.localidadeId,
-          `empresa do item (${it.empresa}) nao bate com empresa da localidade (${loc.empresa})`,
+          `empresa do item (${it.empresa}) não bate com empresa da localidade (${loc.empresa})`,
         );
       }
       const codigoProduto = it.empresa === 'acxe' ? it.produtoCodigoAcxe! : it.produtoCodigoQ2p!;
@@ -281,7 +281,7 @@ export async function processarRecebimentoNacional(
       const obsItem = [
         `Recebimento nacional NF ${nfNorm}`,
         `Produto: ${prod.descricao} (${codigoProduto})`,
-        `Empresa: ${it.empresa.toUpperCase()} · Galpao OMIE ${loc.codigoLocalEstoqueOmie}`,
+        `Empresa: ${it.empresa.toUpperCase()} · Galpão OMIE ${loc.codigoLocalEstoqueOmie}`,
         obsBase ? `Obs: ${obsBase}` : null,
       ]
         .filter(Boolean)
@@ -356,7 +356,7 @@ export async function processarRecebimentoNacional(
 
   logger.info(
     { nf: nfNorm, qtdItens: itensProcessados.length, userId: input.userId },
-    'Recebimento nacional registrado, aguarda aprovacao gestor',
+    'Recebimento nacional registrado, aguarda aprovação gestor',
   );
 
   return {
