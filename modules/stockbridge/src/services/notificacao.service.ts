@@ -4,7 +4,9 @@ import { eq, inArray, and, isNull } from 'drizzle-orm';
 
 const logger = createLogger('stockbridge:notificacao');
 
-const ADMIN_FALLBACK_EMAIL = 'admin@atlas.local';
+// Fallback ENTREGÁVEL (EML-08) — antes era 'admin@atlas.local', não-entregável,
+// então o alerta simplesmente sumia. Só usado se as envs não estiverem setadas.
+const ADMIN_FALLBACK_EMAIL = 'flavio.endo@acxe-polimeros.com.br';
 const COMEX_FALLBACK_EMAIL = 'comex_acxe@acxe-polimeros.com.br';
 
 /**
@@ -41,6 +43,20 @@ function fmtKg(kg: number): string {
 function getAdminEmail(): string {
   const config = getConfig();
   return config.SEED_ADMIN_EMAIL ?? ADMIN_FALLBACK_EMAIL;
+}
+
+/**
+ * Caixa operacional dos alertas de exceção do StockBridge (EML-08). Destino
+ * canônico (To) dos 4 alertas ops; o admin entra em CC via alertaOpsCc().
+ */
+function getOpsEmail(): string {
+  return getConfig().STOCKBRIDGE_OPS_EMAIL ?? ADMIN_FALLBACK_EMAIL;
+}
+
+/** Admin em CC dos alertas ops, se configurado e diferente do To. */
+function alertaOpsCc(to: string): string | undefined {
+  const admin = getConfig().SEED_ADMIN_EMAIL;
+  return admin && admin.toLowerCase() !== to.toLowerCase() ? admin : undefined;
 }
 
 /** Caixa de Comex da ACXE — copiada em todo recebimento concluido com sucesso. */
@@ -103,7 +119,7 @@ export async function enviarAlertaProdutoSemCorrelato(args: {
   notaFiscal: string;
   descricaoProduto: string;
 }): Promise<void> {
-  const to = getAdminEmail();
+  const to = getOpsEmail();
   const subject = `StockBridge — Produto sem correlato Q2P (NF ${args.notaFiscal})`;
   const corpoHtml = `
     <p>Durante o recebimento da <strong>NF ${escapeHtml(args.notaFiscal)}</strong>, o produto abaixo não possui correlato cadastrado na Q2P (correspondência por descrição textual).</p>
@@ -124,7 +140,7 @@ export async function enviarAlertaProdutoSemCorrelato(args: {
     corpoHtml,
   });
   try {
-    await sendEmail({ to, subject, html, text });
+    await sendEmail({ to, cc: alertaOpsCc(to), subject, html, text });
   } catch (err) {
     logger.error({ err, args }, 'Falha ao enviar email de alerta produto sem correlato');
   }
@@ -141,7 +157,7 @@ export async function enviarAlertaNfIndeterminada(args: {
   cnpj: 'acxe' | 'q2p';
   motivo: string;
 }): Promise<void> {
-  const to = getAdminEmail();
+  const to = getOpsEmail();
   const subject = `StockBridge — NF ${args.nf} recebida com dado indeterminado (${args.cnpj.toUpperCase()})`;
   const corpoHtml = `
     <p>O recebimento da <strong>NF ${escapeHtml(args.nf)}</strong> (${args.cnpj.toUpperCase()}) foi <strong>liberado</strong>, mas o sistema não conseguiu determinar com segurança um dos sinais da NF no OMIE.</p>
@@ -158,7 +174,7 @@ export async function enviarAlertaNfIndeterminada(args: {
     corpoHtml,
   });
   try {
-    await sendEmail({ to, subject, html, text });
+    await sendEmail({ to, cc: alertaOpsCc(to), subject, html, text });
   } catch (err) {
     logger.error({ err, args }, 'Falha ao enviar email de alerta de NF indeterminada');
   }
@@ -176,7 +192,7 @@ export async function enviarAlertaDebitoCruzado(args: {
   quantidadeKg: number;
   movimentacaoId: string;
 }): Promise<void> {
-  const to = getAdminEmail();
+  const to = getOpsEmail();
   const subject = `StockBridge — Débito cruzado (NF ${args.notaFiscal})`;
   const corpoHtml = `
     <p>Uma NF de saída gerou <strong>divergência cruzada</strong> entre o CNPJ emissor e o CNPJ onde está o estoque físico.</p>
@@ -192,7 +208,7 @@ export async function enviarAlertaDebitoCruzado(args: {
   `;
   const { html, text } = buildEmailLayout({ titulo: 'Débito cruzado detectado', variante: 'alerta', corpoHtml });
   try {
-    await sendEmail({ to, subject, html, text });
+    await sendEmail({ to, cc: alertaOpsCc(to), subject, html, text });
   } catch (err) {
     logger.error({ err, args }, 'Falha ao enviar email de debito cruzado');
   }
@@ -256,7 +272,7 @@ export async function enviarAlertaPendenciaOmie(args: {
   mensagemErro: string;
   tentativas: number;
 }): Promise<void> {
-  const to = getAdminEmail();
+  const to = getOpsEmail();
   const config = getConfig();
   const linkPainel = `${config.APP_URL}/stockbridge/operacoes-pendentes`;
   const ladoLabel = args.ladoPendente === 'q2p' ? 'OMIE Q2P' : 'OMIE ACXE (transferência da diferença)';
@@ -279,7 +295,7 @@ export async function enviarAlertaPendenciaOmie(args: {
     ctaUrl: linkPainel,
   });
   try {
-    await sendEmail({ to, subject, html, text });
+    await sendEmail({ to, cc: alertaOpsCc(to), subject, html, text });
   } catch (err) {
     logger.error({ err, args }, 'Falha ao enviar email de pendencia OMIE');
   }
@@ -409,12 +425,12 @@ export async function enviarNotificacaoRecebimentoConcluido(args: {
   fornecedor: string | null;
   localidade: string;
 }): Promise<void> {
-  const [emailOperador, gestores] = await Promise.all([
-    resolverEmailOperador(args.operadorUserId),
-    resolverEmailsAprovadores('gestor'),
-  ]);
+  // EML-14: confirmação de recebimento LIMPO vai só para o operador que lançou +
+  // caixa do Comex. Antes notificava TODOS os gestores a cada NF limpa (ruído —
+  // os gestores acompanham pelo Cockpit/aprovações).
+  const emailOperador = await resolverEmailOperador(args.operadorUserId);
   const destinatarios = [
-    ...new Set([emailOperador, ...gestores, getComexEmail()].filter((e): e is string => !!e)),
+    ...new Set([emailOperador, getComexEmail()].filter((e): e is string => !!e)),
   ];
   if (destinatarios.length === 0) {
     logger.warn({ notaFiscal: args.notaFiscal }, 'Nenhum destinatario para confirmacao de recebimento');
