@@ -17,6 +17,8 @@ vi.mock('@atlas/core', () => ({
   getPool: () => ({ query: vi.fn().mockResolvedValue({ rows: [{ count: '1' }] }) }),
   getConfig: () => ({ SEED_ADMIN_EMAIL: 'admin@atlas.local' }),
   sendEmail: vi.fn().mockResolvedValue(undefined),
+  buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
+  escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
 }));
 
 vi.mock('@atlas/auth', () => ({
@@ -123,6 +125,8 @@ describe('POST /api/v1/stockbridge/recebimento — erro estruturado OMIE (US2)',
       getPool: () => ({ query: vi.fn().mockResolvedValue({ rows: [{ count: '1' }] }) }),
       getConfig: () => ({ SEED_ADMIN_EMAIL: 'admin@atlas.local' }),
       sendEmail: vi.fn().mockResolvedValue(undefined),
+      buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
+      escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
     }));
 
     vi.doMock('@atlas/auth', () => ({

@@ -13,6 +13,8 @@ vi.mock('@atlas/core', () => ({
   getConfig: () => ({ SEED_ADMIN_EMAIL: 'admin@atlas.local' }),
   getDb: vi.fn(),
   sendEmail: vi.fn().mockResolvedValue(undefined),
+  buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
+  escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
 }));
 
 vi.mock('@atlas/db', () => ({
