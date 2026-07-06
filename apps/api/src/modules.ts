@@ -10,14 +10,17 @@ export interface ModuleInfo {
   path: string;
 }
 
+// Ordem = ordem de exibicao na sidebar: modulos habilitados primeiro, "em
+// breve" (sem frontend/flag off) ao fim (UI-C, ACXEGDP-263). Nomes devem
+// espelhar apps/web/src/lib/modules.ts.
 const MODULE_DEFINITIONS: Omit<ModuleInfo, 'enabled'>[] = [
   { id: 'hedge', name: 'Hedge Engine', path: '/hedge' },
   { id: 'stockbridge', name: 'StockBridge', path: '/stockbridge' },
   { id: 'breakingpoint', name: 'Breaking Point', path: '/breakingpoint' },
+  { id: 'forecast', name: 'Forecast', path: '/forecast' },
   { id: 'clevel', name: 'C-Level', path: '/clevel' },
   { id: 'comexinsight', name: 'ComexInsight', path: '/comexinsight' },
   { id: 'comexflow', name: 'ComexFlow', path: '/comexflow' },
-  { id: 'forecast', name: 'Forecast', path: '/forecast' },
 ];
 
 export function getModules(): ModuleInfo[] {
