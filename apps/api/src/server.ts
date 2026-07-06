@@ -30,12 +30,16 @@ registerModuleRoutes(app);
 app.use(globalErrorHandler);
 
 // Start
-app.listen(config.API_PORT, async () => {
+app.listen(config.API_PORT, () => {
   logger.info(
     { port: config.API_PORT, env: config.NODE_ENV },
     'Atlas API started',
   );
-  await seedAdmin();
+  // MOD-24: callback não-async + .catch. Como async, uma rejeição do seedAdmin
+  // virava unhandledRejection (o app.listen não trata a promise devolvida).
+  seedAdmin().catch((err) => {
+    logger.error({ err }, 'Falha ao semear admin no boot');
+  });
 });
 
 export default app;
