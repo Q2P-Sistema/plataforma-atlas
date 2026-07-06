@@ -45,12 +45,18 @@ export function ThemeToggle() {
     system: 'light',
   };
 
+  const themeLabel: Record<Theme, string> = {
+    light: 'claro',
+    dark: 'escuro',
+    system: 'sistema',
+  };
+
   return (
     <button
       onClick={() => setTheme(next[theme])}
       className="p-2 rounded-md hover:bg-atlas-border transition-colors text-sm"
-      title={`Tema: ${theme}`}
-      aria-label={`Mudar tema (atual: ${theme})`}
+      title={`Tema: ${themeLabel[theme]}`}
+      aria-label={`Mudar tema (atual: ${themeLabel[theme]})`}
     >
       {icons[theme]}
     </button>

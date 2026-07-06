@@ -88,8 +88,8 @@ const FORECAST_SUB_ITEMS: SidebarSubItem[] = [
   { id: 'forecast-rolling', name: 'Forecast 120d', path: '/forecast/rolling', icon: TrendingUp },
   { id: 'forecast-demanda', name: 'Demanda', path: '/forecast/demanda', icon: BarChart3 },
   { id: 'forecast-insights', name: 'Insights', path: '/forecast/insights', icon: Lightbulb },
-  { id: 'forecast-shopping', name: 'Shopping List', path: '/forecast/shopping', icon: ShoppingCart },
-  { id: 'forecast-config', name: 'Config', path: '/forecast/config', icon: Settings },
+  { id: 'forecast-shopping', name: 'Lista de Compras', path: '/forecast/shopping', icon: ShoppingCart },
+  { id: 'forecast-config', name: 'Configuração', path: '/forecast/config', icon: Settings },
 ];
 
 // Roles refletem requireOperador/requireGestor/requireDiretor das rotas
@@ -130,7 +130,7 @@ const HEDGE_SUB_ITEMS: SidebarSubItem[] = [
   { id: 'hedge-simulacao', name: 'Simulação', path: '/hedge/simulacao', icon: Activity },
   { id: 'hedge-estoque', name: 'Estoque', path: '/hedge/estoque', icon: Package },
   { id: 'hedge-alertas', name: 'Alertas', path: '/hedge/alertas', icon: Bell },
-  { id: 'hedge-config', name: 'Config', path: '/hedge/config', icon: Settings },
+  { id: 'hedge-config', name: 'Configuração', path: '/hedge/config', icon: Settings },
 ];
 
 const queryClient = new QueryClient({

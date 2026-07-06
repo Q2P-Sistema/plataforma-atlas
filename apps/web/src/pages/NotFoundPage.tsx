@@ -20,7 +20,7 @@ export function NotFoundPage() {
           to="/"
           className="inline-block px-6 py-2.5 rounded-lg bg-acxe text-white font-medium hover:bg-acxe/90 transition-colors"
         >
-          Voltar ao inicio
+          Voltar ao início
         </Link>
       </div>
     </div>
