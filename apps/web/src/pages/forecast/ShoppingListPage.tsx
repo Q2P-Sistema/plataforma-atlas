@@ -126,7 +126,7 @@ export function ShoppingListPage() {
             {aiMutation.isPending ? 'Analisando...' : 'Analisar com IA'}
           </button>
           <button onClick={copyToClipboard}
-            className="px-4 py-2 rounded-lg bg-q2p text-white text-xs font-medium hover:bg-[#158a3b] transition-colors">
+            className="px-4 py-2 rounded-lg bg-q2p text-white text-xs font-medium hover:bg-q2p-dark transition-colors">
             Copiar para Executor
           </button>
         </div>

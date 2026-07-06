@@ -23,10 +23,15 @@ const config: Config = {
           'btn-text': 'var(--atlas-btn-text)',
         },
         acxe: '#0077cc',
-        q2p: '#1a9944',
+        // DEFAULT preserva bg-q2p etc.; dark é o hover que vivia como hex cru
+        // hover:bg-[#158a3b] espalhado (UI-B).
+        q2p: { DEFAULT: '#1a9944', dark: '#158a3b' },
         warn: '#d97706',
         crit: '#dc2626',
         ndf: '#7c3aed',
+        // Existia em packages/ui/tokens/colors.ts mas nunca foi exposto aqui,
+        // forcando hex cru #059669 nos modulos (UI-B).
+        success: '#059669',
       },
       fontFamily: {
         sans: ['DM Sans', 'system-ui', 'sans-serif'],

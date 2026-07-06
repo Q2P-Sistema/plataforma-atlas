@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, type ChangeEvent } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
-import { DataTable, type Column } from '@atlas/ui';
+import { DataTable, type Column, chartColors } from '@atlas/ui';
 import { useAuthStore } from '../../stores/auth.store.js';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -168,14 +168,14 @@ export function MotorMVPage() {
           <div className="grid grid-cols-3 gap-3 mb-5">
             <div className="bg-atlas-bg border border-atlas-border rounded-lg p-3">
               <p className="text-xs tracking-[2px] text-atlas-muted uppercase mb-1">Cobertura Global</p>
-              <p className="text-2xl font-bold" style={{ color: result.cobertura_global_pct >= 60 ? '#059669' : result.cobertura_global_pct >= 40 ? '#d97706' : '#dc2626' }}>
+              <p className="text-2xl font-bold" style={{ color: result.cobertura_global_pct >= 60 ? chartColors.success : result.cobertura_global_pct >= 40 ? chartColors.warn : chartColors.crit }}>
                 {fmtPct(result.cobertura_global_pct)}
               </p>
               <p className="text-xs text-atlas-muted mt-1">% da exposição total coberta</p>
             </div>
             <div className="bg-atlas-bg border border-atlas-border rounded-lg p-3">
               <p className="text-xs tracking-[2px] text-atlas-muted uppercase mb-1">Gap Total USD</p>
-              <p className="text-2xl font-bold" style={{ color: result.gap_total_usd > 0 ? '#dc2626' : '#059669' }}>
+              <p className="text-2xl font-bold" style={{ color: result.gap_total_usd > 0 ? chartColors.crit : chartColors.success }}>
                 {fmtM(Math.abs(result.gap_total_usd))}
               </p>
               <p className="text-xs text-atlas-muted mt-1">Exposição residual descoberta</p>
@@ -224,11 +224,11 @@ export function MotorMVPage() {
         {/* 3 Layers */}
         {result && (
           <div className="grid grid-cols-3 gap-3 mb-5">
-            <LayerCard num="01" name="Automático" pct={result.camadas.l1_pct} color="#059669"
+            <LayerCard num="01" name="Automático" pct={result.camadas.l1_pct} color={chartColors.success}
               desc="Contratado automaticamente ao consolidar o bucket." />
-            <LayerCard num="02" name="Tático" pct={result.camadas.l2_pct} color="#7c3aed"
+            <LayerCard num="02" name="Tático" pct={result.camadas.l2_pct} color={chartColors.ndf}
               desc="Decisão semanal — spot vs. média 30d e tendência." />
-            <LayerCard num="03" name="Aberto" pct={result.camadas.l3_pct} color="#d97706"
+            <LayerCard num="03" name="Aberto" pct={result.camadas.l3_pct} color={chartColors.warn}
               desc="Exposição intencional — captura ganho se câmbio cair." />
           </div>
         )}
@@ -254,8 +254,8 @@ export function MotorMVPage() {
               <YAxis tick={{ fontSize: 9 }} />
               <Tooltip />
               <Legend />
-              <Line type="monotone" dataKey="custo" name="Custo hedge (R$K)" stroke="#d97706" strokeWidth={2} dot={{ r: 3 }} />
-              <Line type="monotone" dataKey="protecao" name="Proteção (R$K)" stroke="#059669" strokeWidth={2} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="custo" name="Custo hedge (R$K)" stroke={chartColors.warn} strokeWidth={2} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="protecao" name="Proteção (R$K)" stroke={chartColors.success} strokeWidth={2} dot={{ r: 3 }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -268,8 +268,8 @@ export function MotorMVPage() {
               <YAxis tick={{ fontSize: 9 }} tickFormatter={(v: number) => `${v}%`} />
               <Tooltip formatter={(v) => fmtPct(Number(v), 2)} />
               <Legend />
-              <Line type="monotone" dataKey="sem_hedge" name="Sem hedge" stroke="#dc2626" strokeWidth={1.5} strokeDasharray="3 2" dot={false} />
-              <Line type="monotone" dataKey="com_hedge" name={`Modelo MV (${l1}/${l2}/${100 - l1 - l2})`} stroke="#059669" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="sem_hedge" name="Sem hedge" stroke={chartColors.crit} strokeWidth={1.5} strokeDasharray="3 2" dot={false} />
+              <Line type="monotone" dataKey="com_hedge" name={`Modelo MV (${l1}/${l2}/${100 - l1 - l2})`} stroke={chartColors.success} strokeWidth={2} dot={false} />
               <Line type="monotone" dataKey="floor" name="Piso 15%" stroke="rgba(220,38,38,0.3)" strokeWidth={1} strokeDasharray="2 4" dot={false} />
             </LineChart>
           </ResponsiveContainer>

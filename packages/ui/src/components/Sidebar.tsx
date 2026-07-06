@@ -187,10 +187,10 @@ export function Sidebar({
                                     title={b.title}
                                     className={`inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[10px] font-bold text-white rounded-full ${
                                       b.color === 'emerald'
-                                        ? 'bg-emerald-600'
+                                        ? 'bg-success'
                                         : b.color === 'amber'
-                                          ? 'bg-amber-500'
-                                          : 'bg-red-600'
+                                          ? 'bg-warn'
+                                          : 'bg-crit'
                                     }`}
                                   >
                                     {b.count > 99 ? '99+' : b.count}
@@ -198,7 +198,7 @@ export function Sidebar({
                                 ))}
                             </span>
                           ) : sub.badge != null && sub.badge > 0 ? (
-                            <span className="ml-auto inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[10px] font-bold text-white bg-red-600 rounded-full">
+                            <span className="ml-auto inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[10px] font-bold text-white bg-crit rounded-full">
                               {sub.badge > 99 ? '99+' : sub.badge}
                             </span>
                           ) : null}

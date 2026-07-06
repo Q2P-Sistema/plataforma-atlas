@@ -1,6 +1,6 @@
 import { useState, type ChangeEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { DataTable, type Column } from '@atlas/ui';
+import { DataTable, type Column, chartColors } from '@atlas/ui';
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -129,9 +129,9 @@ export function PositionDashboard() {
 
   // Donut: NDF Contratado vs Exp. Tatica vs Exp. Intencional
   const donutData = [
-    { name: 'NDF Contratado', value: kpis.ndf_ativo_usd, color: '#7c3aed' },
-    { name: 'Exp. Tática', value: Math.max(0, kpis.gap_usd * 0.4), color: '#d97706' },
-    { name: 'Exp. Intencional', value: Math.max(0, kpis.gap_usd * 0.6), color: '#dc2626' },
+    { name: 'NDF Contratado', value: kpis.ndf_ativo_usd, color: chartColors.ndf },
+    { name: 'Exp. Tática', value: Math.max(0, kpis.gap_usd * 0.4), color: chartColors.warn },
+    { name: 'Exp. Intencional', value: Math.max(0, kpis.gap_usd * 0.6), color: chartColors.crit },
   ];
 
   // Bar: exposure vs NDF per bucket
@@ -145,7 +145,7 @@ export function PositionDashboard() {
   const ptaxAtual = ptaxData?.atual;
   const ptaxSubiu = (ptaxAtual?.variacao_pct ?? 0) > 0;
   const ptaxNeutro = (ptaxAtual?.variacao_pct ?? 0) === 0;
-  const ptaxColor = ptaxNeutro ? '#6b7280' : ptaxSubiu ? '#dc2626' : '#059669';
+  const ptaxColor = ptaxNeutro ? '#6b7280' : ptaxSubiu ? chartColors.crit : chartColors.success;
   const ptaxArrow = ptaxNeutro ? '' : ptaxSubiu ? '▲' : '▼';
   const ptaxVarStr = ptaxAtual ? `${ptaxArrow} ${fmtNum(Math.abs(ptaxAtual.variacao_pct), 2)}%` : '';
 
@@ -186,7 +186,7 @@ export function PositionDashboard() {
       key: 'gap' as any, header: 'Líquido',
       render: (r) => {
         const liq = r.exposicao_usd - r.ndf_usd;
-        return <span style={{ color: liq > 500000 ? '#dc2626' : '#059669' }}>{fmtK(liq)}</span>;
+        return <span style={{ color: liq > 500000 ? chartColors.crit : chartColors.success }}>{fmtK(liq)}</span>;
       },
     },
     {
@@ -220,11 +220,11 @@ export function PositionDashboard() {
 
       {/* KPI Strip */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-        <KpiCard label="Exposição USD Total" value={fmtM(kpis.exposicao_usd_total)} color="#0077cc" src="acxe" sub="Títulos a pagar em aberto" />
-        <KpiCard label="Receita USD Projetada" value={fmtM(kpis.recebiveis_usd)} color="#1a9944" src="q2p" sub="Contas a receber 90d" />
-        <KpiCard label="Estoque não pago" value={fmtPct(kpis.pct_nao_pago)} color="#d97706" src="calc" sub={`R$ ${fmtNum(kpis.est_importado_brl / 1e6, 1)}M importado`} />
-        <KpiCard label="Cobertura NDF Ativa" value={fmtM(kpis.ndf_ativo_usd)} color="#7c3aed" src="manual" sub={fmtPct(kpis.cobertura_pct) + ' da exposição'} />
-        <KpiCard label="Exposição Líquida" value={fmtM(kpis.gap_usd)} color="#1a9944" src="calc" sub="Residual descoberto" />
+        <KpiCard label="Exposição USD Total" value={fmtM(kpis.exposicao_usd_total)} color={chartColors.acxe} src="acxe" sub="Títulos a pagar em aberto" />
+        <KpiCard label="Receita USD Projetada" value={fmtM(kpis.recebiveis_usd)} color={chartColors.q2p} src="q2p" sub="Contas a receber 90d" />
+        <KpiCard label="Estoque não pago" value={fmtPct(kpis.pct_nao_pago)} color={chartColors.warn} src="calc" sub={`R$ ${fmtNum(kpis.est_importado_brl / 1e6, 1)}M importado`} />
+        <KpiCard label="Cobertura NDF Ativa" value={fmtM(kpis.ndf_ativo_usd)} color={chartColors.ndf} src="manual" sub={fmtPct(kpis.cobertura_pct) + ' da exposição'} />
+        <KpiCard label="Exposição Líquida" value={fmtM(kpis.gap_usd)} color={chartColors.q2p} src="calc" sub="Residual descoberto" />
       </div>
 
       {/* Main content: Bucket table + Donut */}
@@ -306,25 +306,25 @@ export function PositionDashboard() {
 
       {/* Insights */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <InsightCard border="#0077cc" color="rgba(0,119,204,0.07)">
+        <InsightCard border={chartColors.acxe} color="rgba(0,119,204,0.07)">
           <strong className="text-atlas-text">Acxe — Títulos a pagar:</strong>{' '}
           <span className="text-atlas-muted">
             {fmtM(kpis.total_pagar_usd)} em {buckets.length} buckets mensais ({fmtBrlM(kpis.total_pagar_brl)})
           </span>
         </InsightCard>
-        <InsightCard border="#1a9944" color="rgba(26,153,68,0.07)">
+        <InsightCard border={chartColors.q2p} color="rgba(26,153,68,0.07)">
           <strong className="text-atlas-text">Q2P — Receita projetada:</strong>{' '}
           <span className="text-atlas-muted">
             {fmtBrlM(kpis.recebiveis_brl)} a receber ({fmtM(kpis.recebiveis_usd)} equiv. USD)
           </span>
         </InsightCard>
-        <InsightCard border="#d97706" color="rgba(217,119,6,0.08)">
+        <InsightCard border={chartColors.warn} color="rgba(217,119,6,0.08)">
           <strong className="text-atlas-text">Estoque não pago estimado:</strong>{' '}
           <span className="text-atlas-muted">
             {fmtPct(kpis.pct_nao_pago)} do estoque importado — {fmtM(kpis.est_nao_pago_usd)} de exposição adicional
           </span>
         </InsightCard>
-        <InsightCard border="#059669" color="rgba(5,150,105,0.07)">
+        <InsightCard border={chartColors.success} color="rgba(5,150,105,0.07)">
           <strong className="text-atlas-text">Estoque total:</strong>{' '}
           <span className="text-atlas-muted">
             {fmtBrlM(kpis.total_est_brl)} — Importado {fmtBrlM(kpis.est_importado_brl)} | Trânsito {fmtBrlM(kpis.est_transito_brl)} | Nacional {fmtBrlM(kpis.est_nacional_brl)}

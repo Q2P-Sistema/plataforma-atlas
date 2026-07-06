@@ -5,6 +5,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
 import { fmtNum, fmtPct, fmtBRL } from '../../lib/format.js';
+import { chartColors } from '@atlas/ui';
 
 interface Cenario {
   cambio: number;
@@ -77,7 +78,7 @@ export function MarginSimulationPage() {
       </div>
 
       <button onClick={() => simMutation.mutate()} disabled={simMutation.isPending}
-        className="px-5 py-2 rounded bg-q2p text-white text-xs font-mono tracking-wider hover:bg-[#158a3b] disabled:opacity-50 transition-colors">
+        className="px-5 py-2 rounded bg-q2p text-white text-xs font-mono tracking-wider hover:bg-q2p-dark disabled:opacity-50 transition-colors">
         {simMutation.isPending ? 'Calculando...' : 'Simular 13 cenários'}
       </button>
 
@@ -93,8 +94,8 @@ export function MarginSimulationPage() {
                 <YAxis tick={{ fontSize: 9 }} tickFormatter={(v: number) => `${v}%`} />
                 <Tooltip formatter={(v) => fmtPct(Number(v), 2)} />
                 <Legend />
-                <Line type="monotone" dataKey="sem_hedge" name="Sem hedge" stroke="#dc2626" strokeWidth={1.5} strokeDasharray="3 2" dot={false} />
-                <Line type="monotone" dataKey="com_hedge" name="Com NDF" stroke="#059669" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="sem_hedge" name="Sem hedge" stroke={chartColors.crit} strokeWidth={1.5} strokeDasharray="3 2" dot={false} />
+                <Line type="monotone" dataKey="com_hedge" name="Com NDF" stroke={chartColors.success} strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="floor" name="Piso 15%" stroke="rgba(220,38,38,0.3)" strokeWidth={1} strokeDasharray="2 4" dot={false} />
               </LineChart>
             </ResponsiveContainer>

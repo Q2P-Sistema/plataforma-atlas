@@ -12,6 +12,7 @@ import {
   LineChart,
 } from 'recharts';
 import { Countdown } from './components/Countdown.js';
+import { bpChartColors } from '@atlas/ui';
 
 interface BreakingPoint { semana: number; data: string; val: number }
 interface TravaEvent { semana: number; data: string }
@@ -158,11 +159,11 @@ export function BPDashboardPage() {
   const alarmColor =
     bp.break_total
       ? bp.break_total.semana <= 4
-        ? '#B83228'
+        ? bpChartColors.vermelho
         : bp.break_total.semana <= 8
-          ? '#CF6437'
-          : '#A85A08'
-      : '#2A7A4A';
+          ? bpChartColors.laranja
+          : bpChartColors.ocre
+      : bpChartColors.verde;
 
   return (
     <div className="p-6 max-w-[1440px] mx-auto">
@@ -216,12 +217,12 @@ export function BPDashboardPage() {
 
       {/* KPIs */}
       <div className="grid grid-cols-6 gap-2 mb-5">
-        <KpiCard label="Saldo CC" value={fmtMi(kpis.saldo_cc)} color="#2A7A4A" icon="💰" />
-        <KpiCard label="Estoque → D+15" value={fmtMi(kpis.estoque_valor_venda)} color="#0C6E8A" icon="📦" />
-        <KpiCard label="Cap. Antecip." value={fmtMi(kpis.antecip_disp)} color="#CF6437" icon="📄" />
-        <KpiCard label="FINIMP Devedor" value={fmtMi(kpis.finimp_usado)} color="#A85A08" icon="🏛" />
-        <KpiCard label="Dup. Bloqueadas" value={fmtMi(kpis.dup_bloq)} color="#7236CC" icon="🔒" />
-        <KpiCard label="🛒 Cap. Compras" value={fmtMi(kpis.cap_compra_atual)} color="#B05A8A" icon="🛒" />
+        <KpiCard label="Saldo CC" value={fmtMi(kpis.saldo_cc)} color={bpChartColors.verde} icon="💰" />
+        <KpiCard label="Estoque → D+15" value={fmtMi(kpis.estoque_valor_venda)} color={bpChartColors.azul} icon="📦" />
+        <KpiCard label="Cap. Antecip." value={fmtMi(kpis.antecip_disp)} color={bpChartColors.laranja} icon="📄" />
+        <KpiCard label="FINIMP Devedor" value={fmtMi(kpis.finimp_usado)} color={bpChartColors.ocre} icon="🏛" />
+        <KpiCard label="Dup. Bloqueadas" value={fmtMi(kpis.dup_bloq)} color={bpChartColors.violeta} icon="🔒" />
+        <KpiCard label="🛒 Cap. Compras" value={fmtMi(kpis.cap_compra_atual)} color={bpChartColors.magenta} icon="🛒" />
       </div>
 
       {/* Gráfico principal */}
@@ -244,23 +245,23 @@ export function BPDashboardPage() {
           <ComposedChart data={semanas} margin={{ top: 10, right: 10, left: 5, bottom: 0 }}>
             <defs>
               <linearGradient id="gLiq" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#2A7A4A" stopOpacity={0.22} />
-                <stop offset="95%" stopColor="#2A7A4A" stopOpacity={0} />
+                <stop offset="5%" stopColor={bpChartColors.verde} stopOpacity={0.22} />
+                <stop offset="95%" stopColor={bpChartColors.verde} stopOpacity={0} />
               </linearGradient>
               <linearGradient id="gCC" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#0C6E8A" stopOpacity={0.18} />
-                <stop offset="95%" stopColor="#0C6E8A" stopOpacity={0} />
+                <stop offset="5%" stopColor={bpChartColors.azul} stopOpacity={0.18} />
+                <stop offset="95%" stopColor={bpChartColors.azul} stopOpacity={0} />
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" vertical={false} />
             <XAxis dataKey="label" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} interval={1} />
             <YAxis tick={{ fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={fmtAxis} width={60} />
             <Tooltip content={<CustomTooltip semanas={semanas} />} />
-            <Area type="monotone" dataKey="liquidez_total" stroke="#2A7A4A" strokeWidth={2} fill="url(#gLiq)" />
-            <Area type="monotone" dataKey="saldo_cc" stroke="#0C6E8A" strokeWidth={2} fill="url(#gCC)" />
-            <Line type="monotone" dataKey="antecip_disp" stroke="#CF6437" strokeWidth={2} strokeDasharray="5 3" dot={false} />
-            <Line type="monotone" dataKey="cap_compra" stroke="#B05A8A" strokeWidth={2} strokeDasharray="5 3" dot={false} />
-            <Bar dataKey="pagamento" fill="#B83228" opacity={0.7} />
+            <Area type="monotone" dataKey="liquidez_total" stroke={bpChartColors.verde} strokeWidth={2} fill="url(#gLiq)" />
+            <Area type="monotone" dataKey="saldo_cc" stroke={bpChartColors.azul} strokeWidth={2} fill="url(#gCC)" />
+            <Line type="monotone" dataKey="antecip_disp" stroke={bpChartColors.laranja} strokeWidth={2} strokeDasharray="5 3" dot={false} />
+            <Line type="monotone" dataKey="cap_compra" stroke={bpChartColors.magenta} strokeWidth={2} strokeDasharray="5 3" dot={false} />
+            <Bar dataKey="pagamento" fill={bpChartColors.vermelho} opacity={0.7} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -274,8 +275,8 @@ export function BPDashboardPage() {
             <XAxis dataKey="label" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} interval={1} />
             <YAxis tick={{ fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={fmtAxis} width={60} />
             <Tooltip formatter={(v: unknown) => fmtMi(Number(v))} />
-            <Line type="monotone" name="Saldo FINIMP" dataKey="finimp_saldo" stroke="#A85A08" strokeWidth={2} dot={false} />
-            <Line type="monotone" name="Dup. Bloqueadas" dataKey="dup_bloq" stroke="#7236CC" strokeWidth={2} dot={false} />
+            <Line type="monotone" name="Saldo FINIMP" dataKey="finimp_saldo" stroke={bpChartColors.ocre} strokeWidth={2} dot={false} />
+            <Line type="monotone" name="Dup. Bloqueadas" dataKey="dup_bloq" stroke={bpChartColors.violeta} strokeWidth={2} dot={false} />
           </LineChart>
         </ResponsiveContainer>
       </div>

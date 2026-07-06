@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { bpChartColors } from '@atlas/ui';
 
 interface Banco {
   id: string;
@@ -39,7 +40,7 @@ function Bar({ limite, usado, corHex }: { limite: number; usado: number; corHex:
         className="h-full rounded transition-all"
         style={{
           width: `${pct}%`,
-          backgroundColor: critical ? '#B83228' : corHex,
+          backgroundColor: critical ? bpChartColors.vermelho : corHex,
         }}
       />
     </div>

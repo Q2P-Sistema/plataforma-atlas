@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { chartColors } from '@atlas/ui';
 import {
   LineChart,
   Line,
@@ -16,7 +17,7 @@ import { cmcParams, type CmcUiFiltros } from './filtros.js';
 import type { CmcTendenciaResponse } from './types.js';
 
 // Paleta (tokens do projeto) para as linhas da série.
-const CORES = ['#0077cc', '#1a9944', '#d97706', '#7c3aed', '#dc2626', '#059669', '#2196f3', '#db2777'];
+const CORES = [chartColors.acxe, chartColors.q2p, chartColors.warn, chartColors.ndf, chartColors.crit, chartColors.success, '#2196f3', '#db2777'];
 
 /**
  * Aba "Tendência histórica" (US2): evolução diária do CMC ponderado no período.

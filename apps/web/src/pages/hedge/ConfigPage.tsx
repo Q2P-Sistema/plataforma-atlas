@@ -2,12 +2,13 @@ import { useState, type ChangeEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../../stores/auth.store.js';
 import { fmtBRL } from '../../lib/format.js';
+import { chartColors } from '@atlas/ui';
 
 interface ConfigRow { chave: string; valor: any; descricao: string | null; }
 
 const PARAM_GROUPS: { title: string; src: string; srcColor: string; params: { key: string; label: string; desc: string; unit: string; step: number; min?: number; max?: number }[] }[] = [
   {
-    title: 'Operacional', src: 'OMIE Q2P + Manual', srcColor: '#1a9944',
+    title: 'Operacional', src: 'OMIE Q2P + Manual', srcColor: chartColors.q2p,
     params: [
       { key: 'faturamento_mensal', label: 'Faturamento mensal', desc: 'Base de cálculo do ciclo', unit: 'R$M', step: 0.5 },
       { key: 'pct_custo_importado', label: '% Custo importado', desc: 'Proporção do custo em USD', unit: '%', step: 1, min: 0, max: 100 },
@@ -17,7 +18,7 @@ const PARAM_GROUPS: { title: string; src: string; srcColor: string; params: { ke
     ],
   },
   {
-    title: 'Motor de Hedge', src: 'MOTOR MV', srcColor: '#059669',
+    title: 'Motor de Hedge', src: 'MOTOR MV', srcColor: chartColors.success,
     params: [
       { key: 'lambda_default', label: 'Lambda — Aversão ao risco', desc: '0 = minimiza custo - 1 = max. proteção', unit: '', step: 0.05, min: 0, max: 1 },
       { key: 'camada1_minima', label: 'Camada 1 mínima', desc: 'Hedge automático mínimo por bucket', unit: '%', step: 5, min: 30, max: 90 },
@@ -205,7 +206,7 @@ export function ConfigPage() {
                 className="w-full px-3 py-2 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-xs focus:outline-none focus:ring-1 focus:ring-acxe" />
             </div>
             <button onClick={() => taxaMut.mutate()} disabled={!taxaForm.data_ref || !taxaForm.taxa || taxaMut.isPending}
-              className="w-full px-4 py-2 rounded bg-q2p text-white text-xs font-medium hover:bg-[#158a3b] disabled:opacity-50 transition-colors">
+              className="w-full px-4 py-2 rounded bg-q2p text-white text-xs font-medium hover:bg-q2p-dark disabled:opacity-50 transition-colors">
               {taxaMut.isPending ? 'Salvando...' : 'Inserir Taxa'}
             </button>
           </div>
@@ -214,10 +215,10 @@ export function ConfigPage() {
 
       {/* Info insights */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="rounded-r p-3 text-xs leading-relaxed text-atlas-muted" style={{ borderLeft: '2px solid #0077cc', backgroundColor: 'rgba(0,119,204,0.07)' }}>
+        <div className="rounded-r p-3 text-xs leading-relaxed text-atlas-muted" style={{ borderLeft: `2px solid ${chartColors.acxe}`, backgroundColor: 'rgba(0,119,204,0.07)' }}>
           <strong className="text-atlas-text">Sincronização automática:</strong> BD VPS Acxe e Q2P sincronizam diariamente via n8n. PTAX BCB disponível via API pública — atualização a cada 15 min em dias úteis.
         </div>
-        <div className="rounded-r p-3 text-xs leading-relaxed text-atlas-muted" style={{ borderLeft: '2px solid #059669', backgroundColor: 'rgba(5,150,105,0.07)' }}>
+        <div className="rounded-r p-3 text-xs leading-relaxed text-atlas-muted" style={{ borderLeft: `2px solid ${chartColors.success}`, backgroundColor: 'rgba(5,150,105,0.07)' }}>
           <strong className="text-atlas-text">Taxa NDF:</strong> Inserida manualmente — frequência recomendada: toda segunda-feira. Cotações obtidas com o banco parceiro.
         </div>
       </div>
