@@ -30,7 +30,10 @@ interface ItemForm {
   localidadeId: string;
   quantidade: string; // input controlado
   unidade: Unidade;
-  valorTotalBrl: string; // valor total do item na NF em R$
+  // Peso do rateio (ACXEGDP-178): não é o custo final do item, só a referência
+  // (R$/kg) usada para distribuir o valor total da NF proporcionalmente entre
+  // os itens — peso = valorUnitarioReferenciaBrl × quantidadeKg.
+  valorUnitarioReferenciaBrl: string;
 }
 
 function novoItem(): ItemForm {
@@ -42,7 +45,7 @@ function novoItem(): ItemForm {
     localidadeId: '',
     quantidade: '',
     unidade: 'kg',
-    valorTotalBrl: '',
+    valorUnitarioReferenciaBrl: '',
   };
 }
 
@@ -77,6 +80,7 @@ export function RecebimentoNacionalForm() {
   const apiFetch = useApiFetch();
   const queryClient = useQueryClient();
   const [nf, setNf] = useState('');
+  const [valorTotalNfBrl, setValorTotalNfBrl] = useState('');
   const [observacoes, setObservacoes] = useState('');
   const [itens, setItens] = useState<ItemForm[]>(() => [novoItem()]);
   const [erroEnvio, setErroEnvio] = useState<string | null>(null);
@@ -94,6 +98,7 @@ export function RecebimentoNacionalForm() {
     mutationFn: async () => {
       const payload = {
         nf: nf.trim(),
+        valor_total_nf_brl: Number(valorTotalNfBrl.replace(',', '.')),
         observacoes: observacoes.trim() || undefined,
         itens: itens.map((it) => ({
           produto_codigo_acxe: it.empresa === 'acxe' ? it.produtoCodigo : null,
@@ -102,7 +107,7 @@ export function RecebimentoNacionalForm() {
           localidade_id: it.localidadeId,
           quantidade: Number(it.quantidade.replace(',', '.')),
           unidade: it.unidade,
-          valor_total_nf_brl: Number(it.valorTotalBrl.replace(',', '.')),
+          valor_unitario_referencia_brl: Number(it.valorUnitarioReferenciaBrl.replace(',', '.')),
         })),
       };
       return apiFetch('/api/v1/stockbridge/recebimento/nacional', {
@@ -119,6 +124,7 @@ export function RecebimentoNacionalForm() {
       );
       setErroEnvio(null);
       setNf('');
+      setValorTotalNfBrl('');
       setObservacoes('');
       setItens([novoItem()]);
       queryClient.invalidateQueries({ queryKey: ['stockbridge'] });
@@ -137,6 +143,11 @@ export function RecebimentoNacionalForm() {
       setErroEnvio('Informe o número da NF.');
       return;
     }
+    const valorTotal = Number(valorTotalNfBrl.replace(',', '.'));
+    if (!Number.isFinite(valorTotal) || valorTotal <= 0) {
+      setErroEnvio('Informe o valor total da NF (> 0).');
+      return;
+    }
     for (const it of itens) {
       if (it.produtoCodigo == null) {
         setErroEnvio('Selecione o produto em todos os itens.');
@@ -151,9 +162,9 @@ export function RecebimentoNacionalForm() {
         setErroEnvio('Informe quantidade válida (> 0) em todos os itens.');
         return;
       }
-      const v = Number(it.valorTotalBrl.replace(',', '.'));
+      const v = Number(it.valorUnitarioReferenciaBrl.replace(',', '.'));
       if (!Number.isFinite(v) || v <= 0) {
-        setErroEnvio('Informe o valor total da NF (> 0) em todos os itens.');
+        setErroEnvio('Informe o valor unitário de referência (> 0) em todos os itens.');
         return;
       }
     }
@@ -166,9 +177,20 @@ export function RecebimentoNacionalForm() {
     return soma + q * FATOR_KG[it.unidade];
   }, 0);
 
+  // Peso do rateio (ACXEGDP-178) por item = valor unitário de referência × Kg.
+  // Espelha o cálculo do backend só para dar feedback visual antes do envio.
+  const pesos = itens.map((it) => {
+    const q = Number(it.quantidade.replace(',', '.'));
+    const v = Number(it.valorUnitarioReferenciaBrl.replace(',', '.'));
+    const qKg = Number.isFinite(q) && q > 0 ? q * FATOR_KG[it.unidade] : 0;
+    return Number.isFinite(v) && v > 0 ? v * qKg : 0;
+  });
+  const somaPesos = pesos.reduce((acc, p) => acc + p, 0);
+  const valorTotalNum = Number(valorTotalNfBrl.replace(',', '.'));
+
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-4 bg-atlas-card border border-atlas-border rounded-lg">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 p-4 bg-atlas-card border border-atlas-border rounded-lg">
         <div className="md:col-span-1">
           <label className="block text-xs font-medium text-atlas-muted mb-1">
             Número da NF <span className="text-red-500">*</span>
@@ -182,6 +204,25 @@ export function RecebimentoNacionalForm() {
           />
           <p className="text-[11px] text-atlas-muted mt-1">
             Vai pra observação do ajuste OMIE — não consultamos a NF, só registramos a referência.
+          </p>
+        </div>
+        <div className="md:col-span-1">
+          <label className="block text-xs font-medium text-atlas-muted mb-1">
+            Valor total da NF <span className="text-red-500">*</span>
+          </label>
+          <div className="relative">
+            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-atlas-muted">R$</span>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={valorTotalNfBrl}
+              onChange={(e) => setValorTotalNfBrl(e.target.value)}
+              placeholder="0,00"
+              className="w-full pl-7 pr-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm outline-none focus:ring-2 focus:ring-atlas-accent"
+            />
+          </div>
+          <p className="text-[11px] text-atlas-muted mt-1">
+            Com impostos — rateado entre os itens pelo peso (valor unitário × Kg).
           </p>
         </div>
         <div className="md:col-span-2">
@@ -206,6 +247,11 @@ export function RecebimentoNacionalForm() {
             podeRemover={itens.length > 1}
             onMudar={(patch) => atualizarItem(it.uid, patch)}
             onRemover={() => removerItem(it.uid)}
+            valorRateadoBrl={
+              somaPesos > 0 && Number.isFinite(valorTotalNum) && valorTotalNum > 0
+                ? (valorTotalNum * pesos[idx]!) / somaPesos
+                : null
+            }
           />
         ))}
       </div>
@@ -253,9 +299,11 @@ interface ItemRowProps {
   podeRemover: boolean;
   onMudar: (patch: Partial<ItemForm>) => void;
   onRemover: () => void;
+  /** Fatia estimada do valor total da NF que cabe a este item (preview do rateio). */
+  valorRateadoBrl: number | null;
 }
 
-function ItemRow({ indice, valor, podeRemover, onMudar, onRemover }: ItemRowProps) {
+function ItemRow({ indice, valor, podeRemover, onMudar, onRemover, valorRateadoBrl }: ItemRowProps) {
   const apiFetch = useApiFetch();
 
   const { data: localidades = [] } = useQuery<Localidade[]>({
@@ -368,32 +416,24 @@ function ItemRow({ indice, valor, podeRemover, onMudar, onRemover }: ItemRowProp
 
         <div className="md:col-span-2">
           <label className="block text-xs font-medium text-atlas-muted mb-1">
-            Valor total NF <span className="text-red-500">*</span>
+            Valor unitário de referência <span className="text-red-500">*</span>
           </label>
           <div className="relative">
-            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-atlas-muted">R$</span>
+            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-atlas-muted">R$/kg</span>
             <input
               type="text"
               inputMode="decimal"
-              value={valor.valorTotalBrl}
-              onChange={(e) => onMudar({ valorTotalBrl: e.target.value })}
-              placeholder="0,00"
-              className="w-full pl-7 pr-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm outline-none focus:ring-2 focus:ring-atlas-accent"
+              value={valor.valorUnitarioReferenciaBrl}
+              onChange={(e) => onMudar({ valorUnitarioReferenciaBrl: e.target.value })}
+              placeholder="0,0000"
+              className="w-full pl-12 pr-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm outline-none focus:ring-2 focus:ring-atlas-accent"
             />
           </div>
-          {(() => {
-            const qtd = Number(valor.quantidade.replace(',', '.'));
-            const val = Number(valor.valorTotalBrl.replace(',', '.'));
-            const qtdKg = Number.isFinite(qtd) && qtd > 0 ? qtd * FATOR_KG[valor.unidade] : 0;
-            if (qtdKg > 0 && Number.isFinite(val) && val > 0) {
-              return (
-                <p className="text-[11px] text-atlas-muted mt-1">
-                  = R$ {(val / qtdKg).toLocaleString('pt-BR', { minimumFractionDigits: 4, maximumFractionDigits: 4 })}/kg
-                </p>
-              );
-            }
-            return null;
-          })()}
+          <p className="text-[11px] text-atlas-muted mt-1">
+            {valorRateadoBrl != null
+              ? <>Rateio estimado: <span className="font-medium text-atlas-ink">R$ {valorRateadoBrl.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></>
+              : 'Peso do rateio do valor total da NF — não é o custo final.'}
+          </p>
         </div>
       </div>
     </div>
