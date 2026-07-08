@@ -62,7 +62,7 @@ function SourceBadge({ src }: { src: 'acxe' | 'q2p' | 'bcb' | 'calc' | 'manual' 
     manual: 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20',
   };
   return (
-    <span className={`inline-flex text-xs px-1.5 py-0.5 rounded border font-semibold tracking-wider uppercase ${styles[src]}`}>
+    <span className={`inline-flex shrink-0 text-xs px-1.5 py-0.5 rounded border font-semibold tracking-wider uppercase ${styles[src]}`}>
       {src}
     </span>
   );
@@ -72,8 +72,8 @@ function KpiCard({ label, value, color, src, sub }: { label: string; value: stri
   return (
     <div className="bg-atlas-card border border-atlas-border rounded-lg p-4 relative overflow-hidden">
       <div className="absolute top-0 left-0 right-0 h-0.5" style={{ backgroundColor: color }} />
-      <div className="flex items-center gap-2 mb-2">
-        <p className="text-xs text-atlas-muted uppercase tracking-wider">{label}</p>
+      <div className="flex items-center gap-2 mb-2 min-w-0">
+        <p className="text-xs text-atlas-muted uppercase tracking-wider truncate" title={label}>{label}</p>
         <SourceBadge src={src} />
       </div>
       <p className="text-xl font-bold" style={{ color }}>{value}</p>
