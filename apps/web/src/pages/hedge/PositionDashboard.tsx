@@ -33,6 +33,7 @@ interface Kpis {
   recebiveis_usd: number;
   importacoes_pendentes_usd: number;
   exposicao_usd_total: number;
+  variacao_30d_pct: number;
 }
 
 interface Bucket {
@@ -117,8 +118,8 @@ export function PositionDashboard() {
     return (
       <div className="space-y-5">
         <div className="h-8 w-56 bg-atlas-border rounded animate-pulse" />
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-          {Array.from({ length: 5 }, (_, i) => <div key={i} className="h-20 rounded-lg bg-atlas-border animate-pulse" />)}
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          {Array.from({ length: 6 }, (_, i) => <div key={i} className="h-20 rounded-lg bg-atlas-border animate-pulse" />)}
         </div>
         <div className="h-64 rounded-lg bg-atlas-border animate-pulse" />
       </div>
@@ -148,6 +149,14 @@ export function PositionDashboard() {
   const ptaxColor = ptaxNeutro ? '#6b7280' : ptaxSubiu ? chartColors.crit : chartColors.success;
   const ptaxArrow = ptaxNeutro ? '' : ptaxSubiu ? '▲' : '▼';
   const ptaxVarStr = ptaxAtual ? `${ptaxArrow} ${fmtNum(Math.abs(ptaxAtual.variacao_pct), 2)}%` : '';
+
+  // Variação 30d do dólar (mesma semântica da PTAX: subida = câmbio mais caro = risco).
+  const var30 = kpis.variacao_30d_pct ?? 0;
+  const var30Subiu = var30 > 0;
+  const var30Neutro = var30 === 0;
+  const var30Color = var30Neutro ? '#6b7280' : var30Subiu ? chartColors.crit : chartColors.success;
+  const var30Arrow = var30Neutro ? '' : var30Subiu ? '▲' : '▼';
+  const var30Str = `${var30Arrow} ${fmtNum(Math.abs(var30), 2)}%`.trim();
 
   const MESES_PT = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
   const ptaxMiniData = (() => {
@@ -219,12 +228,13 @@ export function PositionDashboard() {
       </div>
 
       {/* KPI Strip */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <KpiCard label="Exposição USD Total" value={fmtM(kpis.exposicao_usd_total)} color={chartColors.acxe} src="acxe" sub="Títulos a pagar em aberto" />
         <KpiCard label="Receita USD Projetada" value={fmtM(kpis.recebiveis_usd)} color={chartColors.q2p} src="q2p" sub="Contas a receber 90d" />
         <KpiCard label="Estoque não pago" value={fmtPct(kpis.pct_nao_pago)} color={chartColors.warn} src="calc" sub={`R$ ${fmtNum(kpis.est_importado_brl / 1e6, 1)}M importado`} />
         <KpiCard label="Cobertura NDF Ativa" value={fmtM(kpis.ndf_ativo_usd)} color={chartColors.ndf} src="manual" sub={fmtPct(kpis.cobertura_pct) + ' da exposição'} />
         <KpiCard label="Exposição Líquida" value={fmtM(kpis.gap_usd)} color={chartColors.q2p} src="calc" sub="Residual descoberto" />
+        <KpiCard label="Variação 30d (USD)" value={var30Str} color={var30Color} src="bcb" sub="Dólar vs. 30 dias atrás" />
       </div>
 
       {/* Main content: Bucket table + Donut */}
