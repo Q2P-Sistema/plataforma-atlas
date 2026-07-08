@@ -282,6 +282,23 @@ function ProtectedShell() {
     },
   });
 
+  // Gestor/diretor sem 2FA configurado precisa ir para o setup.
+  const precisa2faSetup =
+    !!user &&
+    (user.role === 'gestor' || user.role === 'diretor') &&
+    !user.totp_enabled &&
+    location.pathname !== '/2fa/setup';
+
+  // navigate() precisa rodar num efeito, não durante o render — chamá-lo direto no
+  // corpo do componente (como antes) dispara o warning do React Router "You should
+  // call navigate() in a React.useEffect()" e pode causar navegação/estado
+  // inconsistente entre renders concorrentes.
+  useEffect(() => {
+    if (precisa2faSetup) {
+      navigate('/2fa/setup', { replace: true });
+    }
+  }, [precisa2faSetup, navigate]);
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-atlas-bg">
@@ -294,13 +311,7 @@ function ProtectedShell() {
     return null; // useAuth will redirect
   }
 
-  // Redirect gestor/diretor without 2FA to setup
-  if (
-    (user.role === 'gestor' || user.role === 'diretor') &&
-    !user.totp_enabled &&
-    location.pathname !== '/2fa/setup'
-  ) {
-    navigate('/2fa/setup', { replace: true });
+  if (precisa2faSetup) {
     return null;
   }
 
