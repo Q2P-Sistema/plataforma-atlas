@@ -240,15 +240,42 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
       ) src
       GROUP BY produto_codigo_acxe
     ),
+    transito_recebido_filhotes AS (
+      -- Kg das filhotes JA RECEBIDAS de cada pedido/produto com mapa ativo (mesmo
+      -- criterio de "recebida" da Parte A de fiscal_pend_importacao). Usado para
+      -- descontar do "Transito p/ Galpao" (estagio transito_local) o volume que ja
+      -- virou saldo fisico (Disponivel) — sem isto, o recebimento parcial de um
+      -- pedido contava 2x: em Disponivel E em Transito p/ Galpao (ACXEGDP-183,
+      -- item de Fase 2 registrado so em comentario do Jira ate esta correcao).
+      SELECT mapa.pedido_acxe_omie, i.n_cod_prod AS produto_codigo_acxe,
+             SUM(i.q_com)::numeric AS recebido_kg
+      FROM stockbridge.nf_pedido_mapa mapa
+      JOIN stockbridge.nf_pedido_filhote f ON f.mapa_id = mapa.id AND f.ativo = true
+      JOIN public."tbl_nf_header_ACXE" h ON h.n_nf = LPAD(f.nf_filhote, 8, '0')
+      JOIN public."tbl_nf_itens_ACXE" i ON i.n_id_nf = h.n_id_nf
+      WHERE mapa.ativo = true
+        ${nfValida}
+        AND (
+          h.n_id_receb > 0
+          OR ${recebidaViaMovimentacaoSql("LPAD(f.nf_filhote, 8, '0')")}
+          OR ${recebidaViaLegadoSql("LPAD(f.nf_filhote, 8, '0')")}
+        )
+      GROUP BY mapa.pedido_acxe_omie, i.n_cod_prod
+    ),
     transito_atlas AS (
       SELECT
         l.produto_codigo_acxe,
         SUM(l.quantidade_fisica_kg) FILTER (WHERE l.estagio_transito = 'aguardando_embarque') AS aguardando_embarque_kg,
         SUM(l.quantidade_fisica_kg) FILTER (WHERE l.estagio_transito = 'transito_intl')       AS transito_intl_kg,
         SUM(l.quantidade_fisica_kg) FILTER (WHERE l.estagio_transito = 'no_porto')            AS no_porto_kg,
-        SUM(l.quantidade_fisica_kg) FILTER (WHERE l.estagio_transito = 'transito_local')      AS transito_local_kg,
+        SUM(
+          GREATEST(l.quantidade_fisica_kg - COALESCE(trf.recebido_kg, 0), 0)
+        ) FILTER (WHERE l.estagio_transito = 'transito_local')                                AS transito_local_kg,
         SUM(l.quantidade_fisica_kg) FILTER (WHERE l.estagio_transito = 'transito_interno')    AS transito_interno_kg
       FROM stockbridge.lote l
+      LEFT JOIN transito_recebido_filhotes trf
+        ON trf.pedido_acxe_omie = l.pedido_compra_acxe
+        AND trf.produto_codigo_acxe = l.produto_codigo_acxe
       WHERE l.ativo = true AND l.status = 'transito'
       GROUP BY l.produto_codigo_acxe
     ),
