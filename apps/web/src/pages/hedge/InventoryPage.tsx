@@ -53,9 +53,9 @@ function KpiCard({ label, value, color, src, sub }: { label: string; value: stri
   return (
     <div className="bg-atlas-card border border-atlas-border rounded-lg p-4 relative overflow-hidden">
       <div className="absolute top-0 left-0 right-0 h-0.5" style={{ backgroundColor: color }} />
-      <div className="flex items-center gap-2 mb-2">
-        <p className="text-xs text-atlas-muted uppercase tracking-wider">{label}</p>
-        <span className={`inline-flex text-xs px-1.5 py-0.5 rounded border font-semibold tracking-wider uppercase ${srcStyles[src] ?? srcStyles.calc}`}>
+      <div className="flex items-center gap-2 mb-2 min-w-0">
+        <p className="text-xs text-atlas-muted uppercase tracking-wider truncate" title={label}>{label}</p>
+        <span className={`inline-flex shrink-0 text-xs px-1.5 py-0.5 rounded border font-semibold tracking-wider uppercase ${srcStyles[src] ?? srcStyles.calc}`}>
           {src.toUpperCase()}
         </span>
       </div>
