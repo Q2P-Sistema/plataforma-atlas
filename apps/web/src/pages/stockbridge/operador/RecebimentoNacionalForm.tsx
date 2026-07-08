@@ -186,6 +186,9 @@ export function RecebimentoNacionalForm() {
     return Number.isFinite(v) && v > 0 ? v * qKg : 0;
   });
   const somaPesos = pesos.reduce((acc, p) => acc + p, 0);
+  // Rodapé só afirma "Distribuído" quando TODOS os itens têm peso — com item
+  // incompleto o rateio normalizado joga 100% nos preenchidos e enganaria.
+  const todosItensComPeso = pesos.every((p) => p > 0);
   const valorTotalNum = Number(valorTotalNfBrl.replace(',', '.'));
 
   return (
@@ -222,7 +225,7 @@ export function RecebimentoNacionalForm() {
             />
           </div>
           <p className="text-[11px] text-atlas-muted mt-1">
-            Com impostos — rateado entre os itens pelo peso (valor unitário × Kg).
+            Com impostos — rateado entre os itens pelo peso (valor unitário × kg).
           </p>
         </div>
         <div className="md:col-span-2">
@@ -266,6 +269,9 @@ export function RecebimentoNacionalForm() {
         </button>
         <div className="text-sm text-atlas-muted">
           Total: <span className="font-serif text-atlas-ink">{totalKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg</span>
+          {todosItensComPeso && Number.isFinite(valorTotalNum) && valorTotalNum > 0 && (
+            <> · Distribuído: <span className="font-serif text-atlas-ink">R$ {valorTotalNum.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></>
+          )}
         </div>
       </div>
 
@@ -326,14 +332,23 @@ function ItemRow({ indice, valor, podeRemover, onMudar, onRemover, valorRateadoB
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [valor.empresa, localidades]);
 
+  const qtdNum = Number(valor.quantidade.replace(',', '.'));
+  const quantidadeKg = Number.isFinite(qtdNum) && qtdNum > 0 ? qtdNum * FATOR_KG[valor.unidade] : 0;
+
   return (
     <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-xs font-medium text-atlas-muted">Item {indice + 1}</span>
+      <div className="flex items-center justify-between mb-3 pb-2 border-b border-atlas-border/60">
+        <span className="inline-flex items-center gap-2">
+          <span className="w-5 h-5 rounded-full bg-atlas-accent/10 text-blue-700 dark:text-blue-300 text-[11px] font-semibold flex items-center justify-center" aria-hidden>
+            {indice + 1}
+          </span>
+          <span className="text-xs font-medium text-atlas-muted">Item {indice + 1}</span>
+        </span>
         {podeRemover && (
           <button
             type="button"
             onClick={onRemover}
+            aria-label={`Remover item ${indice + 1}`}
             className="text-xs text-red-700 dark:text-red-400 hover:underline"
           >
             Remover
@@ -341,6 +356,7 @@ function ItemRow({ indice, valor, podeRemover, onMudar, onRemover, valorRateadoB
         )}
       </div>
 
+      {/* Linha 1 — identificação: o quê / de quem / para onde */}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
         <div className="md:col-span-2">
           <label className="block text-xs font-medium text-atlas-muted mb-1">Empresa</label>
@@ -354,8 +370,10 @@ function ItemRow({ indice, valor, podeRemover, onMudar, onRemover, valorRateadoB
           </select>
         </div>
 
-        <div className="md:col-span-4">
-          <label className="block text-xs font-medium text-atlas-muted mb-1">Produto</label>
+        <div className="md:col-span-6">
+          <label className="block text-xs font-medium text-atlas-muted mb-1">
+            Produto <span className="text-red-500">*</span>
+          </label>
           <ProdutoCombobox
             empresa={valor.empresa}
             valor={
@@ -369,8 +387,10 @@ function ItemRow({ indice, valor, podeRemover, onMudar, onRemover, valorRateadoB
           />
         </div>
 
-        <div className="md:col-span-2">
-          <label className="block text-xs font-medium text-atlas-muted mb-1">Estoque</label>
+        <div className="md:col-span-4">
+          <label className="block text-xs font-medium text-atlas-muted mb-1">
+            Estoque <span className="text-red-500">*</span>
+          </label>
           <select
             value={valor.localidadeId}
             onChange={(e) => onMudar({ localidadeId: e.target.value })}
@@ -389,9 +409,14 @@ function ItemRow({ indice, valor, podeRemover, onMudar, onRemover, valorRateadoB
             </p>
           )}
         </div>
+      </div>
 
-        <div className="md:col-span-2">
-          <label className="block text-xs font-medium text-atlas-muted mb-1">Quantidade</label>
+      {/* Linha 2 — números: quantidade / referência do rateio / valor rateado */}
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-3 mt-3">
+        <div className="md:col-span-4">
+          <label className="block text-xs font-medium text-atlas-muted mb-1">
+            Quantidade <span className="text-red-500">*</span>
+          </label>
           <div className="flex gap-1">
             <input
               type="text"
@@ -412,9 +437,14 @@ function ItemRow({ indice, valor, podeRemover, onMudar, onRemover, valorRateadoB
               <option value="bigbag">big bag</option>
             </select>
           </div>
+          {quantidadeKg > 0 && valor.unidade !== 'kg' && (
+            <p className="text-[11px] text-atlas-muted mt-1">
+              = {quantidadeKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg
+            </p>
+          )}
         </div>
 
-        <div className="md:col-span-2">
+        <div className="md:col-span-4">
           <label className="block text-xs font-medium text-atlas-muted mb-1">
             Valor unitário de referência <span className="text-red-500">*</span>
           </label>
@@ -430,9 +460,21 @@ function ItemRow({ indice, valor, podeRemover, onMudar, onRemover, valorRateadoB
             />
           </div>
           <p className="text-[11px] text-atlas-muted mt-1">
+            Peso do rateio do valor total da NF — não é o custo final.
+          </p>
+        </div>
+
+        <div className="md:col-span-4">
+          <label className="block text-xs font-medium text-atlas-muted mb-1">Valor do item (rateio)</label>
+          <div className="px-3 py-2 border border-dashed border-atlas-border bg-atlas-bg rounded text-sm text-right font-serif text-atlas-ink">
             {valorRateadoBrl != null
-              ? <>Rateio estimado: <span className="font-medium text-atlas-ink">R$ {valorRateadoBrl.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></>
-              : 'Peso do rateio do valor total da NF — não é o custo final.'}
+              ? `R$ ${valorRateadoBrl.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              : '—'}
+          </div>
+          <p className="text-[11px] text-atlas-muted mt-1 text-right">
+            {valorRateadoBrl != null && quantidadeKg > 0
+              ? `R$ ${(valorRateadoBrl / quantidadeKg).toLocaleString('pt-BR', { minimumFractionDigits: 4, maximumFractionDigits: 4 })}/kg efetivo`
+              : 'Calculado a partir do valor total da NF.'}
           </p>
         </div>
       </div>
