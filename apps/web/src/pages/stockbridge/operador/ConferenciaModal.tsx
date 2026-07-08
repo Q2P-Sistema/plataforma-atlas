@@ -47,8 +47,11 @@ function useApiFetch() {
 
 export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
   const apiFetch = useApiFetch();
-  const [qtdInput, setQtdInput] = useState(String(item.qtdOriginal));
-  const [unidadeInput, setUnidadeInput] = useState<Unidade>(item.unidade);
+  // Sempre inicia em Kg (convenção do projeto) — nunca herdar a unidade original da
+  // NF (ex.: 't'), senão um operador que edita a quantidade pensando em Kg mas não
+  // troca o seletor faz o backend multiplicar por 1000 (ACXEGDP-176).
+  const [qtdInput, setQtdInput] = useState(String(item.qtdKg));
+  const [unidadeInput, setUnidadeInput] = useState<Unidade>('kg');
   const [localidadeId, setLocalidadeId] = useState('');
   const [obs, setObs] = useState('');
   const [tipoDivergencia, setTipoDivergencia] = useState<'faltando' | 'varredura'>('faltando');
@@ -153,7 +156,9 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
             </select>
           </div>
           {qtdFisicaKg > 0 && unidadeInput !== 'kg' && (
-            <div className="text-xs text-atlas-muted mt-1">= {qtdFisicaKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg</div>
+            <div className="text-xs font-medium text-amber-700 dark:text-amber-400 mt-1">
+              Confirme a conversão: {qtdInput} {unidadeInput} = {qtdFisicaKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg
+            </div>
           )}
         </div>
 
