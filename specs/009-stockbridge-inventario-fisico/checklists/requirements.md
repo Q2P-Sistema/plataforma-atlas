@@ -13,8 +13,8 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
-- [x] Requirements are testable and unambiguous *(exceto as 3 regras intencionalmente em aberto — FR-013/014/015)*
+- [ ] No [NEEDS CLARIFICATION] markers remain *(1 residual — FR-014, referência do gatilho de recontagem)*
+- [x] Requirements are testable and unambiguous *(FR-013/012/015/016 resolvidos em 2026-07-08 — P1-P4; resta FR-014 e a granularidade do FR-011)*
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
 - [x] All acceptance scenarios are defined
@@ -24,13 +24,14 @@
 
 ## Feature Readiness
 
-- [x] All functional requirements have clear acceptance criteria *(núcleo P1/P2; os 3 FRs em debate ficam pendentes)*
+- [x] All functional requirements have clear acceptance criteria *(núcleo + P1-P4 resolvidos; resta FR-014 — referência do gatilho — e a granularidade de escopo do FR-011)*
 - [x] User scenarios cover primary flows
 - [x] Feature meets measurable outcomes defined in Success Criteria
 - [x] No implementation details leak into specification
 
 ## Notes
 
-- **3 marcadores [NEEDS CLARIFICATION] foram deixados intencionalmente** (FR-013 seleção da lista parcial, FR-014 referência da divergência de 1%, FR-015 tratamento/ajuste da divergência), por decisão explícita do usuário: *"vou debater mais as regras com vc ainda. mas vamos iniciar deste ponto"*. Estão consolidados na seção **Regras em Aberto** do spec (6 itens, incluindo 3 não-bloqueantes adicionais sobre ciclo, snapshot e recontagem persistente).
-- O **núcleo** definido pelo usuário (tipos total/parcial, geração automática da lista rotativa, exclusão de já-contados, recontagem por divergência > 1%) está completo e testável — pronto para discussão das regras pendentes.
-- **Próximo passo recomendado**: debater as Regras em Aberto e então rodar `/speckit.clarify` (ou ir direto ao `/speckit.plan` depois de fechar FR-013/014/015).
+- **Atualização 2026-07-08**: as perguntas P1-P4 do Jira (ACXEGDP-150) foram respondidas, resolvendo o threshold de recontagem (0,1%, antes 1%), a seleção/priorização da lista parcial (FR-013), o tratamento pós-apuração (FR-012/015 — ajuste sob aprovação, ambos os tipos) e a contagem dupla no geral (FR-016, novo). Ver seção **Regras em Aberto** do spec (dividida em "Resolvidas" e "Ainda em aberto", 6 itens residuais).
+- **1 marcador [NEEDS CLARIFICATION] permanece intencionalmente** (FR-014 — qual referência, sistema/fiscal/maior, dispara a recontagem; é independente do threshold já decidido).
+- O **núcleo** definido pelo usuário (tipos total/parcial, geração automática da lista rotativa, exclusão de já-contados, recontagem por divergência > 0,1%) está completo e testável.
+- **Próximo passo recomendado**: rodar `/speckit.clarify` nos itens residuais (FR-014, ciclo, snapshot, recontagem persistente, tolerância da contagem dupla, granularidade do escopo) e então `/speckit.plan`.
