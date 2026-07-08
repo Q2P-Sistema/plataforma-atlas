@@ -88,7 +88,9 @@ const ItemSchema = z
     localidade_id: z.string().uuid(),
     quantidade: z.number().positive(),
     unidade: z.enum(['t', 'kg', 'saco', 'bigbag']),
-    valor_total_nf_brl: z.number().positive(),
+    // Peso do rateio (ACXEGDP-178) — não é o custo final do item, só a referência
+    // usada para distribuir valor_total_nf_brl proporcionalmente entre os itens.
+    valor_unitario_referencia_brl: z.number().positive(),
   })
   .refine(
     (d) =>
@@ -99,6 +101,9 @@ const ItemSchema = z
 
 const BodySchema = z.object({
   nf: z.string().min(1).max(50),
+  // Valor total da NF (com impostos), informado uma única vez no cabeçalho e
+  // rateado entre os itens pelo peso (valor unitário de referência × Kg).
+  valor_total_nf_brl: z.number().positive(),
   observacoes: z.string().optional(),
   itens: z.array(ItemSchema).min(1),
 });
@@ -129,6 +134,7 @@ router.post(
     try {
       const result = await processarRecebimentoNacional({
         notaFiscal: parsed.data.nf,
+        valorTotalNfBrl: parsed.data.valor_total_nf_brl,
         observacoes: parsed.data.observacoes ?? null,
         itens: parsed.data.itens.map((it) => ({
           produtoCodigoAcxe: it.produto_codigo_acxe ?? null,
@@ -137,7 +143,7 @@ router.post(
           localidadeId: it.localidade_id,
           quantidade: it.quantidade,
           unidade: it.unidade,
-          valorTotalNfBrl: it.valor_total_nf_brl,
+          valorUnitarioReferenciaBrl: it.valor_unitario_referencia_brl,
         })),
         userId,
       });

@@ -174,13 +174,18 @@ export interface ItemRecebimentoNacionalInput {
   /** Quantidade na unidade informada. Convertida para Kg internamente. */
   quantidade: number;
   unidade: UnidadeMedida;
-  /** Valor total do item na NF em BRL — usado para calcular custo unitario por kg. */
-  valorTotalNfBrl: number;
+  /**
+   * Valor unitario de referencia (R$/kg) do item — usado apenas como peso do
+   * rateio do valor total da NF (ACXEGDP-178). Nao e o custo final do item.
+   */
+  valorUnitarioReferenciaBrl: number;
 }
 
 export interface ProcessarRecebimentoNacionalInput {
   /** Numero da NF — referencia, vai pra observacao do ajuste OMIE. */
   notaFiscal: string;
+  /** Valor total da NF em BRL (com impostos) — rateado entre os itens por peso (ACXEGDP-178). */
+  valorTotalNfBrl: number;
   /** Observacao livre adicional do operador (opcional). */
   observacoes?: string | null;
   itens: ItemRecebimentoNacionalInput[];
@@ -222,6 +227,9 @@ export async function processarRecebimentoNacional(
   if (!input.notaFiscal || input.notaFiscal.trim().length === 0) {
     throw new Error('Número da NF é obrigatório');
   }
+  if (!Number.isFinite(input.valorTotalNfBrl) || input.valorTotalNfBrl <= 0) {
+    throw new Error('Valor total da NF deve ser positivo');
+  }
   if (!input.itens || input.itens.length === 0) {
     throw new Error('Recebimento precisa de pelo menos 1 item');
   }
@@ -235,6 +243,9 @@ export async function processarRecebimentoNacional(
     if (!Number.isFinite(it.quantidade) || it.quantidade <= 0) {
       throw new Error(`Item (${it.empresa} cod ${codigoProduto}): quantidade deve ser positiva`);
     }
+    if (!Number.isFinite(it.valorUnitarioReferenciaBrl) || it.valorUnitarioReferenciaBrl <= 0) {
+      throw new Error(`Item (${it.empresa} cod ${codigoProduto}): valor unitário de referência deve ser positivo`);
+    }
   }
 
   const db = getDb();
@@ -244,9 +255,28 @@ export async function processarRecebimentoNacional(
   const localidadesById = await resolverLocalidadesParaItens(input.itens);
   const produtosByCodigo = await resolverProdutosNacionais(input.itens);
 
+  // Rateio ponderado (ACXEGDP-178): o valor total da NF (informado uma unica vez,
+  // no cabecalho) e distribuido entre os itens proporcionalmente ao peso de cada
+  // um — peso = valor unitario de referencia x quantidade em Kg. Isso reflete
+  // melhor o valor real de cada produto do que uma divisao igual por Kg (um
+  // produto caro nao pode custar o mesmo por Kg que um barato na mesma NF).
+  const quantidadesKg = input.itens.map((it) =>
+    Number(new Decimal(converterParaKg(it.quantidade, it.unidade)).toFixed(3)),
+  );
+  const pesos = input.itens.map((it, idx) =>
+    new Decimal(it.valorUnitarioReferenciaBrl).times(quantidadesKg[idx]!),
+  );
+  const somaPesos = pesos.reduce((acc, p) => acc.plus(p), new Decimal(0));
+  if (somaPesos.lte(0)) {
+    throw new Error('Soma dos pesos do rateio (valor unitário × quantidade) deve ser positiva');
+  }
+  const valoresItemBrl = pesos.map((peso) =>
+    new Decimal(input.valorTotalNfBrl).times(peso).dividedBy(somaPesos),
+  );
+
   const itensProcessados = await db.transaction(async (tx) => {
     const out: ItemRecebimentoNacionalResult[] = [];
-    for (const it of input.itens) {
+    for (const [idx, it] of input.itens.entries()) {
       const loc = localidadesById.get(it.localidadeId);
       if (!loc) {
         throw new LocalidadeNaoElegivelError(
@@ -267,15 +297,13 @@ export async function processarRecebimentoNacional(
         throw new ProdutoNaoEncontradoError(codigoProduto);
       }
 
-      const quantidadeKg = Number(
-        new Decimal(converterParaKg(it.quantidade, it.unidade)).toFixed(3),
-      );
+      const quantidadeKg = quantidadesKg[idx]!;
       if (quantidadeKg <= 0) {
         throw new Error(`Item ${it.empresa} cod ${codigoProduto}: quantidade em Kg <= 0`);
       }
 
       const custoUnitarioBrl = Number(
-        new Decimal(it.valorTotalNfBrl).dividedBy(quantidadeKg).toFixed(6),
+        valoresItemBrl[idx]!.dividedBy(quantidadeKg).toFixed(6),
       );
 
       const obsItem = [
