@@ -126,12 +126,19 @@ router.post('/api/v1/auth/login', async (req: Request, res: Response) => {
 
     logger.info({ userId: user.id, email: user.email }, 'User logged in');
 
+    // ACXEGDP-307: sem totp_enabled/last_login_at aqui, o front (setUser) gravava
+    // totp_enabled=undefined no store — o ProtectedShell tratava todo gestor/diretor
+    // como se nunca tivesse configurado 2FA e mandava de volta pro /2fa/setup a cada
+    // login, mesmo já configurado. /me sempre devolveu esses campos certos; login e
+    // verify-2fa não. Mantém o mesmo shape do /me.
     sendSuccess(res, {
       user: {
         id: user.id,
         name: user.name,
         email: user.email,
         role: user.role,
+        totp_enabled: user.totpEnabled,
+        last_login_at: user.lastLoginAt,
       },
       csrfToken: session.csrfToken,
       requires2FA: false,
@@ -223,12 +230,19 @@ router.post('/api/v1/auth/verify-2fa', async (req: Request, res: Response) => {
 
     logger.info({ userId: user.id }, 'User logged in with 2FA');
 
+    // ACXEGDP-307: sem totp_enabled/last_login_at aqui, o front (setUser) gravava
+    // totp_enabled=undefined no store — o ProtectedShell tratava todo gestor/diretor
+    // como se nunca tivesse configurado 2FA e mandava de volta pro /2fa/setup a cada
+    // login, mesmo já configurado. /me sempre devolveu esses campos certos; login e
+    // verify-2fa não. Mantém o mesmo shape do /me.
     sendSuccess(res, {
       user: {
         id: user.id,
         name: user.name,
         email: user.email,
         role: user.role,
+        totp_enabled: user.totpEnabled,
+        last_login_at: user.lastLoginAt,
       },
       csrfToken: session.csrfToken,
       requires2FA: false,

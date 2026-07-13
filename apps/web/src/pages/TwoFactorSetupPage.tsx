@@ -7,6 +7,7 @@ import { useAuth } from '../hooks/useAuth.js';
 export function TwoFactorSetupPage() {
   const { user, isLoading } = useAuth({ requireAuth: true });
   const csrfToken = useAuthStore((s) => s.csrfToken);
+  const setUser = useAuthStore((s) => s.setUser);
   const [step, setStep] = useState<'loading' | 'scan' | 'confirm'>('loading');
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState('');
   const [secret, setSecret] = useState('');
@@ -78,13 +79,42 @@ export function TwoFactorSetupPage() {
         return;
       }
 
-      // 2FA is now enabled, redirect to dashboard
+      // ACXEGDP-307: sem isso o store ficava com totp_enabled desatualizado (valor
+      // de antes do confirm) e o ProtectedShell mandava de volta pro /2fa/setup —
+      // atualiza antes de navegar pra refletir o que o backend já gravou.
+      if (user) {
+        setUser({ ...user, totp_enabled: true });
+      }
       navigate('/', { replace: true });
     } catch {
       setError('Erro de conexão com o servidor');
     } finally {
       setSubmitting(false);
     }
+  }
+
+  // ACXEGDP-307: sem isso, uma falha em initSetup() (ex: setup-2fa rejeitado com
+  // REAUTH_REQUIRED) só chamava setError() sem sair de step==='loading' — a tela
+  // ficava presa em "Carregando..." pra sempre, escondendo o erro do usuário.
+  if (step === 'loading' && error) {
+    return (
+      <AuthPageShell>
+        <div className="w-full max-w-sm bg-atlas-card rounded-xl shadow-lg p-8 border border-atlas-border text-center space-y-4">
+          <p
+            role="alert"
+            className="text-sm text-crit bg-crit/10 border border-crit/20 rounded-lg px-3 py-2"
+          >
+            {error}
+          </p>
+          <button
+            onClick={() => navigate('/', { replace: true })}
+            className="w-full py-2.5 rounded-lg bg-acxe text-white font-medium hover:bg-acxe/90 focus:outline-none focus:ring-2 focus:ring-acxe focus:ring-offset-2 transition-colors"
+          >
+            Voltar
+          </button>
+        </div>
+      </AuthPageShell>
+    );
   }
 
   if (isLoading || step === 'loading') {
