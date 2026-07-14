@@ -3,6 +3,7 @@ import helmet from 'helmet';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { loadConfig, createLogger } from '@atlas/core';
+import { ativarZodPtBr } from './zod-ptbr.js';
 import { globalErrorHandler } from './error-handler.js';
 import healthRouter from './health.js';
 import authRouter from './routes/auth.routes.js';
@@ -12,6 +13,8 @@ import { seedAdmin } from './seed.js';
 
 const config = loadConfig();
 const logger = createLogger('api');
+// PTB-1 (ACXEGDP-256): mensagens de validação Zod em pt-BR em todas as rotas.
+ativarZodPtBr();
 const app: express.Express = express();
 
 // Global middleware

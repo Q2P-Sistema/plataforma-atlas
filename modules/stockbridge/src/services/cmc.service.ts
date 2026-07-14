@@ -168,7 +168,7 @@ export async function listarSnapshotCmc(
 
   const res = await pool.query<LeafRow>(sql, params).catch((err) => {
     logger.error({ err: err.message }, 'Query snapshot CMC falhou');
-    throw new Error('CMC_FAIL');
+    throw new Error('Falha ao consultar o snapshot de CMC — tente novamente; se persistir, contate o admin');
   });
 
   // 3) Agrega em TS: família → produtos, porOrigem, totais.
@@ -351,7 +351,7 @@ export async function listarTendenciaCmc(
 
   const res = await pool.query<TendenciaRow>(sql, params).catch((err) => {
     logger.error({ err: err.message }, 'Query tendência CMC falhou');
-    throw new Error('CMC_FAIL');
+    throw new Error('Falha ao consultar a tendência de CMC — tente novamente; se persistir, contate o admin');
   });
 
   const datas = rangeDatas(de, ate);
@@ -416,7 +416,7 @@ export async function listarFiltrosCmc(familias?: string[]): Promise<CmcFiltrosR
 
   const res = await pool.query<FiltroRow>(sql, params).catch((err) => {
     logger.error({ err: err.message }, 'Query filtros CMC falhou');
-    throw new Error('CMC_FAIL');
+    throw new Error('Falha ao carregar os filtros de CMC — tente novamente; se persistir, contate o admin');
   });
 
   const familiasSet = new Set<string>();

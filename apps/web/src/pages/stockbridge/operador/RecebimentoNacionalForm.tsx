@@ -206,7 +206,7 @@ export function RecebimentoNacionalForm() {
             className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm outline-none focus:ring-2 focus:ring-atlas-accent"
           />
           <p className="text-[11px] text-atlas-muted mt-1">
-            Vai pra observação do ajuste OMIE — não consultamos a NF, só registramos a referência.
+            Vai para a observação do ajuste OMIE — não consultamos a NF, só registramos a referência.
           </p>
         </div>
         <div className="md:col-span-1">
@@ -292,7 +292,7 @@ export function RecebimentoNacionalForm() {
           disabled={enviarMut.isPending}
           className="px-5 py-2 bg-atlas-btn-bg text-atlas-btn-text rounded text-sm font-medium hover:opacity-90 disabled:opacity-50"
         >
-          {enviarMut.isPending ? 'Enviando...' : 'Enviar para aprovação'}
+          {enviarMut.isPending ? 'Enviando…' : 'Enviar para aprovação'}
         </button>
       </div>
     </form>
@@ -396,7 +396,7 @@ function ItemRow({ indice, valor, podeRemover, onMudar, onRemover, valorRateadoB
             onChange={(e) => onMudar({ localidadeId: e.target.value })}
             className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm outline-none"
           >
-            <option value="">Selecione...</option>
+            <option value="">Selecione…</option>
             {localidades.map((l) => (
               <option key={l.id} value={l.id}>
                 {l.codigo} — {l.nome}
@@ -536,7 +536,7 @@ function ProdutoCombobox({ empresa, valor, onChange }: ProdutoComboboxProps) {
         className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm text-left hover:border-atlas-muted flex items-center justify-between gap-2"
       >
         <span className={valor ? 'truncate' : 'truncate text-atlas-muted'} title={valor?.descricao}>
-          {valor?.descricao ?? 'Selecionar produto...'}
+          {valor?.descricao ?? 'Selecionar produto…'}
         </span>
         <span className="text-atlas-muted text-xs">▾</span>
       </button>
@@ -546,12 +546,12 @@ function ProdutoCombobox({ empresa, valor, onChange }: ProdutoComboboxProps) {
             autoFocus
             value={termo}
             onChange={(e) => setTermo(e.target.value)}
-            placeholder="Buscar produto pela descrição..."
+            placeholder="Buscar produto pela descrição…"
             className="w-full px-3 py-2 border-b border-atlas-border bg-atlas-bg text-sm focus:outline-none"
           />
           <div className="overflow-y-auto flex-1">
             {isFetching && opcoes.length === 0 && (
-              <div className="px-3 py-2 text-xs text-atlas-muted italic">Buscando...</div>
+              <div className="px-3 py-2 text-xs text-atlas-muted italic">Buscando…</div>
             )}
             {!isFetching && opcoes.length === 0 && (
               <div className="px-3 py-2 text-xs text-atlas-muted italic">Nenhum produto encontrado.</div>
@@ -568,7 +568,7 @@ function ProdutoCombobox({ empresa, valor, onChange }: ProdutoComboboxProps) {
                 <div className="truncate" title={p.descricao}>
                   {p.descricao}
                 </div>
-                <div className="text-[11px] text-atlas-muted">cod. {p.codigo}</div>
+                <div className="text-[11px] text-atlas-muted">cód. {p.codigo}</div>
               </button>
             ))}
           </div>

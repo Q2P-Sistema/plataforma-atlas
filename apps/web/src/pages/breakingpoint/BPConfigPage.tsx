@@ -125,7 +125,7 @@ async function putConta(nCodCC: number, incluir: boolean): Promise<void> {
     headers: csrfHeaders(),
     body: JSON.stringify({ empresa: EMPRESA, incluir }),
   });
-  if (!r.ok) throw new Error('Falha ao salvar toggle');
+  if (!r.ok) throw new Error('Falha ao salvar a seleção da conta');
 }
 
 const fmtBRL = (v: number) =>
@@ -386,7 +386,7 @@ function NovoBancoForm({ onCreate, pending }: { onCreate: (b: Omit<Banco, 'id' |
   return (
     <div className="mb-4 p-3 border border-dashed border-atlas-border rounded-lg">
       <div className="grid grid-cols-4 gap-2 items-end">
-        <Field label="Slug (único)"><input className="input w-full" value={id} onChange={(e) => setId(e.target.value)} placeholder="caixa" /></Field>
+        <Field label="Identificador (slug, único)"><input className="input w-full" value={id} onChange={(e) => setId(e.target.value)} placeholder="caixa" /></Field>
         <Field label="Nome"><input className="input w-full" value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Caixa Econômica" /></Field>
         <Field label="Cor"><input type="color" className="w-full h-9 rounded" value={cor} onChange={(e) => setCor(e.target.value)} /></Field>
         <button
@@ -424,7 +424,7 @@ function ContasSection({ notify, invalidateProj }: { notify: (m: string, k?: 'ok
   const mut = useMutation({
     mutationFn: ({ n, incluir }: { n: number; incluir: boolean }) => putConta(n, incluir),
     onSuccess: () => {
-      notify('Toggle salvo');
+      notify('Seleção salva');
       invalidateProj();
       qc.invalidateQueries({ queryKey: ['bp', 'contas'] });
     },
