@@ -5,6 +5,7 @@ import { incluirAjusteEstoque } from '@atlas/integration-omie';
 import { localidade, localidadeCorrelacao } from '@atlas/db';
 import type { EmpresaSaida } from './saida-manual.service.js';
 import { formatarDataOmie } from './omie-shared.js';
+import { COD_INT_AJUSTE_SUFIXO, buildCodIntAjuste } from '../types.js';
 
 const logger = createLogger('stockbridge:omie-saida');
 
@@ -111,7 +112,7 @@ export async function resolverCodigoProdutoOmie(
   return Number(codigo);
 }
 
-async function resolverCodigosLocaisTroca(): Promise<{ acxe: string | null; q2p: string | null }> {
+export async function resolverCodigosLocaisTroca(): Promise<{ acxe: string | null; q2p: string | null }> {
   const db = getDb();
   const [row] = await db
     .select({
@@ -161,7 +162,6 @@ export async function executarSaidaOmieDual(
   const qtd = Number(new Decimal(ctx.quantidadeKg).toFixed(3));
   const obs = ctx.observacao.slice(0, 240);
   const data = formatarDataOmie();
-  const motivoLower = motivo.toLowerCase();
 
   let acxeRes: ResultadoOmie | null = null;
   let q2pRes: ResultadoOmie | null = null;
@@ -169,7 +169,10 @@ export async function executarSaidaOmieDual(
 
   // 1) ACXE primeiro (rollback-friendly: se ACXE falha, nada feito ainda)
   if (correlacao.acxe) {
-    const codInt = `${ctx.opId}:saida-${motivoLower}-acxe`;
+    const codInt = buildCodIntAjuste(
+      ctx.opId,
+      motivo === 'PER' ? COD_INT_AJUSTE_SUFIXO.saidaPerAcxe : COD_INT_AJUSTE_SUFIXO.saidaInvAcxe,
+    );
     logger.info({ ctx, codigoLocalEstoque: correlacao.acxe, motivo, codInt }, 'OMIE ACXE: incluindo SAI');
     const r = await incluirAjusteEstoque('acxe', {
       codigoLocalEstoque: correlacao.acxe,
@@ -190,7 +193,10 @@ export async function executarSaidaOmieDual(
   if (correlacao.q2p) {
     try {
       const idProdutoQ2p = await resolverCodigoProdutoOmie(ctx.produtoCodigoAcxe, 'q2p');
-      const codInt = `${ctx.opId}:saida-${motivoLower}-q2p`;
+      const codInt = buildCodIntAjuste(
+        ctx.opId,
+        motivo === 'PER' ? COD_INT_AJUSTE_SUFIXO.saidaPerQ2p : COD_INT_AJUSTE_SUFIXO.saidaInvQ2p,
+      );
       logger.info(
         { ctx, codigoLocalEstoque: correlacao.q2p, idProdutoQ2p, motivo, codInt },
         'OMIE Q2P: incluindo SAI',
@@ -246,7 +252,7 @@ export async function executarTransferenciaIntraDual(
 
   // Replica em ACXE quando ambos origem/destino tem ACXE
   if (corrOrigem.acxe && corrDestino.acxe) {
-    const codInt = `${ctx.opId}:trf-intra-acxe`;
+    const codInt = buildCodIntAjuste(ctx.opId, COD_INT_AJUSTE_SUFIXO.trfIntraAcxe);
     logger.info(
       { ctx, origem: corrOrigem.acxe, destino: corrDestino.acxe, codInt },
       'OMIE ACXE: incluindo TRF intra-cnpj',
@@ -270,7 +276,7 @@ export async function executarTransferenciaIntraDual(
   if (corrOrigem.q2p && corrDestino.q2p) {
     try {
       const idProdutoQ2p = await resolverCodigoProdutoOmie(ctx.produtoCodigoAcxe, 'q2p');
-      const codInt = `${ctx.opId}:trf-intra-q2p`;
+      const codInt = buildCodIntAjuste(ctx.opId, COD_INT_AJUSTE_SUFIXO.trfIntraQ2p);
       logger.info(
         { ctx, origem: corrOrigem.q2p, destino: corrDestino.q2p, codInt },
         'OMIE Q2P: incluindo TRF intra-cnpj',
@@ -321,7 +327,7 @@ export async function executarComodatoOmieDual(
 
   // ACXE: TRF origem ACXE → TROCA ACXE (so se ambos existem)
   if (corrOrigem.acxe && corrTroca.acxe) {
-    const codInt = `${ctx.opId}:comodato-trf-acxe`;
+    const codInt = buildCodIntAjuste(ctx.opId, COD_INT_AJUSTE_SUFIXO.comodatoTrfAcxe);
     logger.info(
       { ctx, origem: corrOrigem.acxe, destino: corrTroca.acxe, codInt },
       'OMIE ACXE: TRF comodato pra TROCA',
@@ -346,7 +352,7 @@ export async function executarComodatoOmieDual(
   if (corrOrigem.q2p && corrTroca.q2p) {
     try {
       const idProdutoQ2p = await resolverCodigoProdutoOmie(ctx.produtoCodigoAcxe, 'q2p');
-      const codInt = `${ctx.opId}:comodato-trf-q2p`;
+      const codInt = buildCodIntAjuste(ctx.opId, COD_INT_AJUSTE_SUFIXO.comodatoTrfQ2p);
       logger.info(
         { ctx, origem: corrOrigem.q2p, destino: corrTroca.q2p, idProdutoQ2p, codInt },
         'OMIE Q2P: TRF comodato pra TROCA',
@@ -417,7 +423,7 @@ export async function executarRetornoComodatoOmieDual(args: {
 
   // ACXE primeiro
   if (corrTroca.acxe && corrDestino.acxe) {
-    const codIntBaixa = `${args.opId}:ret-baixa-acxe`;
+    const codIntBaixa = buildCodIntAjuste(args.opId, COD_INT_AJUSTE_SUFIXO.retBaixaAcxe);
     logger.info({ args, codInt: codIntBaixa }, 'OMIE ACXE: SAI baixa TROCA');
     const baixa = await incluirAjusteEstoque('acxe', {
       codigoLocalEstoque: corrTroca.acxe,
@@ -431,7 +437,7 @@ export async function executarRetornoComodatoOmieDual(args: {
       valor: vOrig,
       codIntAjuste: codIntBaixa,
     });
-    const codIntEntrada = `${args.opId}:ret-entrada-acxe`;
+    const codIntEntrada = buildCodIntAjuste(args.opId, COD_INT_AJUSTE_SUFIXO.retEntradaAcxe);
     logger.info({ args, codInt: codIntEntrada }, 'OMIE ACXE: ENT destino');
     const entrada = await incluirAjusteEstoque('acxe', {
       codigoLocalEstoque: corrDestino.acxe,
@@ -456,7 +462,7 @@ export async function executarRetornoComodatoOmieDual(args: {
     try {
       const idProdOrigQ2p = await resolverCodigoProdutoOmie(args.produtoCodigoAcxeOriginal, 'q2p');
       const idProdRecQ2p = await resolverCodigoProdutoOmie(args.produtoCodigoAcxeRecebido, 'q2p');
-      const codIntBaixa = `${args.opId}:ret-baixa-q2p`;
+      const codIntBaixa = buildCodIntAjuste(args.opId, COD_INT_AJUSTE_SUFIXO.retBaixaQ2p);
       logger.info({ args, codInt: codIntBaixa }, 'OMIE Q2P: SAI baixa TROCA');
       const baixa = await incluirAjusteEstoque('q2p', {
         codigoLocalEstoque: corrTroca.q2p,
@@ -470,7 +476,7 @@ export async function executarRetornoComodatoOmieDual(args: {
         valor: vOrig,
         codIntAjuste: codIntBaixa,
       });
-      const codIntEntrada = `${args.opId}:ret-entrada-q2p`;
+      const codIntEntrada = buildCodIntAjuste(args.opId, COD_INT_AJUSTE_SUFIXO.retEntradaQ2p);
       logger.info({ args, codInt: codIntEntrada }, 'OMIE Q2P: ENT destino');
       const entrada = await incluirAjusteEstoque('q2p', {
         codigoLocalEstoque: corrDestino.q2p,

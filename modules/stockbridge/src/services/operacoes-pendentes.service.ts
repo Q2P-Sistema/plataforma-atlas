@@ -2,12 +2,18 @@ import { eq, sql, and, ne, desc } from 'drizzle-orm';
 import Decimal from 'decimal.js';
 import { getDb, createLogger } from '@atlas/core';
 import { movimentacao, lote, localidadeCorrelacao, aprovacao } from '@atlas/db';
-import type { Perfil, StatusOmie } from '../types.js';
+import type { Perfil, StatusOmie, SubtipoMovimento } from '../types.js';
 import { COD_INT_AJUSTE_SUFIXO, buildCodIntAjuste } from '../types.js';
 import { incluirAjusteIdempotente } from './omie-idempotente.js';
 import { calcularValorUnitarioQ2p, calcularValorUnitarioAcxe } from './recebimento.service.js';
 import { formatarDataOmie } from './omie-shared.js';
 import { resolverEstoqueDiferencaAcxe } from './estoques-especiais-acxe.js';
+import {
+  resolverCorrelacaoCompletaGalpao,
+  resolverCodigosLocaisTroca,
+  resolverCodigoProdutoOmie,
+} from './omie-saida.service.js';
+import { consultarValorUnitarioProduto } from './aprovacao.service.js';
 
 const logger = createLogger('stockbridge:operacoes-pendentes');
 
@@ -245,6 +251,13 @@ interface MovimentacaoRow {
   tentativasQ2p: number;
   idMovestAcxe: string | null;
   idAjusteAcxe: string | null;
+  // Campos de saida manual sem lote (migration 0026/0031) — usados pelo retry
+  // de saida manual (STK-03, ACXEGDP-283).
+  subtipo: string | null;
+  produtoCodigoAcxe: number | null;
+  galpao: string | null;
+  galpaoDestino: string | null;
+  custoUnitarioBrl: string | null;
 }
 
 async function retentarQ2p(args: {
@@ -253,7 +266,10 @@ async function retentarQ2p(args: {
 }): Promise<RetentarResult> {
   const db = getDb();
   if (!args.mov.loteId) {
-    throw new Error(`Movimentação ${args.mov.id} sem loteId — não é possível retentar`);
+    // STK-03 (ACXEGDP-283): movimentacoes de saida manual/comodato nao tem lote —
+    // antes este guard lancava incondicionalmente e a pendencia Q2P ficava
+    // irrecuperavel (ACXE debitado, Q2P nao, sem caminho automatico).
+    return retentarQ2pSaidaManual(args);
   }
   const [loteRow] = await db.select().from(lote).where(eq(lote.id, args.mov.loteId)).limit(1);
   if (!loteRow) throw new Error(`Lote ${args.mov.loteId} não encontrado`);
@@ -355,6 +371,224 @@ async function retentarQ2p(args: {
         err,
       },
       'Retry Q2P falhou — incrementando tentativas',
+    );
+    throw err;
+  }
+}
+
+/** Mapa subtipo → parametros da chamada Q2P original em omie-saida.service.ts. */
+interface RetrySaidaManualSpec {
+  codInt: string;
+  tipo: 'SAI' | 'TRF';
+  motivo: 'PER' | 'INV' | 'TRF';
+  /** Codigo OMIE do local destino (apenas TRF). */
+  codigoLocalEstoqueDestino?: string;
+}
+
+/**
+ * Retry do lado Q2P para movimentacoes de SAIDA MANUAL (sem lote) — STK-03
+ * (ACXEGDP-283). Reconstroi a chamada OMIE a partir do que a aprovacao original
+ * persistiu na movimentacao (subtipo, galpao, produto, custo_unitario_brl) e a
+ * executa com verificarAntes=true: se a chamada anterior chegou a persistir no
+ * OMIE (falha so na resposta), ListarAjusteEstoque detecta pelo cod_int_ajuste
+ * e nada e duplicado.
+ *
+ * Os cod_int_ajuste vem de COD_INT_AJUSTE_SUFIXO — a MESMA constante usada na
+ * chamada original (omie-saida.service.ts), garantindo match byte a byte.
+ *
+ * retorno_comodato fica de fora deste dispatch (2 pernas Q2P independentes +
+ * 2 movimentacoes) — tratado em follow-up dedicado (STK-03b).
+ */
+async function retentarQ2pSaidaManual(args: {
+  mov: MovimentacaoRow;
+  ator: RetentarInput['ator'];
+}): Promise<RetentarResult> {
+  const db = getDb();
+  const { mov } = args;
+
+  if (mov.subtipo === 'retorno_comodato') {
+    throw new Error(
+      `Movimentação ${mov.id} é retorno de comodato — o retry das 2 pernas Q2P (baixa TROCA + entrada destino) ainda não está disponível. Acione o admin (STK-03b).`,
+    );
+  }
+  if (!mov.produtoCodigoAcxe || !mov.galpao) {
+    throw new Error(
+      `Movimentação ${mov.id} sem produto/galpão persistidos — não é possível reconstruir a chamada Q2P`,
+    );
+  }
+
+  // GUARDA DE APROVACAO: movimentacoes de saida manual nascem 'pendente_q2p' na
+  // SUBMISSAO (saida-manual.service), antes do gestor decidir. Sem este check, o
+  // retry executaria o ajuste OMIE de uma operacao nao aprovada (ou rejeitada),
+  // contornando o fluxo de aprovacao inteiro. Retry so vale pos-aprovacao.
+  const [aprAprovada] = await db
+    .select({ id: aprovacao.id })
+    .from(aprovacao)
+    .where(and(eq(aprovacao.movimentacaoId, mov.id), eq(aprovacao.status, 'aprovada')))
+    .limit(1);
+  if (!aprAprovada) {
+    throw new Error(
+      `Movimentação ${mov.id} ainda não tem aprovação concluída — a pendência Q2P só é retentável depois que o gestor aprovar a saída`,
+    );
+  }
+
+  const correlacao = await resolverCorrelacaoCompletaGalpao(mov.galpao);
+  if (!correlacao.q2p) {
+    throw new Error(`Galpão ${mov.galpao} sem correlato Q2P — não é possível retentar`);
+  }
+
+  let spec: RetrySaidaManualSpec;
+  switch (mov.subtipo as SubtipoMovimento | null) {
+    case 'amostra':
+    case 'descarte':
+    case 'quebra':
+      spec = {
+        codInt: buildCodIntAjuste(mov.opId, COD_INT_AJUSTE_SUFIXO.saidaPerQ2p),
+        tipo: 'SAI',
+        motivo: 'PER',
+      };
+      break;
+    case 'inventario_menos':
+      spec = {
+        codInt: buildCodIntAjuste(mov.opId, COD_INT_AJUSTE_SUFIXO.saidaInvQ2p),
+        tipo: 'SAI',
+        motivo: 'INV',
+      };
+      break;
+    case 'transf_intra_cnpj': {
+      if (!mov.galpaoDestino) {
+        throw new Error(`Movimentação ${mov.id} de transf_intra_cnpj sem galpão destino`);
+      }
+      const corrDestino = await resolverCorrelacaoCompletaGalpao(mov.galpaoDestino);
+      if (!corrDestino.q2p) {
+        throw new Error(`Galpão destino ${mov.galpaoDestino} sem correlato Q2P`);
+      }
+      spec = {
+        codInt: buildCodIntAjuste(mov.opId, COD_INT_AJUSTE_SUFIXO.trfIntraQ2p),
+        tipo: 'TRF',
+        motivo: 'TRF',
+        codigoLocalEstoqueDestino: String(corrDestino.q2p),
+      };
+      break;
+    }
+    case 'comodato': {
+      const troca = await resolverCodigosLocaisTroca();
+      if (!troca.q2p) {
+        throw new Error('Localidade TROCA (90.0.1) sem correlato Q2P — não é possível retentar comodato');
+      }
+      spec = {
+        codInt: buildCodIntAjuste(mov.opId, COD_INT_AJUSTE_SUFIXO.comodatoTrfQ2p),
+        tipo: 'TRF',
+        motivo: 'TRF',
+        codigoLocalEstoqueDestino: String(troca.q2p),
+      };
+      break;
+    }
+    default:
+      throw new Error(
+        `Subtipo '${mov.subtipo ?? '(nulo)'}' não suportado no retry de saída manual (movimentação ${mov.id})`,
+      );
+  }
+
+  // Valor unitario: o MESMO da chamada ACXE original (persistido na aprovacao,
+  // STK-03). Recalcular do preco vivo gravaria custo diferente entre as empresas.
+  // Fallback pro preco vivo cobre apenas movimentacoes aprovadas antes da
+  // persistencia existir (degradacao documentada).
+  let valorUnitario = mov.custoUnitarioBrl != null ? Number(mov.custoUnitarioBrl) : 0;
+  if (valorUnitario <= 0) {
+    logger.warn(
+      { movimentacaoId: mov.id, subtipo: mov.subtipo },
+      'custo_unitario_brl ausente na movimentação — usando preço vivo como fallback (pode divergir do lado ACXE)',
+    );
+    valorUnitario = await consultarValorUnitarioProduto(Number(mov.produtoCodigoAcxe), mov.galpao, 'q2p');
+  }
+  if (valorUnitario <= 0) {
+    throw new Error(
+      `Sem valor unitário disponível para o retry (produto ${mov.produtoCodigoAcxe}, galpão ${mov.galpao}) — OMIE rejeita ajuste com valor 0`,
+    );
+  }
+
+  const idProdutoQ2p = await resolverCodigoProdutoOmie(Number(mov.produtoCodigoAcxe), 'q2p');
+  const quantidade = Number(new Decimal(Math.abs(Number(mov.quantidadeKg))).toFixed(3));
+
+  try {
+    const res = await incluirAjusteIdempotente(
+      'q2p',
+      spec.codInt,
+      {
+        codigoLocalEstoque: String(correlacao.q2p),
+        ...(spec.codigoLocalEstoqueDestino
+          ? { codigoLocalEstoqueDestino: spec.codigoLocalEstoqueDestino }
+          : {}),
+        idProduto: idProdutoQ2p,
+        dataAtual: formatarDataOmie(),
+        quantidade,
+        observacao: `Retry Q2P saída manual ${mov.subtipo} (op ${mov.opId})`.slice(0, 240),
+        origem: 'AJU',
+        tipo: spec.tipo,
+        motivo: spec.motivo,
+        valor: Number(new Decimal(valorUnitario).toFixed(2)),
+      },
+      { verificarAntes: true },
+    );
+
+    await db
+      .update(movimentacao)
+      .set({
+        idMovestQ2p: res.idMovest,
+        idAjusteQ2p: res.idAjuste,
+        // Saida manual: mesmo sinal que aprovarSaidaManual grava no lado Q2P
+        mvQ2p: -1,
+        dtQ2p: new Date(),
+        idUserQ2p: args.ator.userId,
+        statusOmie: 'concluida',
+        ultimoErroOmie: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(movimentacao.id, mov.id));
+
+    logger.info(
+      {
+        movimentacaoId: mov.id,
+        opId: mov.opId,
+        subtipo: mov.subtipo,
+        ator: args.ator,
+        jaExistia: res.jaExistia,
+      },
+      'Pendência Q2P de saída manual concluída via retry',
+    );
+
+    return {
+      movimentacaoId: mov.id,
+      statusOmie: 'concluida',
+      jaExistiaNoOmie: res.jaExistia,
+      tentativasQ2p: mov.tentativasQ2p,
+    };
+  } catch (err) {
+    const novasTentativas = mov.tentativasQ2p + 1;
+    await db
+      .update(movimentacao)
+      .set({
+        tentativasQ2p: novasTentativas,
+        ultimoErroOmie: {
+          lado: 'q2p',
+          mensagem: (err as Error)?.message ?? 'erro desconhecido',
+          timestamp: new Date().toISOString(),
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(movimentacao.id, mov.id));
+
+    logger.warn(
+      {
+        movimentacaoId: mov.id,
+        opId: mov.opId,
+        subtipo: mov.subtipo,
+        tentativasQ2p: novasTentativas,
+        ator: args.ator,
+        err,
+      },
+      'Retry Q2P de saída manual falhou — incrementando tentativas',
     );
     throw err;
   }
