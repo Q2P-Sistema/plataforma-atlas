@@ -173,6 +173,42 @@ export async function enviarAlertaProdutoSemCorrelato(args: {
  * (fail-open) e alerta o admin para revisão posterior. Espelha o padrão de
  * `enviarAlertaProdutoSemCorrelato` — fora de transação, não bloqueia, try/catch logado.
  */
+/**
+ * STK-10 (ACXEGDP-289): NF multi-item rejeitada no recebimento — o modelo
+ * suporta 1 produto por NF. O admin decide como processar (manual no OMIE ou
+ * desdobrar a NF).
+ */
+export async function enviarAlertaNfMultiItem(args: {
+  nf: string;
+  cnpj: 'acxe' | 'q2p';
+  totalItens: number;
+}): Promise<void> {
+  const to = getOpsEmail();
+  const subject = `StockBridge — NF ${args.nf} com ${args.totalItens} itens bloqueada no recebimento (${args.cnpj.toUpperCase()})`;
+  const corpoHtml = `
+    <p>O recebimento da <strong>NF ${escapeHtml(args.nf)}</strong> (${args.cnpj.toUpperCase()}) foi <strong>bloqueado</strong>: a NF tem <strong>${args.totalItens} itens</strong> de produto e o StockBridge suporta apenas NF de item único.</p>
+    ${emailDataList([
+      { label: 'NF', valor: args.nf },
+      { label: 'Itens', valor: String(args.totalItens) },
+    ])}
+    ${emailActionBox(`
+      <ol style="margin:0;padding-left:18px;">
+        <li>Conferir a NF ${escapeHtml(args.nf)} no OMIE.</li>
+        <li>Processar a entrada manualmente no OMIE ou desdobrar a NF por item.</li>
+      </ol>`)}
+  `;
+  const { html, text } = buildEmailLayout({
+    titulo: 'NF multi-item bloqueada no recebimento',
+    variante: 'alerta',
+    corpoHtml,
+  });
+  try {
+    await sendEmail({ to, cc: alertaOpsCc(to), subject, html, text });
+  } catch (err) {
+    logger.error({ err, args }, 'Falha ao enviar email de alerta de NF multi-item');
+  }
+}
+
 export async function enviarAlertaNfIndeterminada(args: {
   nf: string;
   cnpj: 'acxe' | 'q2p';

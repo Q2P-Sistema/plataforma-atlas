@@ -211,7 +211,17 @@ export async function registrarSaidaManual(
 
   const db = getDb();
   const resultado = await db.transaction(async (tx) => {
-    // Re-checa saldo dentro da tx para evitar race condition entre concorrentes.
+    // STK-11 (ACXEGDP-289): advisory lock transacional por (produto, galpao,
+    // empresa) ANTES do re-check de saldo. Sem ele, o re-check abaixo nao
+    // protegia nada: em READ COMMITTED, duas tx concorrentes do mesmo trio nao
+    // veem a reserva uma da outra — ambas passavam no SUM e inseriam
+    // reserva_saldo, somando reservado > disponivel. O lock serializa apenas
+    // saidas do MESMO trio (trios distintos seguem paralelos) e e liberado
+    // automaticamente no commit/rollback.
+    const chaveLock = `sb:reserva:${input.produtoCodigoAcxe}:${input.galpao}:${input.empresa}`;
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${chaveLock}, 0))`);
+
+    // Re-checa saldo dentro da tx (agora efetivo, sob o lock).
     const reChk = await tx.execute<{ disp_kg: string }>(sql`
       WITH descricao_sku AS (
         SELECT descricao FROM public."tbl_produtos_ACXE"

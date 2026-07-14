@@ -11,6 +11,7 @@ import {
   ImportacaoApenasAcxeError,
   OmieAjusteError,
 } from '../services/recebimento.service.js';
+import { NotaFiscalMultiItemError } from '@atlas/integration-omie';
 import { CorrelacaoNaoEncontradaError } from '../services/correlacao.service.js';
 import { mapearErroOmieParaResposta } from '../services/erros-omie.js';
 import type { Perfil } from '../types.js';
@@ -67,6 +68,10 @@ router.post('/api/v1/stockbridge/recebimento', requireOperador, requireArmazemVi
     }
     if (err instanceof ImportacaoApenasAcxeError) {
       res.status(422).json({ data: null, error: { code: 'IMPORTACAO_APENAS_ACXE', userMessage: err.message, message: err.message } });
+      return;
+    }
+    if (err instanceof NotaFiscalMultiItemError) {
+      res.status(422).json({ data: null, error: { code: 'NF_MULTI_ITEM', userMessage: err.message, message: err.message } });
       return;
     }
     if (err instanceof NotaFiscalNaoEmitidaPelaAcxeError) {
