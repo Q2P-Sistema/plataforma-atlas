@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, sql, inArray } from 'drizzle-orm';
 import Decimal from 'decimal.js';
 import { getDb, createLogger } from '@atlas/core';
 import { lote, movimentacao, movimentacaoLegado, aprovacao, localidade, localidadeCorrelacao } from '@atlas/db';
@@ -82,11 +82,16 @@ async function aplicarValidacaoNf(numero: number, cnpj: 'acxe' | 'q2p'): Promise
 /**
  * Idempotencia de recebimento: a NF ja foi processada — no Atlas OU no legado PHP?
  *
- * Consulta duas fontes:
+ * Consulta tres fontes:
  *  - `stockbridge.movimentacao` (entrada_nf ativa) — recebimentos nascidos no Atlas.
  *  - `stockbridge.movimentacao_legado` (migration 0038) — historico importado do
  *    MySQL legado. Sem isso, uma NF que o sistema PHP ja processou poderia ser
  *    reprocessada no Atlas, gerando ajuste DUPLICADO no OMIE.
+ *  - `stockbridge.lote` em aguardando_aprovacao/provisorio (STK-02, ACXEGDP-282) —
+ *    o fluxo divergente cria apenas lote+aprovacao (nenhuma movimentacao); sem esta
+ *    checagem a mesma NF continuava "livre" ate o gestor decidir, permitindo um
+ *    segundo recebimento e ajuste OMIE duplicado apos as duas aprovacoes.
+ *    Lote rejeitado ou em transito NAO bloqueia (re-receber e legitimo nesses casos).
  *
  * `nfNormalizada` deve vir de `normalizarNumeroNf` (zero-padded 8 digitos) — e o
  * formato em que ambas as tabelas gravam a NF.
@@ -95,7 +100,7 @@ async function nfJaProcessada(
   db: ReturnType<typeof getDb>,
   nfNormalizada: string,
 ): Promise<boolean> {
-  const [atlas, legado] = await Promise.all([
+  const [atlas, legado, loteAberto] = await Promise.all([
     db
       .select({ id: movimentacao.id })
       .from(movimentacao)
@@ -117,8 +122,19 @@ async function nfJaProcessada(
         ),
       )
       .limit(1),
+    db
+      .select({ id: lote.id })
+      .from(lote)
+      .where(
+        and(
+          eq(lote.notaFiscal, nfNormalizada),
+          inArray(lote.status, ['aguardando_aprovacao', 'provisorio']),
+          eq(lote.ativo, true),
+        ),
+      )
+      .limit(1),
   ]);
-  return atlas.length > 0 || legado.length > 0;
+  return atlas.length > 0 || legado.length > 0 || loteAberto.length > 0;
 }
 
 export interface OmieAjusteErrorContext {
