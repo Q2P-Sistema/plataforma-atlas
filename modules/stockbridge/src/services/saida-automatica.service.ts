@@ -224,29 +224,13 @@ async function resolverLocalidadeFisica(
   return { localidadeId: row.localidadeId, cnpjLocalidade: cnpjNormalizado };
 }
 
-/**
- * Regulariza uma divergencia cruzada aberta quando o setor contabil emite a NF de
- * transferencia ACXE↔Q2P. Marca divergencia como 'regularizada' e vincula a
- * movimentacao de regularizacao.
- *
- * Chamada opcional pelo mesmo endpoint quando tipoOmie=transf_cnpj e ha
- * divergencia cruzada aberta para o mesmo produto.
- */
-export async function regularizarFiscal(movimentacaoRegularizacaoId: string): Promise<number> {
-  const db = getDb();
-  const result = await db
-    .update(divergencia)
-    .set({
-      status: 'regularizada',
-      regularizadaEm: new Date(),
-      regularizadaPorMovimentacaoId: movimentacaoRegularizacaoId,
-    })
-    .where(and(eq(divergencia.tipo, 'cruzada'), eq(divergencia.status, 'aberta')))
-    .returning({ id: divergencia.id });
-
-  logger.info({ movimentacaoRegularizacaoId, regularizadas: result.length }, 'Divergencias cruzadas regularizadas');
-  return result.length;
-}
+// STK-13 (ACXEGDP-290): regularizarFiscal foi REMOVIDA — era codigo morto (zero
+// chamadores) com uma armadilha latente: o UPDATE marcava TODAS as divergencias
+// cruzadas abertas como 'regularizada', sem filtrar produto/NF/quantidade,
+// apesar do docstring prometer "para o mesmo produto". Quando o fluxo de
+// regularizacao fiscal por NF de transferencia (tipoOmie=transf_cnpj) virar
+// feature, reimplementar COM filtro por divergencia especifica — historico no
+// git e no card ACXEGDP-290.
 
 /**
  * Helper exposto para testes: dado o emissor e o CNPJ fisico, retorna se e debito cruzado.

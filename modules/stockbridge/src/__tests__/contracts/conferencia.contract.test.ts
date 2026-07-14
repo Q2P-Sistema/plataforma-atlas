@@ -2,9 +2,20 @@ import { describe, it, expect, vi, beforeAll } from 'vitest';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import request from 'supertest';
 
+// STK-14: espia o cached() do badge — passthrough (sempre executa o fetch) mas
+// registra chave/TTL pra assert do seam de cache.
+const cachedSpy = vi.hoisted(() =>
+  vi.fn(async (_key: string, _ttl: number, fetchFn: () => Promise<unknown>) => ({
+    data: await fetchFn(),
+    hit: false,
+  })),
+);
+
 // getPool responde a (1) datas (MAX(ddataposicao)) e (2) agregação (pivot).
 vi.mock('@atlas/core', () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
+  cached: cachedSpy,
+  invalidate: vi.fn(),
   getPool: () => ({
     query: vi.fn((sql: string) => {
       const s = String(sql);
@@ -150,5 +161,18 @@ describe('GET /api/v1/stockbridge/conferencia — contratos', () => {
       .get('/api/v1/stockbridge/conferencia/contagem')
       .set('x-test-role', 'operador');
     expect(res.status).toBe(403);
+  });
+
+  // STK-14 (ACXEGDP-290): o badge passa pelo cache-aside de @atlas/core —
+  // chave fixa + TTL 5 min (posição muda 1x/dia; polling era 30s por gestor).
+  it('contagem usa cached() com a chave e TTL do badge', async () => {
+    cachedSpy.mockClear();
+    const res = await request(app).get('/api/v1/stockbridge/conferencia/contagem');
+    expect(res.status).toBe(200);
+    expect(cachedSpy).toHaveBeenCalledWith(
+      'stockbridge:conferencia:badge',
+      300,
+      expect.any(Function),
+    );
   });
 });
