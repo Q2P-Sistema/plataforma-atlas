@@ -1,4 +1,4 @@
-import { getPool, createLogger } from '@atlas/core';
+import { getPool, createLogger, cached } from '@atlas/core';
 
 const logger = createLogger('stockbridge:conferencia');
 
@@ -292,23 +292,37 @@ export async function listarConferencia(
   }
 }
 
-/** Contagem para o badge: itens com Status Geral != OK (D7). */
+/** TTL do badge: a posição só muda no sync diário — 5 min de staleness é irrelevante. */
+const BADGE_CACHE_TTL_S = 300;
+const BADGE_CACHE_KEY = 'stockbridge:conferencia:badge';
+
+/**
+ * Contagem para o badge: itens com Status Geral != OK (D7).
+ *
+ * STK-14 (ACXEGDP-290): cacheada em Redis (TTL 5 min). Sem o cache, o polling
+ * de 30s por gestor (App.tsx) recomputava a agregação completa (UNION ALL das
+ * posições ACXE/Q2P + classificação/sort de todas as linhas em TS) a cada
+ * tick, para devolver 3 contadores de um snapshot que muda 1x/dia.
+ */
 export async function contarConferencia(): Promise<ConferenciaContagem> {
   try {
-    const { itens, dataPosicaoAcxe, dataPosicaoQ2p } = await buscarConferencia();
-    const porStatus = { divergenteENegativo: 0, divergente: 0, negativo: 0 };
-    for (const i of itens) {
-      if (i.statusGeral === 'Divergente e Negativo') porStatus.divergenteENegativo += 1;
-      else if (i.statusGeral === 'Divergente') porStatus.divergente += 1;
-      else if (i.statusGeral === 'Negativo') porStatus.negativo += 1;
-    }
-    return {
-      contagem: porStatus.divergenteENegativo + porStatus.divergente + porStatus.negativo,
-      porStatus,
-      dataPosicaoAcxe,
-      dataPosicaoQ2p,
-      defasagemEntreEmpresas: dataPosicaoAcxe !== dataPosicaoQ2p,
-    };
+    const { data } = await cached(BADGE_CACHE_KEY, BADGE_CACHE_TTL_S, async () => {
+      const { itens, dataPosicaoAcxe, dataPosicaoQ2p } = await buscarConferencia();
+      const porStatus = { divergenteENegativo: 0, divergente: 0, negativo: 0 };
+      for (const i of itens) {
+        if (i.statusGeral === 'Divergente e Negativo') porStatus.divergenteENegativo += 1;
+        else if (i.statusGeral === 'Divergente') porStatus.divergente += 1;
+        else if (i.statusGeral === 'Negativo') porStatus.negativo += 1;
+      }
+      return {
+        contagem: porStatus.divergenteENegativo + porStatus.divergente + porStatus.negativo,
+        porStatus,
+        dataPosicaoAcxe,
+        dataPosicaoQ2p,
+        defasagemEntreEmpresas: dataPosicaoAcxe !== dataPosicaoQ2p,
+      };
+    });
+    return data;
   } catch (err) {
     logger.error({ err }, 'Falha ao contar divergências da conferência');
     throw err instanceof Error ? err : new Error('CONFERENCIA_FAIL');
