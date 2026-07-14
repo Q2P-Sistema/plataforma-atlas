@@ -326,7 +326,7 @@ function ImportacaoSection({
         </div>
       )}
 
-      {isLoading && <div className="p-6 text-sm text-atlas-muted">Consultando OMIE...</div>}
+      {isLoading && <div className="p-6 text-sm text-atlas-muted">Consultando OMIE…</div>}
 
       {queryKey.nf && !isLoading && itens.length === 0 && !error && (
         <div className="p-6 text-sm text-atlas-muted border border-dashed border-atlas-border rounded-lg">
@@ -346,7 +346,7 @@ function ImportacaoSection({
                   <span className="font-mono text-xs text-atlas-muted">NF {item.nf}</span>
                 </div>
                 <div className="text-xs text-atlas-muted">
-                  {item.cnpj.toUpperCase()} · cod. {item.produto.codigo} · {item.dtEmissao}
+                  {item.cnpj.toUpperCase()} · cód. {item.produto.codigo} · {item.dtEmissao}
                 </div>
               </div>
               <div className="text-right">

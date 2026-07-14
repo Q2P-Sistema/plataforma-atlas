@@ -7,15 +7,15 @@ export function SBPlaceholderPage() {
     <div className="p-8">
       <h1 className="text-2xl font-serif text-atlas-ink mb-4">StockBridge</h1>
       <p className="text-atlas-muted">
-        Módulo em desenvolvimento. Phase 2 (Foundational) concluída. Próximas fases:
+        Módulo em desenvolvimento. A base técnica está concluída. Próximas etapas:
       </p>
       <ul className="list-disc list-inside mt-4 text-atlas-muted space-y-1">
-        <li>US1 — Recebimento de NF com conferência física (P1)</li>
-        <li>US2 — Cockpit de estoque por produto (P1)</li>
-        <li>US3 — Aprovações hierárquicas (P2)</li>
-        <li>US4 — Pipeline de trânsito marítimo (P2)</li>
-        <li>US5 — Saídas automáticas via OMIE (P2)</li>
-        <li>US6-US8 — Saídas manuais, métricas, gestão (P3)</li>
+        <li>Recebimento de NF com conferência física</li>
+        <li>Cockpit de estoque por produto</li>
+        <li>Aprovações hierárquicas</li>
+        <li>Pipeline de trânsito marítimo</li>
+        <li>Saídas automáticas via OMIE</li>
+        <li>Saídas manuais, métricas e gestão</li>
       </ul>
     </div>
   );

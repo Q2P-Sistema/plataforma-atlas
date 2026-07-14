@@ -197,7 +197,7 @@ export function CockpitPage() {
       label: 'Posição Fiscal',
       value: `${fmtKg(r.totalFiscalKg)} kg`,
       color: 'text-atlas-ink',
-      info: 'Posição contábil total = físico + NFs emitidas sem recebimento físico confirmado (nacionais via n_id_receb e importações via movimentação Atlas).',
+      info: 'Posição contábil total = físico + NFs emitidas sem recebimento físico confirmado (nacionais apontadas pelo OMIE e importações pela movimentação do Atlas).',
       hint: totalPendente > 0
         ? `+${fmtKg(totalPendente)} kg pendentes (${fmtKg(r.totalFiscalPendenteNacionalKg)} nac · ${fmtKg(r.totalFiscalPendenteImportacaoKg)} imp)`
         : undefined,
@@ -271,7 +271,7 @@ export function CockpitPage() {
               onClick={() => setCnpjFilter(v)}
               className={`px-3 py-1 rounded text-xs font-medium transition ${cnpjFilter === v ? 'bg-atlas-card shadow-sm text-atlas-ink' : 'text-atlas-muted'}`}
             >
-              {v === 'ambos' ? 'Ambos CNPJs' : v.toUpperCase()}
+              {v === 'ambos' ? 'Ambos os CNPJs' : v.toUpperCase()}
             </button>
           ))}
         </div>
@@ -417,11 +417,11 @@ export function CockpitPage() {
         </div>
       )}
 
-      {isLoading && <div className="p-6 text-sm text-atlas-muted">Carregando...</div>}
+      {isLoading && <div className="p-6 text-sm text-atlas-muted">Carregando…</div>}
 
       {data && data.skus.length === 0 && !isLoading && (
         <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-atlas-border rounded-lg">
-          Nenhum SKU com saldo encontrado neste filtro. Em dev sem sync OMIE, essa lista fica vazia.
+          Nenhum SKU com saldo encontrado neste filtro.
         </div>
       )}
 
@@ -432,7 +432,7 @@ export function CockpitPage() {
       {data && data.skus.length > 0 && (
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-xs uppercase tracking-wide text-atlas-muted font-medium">
-            SKUs <span className="text-atlas-muted/70 normal-case">— {data.skus.length} item{data.skus.length === 1 ? '' : 's'} {data.skus.length !== rawData?.skus.length ? `(${rawData?.skus.length} no total)` : ''}, ordem por criticidade</span>
+            SKUs <span className="text-atlas-muted/70 normal-case">— {data.skus.length} {data.skus.length === 1 ? 'item' : 'itens'} {data.skus.length !== rawData?.skus.length ? `(${rawData?.skus.length} no total)` : ''}, ordem por criticidade</span>
           </h2>
           <div className="flex gap-1 p-1 bg-atlas-bg rounded">
             <button
@@ -786,7 +786,7 @@ function MultiSelectDropdown({
       ? allLabel
       : selected.length === 1
         ? options.find((o) => o.value === selected[0])?.label ?? selected[0]
-        : `${label}: ${selected.length} selecionados`;
+        : `${label}: ${selected.length} itens selecionados`;
 
   return (
     <div ref={containerRef} className="relative">

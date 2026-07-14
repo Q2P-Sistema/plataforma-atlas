@@ -288,7 +288,7 @@ export async function listarConferencia(
     return { resumo, itens: aplicarFiltros(itens, filtros) };
   } catch (err) {
     logger.error({ err }, 'Falha ao montar conferência de estoque');
-    throw err instanceof Error ? err : new Error('CONFERENCIA_FAIL');
+    throw err instanceof Error ? err : new Error('Falha ao montar a conferência de estoque — tente novamente; se persistir, contate o admin');
   }
 }
 
@@ -325,6 +325,6 @@ export async function contarConferencia(): Promise<ConferenciaContagem> {
     return data;
   } catch (err) {
     logger.error({ err }, 'Falha ao contar divergências da conferência');
-    throw err instanceof Error ? err : new Error('CONFERENCIA_FAIL');
+    throw err instanceof Error ? err : new Error('Falha ao montar a conferência de estoque — tente novamente; se persistir, contate o admin');
   }
 }

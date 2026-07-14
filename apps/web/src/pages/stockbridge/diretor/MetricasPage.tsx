@@ -17,8 +17,13 @@ interface AnaliticaSku {
   quantidadeKg: number; cmpBrlKg: number; valorBrl: number; coberturaDias: number | null; divergencias: number;
 }
 
-const fmtBRL = (n: number) => `R$ ${(n / 1e6).toFixed(2)} M`;
-const fmtUSD = (n: number) => `USD ${(n / 1e3).toFixed(0)} k`;
+const fmtBRL = (n: number) => `R$ ${(n / 1e6).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} M`;
+const fmtUSD = (n: number) => `USD ${(n / 1e3).toLocaleString('pt-BR', { maximumFractionDigits: 0 })} k`;
+// Backend envia mes como 'YYYY-MM' (to_char) — exibe como MM/YYYY.
+const fmtMes = (m: string) => {
+  const [ano, mes] = m.split('-');
+  return ano && mes ? `${mes}/${ano}` : m;
+};
 
 function useApiFetch() {
   const csrfToken = useAuthStore((s) => s.csrfToken);
@@ -69,10 +74,10 @@ export function MetricasPage() {
       {kpis && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
-            <Card label="Valor Estoque" value={fmtBRL(kpis.valorEstoqueBrl)} sub={fmtUSD(kpis.valorEstoqueUsd)} />
+            <Card label="Valor do Estoque" value={fmtBRL(kpis.valorEstoqueBrl)} sub={fmtUSD(kpis.valorEstoqueUsd)} />
             <Card label="Exposição Cambial" value={fmtBRL(kpis.exposicaoCambialBrl)} sub={fmtUSD(kpis.exposicaoCambialUsd)} accent="text-violet-700" />
-            <Card label="PTAX" value={`R$ ${kpis.ptaxBrl.toFixed(4)}`} sub="BCB" />
-            <Card label="Taxa Divergência" value={`${kpis.taxaDivergenciaPct}%`} accent={kpis.taxaDivergenciaPct > 5 ? 'text-red-700' : 'text-amber-700'} />
+            <Card label="PTAX" value={`R$ ${kpis.ptaxBrl.toLocaleString('pt-BR', { minimumFractionDigits: 4, maximumFractionDigits: 4 })}`} sub="BCB" />
+            <Card label="Taxa de Divergência" value={`${kpis.taxaDivergenciaPct.toLocaleString('pt-BR')}%`} accent={kpis.taxaDivergenciaPct > 5 ? 'text-red-700' : 'text-amber-700'} />
           </div>
 
           <GiroMedioPanel giro={kpis.giroMedioDias} />
@@ -89,7 +94,7 @@ export function MetricasPage() {
                 <div key={e.mes} className="flex-1 flex flex-col items-center gap-1">
                   <div className="text-[10px] text-atlas-muted">{Math.round(e.quantidadeKg).toLocaleString('pt-BR')} kg</div>
                   <div className="w-full bg-atlas-ink rounded-t" style={{ height: `${h}%` }} />
-                  <div className="text-[10px] text-atlas-muted">{e.mes}</div>
+                  <div className="text-[10px] text-atlas-muted">{fmtMes(e.mes)}</div>
                 </div>
               );
             })}
@@ -236,7 +241,7 @@ function TabelaAnalitica({ analitica }: { analitica: AnaliticaSku[] }) {
         <input
           value={busca}
           onChange={(e) => setBusca(e.target.value)}
-          placeholder="Buscar por SKU, código ou família..."
+          placeholder="Buscar por SKU, código ou família…"
           className="ml-auto px-3 py-1.5 border border-atlas-border bg-atlas-bg rounded text-xs w-72"
         />
       </div>
@@ -264,7 +269,7 @@ function TabelaAnalitica({ analitica }: { analitica: AnaliticaSku[] }) {
               <input
                 value={filtros.nome}
                 onChange={(e) => setF('nome', e.target.value)}
-                placeholder="contém..."
+                placeholder="contém…"
                 className="w-full px-1.5 py-0.5 text-[11px] border border-atlas-border bg-atlas-bg rounded"
               />
             </th>
@@ -279,7 +284,7 @@ function TabelaAnalitica({ analitica }: { analitica: AnaliticaSku[] }) {
                   setF('familias', novo);
                 }}
                 className="w-full px-1.5 py-0.5 text-[11px] border border-atlas-border bg-atlas-bg rounded"
-                title="Selecione uma ou mais (clique de novo pra remover)"
+                title="Selecione uma ou mais (clique de novo para remover)"
               >
                 <option value="">{filtros.familias.size === 0 ? 'todas' : `${filtros.familias.size} selecionadas`}</option>
                 {familiasUnicas.map((f) => (
@@ -291,7 +296,7 @@ function TabelaAnalitica({ analitica }: { analitica: AnaliticaSku[] }) {
               <input
                 value={filtros.ncm}
                 onChange={(e) => setF('ncm', e.target.value)}
-                placeholder="contém..."
+                placeholder="contém…"
                 className="w-full px-1.5 py-0.5 text-[11px] border border-atlas-border bg-atlas-bg rounded"
               />
             </th>
@@ -327,7 +332,7 @@ function TabelaAnalitica({ analitica }: { analitica: AnaliticaSku[] }) {
               <td className="px-3 py-2 text-atlas-muted border-r border-atlas-border/60">{s.familia ?? '—'}</td>
               <td className="px-3 py-2 font-mono text-[11px] text-atlas-muted border-r border-atlas-border/60">{s.ncm ?? '—'}</td>
               <td className="px-3 py-2 text-right border-r border-atlas-border/60">{s.quantidadeKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}</td>
-              <td className="px-3 py-2 text-right border-r border-atlas-border/60">{s.cmpBrlKg > 0 ? s.cmpBrlKg.toFixed(2) : '—'}</td>
+              <td className="px-3 py-2 text-right border-r border-atlas-border/60">{s.cmpBrlKg > 0 ? s.cmpBrlKg.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
               <td className="px-3 py-2 text-right border-r border-atlas-border/60">{fmtBRL(s.valorBrl)}</td>
               <td className="px-3 py-2 text-right border-r border-atlas-border/60">{s.coberturaDias != null ? `${s.coberturaDias}d` : '—'}</td>
               <td className="px-3 py-2 text-center">
@@ -353,14 +358,14 @@ function RangeInputs({
         type="number"
         value={min}
         onChange={(e) => onMin(e.target.value)}
-        placeholder="≥ min"
+        placeholder="≥ mín"
         className="w-full px-1 py-0.5 text-[10px] border border-atlas-border bg-atlas-bg rounded text-right"
       />
       <input
         type="number"
         value={max}
         onChange={(e) => onMax(e.target.value)}
-        placeholder="≤ max"
+        placeholder="≤ máx"
         className="w-full px-1 py-0.5 text-[10px] border border-atlas-border bg-atlas-bg rounded text-right"
       />
     </div>
@@ -397,7 +402,7 @@ function GiroMedioPanel({ giro }: { giro: Record<string, number> }) {
   return (
     <div className="bg-atlas-card border border-atlas-border rounded-lg p-3 mb-6">
       <div className="text-xs text-atlas-muted mb-2">
-        <span title="Para cada SKU com consumo > 0: cobertura = saldo_OMIE / consumo_medio_diario. Giro família = média entre os SKUs.">
+        <span title="Para cada SKU com consumo > 0: cobertura = saldo OMIE ÷ consumo médio diário. Giro da família = média entre os SKUs.">
           Giro Médio (cobertura em dias por família)
           <span className="ml-1 text-atlas-ink cursor-help">ⓘ</span>
         </span>
