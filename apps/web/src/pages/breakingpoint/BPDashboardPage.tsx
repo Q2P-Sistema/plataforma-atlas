@@ -65,7 +65,7 @@ interface Projecao {
   sync_at: string;
 }
 
-const fmtAxis = (v: number) => `${(v / 1_000_000).toFixed(1)}M`;
+const fmtAxis = (v: number) => `${(v / 1_000_000).toFixed(1).replace('.', ',')}M`;
 
 async function fetchProjecao(): Promise<Projecao> {
   const res = await fetch('/api/v1/bp/projecao?empresa=acxe', { credentials: 'include' });
@@ -177,7 +177,7 @@ export function BPDashboardPage() {
           </span>
         </div>
         <span className="text-xs text-atlas-muted">
-          Sync: {new Date(proj.sync_at).toLocaleString('pt-BR')}
+          Sincronizado: {new Date(proj.sync_at).toLocaleString('pt-BR')}
         </span>
       </div>
 
@@ -227,7 +227,7 @@ export function BPDashboardPage() {
           <div>
             <h2 className="text-sm font-bold">Liquidez · Pagamentos · Capacidade de Compras — 26 Semanas</h2>
             <p className="text-xs text-atlas-muted mt-1">
-              Cap. Compras = Caixa + Antecip. + FINIMP disp. − obrigações (buffer 20%) · valores em Mi
+              Cap. Compras = Caixa + Antecip. + FINIMP disp. − obrigações (reserva de 20%) · valores em Mi
             </p>
           </div>
           <div className="bg-pink-500/10 border border-pink-500/30 rounded-lg px-4 py-2 text-center min-w-[170px]">

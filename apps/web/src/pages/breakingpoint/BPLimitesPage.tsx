@@ -29,6 +29,9 @@ async function fetchBancos(): Promise<Banco[]> {
 const fmtBRL = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(v);
 
+const fmtPct1 = (v: number) =>
+  `${v.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+
 function TotalCard({
   titulo,
   icone,
@@ -64,7 +67,7 @@ function TotalCard({
         </div>
         <div className="flex justify-between text-xs">
           <span className="text-atlas-muted">Utilização</span>
-          <span className="font-semibold tabular-nums">{pct.toFixed(1)}%</span>
+          <span className="font-semibold tabular-nums">{fmtPct1(pct)}</span>
         </div>
       </div>
     </div>

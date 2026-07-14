@@ -138,8 +138,7 @@ export function MeuEstoquePage() {
       <div className="mb-5">
         <h1 className="text-2xl font-serif text-atlas-ink mb-1">Meu Estoque</h1>
         <p className="text-sm text-atlas-muted">
-          Saldo físico dos SKUs no(s) galpão(ões) vinculados ao seu usuário. Dados sincronizados do OMIE
-          (vw_posicaoEstoqueUnificadaFamilia).
+          Saldo físico dos SKUs no(s) galpão(ões) vinculados ao seu usuário. Dados sincronizados do OMIE.
           {data?.galpoes && data.galpoes.length > 0 && (
             <> Galpão(ões): <strong>{data.galpoes.join(', ')}</strong>.</>
           )}
@@ -151,8 +150,7 @@ export function MeuEstoquePage() {
 
       {semGalpao && (
         <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-sm text-amber-800 dark:text-amber-300">
-          Você não tem nenhum galpão vinculado. Solicite ao gestor para configurar via{' '}
-          <code className="font-mono">stockbridge.user_galpao</code>.
+          Você não tem nenhum galpão vinculado. Solicite ao gestor o vínculo do seu usuário a um galpão.
         </div>
       )}
 
@@ -168,7 +166,7 @@ export function MeuEstoquePage() {
             <input
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
-              placeholder="Buscar por nome, código ou família..."
+              placeholder="Buscar por nome, código ou família…"
               className="flex-1 px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
             />
             <select
@@ -182,7 +180,7 @@ export function MeuEstoquePage() {
             </select>
           </div>
 
-          {isLoading && <div className="p-6 text-sm text-atlas-muted">Carregando...</div>}
+          {isLoading && <div className="p-6 text-sm text-atlas-muted">Carregando…</div>}
 
           {data && (
             <>

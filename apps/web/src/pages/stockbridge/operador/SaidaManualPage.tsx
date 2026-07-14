@@ -56,11 +56,11 @@ interface SaldoDisponivel {
 
 const SUBTIPO_CFG: Record<Subtipo, { label: string; nivel: 'gestor' | 'diretor'; help: string; cor: string }> = {
   transf_intra_cnpj: { label: 'Transferência intra-CNPJ',  nivel: 'gestor',  help: 'Mesmo CNPJ, outro galpão — sem impacto fiscal', cor: 'bg-sky-100 text-sky-800' },
-  comodato:          { label: 'Comodato (empréstimo)',     nivel: 'diretor', help: 'Saída temporária pra TROCA — só Q2P; requer diretor', cor: 'bg-purple-100 text-purple-800' },
+  comodato:          { label: 'Comodato (empréstimo)',     nivel: 'diretor', help: 'Saída temporária para TROCA — só Q2P; requer diretor', cor: 'bg-purple-100 text-purple-800' },
   amostra:           { label: 'Amostra / brinde',          nivel: 'gestor',  help: 'Saída definitiva sem venda — gera divergência fiscal', cor: 'bg-amber-100 text-amber-800' },
   descarte:          { label: 'Descarte / perda',          nivel: 'gestor',  help: 'Material inutilizável — gera divergência fiscal', cor: 'bg-rose-100 text-rose-800' },
   quebra:            { label: 'Quebra técnica',            nivel: 'gestor',  help: 'Perda no manuseio — gera divergência fiscal', cor: 'bg-orange-100 text-orange-800' },
-  inventario_menos:  { label: 'Ajuste inventário (-)',     nivel: 'gestor',  help: 'Contagem apurou saldo menor — gera divergência', cor: 'bg-zinc-100 text-zinc-800' },
+  inventario_menos:  { label: 'Ajuste de inventário (-)',  nivel: 'gestor',  help: 'Contagem apurou saldo menor — gera divergência', cor: 'bg-zinc-100 text-zinc-800' },
 };
 
 const fmtKg = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 0 });
@@ -357,7 +357,7 @@ export function SaidaManualPage() {
         </div>
       </div>
 
-      {meuEstoque.isLoading && <div className="text-sm text-atlas-muted">Carregando estoque...</div>}
+      {meuEstoque.isLoading && <div className="text-sm text-atlas-muted">Carregando estoque…</div>}
       {meuEstoque.error && (
         <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-sm text-red-800 dark:text-red-300">
           Erro: {meuEstoque.error.message}
@@ -596,7 +596,7 @@ function SaidaManualModal({ sku, onClose, onSuccess, galpoesDisponiveis }: Saida
                 : 'bg-atlas-muted/20 text-atlas-muted cursor-not-allowed'
             }`}
           >
-            {mut.isPending ? 'Enviando...' : 'Registrar saída'}
+            {mut.isPending ? 'Enviando…' : 'Registrar saída'}
           </button>
         </>
       }

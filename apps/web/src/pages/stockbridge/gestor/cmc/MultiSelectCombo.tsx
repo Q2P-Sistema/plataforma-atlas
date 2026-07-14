@@ -54,7 +54,7 @@ export function MultiSelectCombo({
       ? allLabel
       : selected.length === 1
         ? (options.find((o) => o.value === selected[0])?.label ?? selected[0])
-        : `${label}: ${selected.length} selecionados`;
+        : `${label}: ${selected.length} itens selecionados`;
 
   return (
     <div ref={containerRef} className="relative">
@@ -89,7 +89,7 @@ export function MultiSelectCombo({
               type="text"
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
-              placeholder={`Buscar ${label.toLowerCase()}...`}
+              placeholder={`Buscar ${label.toLowerCase()}…`}
               className="w-full px-2 py-1 rounded border border-atlas-border bg-atlas-bg text-xs focus:outline-none focus:ring-1 focus:ring-acxe"
             />
           </div>

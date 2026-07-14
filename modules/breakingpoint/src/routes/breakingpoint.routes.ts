@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { requireAuth, requireRole, requireModule, csrfProtection } from '@atlas/auth';
-import { createLogger } from '@atlas/core';
+import { createLogger, cached, invalidate, sendSuccess, sendError } from '@atlas/core';
 import { getDadosMotor, listContas } from '../services/dados.service.js';
 import { calcular } from '../services/motor.service.js';
 import {
@@ -15,20 +15,10 @@ import {
   setContaIncluir,
   type Empresa,
 } from '../services/config.service.js';
-import { cached, invalidate } from '../services/cache.service.js';
+
 
 const logger = createLogger('breakingpoint:routes');
 const router: Router = Router();
-
-function sendSuccess(res: Response, data: unknown, status = 200, meta?: Record<string, unknown>) {
-  const body: Record<string, unknown> = { data, error: null };
-  if (meta) body.meta = meta;
-  res.status(status).json(body);
-}
-
-function sendError(res: Response, code: string, message: string, status = 400) {
-  res.status(status).json({ data: null, error: { code, message } });
-}
 
 const EmpresaSchema = z.enum(['acxe', 'q2p']).default('acxe');
 

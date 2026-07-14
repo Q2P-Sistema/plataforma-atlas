@@ -21,6 +21,9 @@ interface Banco {
   ativo: boolean;
 }
 
+const fmtPct1 = (v: number) =>
+  `${v.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+
 async function fetchBancos(): Promise<Banco[]> {
   const r = await fetch('/api/v1/bp/bancos?empresa=acxe', { credentials: 'include' });
   // Sem o guard, erro estruturado do backend resolve como data=null (UI-E).
@@ -127,7 +130,7 @@ export function BPEstruturaBancosPage() {
                 limite={b.antecip_limite}
                 usado={b.antecip_usado}
                 disp={b.antecip_disp}
-                extra={`taxa ${(b.antecip_taxa * 100).toFixed(1)}%`}
+                extra={`taxa ${fmtPct1(b.antecip_taxa * 100)}`}
                 corHex={b.cor_hex}
               />
               <LinhaLimite
@@ -135,7 +138,7 @@ export function BPEstruturaBancosPage() {
                 limite={b.finimp_limite}
                 usado={b.finimp_usado}
                 disp={b.finimp_disp}
-                extra={`garantia ${(b.finimp_garantia_pct * 100).toFixed(1)}%`}
+                extra={`garantia ${fmtPct1(b.finimp_garantia_pct * 100)}`}
                 corHex={b.cor_hex}
               />
               <LinhaLimite

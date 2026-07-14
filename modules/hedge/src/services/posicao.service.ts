@@ -154,6 +154,22 @@ export async function calcularPosicao(
 }
 
 /**
+ * Classifica a cobertura de hedge de um bucket. Thresholds fixos 60/100 —
+ * torná-los configuráveis (config_motor) é escopo do MOD-04 (ACXEGDP-275).
+ *
+ * Consolidada aqui a partir do bucket.service.ts aposentado (MOD-18,
+ * ACXEGDP-269/298): a lógica vivia duplicada — inline neste arquivo e como
+ * função órfã lá (consumida só pelo teste, dando falsa confiança).
+ */
+export function determinarStatus(
+  coberturaPct: number,
+): 'ok' | 'sub_hedged' | 'over_hedged' {
+  if (coberturaPct < 60) return 'sub_hedged';
+  if (coberturaPct > 100) return 'over_hedged';
+  return 'ok';
+}
+
+/**
  * Recalcula buckets lendo da view OMIE vw_hedge_pagar_usd.
  * A view ja faz o join com cotacao e retorna valor_usd, bucket_mes, etc.
  */
@@ -216,9 +232,7 @@ export async function recalcularBuckets(): Promise<void> {
       ? new Decimal(0)
       : ndfUsd.div(pagarUsd).times(100);
 
-    let status: 'ok' | 'sub_hedged' | 'over_hedged' = 'ok';
-    if (cobertura.lt(60)) status = 'sub_hedged';
-    if (cobertura.gt(100)) status = 'over_hedged';
+    const status = determinarStatus(cobertura.toNumber());
 
     if (existing) {
       await db

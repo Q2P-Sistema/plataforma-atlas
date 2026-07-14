@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '@atlas/ui';
 import { useAuthStore } from '../../../stores/auth.store.js';
+import { SUBTIPO_LABEL, rotulo } from '../labels.js';
 
 interface Pendencia {
   id: string;
@@ -64,11 +65,11 @@ function useApiFetch() {
       try {
         body = JSON.parse(text);
       } catch {
-        throw new Error(`HTTP ${res.status}: resposta nao-JSON (${text.slice(0, 120)})`);
+        throw new Error(`HTTP ${res.status}: resposta não-JSON (${text.slice(0, 120)})`);
       }
     }
     if (!res.ok) {
-      throw new Error(body.error?.message ?? `HTTP ${res.status} sem body — servidor pode ter reiniciado, tente novamente`);
+      throw new Error(body.error?.message ?? `HTTP ${res.status} sem resposta — o servidor pode ter reiniciado, tente novamente`);
     }
     return body;
   };
@@ -105,7 +106,7 @@ export function AprovacoesPage() {
     onSuccess: ({ pendencia }) => {
       setFeedback({
         tipo: 'sucesso',
-        texto: `✓ ${TIPO_LABEL[pendencia.tipoAprovacao] ?? pendencia.tipoAprovacao} aprovada — ${pendencia.produto.fornecedor}`,
+        texto: `✓ Pendência aprovada: ${TIPO_LABEL[pendencia.tipoAprovacao] ?? pendencia.tipoAprovacao} — ${pendencia.produto.fornecedor}`,
       });
       queryClient.invalidateQueries({ queryKey: ['stockbridge'] });
     },
@@ -123,7 +124,7 @@ export function AprovacoesPage() {
       setMotivoRejeicao('');
       setFeedback({
         tipo: 'sucesso',
-        texto: `✓ ${TIPO_LABEL[pendencia.tipoAprovacao] ?? pendencia.tipoAprovacao} rejeitada — ${pendencia.produto.fornecedor}. Operador foi notificado por email.`,
+        texto: `✓ Pendência rejeitada: ${TIPO_LABEL[pendencia.tipoAprovacao] ?? pendencia.tipoAprovacao} — ${pendencia.produto.fornecedor}. O operador foi notificado por e-mail.`,
       });
       queryClient.invalidateQueries({ queryKey: ['stockbridge'] });
     },
@@ -165,7 +166,7 @@ export function AprovacoesPage() {
         </div>
       )}
 
-      {isLoading && <div className="p-6 text-sm text-atlas-muted">Carregando...</div>}
+      {isLoading && <div className="p-6 text-sm text-atlas-muted">Carregando…</div>}
 
       {!isLoading && pendencias.length === 0 && (
         <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-atlas-border rounded-lg">
@@ -194,7 +195,7 @@ export function AprovacoesPage() {
                     )}
                     {p.tipoDivergencia && (
                       <span className="text-xs font-semibold px-2 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300">
-                        {p.tipoDivergencia}
+                        {rotulo(SUBTIPO_LABEL, p.tipoDivergencia)}
                       </span>
                     )}
                   </div>
@@ -219,7 +220,7 @@ export function AprovacoesPage() {
                 <div className="grid grid-cols-3 gap-2 mb-3">
                   <Cell label="Previsto NF" value={`${p.quantidadePrevistaKg?.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg`} />
                   <Cell label="Recebido" value={`${p.quantidadeRecebidaKg?.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg`} accent="text-amber-700" />
-                  <Cell label="Delta" value={`${p.deltaKg! > 0 ? '+' : ''}${p.deltaKg?.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg`} accent={p.deltaKg! < 0 ? 'text-red-700' : 'text-amber-700'} />
+                  <Cell label="Diferença" value={`${p.deltaKg! > 0 ? '+' : ''}${p.deltaKg?.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg`} accent={p.deltaKg! < 0 ? 'text-red-700' : 'text-amber-700'} />
                 </div>
               )}
 
@@ -242,7 +243,7 @@ export function AprovacoesPage() {
                   disabled={aprovarMut.isPending || rejeitarMut.isPending}
                   className="px-4 py-1.5 bg-green-700 text-white rounded text-sm font-medium hover:opacity-90"
                 >
-                  {aprovarMut.isPending ? '...' : 'Aprovar'}
+                  {aprovarMut.isPending ? '…' : 'Aprovar'}
                 </button>
               </div>
             </div>
@@ -284,7 +285,7 @@ export function AprovacoesPage() {
                 disabled={!motivoRejeicao.trim() || rejeitarMut.isPending}
                 className={`px-5 py-2 rounded text-sm font-medium ${motivoRejeicao.trim() ? 'bg-red-700 text-white hover:opacity-90' : 'bg-atlas-muted/20 text-atlas-muted cursor-not-allowed'}`}
               >
-                {rejeitarMut.isPending ? 'Enviando...' : 'Confirmar rejeição'}
+                {rejeitarMut.isPending ? 'Enviando…' : 'Confirmar rejeição'}
               </button>
             </div>
           </div>

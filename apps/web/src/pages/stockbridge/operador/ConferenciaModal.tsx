@@ -96,7 +96,7 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
       const data = res.data as { status: string; deltaKg?: number };
       if (data.status === 'aguardando_aprovacao') {
         const deltaAbs = Math.abs(data.deltaKg ?? 0);
-        setSucesso({ tipo: 'divergencia', mensagem: `Recebido com divergência de ${deltaAbs.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg — encaminhado para aprovação do Gestor.` });
+        setSucesso({ tipo: 'divergencia', mensagem: `Recebido com divergência de ${deltaAbs.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg — encaminhado para aprovação do gestor.` });
       } else {
         setSucesso({ tipo: 'ok', mensagem: 'Recebimento registrado com sucesso em ACXE + Q2P.' });
       }
@@ -173,7 +173,7 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
               <div className={`font-serif text-sm ${temDivergencia ? 'text-amber-700 dark:text-amber-400' : 'text-green-700 dark:text-green-400'}`}>{qtdFisicaKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg</div>
             </div>
             <div className="p-2 bg-atlas-bg rounded">
-              <div className="text-xs text-atlas-muted">Delta</div>
+              <div className="text-xs text-atlas-muted">Diferença</div>
               <div className={`font-serif text-sm ${Math.abs(deltaKg) < 1 ? 'text-green-700 dark:text-green-400' : deltaKg > 0 ? 'text-amber-700 dark:text-amber-400' : 'text-red-700 dark:text-red-400'}`}>
                 {deltaKg > 0 ? '+' : ''}{deltaKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg
               </div>
@@ -195,7 +195,7 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
           </select>
           {localidades.length === 0 && (
             <div className="text-xs text-atlas-muted mt-1">
-              Nenhuma localidade ativa cadastrada. Peça ao gestor para cadastrar em /stockbridge/localidades.
+              Nenhuma localidade ativa cadastrada. Peça ao gestor para cadastrar na tela de Localidades.
             </div>
           )}
         </div>
@@ -249,7 +249,7 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
             disabled={!podeConfirmar || recebimentoMut.isPending}
             className={`px-5 py-2 rounded text-sm font-medium ${podeConfirmar && !recebimentoMut.isPending ? 'bg-atlas-btn-bg text-atlas-btn-text hover:opacity-90' : 'bg-atlas-muted/20 text-atlas-muted cursor-not-allowed'}`}
           >
-            {recebimentoMut.isPending ? 'Enviando...' : temDivergencia ? 'Registrar com divergência' : 'Confirmar recebimento'}
+            {recebimentoMut.isPending ? 'Enviando…' : temDivergencia ? 'Registrar com divergência' : 'Confirmar recebimento'}
           </button>
         </div>
       </div>

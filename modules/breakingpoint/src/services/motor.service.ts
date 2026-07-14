@@ -91,6 +91,8 @@ const FRACAO_ESTOQUE_LIQUIDAVEL_SEMANA = 0.18;
 const LIMIAR_FINIMP_SOBRE_PAGAMENTO = 0.5;
 /** Reserva obrigatória de caixa como múltiplo do pagamento da semana (120%). */
 const FATOR_RESERVA_OBRIGATORIA = 1.2;
+/** Piso de folga em antecipação (BRL): abaixo disto a semana é marcada como breaking point de antecipação. */
+const PISO_ANTECIPACAO_BRL = 200_000;
 
 export function calcular(input: MotorInput): MotorOutput {
   const { dados, data_base } = input;
@@ -164,7 +166,7 @@ export function calcular(input: MotorInput): MotorOutput {
     if (breakCaixa === null && saldoCCProximo < 0) {
       breakCaixa = { semana: w + 1, data: dataFmt, val: saldoCCProximo };
     }
-    if (breakAntecip === null && dup_antecip_limite > 0 && antecipDisp < 200_000) {
+    if (breakAntecip === null && dup_antecip_limite > 0 && antecipDisp < PISO_ANTECIPACAO_BRL) {
       breakAntecip = { semana: w + 1, data: dataFmt, val: antecipDisp };
     }
     if (breakTotal === null && gap < 0) {

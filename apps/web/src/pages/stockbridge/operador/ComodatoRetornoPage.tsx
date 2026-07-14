@@ -82,7 +82,7 @@ export function ComodatoRetornoPage() {
     },
     onSuccess: (res) => {
       setFeedbackCron(
-        `Cron rodou — ${res.total} comodato(s) vencido(s); ${res.notificados} notificacao(oes) disparada(s).`,
+        `Rotina de alerta executada — ${res.total} comodato(s) vencido(s); ${res.notificados} notificação(ões) disparada(s).`,
       );
       queryClient.invalidateQueries({ queryKey: ['stockbridge', 'comodatos', 'count'] });
     },
@@ -120,7 +120,7 @@ export function ComodatoRetornoPage() {
                 dispararCronMut.mutate();
               }}
               disabled={dispararCronMut.isPending}
-              title="Roda agora o cron de alerta — normalmente roda às 08:00 BR todo dia"
+              title="Executa agora a rotina de alerta — normalmente roda todos os dias às 08:00 (horário de Brasília)"
               className="px-3 py-1.5 text-xs font-medium border border-atlas-border rounded hover:bg-atlas-bg/60 disabled:opacity-50"
             >
               {dispararCronMut.isPending ? 'Rodando…' : (<><Bell size={12} className="inline -mt-0.5 mr-1" aria-hidden />Disparar alerta agora</>)}
@@ -143,7 +143,7 @@ export function ComodatoRetornoPage() {
         />
       </div>
 
-      {isLoading && <div className="text-sm text-atlas-muted">Carregando comodatos...</div>}
+      {isLoading && <div className="text-sm text-atlas-muted">Carregando comodatos…</div>}
       {error && (
         <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-sm text-red-800 dark:text-red-300">
           Erro: {error.message}
@@ -318,7 +318,7 @@ function RetornoModal({ comodato, onClose, onSuccess }: RetornoModalProps) {
                 : 'bg-atlas-muted/20 text-atlas-muted cursor-not-allowed'
             }`}
           >
-            {mut.isPending ? 'Enviando...' : 'Registrar retorno'}
+            {mut.isPending ? 'Enviando…' : 'Registrar retorno'}
           </button>
         </>
       }
@@ -389,7 +389,7 @@ function RetornoModal({ comodato, onClose, onSuccess }: RetornoModalProps) {
             />
             {qtdMudou && (
               <div className="mt-1 text-[11px] text-amber-700">
-                <AlertTriangle size={12} className="inline -mt-0.5 mr-1" aria-hidden />Diferença vs. original ({fmtKg(comodato.quantidadeKg)} kg): delta{' '}
+                <AlertTriangle size={12} className="inline -mt-0.5 mr-1" aria-hidden />Diferença em relação ao original ({fmtKg(comodato.quantidadeKg)} kg):{' '}
                 {(qtdNum - comodato.quantidadeKg > 0 ? '+' : '') +
                   (qtdNum - comodato.quantidadeKg).toLocaleString('pt-BR', { maximumFractionDigits: 3 })}{' '}
                 kg — vai gerar divergência
@@ -503,12 +503,12 @@ function ProdutoCombobox({ valor, onChange, destacar }: ProdutoComboboxProps) {
             autoFocus
             value={termo}
             onChange={(e) => setTermo(e.target.value)}
-            placeholder="Buscar produto pela descrição..."
+            placeholder="Buscar produto pela descrição…"
             className="w-full px-3 py-2 border-b border-atlas-border bg-atlas-bg text-sm focus:outline-none"
           />
           <div className="overflow-y-auto flex-1">
             {isFetching && opcoes.length === 0 && (
-              <div className="px-3 py-2 text-xs text-atlas-muted italic">Buscando...</div>
+              <div className="px-3 py-2 text-xs text-atlas-muted italic">Buscando…</div>
             )}
             {!isFetching && opcoes.length === 0 && (
               <div className="px-3 py-2 text-xs text-atlas-muted italic">Nenhum produto encontrado.</div>
