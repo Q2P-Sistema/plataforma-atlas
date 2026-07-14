@@ -179,3 +179,67 @@ describe('saida-manual#registrarSaidaManual — validacoes', () => {
     ).rejects.toThrow(/destino/i);
   });
 });
+
+// STK-11 (ACXEGDP-289): o re-check de saldo dentro da tx nao protegia nada em
+// READ COMMITTED (duas tx concorrentes nao veem a reserva uma da outra). O
+// advisory lock transacional por (produto, galpao, empresa) serializa o trio.
+describe('saida-manual#registrarSaidaManual — advisory lock (STK-11)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  function sqlText(obj: unknown): string {
+    const chunks = (obj as { queryChunks?: Array<{ value?: unknown }> })?.queryChunks;
+    if (!chunks) return String(obj);
+    return chunks
+      .map((c) => {
+        const v = c.value;
+        if (Array.isArray(v)) return v.join('');
+        if (typeof v === 'string') return v;
+        return '';
+      })
+      .join('');
+  }
+
+  it('adquire pg_advisory_xact_lock do trio ANTES do re-check de saldo', async () => {
+    const { getDb } = await import('@atlas/core');
+    const txExecute = vi.fn().mockResolvedValue({ rows: [{ disp_kg: '5000' }] });
+    const tx = {
+      insert: vi.fn().mockReturnThis(),
+      values: vi.fn().mockReturnThis(),
+      returning: vi.fn().mockResolvedValue([{ id: 'novo-id' }]),
+      update: vi.fn().mockReturnThis(),
+      set: vi.fn().mockReturnThis(),
+      where: vi.fn().mockResolvedValue(undefined),
+      select: vi.fn().mockReturnThis(),
+      from: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue([]),
+      execute: txExecute,
+    };
+    const db = {
+      execute: vi.fn().mockResolvedValue({
+        rows: [{ saldo_omie_kg: '5000', reservado_kg: '0', descricao: 'PP H301' }],
+      }),
+      transaction: async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
+    };
+    vi.mocked(getDb).mockReturnValue(db as never);
+
+    await registrarSaidaManual({
+      subtipo: 'descarte',
+      produtoCodigoAcxe: 1234,
+      galpao: '11',
+      empresa: 'q2p',
+      quantidadeOriginal: 1000,
+      unidade: 'kg',
+      observacoes: 'teste lock',
+      userId: 'u1',
+    });
+
+    // 1ª instrucao da tx = lock com a chave do trio; 2ª = re-check de saldo
+    const primeira = sqlText(txExecute.mock.calls[0]![0]);
+    expect(primeira).toContain('pg_advisory_xact_lock');
+    expect(primeira).toContain('hashtextextended');
+    // A chave do trio vai como parametro bound (chunk Param do drizzle)
+    expect(JSON.stringify(txExecute.mock.calls[0]![0])).toContain('sb:reserva:1234:11:q2p');
+    const segunda = sqlText(txExecute.mock.calls[1]![0]);
+    expect(segunda).toContain('reserva_saldo');
+  });
+});

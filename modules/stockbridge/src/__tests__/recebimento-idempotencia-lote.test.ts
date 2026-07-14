@@ -27,12 +27,17 @@ vi.mock('@atlas/db', () => ({
 }));
 
 const consultarNFSpy = vi.fn();
-vi.mock('@atlas/integration-omie', () => ({
-  incluirAjusteEstoque: vi.fn(),
-  listarAjusteEstoque: vi.fn(),
-  consultarNF: (...args: unknown[]) => consultarNFSpy(...args),
-  isMockMode: () => true,
-}));
+vi.mock('@atlas/integration-omie', async (importOriginal) => {
+  // NotaFiscalMultiItemError REAL: o service faz instanceof no catch (STK-10).
+  const real = await importOriginal<typeof import('@atlas/integration-omie')>();
+  return {
+    NotaFiscalMultiItemError: real.NotaFiscalMultiItemError,
+    incluirAjusteEstoque: vi.fn(),
+    listarAjusteEstoque: vi.fn(),
+    consultarNF: (...args: unknown[]) => consultarNFSpy(...args),
+    isMockMode: () => true,
+  };
+});
 
 import { getDb } from '@atlas/core';
 import {
@@ -151,5 +156,29 @@ describe('importação ACXE-only (STK-12)', () => {
 
     await expect(getFilaOmie({ nf: '300', cnpj: 'q2p' })).rejects.toThrow(/apenas para NF emitida pela ACXE/);
     expect(consultarNFSpy).not.toHaveBeenCalled();
+  });
+});
+
+// STK-10 (ACXEGDP-289): NF multi-item rejeitada com alerta ao admin — antes o
+// det[0] era lido silenciosamente (valor unitário inflado, itens 2..n perdidos).
+describe('NF multi-item rejeitada com alerta (STK-10)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('processarRecebimento propaga NotaFiscalMultiItemError e dispara e-mail ao admin', async () => {
+    const { NotaFiscalMultiItemError } = await import('@atlas/integration-omie');
+    const { sendEmail } = await import('@atlas/core');
+    const db = dbComRespostasPorTabela({});
+    vi.mocked(getDb).mockReturnValue(db as never);
+    consultarNFSpy.mockRejectedValue(new NotaFiscalMultiItemError(300, 4));
+
+    await expect(processarRecebimento(inputBase)).rejects.toThrow(/4 itens/);
+
+    // Alerta é fire-and-forget — aguarda o microtask antes de assertar
+    await new Promise((r) => setImmediate(r));
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ subject: expect.stringContaining('itens bloqueada') }),
+    );
   });
 });

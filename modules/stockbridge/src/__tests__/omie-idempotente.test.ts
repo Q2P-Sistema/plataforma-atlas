@@ -8,6 +8,8 @@ vi.mock('@atlas/core', () => ({
 }));
 
 vi.mock('@atlas/integration-omie', () => ({
+  // Classe dummy: rotas/services importam o binding (STK-10); instanceof falso cai no handler seguinte.
+  NotaFiscalMultiItemError: class NotaFiscalMultiItemError extends Error {},
   incluirAjusteEstoque: (...args: unknown[]) => incluirSpy(...args),
   listarAjusteEstoque: (...args: unknown[]) => listarSpy(...args),
 }));

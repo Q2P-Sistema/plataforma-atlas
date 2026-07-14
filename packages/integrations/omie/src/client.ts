@@ -178,5 +178,16 @@ export async function callOmie<TResponse = unknown>(
 }
 
 export function isMockMode(): boolean {
-  return (process.env.OMIE_MODE ?? 'real') === 'mock';
+  const mock = (process.env.OMIE_MODE ?? 'real') === 'mock';
+  // STK-15 (ACXEGDP-289): mock em producao gravaria recebimentos/saidas como
+  // 'concluida' com ids MOCK-* sem tocar o ERP — silenciosamente. Um copy-paste
+  // de .env (que traz OMIE_MODE=mock como default de dev) bastaria. Fail-fast.
+  if (mock && process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'OMIE_MODE=mock com NODE_ENV=production — configuração proibida: as escritas OMIE seriam ' +
+        'simuladas com ids MOCK-* sem tocar o ERP. Configure OMIE_MODE=real (com as credenciais ' +
+        'OMIE_*_KEY/SECRET) ou rode fora de produção.',
+    );
+  }
+  return mock;
 }

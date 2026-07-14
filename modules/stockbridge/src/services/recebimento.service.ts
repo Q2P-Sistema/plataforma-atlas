@@ -6,6 +6,7 @@ import { lote, movimentacao, movimentacaoLegado, aprovacao, localidade, localida
 import {
   consultarNF,
   isMockMode,
+  NotaFiscalMultiItemError,
   type ConsultarNFResponse,
 } from '@atlas/integration-omie';
 import { getCorrelacao, CorrelacaoNaoEncontradaError } from './correlacao.service.js';
@@ -18,6 +19,7 @@ import {
   enviarAlertaPendenciaOmie,
   enviarNotificacaoRecebimentoConcluido,
   enviarAlertaNfIndeterminada,
+  enviarAlertaNfMultiItem,
 } from './notificacao.service.js';
 import { incluirAjusteIdempotente } from './omie-idempotente.js';
 import { COD_INT_AJUSTE_SUFIXO, buildCodIntAjuste, CNPJ_ACXE, CNPJ_Q2P_MATRIZ } from '../types.js';
@@ -65,6 +67,27 @@ export class ImportacaoApenasAcxeError extends Error {
         'Para entradas diretas da Q2P, use o fluxo de Recebimento Nacional.',
     );
     this.name = 'ImportacaoApenasAcxeError';
+  }
+}
+
+/**
+ * STK-10 (ACXEGDP-289): consultarNF com alerta de admin quando a NF tem mais de
+ * um item de produto. O modelo suporta 1 produto por NF — antes, o det[0] era
+ * lido silenciosamente (valor unitário inflado + itens 2..n perdidos). O alerta
+ * segue o mesmo padrão do CorrelacaoNaoEncontradaError: e-mail fora do caminho
+ * crítico + rethrow pro erro tipado chegar à rota (422).
+ */
+async function consultarNFComAlertaMultiItem(
+  cnpj: 'acxe' | 'q2p',
+  numero: number,
+): Promise<ConsultarNFResponse> {
+  try {
+    return await consultarNF(cnpj, numero);
+  } catch (err) {
+    if (err instanceof NotaFiscalMultiItemError) {
+      void enviarAlertaNfMultiItem({ nf: String(numero), cnpj, totalItens: err.totalItens });
+    }
+    throw err;
   }
 }
 
@@ -247,7 +270,7 @@ export async function getFilaOmie(params: {
       return [];
     }
 
-    const omieData = await consultarNF(params.cnpj, numero);
+    const omieData = await consultarNFComAlertaMultiItem(params.cnpj, numero);
     // Feature 012: bloqueia NF cancelada / não-emitida-pela-ACXE (fail-open se indeterminado).
     // Lê da tbl_nf_header sincronizada (flag cancelada + CNPJ do emitente), não do retorno ao vivo.
     await aplicarValidacaoNf(numero, params.cnpj);
@@ -362,7 +385,7 @@ export async function processarRecebimento(
   }
 
   // 2. Consulta NF no OMIE (lado do CNPJ emissor)
-  const omieData = await consultarNF(input.cnpj, Number(input.nf) || 0);
+  const omieData = await consultarNFComAlertaMultiItem(input.cnpj, Number(input.nf) || 0);
   // Feature 012: valida cancelamento/emitente ANTES de qualquer escrita (lote/mov/ajuste).
   // Bloqueio aqui garante zero efeito colateral (FR-002/FR-008). Lê da tbl_nf_header sincronizada.
   await aplicarValidacaoNf(Number(input.nf) || 0, input.cnpj);
