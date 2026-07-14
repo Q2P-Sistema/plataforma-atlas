@@ -26,9 +26,10 @@ vi.mock('@atlas/core', () => ({
 vi.mock('@atlas/db', () => ({
   aprovacao: { id: {}, status: {}, loteId: {}, precisaNivel: {}, tipoAprovacao: {}, quantidadePrevistaKg: {}, quantidadeRecebidaKg: {}, tipoDivergencia: {}, observacoes: {}, lancadoPor: {}, lancadoEm: {} },
   lote: { id: {}, status: {}, quantidadeFisicaKg: {}, produtoCodigoAcxe: {}, produtoCodigoQ2p: {}, localidadeId: {}, notaFiscal: {}, custoBrlKg: {}, updatedAt: {} },
-  movimentacao: { id: {} },
+  movimentacao: { id: {}, movimentacaoOrigemId: {}, tipoMovimento: {}, ativo: {} },
   localidadeCorrelacao: { localidadeId: {}, codigoLocalEstoqueAcxe: {}, codigoLocalEstoqueQ2p: {} },
   users: { id: {}, email: {} },
+  reservaSaldo: { movimentacaoId: {}, status: {}, resolvidoEm: {} },
 }));
 
 vi.mock('@atlas/integration-omie', () => ({
@@ -39,6 +40,17 @@ vi.mock('@atlas/integration-omie', () => ({
   }),
   consultarNF: vi.fn(),
   isMockMode: () => true,
+}));
+
+// STK-06: aprovarSaidaManual/retorno_comodato — as funcoes OMIE de saida sao
+// mockadas pra controlar o resultado dual (sucesso vs pendenciaQ2p) sem
+// depender das correlacoes reais (db.execute).
+vi.mock('../services/omie-saida.service.js', () => ({
+  executarSaidaOmieDual: vi.fn(),
+  executarTransferenciaIntraDual: vi.fn(),
+  executarComodatoOmieDual: vi.fn(),
+  executarRetornoComodatoOmieDual: vi.fn(),
+  resolverCodigoProdutoOmie: vi.fn(),
 }));
 
 /**
@@ -98,6 +110,8 @@ function criarDbComTabelas(
       const tabelaRows = updateTable ? rows.get(updateTable) ?? [] : [];
       return Promise.resolve(tabelaRows.length > 0 ? tabelaRows : [{ id: 'nova-id' }]);
     }),
+    // consultarValorUnitarioProduto (media ponderada) — retorna vu fixo 2.5
+    execute: vi.fn(() => Promise.resolve({ rows: [{ vu: '2.5' }] })),
   };
   return {
     ...chain,
@@ -590,6 +604,115 @@ describe('aprovacao.service#resubmeter — guard de duplicacao (STK-07)', () => 
     await expect(
       resubmeter({ id: 'apr-1', usuarioId: 'u1', quantidadeRecebidaKg: 22, observacoes: 'de novo' }),
     ).rejects.toThrow(ResubmissaoDuplicadaError);
+  });
+});
+
+// STK-06 (ACXEGDP-286): retorno de comodato — a persistencia da BAIXA do TROCA
+// era feita fora/antes da transacao com statusOmie='concluida' incondicional.
+// Agora roda dentro da tx (apos o claim) e reflete a pendencia Q2P nas DUAS
+// movimentacoes, com os valores unitarios persistidos pro retry (STK-03b).
+describe('aprovacao.service#aprovarSaidaManual — retorno_comodato (STK-06)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const aprRow = {
+    id: 'apr-ret', loteId: null, status: 'pendente',
+    precisaNivel: 'gestor', tipoAprovacao: 'retorno_comodato',
+    quantidadeRecebidaKg: '800', lancadoPor: 'op-1',
+    produtoCodigoAcxe: 2002, galpao: '11.1', empresa: 'q2p',
+    movimentacaoId: 'mov-multi',
+  };
+  // Uma unica linha serve os 3 selects de movimentacao (entrada, origem, baixa)
+  // no mock por-tabela — os campos cobrem os 3 papeis.
+  const movRow = {
+    id: 'mov-multi', opId: 'op-ret', movimentacaoOrigemId: 'mov-multi',
+    produtoCodigoAcxe: 1001, galpao: '11.1', quantidadeKg: '800',
+    createdAt: new Date('2026-06-01T12:00:00Z'), observacoes: 'Comodato cliente X',
+  };
+
+  async function montarDb() {
+    const mod = await import('@atlas/db');
+    const m = new Map<object, unknown[]>();
+    m.set(mod.aprovacao, [aprRow]);
+    m.set(mod.movimentacao, [movRow]);
+    m.set(mod.users, [{ email: 'operador@test.local' }]);
+    return criarDbComTabelas(m);
+  }
+
+  it('Q2P pendente: BAIXA e ENTRADA ficam pendente_q2p, com custo persistido, dentro da tx', async () => {
+    const { getDb } = await import('@atlas/core');
+    const omieSaida = await import('../services/omie-saida.service.js');
+    vi.mocked(omieSaida.executarRetornoComodatoOmieDual).mockResolvedValue({
+      acxe: {
+        baixa: { idMovest: 'MB-A', idAjuste: 'AB-A' },
+        entrada: { idMovest: 'ME-A', idAjuste: 'AE-A' },
+      },
+      q2p: null,
+      pendenciaQ2p: { mensagem: 'Q2P caiu depois do ACXE' },
+    });
+    const dbMock = await montarDb();
+    vi.mocked(getDb).mockReturnValue(dbMock as never);
+
+    await aprovar({ id: 'apr-ret', usuarioId: 'gestor-1', perfilUsuario: 'gestor' });
+
+    const setCalls = (dbMock.set as ReturnType<typeof vi.fn>).mock.calls as Array<[Record<string, unknown>]>;
+
+    // Baixa do TROCA: ids ACXE da perna baixa + pendente_q2p (antes: 'concluida' incondicional)
+    const setBaixa = setCalls.find((c) => c[0]?.idMovestAcxe === 'MB-A');
+    expect(setBaixa?.[0]).toMatchObject({
+      statusOmie: 'pendente_q2p',
+      custoUnitarioBrl: '2.5',
+      mvAcxe: -1,
+      tentativasQ2p: 1,
+      ultimoErroOmie: expect.objectContaining({ mensagem: expect.stringContaining('Q2P caiu') }),
+    });
+
+    // Entrada destino: ids ACXE da perna entrada + pendente_q2p + custo persistido
+    const setEntrada = setCalls.find((c) => c[0]?.idMovestAcxe === 'ME-A');
+    expect(setEntrada?.[0]).toMatchObject({
+      statusOmie: 'pendente_q2p',
+      custoUnitarioBrl: '2.5',
+      mvAcxe: 1,
+      tentativasQ2p: 1,
+    });
+
+    // Ordem dos updates prova que a baixa roda DEPOIS do claim da aprovacao
+    // (dentro da tx) — antes ela commitava sozinha antes da tx abrir.
+    const updateCalls = (dbMock.update as ReturnType<typeof vi.fn>).mock.calls as Array<[{ __id?: string } | object]>;
+    expect(updateCalls[0]?.[0]).toBe(dbMod.aprovacao);
+  });
+
+  it('sucesso completo: baixa e entrada concluidas com os 4 ids persistidos', async () => {
+    const { getDb } = await import('@atlas/core');
+    const omieSaida = await import('../services/omie-saida.service.js');
+    vi.mocked(omieSaida.executarRetornoComodatoOmieDual).mockResolvedValue({
+      acxe: {
+        baixa: { idMovest: 'MB-A', idAjuste: 'AB-A' },
+        entrada: { idMovest: 'ME-A', idAjuste: 'AE-A' },
+      },
+      q2p: {
+        baixa: { idMovest: 'MB-Q', idAjuste: 'AB-Q' },
+        entrada: { idMovest: 'ME-Q', idAjuste: 'AE-Q' },
+      },
+      pendenciaQ2p: null,
+    });
+    const dbMock = await montarDb();
+    vi.mocked(getDb).mockReturnValue(dbMock as never);
+
+    await aprovar({ id: 'apr-ret', usuarioId: 'gestor-1', perfilUsuario: 'gestor' });
+
+    const setCalls = (dbMock.set as ReturnType<typeof vi.fn>).mock.calls as Array<[Record<string, unknown>]>;
+    const setBaixa = setCalls.find((c) => c[0]?.idMovestAcxe === 'MB-A');
+    expect(setBaixa?.[0]).toMatchObject({
+      statusOmie: 'concluida',
+      idMovestQ2p: 'MB-Q',
+      mvQ2p: -1,
+    });
+    const setEntrada = setCalls.find((c) => c[0]?.idMovestAcxe === 'ME-A');
+    expect(setEntrada?.[0]).toMatchObject({
+      statusOmie: 'concluida',
+      idMovestQ2p: 'ME-Q',
+      mvQ2p: 1,
+    });
   });
 });
 

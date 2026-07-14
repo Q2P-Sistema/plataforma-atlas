@@ -1070,6 +1070,9 @@ async function aprovarSaidaManual(
         q2p: { baixa: { idMovest: string; idAjuste: string }; entrada: { idMovest: string; idAjuste: string } } | null;
         pendenciaQ2p: { mensagem: string } | null;
       };
+  // Contexto do retorno_comodato para persistencia DENTRO da tx (STK-06):
+  // id da movimentacao de baixa + os dois valores unitarios usados no OMIE.
+  let retornoCtx: { movBaixaId: string; valorOriginal: number; valorRecebido: number } | null = null;
 
   try {
     switch (ap.tipoAprovacao) {
@@ -1193,24 +1196,12 @@ async function aprovarSaidaManual(
           observacao: observacaoOmie,
         });
         resultadoOmie = { kind: 'retorno_dual', acxe: r.acxe, q2p: r.q2p, pendenciaQ2p: r.pendenciaQ2p };
-
-        // Persistir baixa OMIE na movimentacao de baixa (4 ids: acxe.baixa, q2p.baixa)
-        const updateBaixa: Record<string, unknown> = { statusOmie: 'concluida', updatedAt: new Date() };
-        if (r.acxe) {
-          updateBaixa.idMovestAcxe = r.acxe.baixa.idMovest;
-          updateBaixa.idAjusteAcxe = r.acxe.baixa.idAjuste;
-          updateBaixa.mvAcxe = -1;
-          updateBaixa.dtAcxe = new Date();
-          updateBaixa.idUserAcxe = input.usuarioId;
-        }
-        if (r.q2p) {
-          updateBaixa.idMovestQ2p = r.q2p.baixa.idMovest;
-          updateBaixa.idAjusteQ2p = r.q2p.baixa.idAjuste;
-          updateBaixa.mvQ2p = -1;
-          updateBaixa.dtQ2p = new Date();
-          updateBaixa.idUserQ2p = input.usuarioId;
-        }
-        await db.update(movimentacao).set(updateBaixa).where(eq(movimentacao.id, movBaixa.id));
+        // STK-06 (ACXEGDP-286): a persistencia da baixa era feita AQUI, fora e
+        // ANTES da transacao, com statusOmie='concluida' incondicional — Q2P
+        // pendente sumia do radar e um rollback posterior da tx deixava o update
+        // orfao commitado. Agora tudo acontece dentro da tx, condicionado a
+        // pendenciaQ2p (ver bloco retorno_dual abaixo).
+        retornoCtx = { movBaixaId: movBaixa.id, valorOriginal, valorRecebido };
         break;
       }
       default:
@@ -1295,6 +1286,44 @@ async function aprovarSaidaManual(
           timestamp: new Date().toISOString(),
         };
         updateMov.tentativasQ2p = 1;
+      }
+      // STK-03b: valor da ENTRADA persistido pro retry reusar o mesmo preco.
+      if (retornoCtx) updateMov.custoUnitarioBrl = String(retornoCtx.valorRecebido);
+
+      // STK-06 (ACXEGDP-286): persistencia da BAIXA do TROCA — dentro da tx e
+      // condicionada a pendenciaQ2p. Se Q2P falhou apos ACXE ok, AMBAS as
+      // movimentacoes ficam pendente_q2p (antes a baixa era marcada 'concluida'
+      // incondicionalmente e o lado Q2P dela sumia do painel de retry).
+      if (retornoCtx) {
+        const r = resultadoOmie;
+        const updateBaixa: Record<string, unknown> = {
+          statusOmie: r.pendenciaQ2p ? 'pendente_q2p' : 'concluida',
+          custoUnitarioBrl: String(retornoCtx.valorOriginal),
+          updatedAt: new Date(),
+        };
+        if (r.acxe) {
+          updateBaixa.idMovestAcxe = r.acxe.baixa.idMovest;
+          updateBaixa.idAjusteAcxe = r.acxe.baixa.idAjuste;
+          updateBaixa.mvAcxe = -1;
+          updateBaixa.dtAcxe = new Date();
+          updateBaixa.idUserAcxe = input.usuarioId;
+        }
+        if (r.q2p) {
+          updateBaixa.idMovestQ2p = r.q2p.baixa.idMovest;
+          updateBaixa.idAjusteQ2p = r.q2p.baixa.idAjuste;
+          updateBaixa.mvQ2p = -1;
+          updateBaixa.dtQ2p = new Date();
+          updateBaixa.idUserQ2p = input.usuarioId;
+        }
+        if (r.pendenciaQ2p) {
+          updateBaixa.ultimoErroOmie = {
+            lado: 'q2p',
+            mensagem: r.pendenciaQ2p.mensagem,
+            timestamp: new Date().toISOString(),
+          };
+          updateBaixa.tentativasQ2p = 1;
+        }
+        await tx.update(movimentacao).set(updateBaixa).where(eq(movimentacao.id, retornoCtx.movBaixaId));
       }
     }
 

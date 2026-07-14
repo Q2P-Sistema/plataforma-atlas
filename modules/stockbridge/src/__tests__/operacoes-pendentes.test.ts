@@ -61,9 +61,15 @@ function chainComMov(
      * retry de saida manual (STK-03). Default: uma aprovacao 'aprovada' existe.
      */
     aprovacaoRows?: unknown[];
+    /**
+     * Linhas devolvidas quando um select em movimentacao e aguardado SEM
+     * .limit() — a busca do PAR baixa/entrada do retorno de comodato (STK-03b).
+     */
+    movsSemLimit?: unknown[];
   } = {},
 ): ChainMock {
   // db.select().from().where().limit(1) -> [mov?] (ou aprovacaoRows p/ tabela aprovacao)
+  // db.select().from().where() aguardado direto -> movsSemLimit (busca do par, STK-03b)
   // db.update().set().where() -> Promise<void>
   // where() retorna chain (encadeavel) na select-chain; quando vier de set(), deve retornar promise.
   // Solucao: where retorna THIS, mas limit retorna a lista. set retorna um sub-chain com where=Promise.
@@ -71,7 +77,7 @@ function chainComMov(
   const aprovacaoRows = opts.aprovacaoRows ?? [{ id: 'apr-aprovada' }];
   let currentRows: unknown[] = limitResolved;
   const setSpy = vi.fn();
-  const chain: ChainMock = {
+  const chain: ChainMock & { then?: unknown } = {
     select: vi.fn().mockReturnThis() as never,
     from: vi.fn((table: { __id?: string }) => {
       currentRows = table?.__id === 'aprovacao' ? aprovacaoRows : limitResolved;
@@ -82,6 +88,8 @@ function chainComMov(
     update: vi.fn().mockReturnThis() as never,
     set: setSpy as never,
   };
+  // Thenable: permite `await db.select().from().where()` sem .limit() (par do retorno).
+  chain.then = (resolve: (rows: unknown[]) => void) => resolve(opts.movsSemLimit ?? currentRows);
   setSpy.mockReturnValue({ where: vi.fn(() => Promise.resolve(undefined)) });
   return chain;
 }
@@ -362,12 +370,14 @@ describe('retentarOperacaoPendente — saida manual sem lote (STK-03)', () => {
     expect(omie.listarAjusteEstoque).not.toHaveBeenCalled();
   });
 
-  it('retorno_comodato: erro explicito (aguarda STK-03b), nao silencia', async () => {
-    await prepararMocks({ ...movBase, subtipo: 'retorno_comodato' });
+  it('retorno_comodato sem movimentacao_origem_id: erro claro (nao cai no fluxo generico)', async () => {
+    // O dispatch do retorno (STK-03b) exige o par baixa/entrada via origem;
+    // registro inconsistente falha com mensagem especifica, nao SAI/PER generico.
+    await prepararMocks({ ...movBase, subtipo: 'retorno_comodato', movimentacaoOrigemId: null });
 
     await expect(
       retentarOperacaoPendente({ movimentacaoId: 'mov-sm-1', ator: { userId: 'g', role: 'gestor' } }),
-    ).rejects.toThrow(/retorno de comodato/i);
+    ).rejects.toThrow(/movimentacao_origem_id/);
   });
 
   it('falha do OMIE no retry: incrementa tentativas_q2p e registra ultimo erro', async () => {
@@ -406,5 +416,160 @@ describe('retentarOperacaoPendente — saida manual sem lote (STK-03)', () => {
     await expect(
       retentarOperacaoPendente({ movimentacaoId: 'mov-sm-1', ator: { userId: 'op-1', role: 'operador' } }),
     ).rejects.toBeInstanceOf(OperadorSemRetentativasError);
+  });
+});
+
+// STK-03b (ACXEGDP-283): retry do retorno de comodato — 2 pernas Q2P independentes
+// (baixa TROCA + entrada destino) em 2 movimentacoes pareadas por movimentacao_origem_id.
+// Os cod_int_ajuste derivam do opId da ENTRADA (mesmo contrato da aprovacao).
+describe('retentarOperacaoPendente — retorno de comodato (STK-03b)', () => {
+  const entradaRow = {
+    id: 'mov-ent',
+    opId: 'op-ent',
+    loteId: null,
+    notaFiscal: 'RET-ENT-X',
+    quantidadeKg: '800',
+    statusOmie: 'pendente_q2p',
+    tentativasQ2p: 0,
+    tentativasAcxeFaltando: 0,
+    idMovestAcxe: 'ME-A',
+    idAjusteAcxe: 'AE-A',
+    subtipo: 'retorno_comodato',
+    tipoMovimento: 'entrada_manual',
+    produtoCodigoAcxe: 2002,
+    galpao: '11.1',
+    galpaoDestino: null,
+    custoUnitarioBrl: '2.50',
+    movimentacaoOrigemId: 'mov-orig',
+  };
+  const baixaRow = {
+    ...entradaRow,
+    id: 'mov-bx',
+    opId: 'op-bx-proprio', // opId da baixa NAO e usado — as pernas usam o da entrada
+    notaFiscal: 'RET-BAIXA-X',
+    tipoMovimento: 'ajuste',
+    produtoCodigoAcxe: 1001,
+    galpao: '90',
+    quantidadeKg: '-1000',
+    custoUnitarioBrl: '2.00',
+    idMovestAcxe: 'MB-A',
+    idAjusteAcxe: 'AB-A',
+  };
+
+  async function prepararRetorno(opts: {
+    clicada?: Record<string, unknown>;
+    par?: unknown[];
+    aprovacaoRows?: unknown[];
+  } = {}) {
+    const { getDb } = await import('@atlas/core');
+    const omieSaida = await import('../services/omie-saida.service.js');
+    const omie = await import('@atlas/integration-omie');
+    const chain = chainComMov(opts.clicada ?? { ...entradaRow }, {
+      movsSemLimit: opts.par ?? [{ ...baixaRow }, { ...entradaRow }],
+      aprovacaoRows: opts.aprovacaoRows,
+    });
+    vi.mocked(getDb).mockReturnValue(chain as never);
+    vi.mocked(omieSaida.resolverCorrelacaoCompletaGalpao).mockResolvedValue({ acxe: '111', q2p: '222' });
+    vi.mocked(omieSaida.resolverCodigosLocaisTroca).mockResolvedValue({ acxe: '900', q2p: '901' });
+    vi.mocked(omieSaida.resolverCodigoProdutoOmie).mockImplementation(
+      async (cod: number) => (cod === 1001 ? 3001 : 4002),
+    );
+    vi.mocked(omie.listarAjusteEstoque).mockResolvedValue({
+      pagina: 1, totalDePaginas: 1, registros: 0, totalDeRegistros: 0, ajustes: [],
+    } as never);
+    vi.mocked(omie.incluirAjusteEstoque).mockResolvedValue({
+      idMovest: 'M-Q2P-RET', idAjuste: 'A-Q2P-RET', descricaoStatus: 'ok',
+    } as never);
+    return { chain, omie };
+  }
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('ambas as pernas pendentes: executa baixa (SAI TROCA) e entrada (ENT destino) com opId da ENTRADA', async () => {
+    const { chain, omie } = await prepararRetorno();
+
+    const res = await retentarOperacaoPendente({
+      movimentacaoId: 'mov-ent',
+      ator: { userId: 'gestor-1', role: 'gestor' },
+    });
+
+    expect(res.statusOmie).toBe('concluida');
+    expect(omie.incluirAjusteEstoque).toHaveBeenCalledTimes(2);
+    expect(omie.incluirAjusteEstoque).toHaveBeenNthCalledWith(1, 'q2p', expect.objectContaining({
+      codIntAjuste: 'op-ent:ret-baixa-q2p', // opId da ENTRADA, nao o da baixa
+      codigoLocalEstoque: '901', // TROCA Q2P
+      idProduto: 3001, // produto ORIGINAL correlacionado
+      tipo: 'SAI',
+      motivo: 'INV',
+      quantidade: 1000,
+      valor: 2, // custo persistido da baixa
+    }));
+    expect(omie.incluirAjusteEstoque).toHaveBeenNthCalledWith(2, 'q2p', expect.objectContaining({
+      codIntAjuste: 'op-ent:ret-entrada-q2p',
+      codigoLocalEstoque: '222', // destino Q2P
+      idProduto: 4002, // produto RECEBIDO correlacionado
+      tipo: 'ENT',
+      motivo: 'INV',
+      quantidade: 800,
+      valor: 2.5, // custo persistido da entrada
+    }));
+
+    // Ambas as linhas atualizadas: baixa mvQ2p=-1, entrada mvQ2p=+1
+    const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls as Array<[Record<string, unknown>]>;
+    const setBaixa = setCalls.find((c) => c[0]?.mvQ2p === -1);
+    const setEntrada = setCalls.find((c) => c[0]?.mvQ2p === 1);
+    expect(setBaixa?.[0]).toMatchObject({ statusOmie: 'concluida', idMovestQ2p: 'M-Q2P-RET' });
+    expect(setEntrada?.[0]).toMatchObject({ statusOmie: 'concluida', idMovestQ2p: 'M-Q2P-RET' });
+  });
+
+  it('baixa ja concluida (falha original foi ENTRE as pernas): so a entrada roda', async () => {
+    const { omie } = await prepararRetorno({
+      par: [{ ...baixaRow, statusOmie: 'concluida' }, { ...entradaRow }],
+    });
+
+    await retentarOperacaoPendente({ movimentacaoId: 'mov-ent', ator: { userId: 'g', role: 'gestor' } });
+
+    expect(omie.incluirAjusteEstoque).toHaveBeenCalledTimes(1);
+    expect(omie.incluirAjusteEstoque).toHaveBeenCalledWith('q2p', expect.objectContaining({
+      codIntAjuste: 'op-ent:ret-entrada-q2p',
+    }));
+  });
+
+  it('clicar na BAIXA resolve a operacao inteira (par localizado pela origem)', async () => {
+    const { omie } = await prepararRetorno({ clicada: { ...baixaRow } });
+
+    const res = await retentarOperacaoPendente({
+      movimentacaoId: 'mov-bx',
+      ator: { userId: 'g', role: 'gestor' },
+    });
+
+    expect(res.movimentacaoId).toBe('mov-bx');
+    expect(omie.incluirAjusteEstoque).toHaveBeenCalledTimes(2);
+  });
+
+  it('retorno nao aprovado: bloqueia sem tocar OMIE (movs nascem pendente_q2p na submissao)', async () => {
+    const { omie } = await prepararRetorno({ aprovacaoRows: [] });
+
+    await expect(
+      retentarOperacaoPendente({ movimentacaoId: 'mov-ent', ator: { userId: 'g', role: 'gestor' } }),
+    ).rejects.toThrow(/aprova/i);
+    expect(omie.incluirAjusteEstoque).not.toHaveBeenCalled();
+    expect(omie.listarAjusteEstoque).not.toHaveBeenCalled();
+  });
+
+  it('perna baixa falha: incrementa tentativas NA BAIXA, nao tenta a entrada, propaga', async () => {
+    const { chain, omie } = await prepararRetorno();
+    vi.mocked(omie.incluirAjusteEstoque).mockRejectedValueOnce(new Error('OMIE Q2P 503 na baixa'));
+
+    await expect(
+      retentarOperacaoPendente({ movimentacaoId: 'mov-ent', ator: { userId: 'g', role: 'gestor' } }),
+    ).rejects.toThrow('OMIE Q2P 503 na baixa');
+
+    expect(omie.incluirAjusteEstoque).toHaveBeenCalledTimes(1); // entrada NAO tentada
+    const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls as Array<[Record<string, unknown>]>;
+    expect(setCalls.at(-1)?.[0]).toMatchObject({
+      tentativasQ2p: 1,
+      ultimoErroOmie: expect.objectContaining({ mensagem: expect.stringContaining('503 na baixa') }),
+    });
   });
 });
