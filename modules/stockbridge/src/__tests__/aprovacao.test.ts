@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as dbMod from '@atlas/db';
 import {
   aprovar,
   rejeitar,
@@ -6,6 +7,7 @@ import {
   AprovacaoNaoEncontradaError,
   AprovacaoNivelInsuficienteError,
   AprovacaoStatusInvalidoError,
+  ResubmissaoDuplicadaError,
   inferirNivelAprovacao,
 } from '../services/aprovacao.service.js';
 
@@ -43,25 +45,59 @@ vi.mock('@atlas/integration-omie', () => ({
  * Mock generico que responde diferentes selects baseando-se no objeto "from".
  * Constroi um chain select().from(X).where().limit() que retorna a lista mapeada
  * por referencia de tabela. `transaction` reaproveita o mesmo chain.
+ *
+ * Pos STK-01/07 o service usa dois padroes que o mock precisa distinguir:
+ *  - claim atomico: update(aprovacao).set().where(status='pendente').returning()
+ *    — devolve a linha da tabela (vencedor) ou, com opts.claimFalha, [] (perdedor
+ *    da corrida, pra testar o ramo de erro).
+ *  - guard de resubmissao: select COM projecao em aprovacao — devolve
+ *    opts.pendentesDoLote (default [], lote livre). Selects com projecao em
+ *    outras tabelas (ex: email de users) seguem a tabela normal.
  */
-function criarDbComTabelas(rows: Map<object, unknown[]>) {
+function criarDbComTabelas(
+  rows: Map<object, unknown[]>,
+  opts: { claimFalha?: boolean; pendentesDoLote?: unknown[] } = {},
+) {
   let currentRows: unknown[] = [];
+  let guardResubmissao = false;
+  let temProjecao = false;
+  let modo: 'select' | 'update' | 'insert' = 'select';
+  let updateTable: object | null = null;
   const chain = {
-    select: vi.fn().mockReturnThis(),
+    select: vi.fn((projecao?: object) => {
+      modo = 'select';
+      temProjecao = projecao !== undefined;
+      return chain;
+    }),
     from: vi.fn((table: object) => {
       currentRows = rows.get(table) ?? [];
+      guardResubmissao = temProjecao && table === dbMod.aprovacao;
       return chain;
     }),
     where: vi.fn().mockReturnThis(),
     innerJoin: vi.fn().mockReturnThis(),
     leftJoin: vi.fn().mockReturnThis(),
     orderBy: vi.fn().mockReturnThis(),
-    limit: vi.fn(() => Promise.resolve(currentRows)),
-    update: vi.fn().mockReturnThis(),
+    limit: vi.fn(() =>
+      Promise.resolve(guardResubmissao ? opts.pendentesDoLote ?? [] : currentRows),
+    ),
+    update: vi.fn((table: object) => {
+      modo = 'update';
+      updateTable = table;
+      return chain;
+    }),
     set: vi.fn().mockReturnThis(),
-    insert: vi.fn().mockReturnThis(),
+    insert: vi.fn(() => {
+      modo = 'insert';
+      return chain;
+    }),
     values: vi.fn().mockReturnThis(),
-    returning: vi.fn().mockResolvedValue([{ id: 'nova-id' }]),
+    returning: vi.fn(() => {
+      if (modo === 'insert') return Promise.resolve([{ id: 'nova-id' }]);
+      if (updateTable === dbMod.aprovacao && opts.claimFalha) return Promise.resolve([]);
+      const tabelaRows = updateTable ? rows.get(updateTable) ?? [] : [];
+      return Promise.resolve(tabelaRows.length > 0 ? tabelaRows : [{ id: 'nova-id' }]);
+    }),
   };
   return {
     ...chain,
@@ -258,7 +294,8 @@ describe('aprovacao.service#aprovar', () => {
     expect(res.pendenciaOmie).toBeDefined();
     expect(res.pendenciaOmie!.lado).toBe('q2p');
     expect(res.pendenciaOmie!.movimentacaoId).toBe('nova-id');
-    expect(res.pendenciaOmie!.opId).toMatch(/^[0-9a-f-]{36}$/);
+    // STK-01: opId deterministico = id da aprovacao (nao mais randomUUID)
+    expect(res.pendenciaOmie!.opId).toBe('apr-q2pfail');
 
     // 2) Movimentacao gravada com statusOmie=pendente_q2p
     const valuesCalls = dbMock.values.mock.calls as Array<[Record<string, unknown>]>;
@@ -369,27 +406,25 @@ describe('aprovacao.service#aprovar', () => {
 
     await aprovar({ id: 'apr-3', usuarioId: 'u1', perfilUsuario: 'gestor' });
 
-    // 1) Todas as 3 chamadas OMIE compartilham o mesmo opId no cod_int_ajuste
+    // 1) Todas as 3 chamadas OMIE compartilham o mesmo opId no cod_int_ajuste —
+    // e ele e DETERMINISTICO (id da aprovacao, STK-01), nao mais randomUUID.
     const calls = vi.mocked(omieMod.incluirAjusteEstoque).mock.calls;
     const codIntAjustes = calls.map((c) => (c[1] as { codIntAjuste?: string }).codIntAjuste ?? '');
     const opIds = codIntAjustes.map((c) => c.split(':')[0]);
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-    expect(opIds[0]).toMatch(uuidRegex);
+    expect(opIds[0]).toBe('apr-3');
     expect(new Set(opIds).size).toBe(1); // mesmo opId nas 3 chamadas
     expect(codIntAjustes[0]).toMatch(/:acxe-trf$/);
     expect(codIntAjustes[1]).toMatch(/:q2p-ent$/);
     expect(codIntAjustes[2]).toMatch(/:acxe-faltando$/);
 
-    // 2) Movimentacao foi inserida com opId UUID + statusOmie=concluida
+    // 2) Movimentacao foi inserida com o mesmo opId + statusOmie=concluida
     const valuesCalls = dbMock.values.mock.calls as Array<[Record<string, unknown>]>;
     const movInsert = valuesCalls.find((c) => c[0] && typeof c[0] === 'object' && 'idMovestAcxe' in c[0]);
     expect(movInsert).toBeDefined();
     expect(movInsert![0]).toMatchObject({
-      opId: expect.stringMatching(uuidRegex),
+      opId: 'apr-3',
       statusOmie: 'concluida',
     });
-    // E o opId persistido bate com o opId dos cod_int_ajuste
-    expect(movInsert![0].opId).toBe(opIds[0]);
   });
 });
 
@@ -466,6 +501,95 @@ describe('aprovacao.service#resubmeter', () => {
 
   it('exige motivo', async () => {
     await expect(resubmeter({ id: 'apr-1', usuarioId: 'u1', quantidadeRecebidaKg: 20, observacoes: '' })).rejects.toThrow(/motivo/i);
+  });
+});
+
+// STK-01/07 (ACXEGDP-281/287): claim atomico — o perdedor de uma corrida
+// (outra requisicao mudou o status entre o pre-check e o UPDATE condicional)
+// recebe erro tipado em vez de sobrescrever silenciosamente.
+describe('aprovacao.service — claim atomico (STK-01/07)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('aprovar: perdedor da corrida recebe AprovacaoStatusInvalidoError (nao 200 silencioso)', async () => {
+    const { getDb } = await import('@atlas/core');
+    vi.mocked(getDb).mockReturnValue(
+      criarDbComTabelas(
+        await tabelas({
+          id: 'apr-race', loteId: 'lote-1', status: 'pendente',
+          precisaNivel: 'gestor', tipoAprovacao: 'entrada_manual', lancadoPor: 'op-1',
+        }),
+        { claimFalha: true },
+      ) as never,
+    );
+    await expect(
+      aprovar({ id: 'apr-race', usuarioId: 'u1', perfilUsuario: 'gestor' }),
+    ).rejects.toThrow(AprovacaoStatusInvalidoError);
+  });
+
+  it('rejeitar: perdedor da corrida recebe AprovacaoStatusInvalidoError', async () => {
+    const { getDb } = await import('@atlas/core');
+    vi.mocked(getDb).mockReturnValue(
+      criarDbComTabelas(
+        await tabelas({
+          id: 'apr-race', loteId: 'lote-1', status: 'pendente',
+          precisaNivel: 'gestor', tipoAprovacao: 'entrada_manual', lancadoPor: 'op-1',
+        }),
+        { claimFalha: true },
+      ) as never,
+    );
+    await expect(
+      rejeitar({ id: 'apr-race', usuarioId: 'u1', perfilUsuario: 'gestor', motivo: 'corrida' }),
+    ).rejects.toThrow(AprovacaoStatusInvalidoError);
+  });
+
+  it('aprovar divergencia: opId dos cod_int_ajuste e o ID DA APROVACAO (deterministico, nao random)', async () => {
+    const { getDb } = await import('@atlas/core');
+    const omieMod = await import('@atlas/integration-omie');
+    const aprRow = {
+      id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', loteId: 'lote-det', status: 'pendente',
+      precisaNivel: 'gestor', tipoAprovacao: 'recebimento_divergencia',
+      quantidadeRecebidaKg: '24500', tipoDivergencia: 'faltando', lancadoPor: 'op-1',
+    };
+    const loteRow = {
+      id: 'lote-det', codigo: 'L-DET', notaFiscal: '900', cnpj: 'Acxe Matriz',
+      produtoCodigoAcxe: 1001, produtoCodigoQ2p: 2001,
+      localidadeId: 'loc-1', quantidadeFisicaKg: '24500',
+      quantidadeFiscalKg: '25000', custoBrlKg: '1.20',
+      valorTotalNfBrl: '31250.00', codigoLocalEstoqueOrigemAcxe: '999',
+    };
+    vi.mocked(getDb).mockReturnValue(criarDbComTabelas(await tabelas(aprRow, loteRow)) as never);
+
+    await aprovar({ id: aprRow.id, usuarioId: 'u1', perfilUsuario: 'gestor' });
+
+    // Duas invocacoes concorrentes desta mesma aprovacao gerariam o MESMO
+    // cod_int_ajuste — a protecao 1035 do OMIE deduplica no ERP.
+    const calls = vi.mocked(omieMod.incluirAjusteEstoque).mock.calls;
+    for (const c of calls) {
+      expect((c[1] as { codIntAjuste?: string }).codIntAjuste).toMatch(
+        new RegExp(`^${aprRow.id}:`),
+      );
+    }
+  });
+});
+
+describe('aprovacao.service#resubmeter — guard de duplicacao (STK-07)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('bloqueia re-submissao quando o lote ja tem aprovacao pendente', async () => {
+    const { getDb } = await import('@atlas/core');
+    vi.mocked(getDb).mockReturnValue(
+      criarDbComTabelas(
+        await tabelas({
+          id: 'apr-1', loteId: 'lote-1', status: 'rejeitada',
+          precisaNivel: 'gestor', tipoAprovacao: 'recebimento_divergencia',
+          quantidadePrevistaKg: '25', quantidadeRecebidaKg: '20', tipoDivergencia: 'faltando',
+        }),
+        { pendentesDoLote: [{ id: 'apr-pendente-de-resubmissao-anterior' }] },
+      ) as never,
+    );
+    await expect(
+      resubmeter({ id: 'apr-1', usuarioId: 'u1', quantidadeRecebidaKg: 22, observacoes: 'de novo' }),
+    ).rejects.toThrow(ResubmissaoDuplicadaError);
   });
 });
 

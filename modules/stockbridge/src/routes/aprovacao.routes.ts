@@ -12,6 +12,7 @@ import {
   AprovacaoNaoEncontradaError,
   AprovacaoNivelInsuficienteError,
   AprovacaoStatusInvalidoError,
+  ResubmissaoDuplicadaError,
 } from '../services/aprovacao.service.js';
 import { OmieAjusteError } from '../services/recebimento.service.js';
 import { mapearErroOmieParaResposta } from '../services/erros-omie.js';
@@ -150,6 +151,10 @@ function tratarErro(res: Response, err: unknown, ator?: { role: Perfil }) {
   }
   if (err instanceof AprovacaoStatusInvalidoError) {
     res.status(409).json({ data: null, error: { code: 'APROVACAO_STATUS_INVALIDO', message: err.message } });
+    return;
+  }
+  if (err instanceof ResubmissaoDuplicadaError) {
+    res.status(409).json({ data: null, error: { code: 'RESUBMISSAO_DUPLICADA', message: err.message } });
     return;
   }
   if (err instanceof OmieAjusteError) {
