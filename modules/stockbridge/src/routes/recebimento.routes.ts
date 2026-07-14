@@ -8,6 +8,7 @@ import {
   NotaFiscalJaProcessadaError,
   NotaFiscalCanceladaError,
   NotaFiscalNaoEmitidaPelaAcxeError,
+  ImportacaoApenasAcxeError,
   OmieAjusteError,
 } from '../services/recebimento.service.js';
 import { CorrelacaoNaoEncontradaError } from '../services/correlacao.service.js';
@@ -62,6 +63,10 @@ router.post('/api/v1/stockbridge/recebimento', requireOperador, requireArmazemVi
     }
     if (err instanceof NotaFiscalCanceladaError) {
       res.status(422).json({ data: null, error: { code: 'NF_CANCELADA', userMessage: err.message, message: err.message } });
+      return;
+    }
+    if (err instanceof ImportacaoApenasAcxeError) {
+      res.status(422).json({ data: null, error: { code: 'IMPORTACAO_APENAS_ACXE', userMessage: err.message, message: err.message } });
       return;
     }
     if (err instanceof NotaFiscalNaoEmitidaPelaAcxeError) {

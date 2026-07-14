@@ -77,7 +77,10 @@ export async function processarSaidaAutomatica(
 ): Promise<ProcessarSaidaResult> {
   const db = getDb();
 
-  // 1. Idempotencia
+  // 1. Idempotencia — STK-09 (ACXEGDP-288): por NF + EMPRESA emissora. Sem a
+  // empresa na chave, a saida da 2ª empresa com o mesmo numero de NF era
+  // engolida como {idempotente:true} devolvendo o movimentacaoId da OUTRA
+  // empresa (perda silenciosa).
   const [existente] = await db
     .select({ id: movimentacao.id })
     .from(movimentacao)
@@ -85,12 +88,13 @@ export async function processarSaidaAutomatica(
       and(
         eq(movimentacao.notaFiscal, input.nf),
         eq(movimentacao.tipoMovimento, 'saida_automatica'),
+        eq(movimentacao.empresa, input.cnpjEmissor),
         eq(movimentacao.ativo, true),
       ),
     )
     .limit(1);
   if (existente) {
-    logger.info({ nf: input.nf }, 'Saída automática já processada — idempotente');
+    logger.info({ nf: input.nf, empresa: input.cnpjEmissor }, 'Saída automática já processada — idempotente');
     return {
       movimentacaoId: existente.id,
       subtipo: TIPO_OMIE_PARA_SUBTIPO[input.tipoOmie],
@@ -121,6 +125,8 @@ export async function processarSaidaAutomatica(
         notaFiscal: input.nf,
         tipoMovimento: tipoMov,
         subtipo,
+        // STK-09: empresa emissora participa da chave de idempotencia
+        empresa: input.cnpjEmissor,
         quantidadeKg: String(-Math.abs(quantidadeKg)), // saida = negativo
         mvAcxe: input.cnpjEmissor === 'acxe' ? 1 : null,
         dtAcxe: input.cnpjEmissor === 'acxe' ? dtEmissaoDate : null,

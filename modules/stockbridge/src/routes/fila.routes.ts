@@ -7,6 +7,7 @@ import {
   getFilaOmie,
   NotaFiscalCanceladaError,
   NotaFiscalNaoEmitidaPelaAcxeError,
+  ImportacaoApenasAcxeError,
 } from '../services/recebimento.service.js';
 
 const logger = createLogger('stockbridge:fila');
@@ -32,6 +33,10 @@ router.get('/api/v1/stockbridge/fila', requireOperador, requireArmazemVinculado,
   } catch (err) {
     if (err instanceof NotaFiscalCanceladaError) {
       res.status(422).json({ data: null, error: { code: 'NF_CANCELADA', userMessage: err.message, message: err.message } });
+      return;
+    }
+    if (err instanceof ImportacaoApenasAcxeError) {
+      res.status(422).json({ data: null, error: { code: 'IMPORTACAO_APENAS_ACXE', userMessage: err.message, message: err.message } });
       return;
     }
     if (err instanceof NotaFiscalNaoEmitidaPelaAcxeError) {

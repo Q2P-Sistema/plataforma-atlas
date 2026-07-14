@@ -20,7 +20,7 @@ import {
   enviarAlertaNfIndeterminada,
 } from './notificacao.service.js';
 import { incluirAjusteIdempotente } from './omie-idempotente.js';
-import { COD_INT_AJUSTE_SUFIXO, buildCodIntAjuste } from '../types.js';
+import { COD_INT_AJUSTE_SUFIXO, buildCodIntAjuste, CNPJ_ACXE, CNPJ_Q2P_MATRIZ } from '../types.js';
 import type { SubtipoMovimento, UnidadeMedida } from '../types.js';
 
 const logger = createLogger('stockbridge:recebimento');
@@ -47,6 +47,24 @@ export class NotaFiscalNaoEmitidaPelaAcxeError extends Error {
       `A NF ${notaFiscal} não foi emitida pela ACXE (consta como nota de entrada de outro fornecedor). Verifique o número.`,
     );
     this.name = 'NotaFiscalNaoEmitidaPelaAcxeError';
+  }
+}
+
+/**
+ * STK-12 (ACXEGDP-288): o recebimento de importação só suporta NF emitida pela
+ * ACXE. Para cnpj='q2p', getCorrelacao buscava o código de produto Q2P em
+ * tbl_produtos_ACXE — falso-bloqueio (409 + spam de e-mail admin) ou, em
+ * coincidência numérica, produto ACXE errado. O modelo dual do recebimento
+ * (ACXE TRF do trânsito + Q2P ENT) pressupõe NF ACXE, e a UI sempre envia
+ * cnpj='acxe'. Entradas Q2P diretas têm fluxo próprio (Recebimento Nacional).
+ */
+export class ImportacaoApenasAcxeError extends Error {
+  constructor() {
+    super(
+      'Recebimento de importação é suportado apenas para NF emitida pela ACXE. ' +
+        'Para entradas diretas da Q2P, use o fluxo de Recebimento Nacional.',
+    );
+    this.name = 'ImportacaoApenasAcxeError';
   }
 }
 
@@ -93,13 +111,20 @@ async function aplicarValidacaoNf(numero: number, cnpj: 'acxe' | 'q2p'): Promise
  *    segundo recebimento e ajuste OMIE duplicado apos as duas aprovacoes.
  *    Lote rejeitado ou em transito NAO bloqueia (re-receber e legitimo nesses casos).
  *
+ * STK-09 (ACXEGDP-288): a chave inclui a EMPRESA — a numeracao de NF e por
+ * emissor, entao NF 300 da ACXE nao pode bloquear NF 300 da Q2P. As consultas em
+ * movimentacao e lote filtram por empresa/cnpj; a do legado permanece so por NF
+ * (dados antigos sem a coluna — bloquear a mais e o lado conservador).
+ *
  * `nfNormalizada` deve vir de `normalizarNumeroNf` (zero-padded 8 digitos) — e o
  * formato em que ambas as tabelas gravam a NF.
  */
 async function nfJaProcessada(
   db: ReturnType<typeof getDb>,
   nfNormalizada: string,
+  cnpj: 'acxe' | 'q2p',
 ): Promise<boolean> {
+  const cnpjLote = cnpj === 'acxe' ? CNPJ_ACXE : CNPJ_Q2P_MATRIZ;
   const [atlas, legado, loteAberto] = await Promise.all([
     db
       .select({ id: movimentacao.id })
@@ -108,6 +133,7 @@ async function nfJaProcessada(
         and(
           eq(movimentacao.notaFiscal, nfNormalizada),
           eq(movimentacao.tipoMovimento, 'entrada_nf'),
+          eq(movimentacao.empresa, cnpj),
           eq(movimentacao.ativo, true),
         ),
       )
@@ -128,6 +154,7 @@ async function nfJaProcessada(
       .where(
         and(
           eq(lote.notaFiscal, nfNormalizada),
+          eq(lote.cnpj, cnpjLote),
           inArray(lote.status, ['aguardando_aprovacao', 'provisorio']),
           eq(lote.ativo, true),
         ),
@@ -203,6 +230,10 @@ export async function getFilaOmie(params: {
 
   // Caso 1: busca direta por NF + CNPJ (fluxo principal, herdado do legado)
   if (params.nf && params.cnpj) {
+    // STK-12: importação é ACXE-only (ver ImportacaoApenasAcxeError).
+    if (params.cnpj === 'q2p') {
+      throw new ImportacaoApenasAcxeError();
+    }
     const numero = Number(params.nf);
     if (!Number.isFinite(numero) || numero <= 0) {
       return [];
@@ -212,7 +243,7 @@ export async function getFilaOmie(params: {
     // Idempotencia: ja processada (Atlas ou legado)?
     // OMIE retorna nNF zero-padded (ex: "00000300") e e nesse formato que gravamos.
     // Operador tipicamente digita "300" — normalizamos antes de comparar.
-    if (await nfJaProcessada(db, nfNormalizada)) {
+    if (await nfJaProcessada(db, nfNormalizada, params.cnpj)) {
       return [];
     }
 
@@ -314,6 +345,10 @@ export async function processarRecebimento(
   input: ProcessarRecebimentoInput,
 ): Promise<ProcessarRecebimentoResult> {
   const db = getDb();
+  // STK-12: importação é ACXE-only (ver ImportacaoApenasAcxeError).
+  if (input.cnpj === 'q2p') {
+    throw new ImportacaoApenasAcxeError();
+  }
   // Normaliza para o formato OMIE (zero-padded 8 digitos para NFs numericas).
   // Sem isso, operador digitando "300" enquanto OMIE retorna "00000300" passa
   // pela checagem de idempotencia mesmo com o registro ja gravado no DB.
@@ -321,8 +356,8 @@ export async function processarRecebimento(
   // notificacao) use a forma canonica.
   input = { ...input, nf: normalizarNumeroNf(input.nf) };
 
-  // 1. Idempotencia (Atlas + legado PHP)
-  if (await nfJaProcessada(db, input.nf)) {
+  // 1. Idempotencia (Atlas + legado PHP) — STK-09: por NF + empresa
+  if (await nfJaProcessada(db, input.nf, input.cnpj)) {
     throw new NotaFiscalJaProcessadaError(input.nf);
   }
 
@@ -470,6 +505,8 @@ export async function processarRecebimento(
         tipoMovimento: 'entrada_nf',
         subtipo: inferirSubtipoEntrada(omieData),
         loteId: loteCriado!.id,
+        // STK-09: empresa participa da chave de idempotencia (migration 0044)
+        empresa: input.cnpj,
         quantidadeKg: String(qtdFisicaKg),
         mvAcxe: 1,
         dtAcxe: new Date(),

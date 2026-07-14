@@ -1,4 +1,4 @@
-import { eq, sql, and, ne, desc } from 'drizzle-orm';
+import { eq, sql, and, ne, desc, isNull } from 'drizzle-orm';
 import Decimal from 'decimal.js';
 import { getDb, createLogger } from '@atlas/core';
 import { movimentacao, lote, localidadeCorrelacao, aprovacao } from '@atlas/db';
@@ -70,6 +70,14 @@ export interface OperacaoPendenteItem {
 /**
  * Lista todas as movimentacoes com OMIE pendente (status_omie != 'concluida' e != 'falha').
  * Ordenada por created_at desc — pendencias mais recentes no topo.
+ *
+ * STK-08 (ACXEGDP-288): movimentacoes de saida manual/retorno/recebimento
+ * nacional nascem 'pendente_q2p' na SUBMISSAO, antes do gestor decidir — o
+ * painel as listava como "pendencias OMIE" quando ainda eram aprovacoes em
+ * aberto. O LEFT JOIN exclui movimentacoes com aprovacao PENDENTE linkada:
+ * pendencia OMIE de verdade so existe depois da decisao do gestor. Movs do
+ * fluxo de recebimento (aprovacao linkada por lote, nao por movimentacao_id)
+ * nao tem match no join e seguem listadas normalmente.
  */
 export async function listarPendentes(): Promise<OperacaoPendenteItem[]> {
   const db = getDb();
@@ -91,11 +99,16 @@ export async function listarPendentes(): Promise<OperacaoPendenteItem[]> {
     })
     .from(movimentacao)
     .leftJoin(lote, eq(lote.id, movimentacao.loteId))
+    .leftJoin(
+      aprovacao,
+      and(eq(aprovacao.movimentacaoId, movimentacao.id), eq(aprovacao.status, 'pendente')),
+    )
     .where(
       and(
         ne(movimentacao.statusOmie, 'concluida'),
         ne(movimentacao.statusOmie, 'falha'),
         eq(movimentacao.ativo, true),
+        isNull(aprovacao.id),
       ),
     )
     .orderBy(sql`${movimentacao.createdAt} DESC`);
@@ -161,6 +174,20 @@ export async function marcarComoFalhaDefinitiva(input: MarcarFalhaInput): Promis
   if (!mov) throw new OperacaoPendenteNaoEncontradaError(input.movimentacaoId);
   if (mov.statusOmie === 'concluida' || mov.statusOmie === 'falha') {
     throw new OperacaoNaoPendenteError(input.movimentacaoId, mov.statusOmie);
+  }
+
+  // STK-08 (ACXEGDP-288): movimentacoes com aprovacao ainda PENDENTE nao sao
+  // pendencias OMIE (nada foi chamado) — marcar 'falha' nelas esconderia uma
+  // aprovacao em aberto do fluxo do gestor. Rejeitar a aprovacao e o caminho.
+  const [aprPendente] = await db
+    .select({ id: aprovacao.id })
+    .from(aprovacao)
+    .where(and(eq(aprovacao.movimentacaoId, mov.id), eq(aprovacao.status, 'pendente')))
+    .limit(1);
+  if (aprPendente) {
+    throw new Error(
+      `Movimentação ${mov.id} ainda aguarda decisão do gestor (aprovação ${aprPendente.id} pendente) — rejeite a aprovação em vez de marcar falha OMIE`,
+    );
   }
 
   await db

@@ -156,11 +156,16 @@ describe('Validação de NF no recebimento — contratos (feature 012)', () => {
     expect(res.body.data.length).toBe(1);
   });
 
-  it('GET /fila (q2p) número de terceiro NÃO bloqueia por emitente → 200', async () => {
+  // STK-12 (ACXEGDP-288): importação virou ACXE-only — cnpj=q2p é rejeitado
+  // com erro claro apontando o Recebimento Nacional, ANTES de consultar OMIE
+  // (o comportamento antigo, testado aqui como 200, resolvia o produto Q2P na
+  // tabela ACXE e gerava falso-bloqueio 409 + spam de e-mail admin adiante).
+  it('GET /fila (q2p) → 422 IMPORTACAO_APENAS_ACXE', async () => {
     header([{ cancelada: false, emitente_acxe: false }]);
     const res = await request(app).get('/api/v1/stockbridge/fila?nf=556&cnpj=q2p');
-    expect(res.status).toBe(200);
-    expect(res.body.data.length).toBe(1);
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('IMPORTACAO_APENAS_ACXE');
+    expect(res.body.error.userMessage).toMatch(/Recebimento Nacional/);
   });
 
   // US3 — sem regressão

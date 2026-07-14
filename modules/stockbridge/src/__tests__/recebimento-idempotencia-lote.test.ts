@@ -125,3 +125,31 @@ describe('nfJaProcessada considera lote aberto do fluxo divergente (STK-02)', ()
     await expect(processarRecebimento(inputBase)).rejects.toThrow(NotaFiscalJaProcessadaError);
   });
 });
+
+// STK-12 (ACXEGDP-288): importação é ACXE-only — para cnpj='q2p', getCorrelacao
+// buscava o código de produto Q2P em tbl_produtos_ACXE (falso-bloqueio 409 +
+// spam de e-mail admin, ou produto errado em coincidência numérica).
+describe('importação ACXE-only (STK-12)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('processarRecebimento com cnpj=q2p → ImportacaoApenasAcxeError, sem tocar OMIE nem DB', async () => {
+    const db = dbComRespostasPorTabela({});
+    vi.mocked(getDb).mockReturnValue(db as never);
+
+    await expect(
+      processarRecebimento({ ...inputBase, cnpj: 'q2p' }),
+    ).rejects.toThrow(/Recebimento Nacional/);
+    expect(consultarNFSpy).not.toHaveBeenCalled();
+    expect(db.select).not.toHaveBeenCalled();
+  });
+
+  it('getFilaOmie com cnpj=q2p → ImportacaoApenasAcxeError antes da idempotência', async () => {
+    const db = dbComRespostasPorTabela({});
+    vi.mocked(getDb).mockReturnValue(db as never);
+
+    await expect(getFilaOmie({ nf: '300', cnpj: 'q2p' })).rejects.toThrow(/apenas para NF emitida pela ACXE/);
+    expect(consultarNFSpy).not.toHaveBeenCalled();
+  });
+});
