@@ -3,7 +3,7 @@ import { getDb, createLogger } from '@atlas/core';
 import { aprovacao, lote, movimentacao, localidadeCorrelacao, reservaSaldo, users } from '@atlas/db';
 import type { Perfil, TipoAprovacao } from '../types.js';
 import { NIVEL_APROVACAO_POR_SUBTIPO } from '../types.js';
-import { formatarDataOmie } from './omie-shared.js';
+import { formatarDataOmie, filtroEmpresaOmie } from './omie-shared.js';
 import {
   executarAjusteOmieDual,
   calcularValorUnitarioQ2p,
@@ -1373,10 +1373,11 @@ export async function consultarValorUnitarioProduto(
   empresa: 'acxe' | 'q2p',
 ): Promise<number> {
   const db = getDb();
-  const filtroEmp =
-    empresa === 'acxe'
-      ? `(o.codigo_estoque LIKE '%.1' AND o.empresa = 'ACXE')`
-      : `((o.codigo_estoque LIKE '%.1' OR o.codigo_estoque LIKE '%.2') AND o.empresa = 'Q2P')`;
+  // STK-17: filtro consolidado em omie-shared (era cópia byte-idêntica do
+  // saida-manual.service). Os DOIS esqueletos de query abaixo (galpão específico
+  // + fallback cross-galpão) permanecem locais de propósito: calculam média
+  // ponderada de valor, semântica distinta da consulta de saldo do saida-manual.
+  const filtroEmp = filtroEmpresaOmie(empresa);
 
   // 1. Tenta no galpao especifico (saldo ponderado)
   const especifico = await db.execute<{ vu: string | null }>(sql`

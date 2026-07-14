@@ -3,6 +3,7 @@ import Decimal from 'decimal.js';
 import { getDb, createLogger } from '@atlas/core';
 import { movimentacao, aprovacao, divergencia, reservaSaldo } from '@atlas/db';
 import { converterParaKg } from './motor.service.js';
+import { filtroEmpresaOmie } from './omie-shared.js';
 import { enviarAlertaAprovacaoPendente } from './notificacao.service.js';
 import { resolverDescricaoProdutoAcxe } from './produto-descricao.js';
 import { NIVEL_APROVACAO_POR_SUBTIPO, type SubtipoMovimento, type UnidadeMedida } from '../types.js';
@@ -68,17 +69,6 @@ export interface SaldoDisponivel {
   saldoOmieKg: number;
   reservadoKg: number;
   disponivelKg: number;
-}
-
-/**
- * Filtro por empresa na vw_posicaoEstoqueUnificadaFamilia (mesmo padrao do Cockpit):
- *   acxe  → codigo_estoque '%.1' + empresa='ACXE'
- *   q2p   → codigo_estoque '%.1' OR '%.2' + empresa='Q2P'
- */
-function filtroEmpresaOmie(empresa: EmpresaSaida): string {
-  return empresa === 'acxe'
-    ? `(o.codigo_estoque LIKE '%.1' AND o.empresa = 'ACXE')`
-    : `((o.codigo_estoque LIKE '%.1' OR o.codigo_estoque LIKE '%.2') AND o.empresa = 'Q2P')`;
 }
 
 /**

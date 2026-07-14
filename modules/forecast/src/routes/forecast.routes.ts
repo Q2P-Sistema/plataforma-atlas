@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { requireAuth, requireRole, requireModule, csrfProtection } from '@atlas/auth';
-import { createLogger } from '@atlas/core';
+import { createLogger, sendSuccess, sendError } from '@atlas/core';
 import { getFamilias } from '../services/familia.service.js';
 import { getVendas12mByCodigo } from '../services/vendas.service.js';
 import { calcularForecast, getFamiliasUrgentes } from '../services/forecast.service.js';
@@ -12,14 +12,6 @@ import { analyzeShoppingList } from '../services/ai-analysis.service.js';
 
 const logger = createLogger('forecast:routes');
 const router: Router = Router();
-
-function sendSuccess(res: Response, data: unknown, status = 200) {
-  res.status(status).json({ data, error: null });
-}
-
-function sendError(res: Response, code: string, message: string, status = 400) {
-  res.status(status).json({ data: null, error: { code, message } });
-}
 
 // All forecast routes require authentication + module access
 router.use('/api/v1/forecast', requireAuth, csrfProtection, requireModule('forecast'));

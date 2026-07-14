@@ -41,14 +41,17 @@ export function __injectMockAjuste(cnpj: OmieCnpj, ajuste: AjusteEstoqueListado)
 export function mockConsultarNF(cnpj: OmieCnpj, numeroNota: number): ConsultarNFResponse {
   // Produto real com correlato ACXE↔Q2P (match por descricao "PEAD 5502").
   // Permite testar o fluxo completo de recebimento em dev sem bater em API real.
+  // Card ACXEGDP-301: qCom=25_000 com uCom='t' criava drift Kg/t (25 mil TONELADAS);
+  // 25 t = 25.000 kg — mesma massa pretendida, e dev em mock passa a exercitar a
+  // conversao de unidade real (converterParaKg).
   return {
     nNF: numeroNota,
     cChaveNFe: `MOCK-CHAVE-${cnpj}-${numeroNota}`,
     dEmi: '15/04/2026',
     nCodProd: cnpj === 'acxe' ? 4_452_881_285 : 3_033_098_357,
     codigoLocalEstoque: cnpj === 'acxe' ? '4498926337' : '8115873874',
-    qCom: 25_000,
-    uCom: 'KG',
+    qCom: 25,
+    uCom: 't',
     xProd: 'PEAD 5502',
     vUnCom: 1.2,
     vNF: 30_000,
