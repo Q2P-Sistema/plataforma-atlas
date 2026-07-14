@@ -15,6 +15,9 @@ export const chartColors = {
   crit: colors.accent.crit, // #dc2626 — crítico
   ndf: colors.accent.ndf, // #7c3aed — NDF/violeta
   success: colors.accent.success, // #059669 — positivo/ok
+  neutral: '#6b7280', // cinza neutro (estados sem direção: PTAX estável, sem origem)
+  slate: '#8492a6', // cinza-azulado de apoio (rótulos/ações secundárias do hedge)
+  info: '#3b82f6', // azul informativo (séries/sparklines sem semântica de alerta)
 } as const;
 
 /**

@@ -134,7 +134,7 @@ export function MeuEstoquePage() {
   const totalEspeciaisKg = especiaisFiltrado.reduce((acc, i) => acc + i.saldoKg, 0);
 
   return (
-    <div className="p-6 max-w-6xl">
+    <div className="p-6 max-w-7xl">
       <div className="mb-5">
         <h1 className="text-2xl font-serif text-atlas-ink mb-1">Meu Estoque</h1>
         <p className="text-sm text-atlas-muted">

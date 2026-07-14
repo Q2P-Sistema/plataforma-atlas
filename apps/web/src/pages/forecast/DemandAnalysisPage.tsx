@@ -131,12 +131,12 @@ function MiniSparkline({ data }: { data: number[] }) {
       <AreaChart data={chartData}>
         <defs>
           <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.05} />
+            <stop offset="5%" stopColor={chartColors.info} stopOpacity={0.3} />
+            <stop offset="95%" stopColor={chartColors.info} stopOpacity={0.05} />
           </linearGradient>
         </defs>
         <Tooltip formatter={(v) => fmtT(Number(v))} labelFormatter={() => ''} />
-        <Area type="monotone" dataKey="v" stroke="#3b82f6" fill="url(#sparkGrad)" strokeWidth={1.5} dot={false} />
+        <Area type="monotone" dataKey="v" stroke={chartColors.info} fill="url(#sparkGrad)" strokeWidth={1.5} dot={false} />
       </AreaChart>
     </ResponsiveContainer>
   );

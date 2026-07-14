@@ -384,7 +384,7 @@ function RetornoModal({ comodato, onClose, onSuccess }: RetornoModalProps) {
               onChange={(e) => setQuantidadeKg(e.target.value)}
               placeholder="0,000"
               className={`w-full px-3 py-2 border rounded text-sm font-serif bg-atlas-bg ${
-                qtdMudou ? 'border-amber-400' : 'border-atlas-border'
+                qtdMudou ? 'border-amber-400 dark:border-amber-600' : 'border-atlas-border'
               }`}
             />
             {qtdMudou && (
@@ -488,7 +488,7 @@ function ProdutoCombobox({ valor, onChange, destacar }: ProdutoComboboxProps) {
         type="button"
         onClick={() => setAberto((v) => !v)}
         className={`w-full px-3 py-2 border rounded text-sm text-left bg-atlas-bg ${
-          destacar ? 'border-amber-400' : 'border-atlas-border'
+          destacar ? 'border-amber-400 dark:border-amber-600' : 'border-atlas-border'
         } hover:border-atlas-muted flex items-center justify-between gap-2`}
       >
         <span className="truncate" title={valor.descricao}>

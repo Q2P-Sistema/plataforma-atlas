@@ -112,6 +112,7 @@ export function TransitoPage() {
     },
   });
 
+  // max-w-full deliberado: pipeline de 5 estágios lado a lado precisa da largura total (UI-E)
   return (
     <div className="p-6 max-w-full">
       <div className="mb-5">

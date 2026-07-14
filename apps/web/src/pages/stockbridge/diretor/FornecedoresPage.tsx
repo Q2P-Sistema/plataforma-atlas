@@ -65,7 +65,7 @@ export function FornecedoresPage() {
   const excluidos = filtrado.filter((f) => f.excluido);
 
   return (
-    <div className="p-6 max-w-5xl">
+    <div className="p-6 max-w-7xl">
       <div className="mb-5">
         <div className="flex items-center gap-2 mb-1">
           <h1 className="text-2xl font-serif text-atlas-ink">Fornecedores</h1>

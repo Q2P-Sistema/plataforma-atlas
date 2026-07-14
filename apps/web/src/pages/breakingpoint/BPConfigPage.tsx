@@ -201,7 +201,7 @@ function ParamsSection({ notify, invalidateProj }: { notify: (m: string, k?: 'ok
   return (
     <section className="bg-atlas-card border border-atlas-border rounded-xl p-5">
       <h2 className="text-sm font-bold mb-4">Parâmetros Globais</h2>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Field label="Antecipação já usada (R$)" hint="Total de duplicatas já antecipadas no período">
           <input
             type="number"
@@ -351,7 +351,7 @@ function BancoRow({ banco, onSave, onDelete }: { banco: Banco; onSave: (b: Banco
           Ativo
         </label>
       </div>
-      <div className="grid grid-cols-3 gap-3 text-xs">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
         <Group title="Antecipação">
           <NumRow label="Limite" value={form.antecip_limite} onChange={(v) => setForm({ ...form, antecip_limite: v })} />
           <NumRow label="Usado" value={form.antecip_usado} onChange={(v) => setForm({ ...form, antecip_usado: v })} />
@@ -385,7 +385,7 @@ function NovoBancoForm({ onCreate, pending }: { onCreate: (b: Omit<Banco, 'id' |
   const [cor, setCor] = useState('#666666');
   return (
     <div className="mb-4 p-3 border border-dashed border-atlas-border rounded-lg">
-      <div className="grid grid-cols-4 gap-2 items-end">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 items-end">
         <Field label="Identificador (slug, único)"><input className="input w-full" value={id} onChange={(e) => setId(e.target.value)} placeholder="caixa" /></Field>
         <Field label="Nome"><input className="input w-full" value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Caixa Econômica" /></Field>
         <Field label="Cor"><input type="color" className="w-full h-9 rounded" value={cor} onChange={(e) => setCor(e.target.value)} /></Field>

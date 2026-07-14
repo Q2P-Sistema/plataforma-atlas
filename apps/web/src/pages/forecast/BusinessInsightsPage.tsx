@@ -127,7 +127,7 @@ export function BusinessInsightsPage() {
               <YAxis yAxisId="preco" orientation="right" tick={{ fontSize: 9 }} tickFormatter={(v: number) => `US$ ${fmtNum(v, 0)}`} />
               <Tooltip formatter={(v, name) => name === 'Volume (kg)' ? fmtT(Number(v)) : name === 'Valor USD' ? fmtK(Number(v)) : `US$ ${fmtNum(Number(v), 0)}/t`} />
               <Legend />
-              <Bar yAxisId="vol" dataKey="volume_kg" name="Volume (kg)" fill="#3b82f6" opacity={0.7} />
+              <Bar yAxisId="vol" dataKey="volume_kg" name="Volume (kg)" fill={chartColors.info} opacity={0.7} />
               <Line yAxisId="preco" type="monotone" dataKey="preco_ton_usd" name="Preço/ton USD" stroke={chartColors.crit} strokeWidth={2} dot={{ r: 3 }} />
             </ComposedChart>
           </ResponsiveContainer>

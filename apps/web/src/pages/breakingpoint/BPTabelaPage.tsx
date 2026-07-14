@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Ban, AlertTriangle, Check, CheckCircle2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { ErrorState } from '@atlas/ui';
 import { fmtMi } from './format.js';
@@ -38,21 +39,21 @@ async function fetchProjecao(): Promise<Projecao> {
 function StatusBadge({ status }: { status: 'critico' | 'alerta' | 'ok' }) {
   if (status === 'critico') {
     return (
-      <span className="text-[10px] px-2 py-0.5 rounded bg-red-500/15 text-red-700 dark:text-red-300 border border-red-500/40 font-bold uppercase">
-        ⛔ CRISE
+      <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-red-500/15 text-red-700 dark:text-red-300 border border-red-500/40 font-bold uppercase">
+        <Ban size={10} aria-hidden /> CRISE
       </span>
     );
   }
   if (status === 'alerta') {
     return (
-      <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40 font-bold uppercase">
-        ⚠ ALERTA
+      <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40 font-bold uppercase">
+        <AlertTriangle size={10} aria-hidden /> ALERTA
       </span>
     );
   }
   return (
-    <span className="text-[10px] px-2 py-0.5 rounded bg-green-500/15 text-green-700 dark:text-green-300 border border-green-500/40 font-semibold uppercase">
-      ✓ OK
+    <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-green-500/15 text-green-700 dark:text-green-300 border border-green-500/40 font-semibold uppercase">
+      <Check size={10} aria-hidden /> OK
     </span>
   );
 }
@@ -113,7 +114,7 @@ export function BPTabelaPage() {
       <div className="bg-atlas-card border border-atlas-border rounded-xl overflow-hidden">
         {semanas.length === 0 ? (
           <p className="p-6 text-center text-atlas-muted text-sm">
-            Nenhuma semana em CRISE ou ALERTA. ✅
+            Nenhuma semana em CRISE ou ALERTA. <CheckCircle2 size={14} className="inline -mt-0.5 text-green-600 dark:text-green-400" aria-hidden />
           </p>
         ) : (
           <table className="w-full text-xs">
