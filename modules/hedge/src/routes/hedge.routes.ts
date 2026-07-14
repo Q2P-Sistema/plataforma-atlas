@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { requireAuth, requireRole, requireModule, csrfProtection } from '@atlas/auth';
-import { createLogger } from '@atlas/core';
+import { createLogger, cached, invalidate, sendSuccess, sendError } from '@atlas/core';
 import { calcularPosicao, recalcularBuckets, getHistorico } from '../services/posicao.service.js';
 import { calcularMotor } from '../services/motor.service.js';
 import { getVariacao30d } from '../services/ptax.service.js';
@@ -10,20 +10,10 @@ import { simularMargem } from '../services/simulacao.service.js';
 import { getEstoque, getLocalidades, salvarLocalidadesAtivas } from '../services/estoque.service.js';
 import { listarAlertas, marcarLido, resolver, gerarAlertas } from '../services/alerta.service.js';
 import { getConfig, updateConfig, getTaxasNdf, inserirTaxaNdf } from '../services/config.service.js';
-import { cached, invalidate } from '../services/cache.service.js';
+
 
 const logger = createLogger('hedge:routes');
 const router: Router = Router();
-
-function sendSuccess(res: Response, data: unknown, status = 200, meta?: Record<string, unknown>) {
-  const body: Record<string, unknown> = { data, error: null };
-  if (meta) body.meta = meta;
-  res.status(status).json(body);
-}
-
-function sendError(res: Response, code: string, message: string, status = 400) {
-  res.status(status).json({ data: null, error: { code, message } });
-}
 
 // All hedge routes require authentication + module access
 router.use('/api/v1/hedge', requireAuth, csrfProtection, requireModule('hedge'));

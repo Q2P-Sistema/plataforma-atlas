@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import Decimal from 'decimal.js';
-import { determinarStatus } from '../services/bucket.service.js';
+import { determinarStatus } from '../services/posicao.service.js';
 
 describe('Bucket Status', () => {
   it('returns sub_hedged when cobertura < 60%', () => {
