@@ -547,6 +547,9 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
           // (idêntico ao comportamento anterior).
           subtipo: inferirSubtipoPorNumeroNf(loteRow!.notaFiscal ?? ''),
           loteId: ap.loteId,
+          // STK-09: empresa participa da chave de idempotencia (migration 0044);
+          // derivada do cnpj do lote (mesma origem do recebimento).
+          empresa: loteRow!.cnpj.toLowerCase().includes('acxe') ? 'acxe' : 'q2p',
           quantidadeKg: String(Number(ap.quantidadeRecebidaKg ?? loteRow!.quantidadeFisicaKg)),
           mvAcxe: 1,
           dtAcxe: new Date(),

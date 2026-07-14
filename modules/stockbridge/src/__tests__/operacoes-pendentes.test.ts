@@ -99,11 +99,15 @@ describe('marcarComoFalhaDefinitiva (US3)', () => {
 
   it('atualiza status_omie=falha e registra motivo no ultimo_erro_omie', async () => {
     const { getDb } = await import('@atlas/core');
-    const chain = chainComMov({
-      id: 'mov-1',
-      statusOmie: 'pendente_q2p',
-      tentativasQ2p: 2,
-    });
+    // aprovacaoRows vazio = sem aprovacao PENDENTE linkada (o guard STK-08 libera)
+    const chain = chainComMov(
+      {
+        id: 'mov-1',
+        statusOmie: 'pendente_q2p',
+        tentativasQ2p: 2,
+      },
+      { aprovacaoRows: [] },
+    );
     vi.mocked(getDb).mockReturnValue(chain as never);
 
     const res = await marcarComoFalhaDefinitiva({
@@ -185,6 +189,27 @@ describe('marcarComoFalhaDefinitiva (US3)', () => {
         ator: { userId: 'u1', role: 'gestor' },
       }),
     ).rejects.toBeInstanceOf(OperacaoNaoPendenteError);
+  });
+
+  // STK-08 (ACXEGDP-288): mov de saida manual nasce pendente_q2p na submissao —
+  // marcar 'falha' antes da decisao do gestor esconderia a aprovacao em aberto.
+  it('bloqueia marcar-falha quando ha aprovacao PENDENTE linkada (pre-aprovacao)', async () => {
+    const { getDb } = await import('@atlas/core');
+    const chain = chainComMov(
+      { id: 'mov-1', statusOmie: 'pendente_q2p', tentativasQ2p: 0 },
+      { aprovacaoRows: [{ id: 'apr-em-aberto' }] },
+    );
+    vi.mocked(getDb).mockReturnValue(chain as never);
+
+    await expect(
+      marcarComoFalhaDefinitiva({
+        movimentacaoId: 'mov-1',
+        motivo: 'tentativa prematura',
+        ator: { userId: 'u1', role: 'gestor' },
+      }),
+    ).rejects.toThrow(/aguarda decisão do gestor/);
+    // Nenhum update executado
+    expect((chain.set as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
   });
 });
 
