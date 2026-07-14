@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { eq, and, inArray, sql } from 'drizzle-orm';
 import { getDb, createLogger } from '@atlas/core';
 import { aprovacao, lote, movimentacao, localidadeCorrelacao, reservaSaldo, users } from '@atlas/db';
@@ -55,6 +54,30 @@ export class AprovacaoStatusInvalidoError extends Error {
     super(`Aprovação ${id} já foi ${statusAtual} — não é possível alterar`);
     this.name = 'AprovacaoStatusInvalidoError';
   }
+}
+
+/** STK-07 (ACXEGDP-287): re-submissão quando o lote já tem outra aprovação pendente. */
+export class ResubmissaoDuplicadaError extends Error {
+  constructor(public readonly loteId: string) {
+    super(
+      `Este lote já tem uma aprovação pendente — a re-submissão anterior foi registrada. ` +
+        'Aguarde a decisão do gestor em vez de re-submeter de novo.',
+    );
+    this.name = 'ResubmissaoDuplicadaError';
+  }
+}
+
+/**
+ * Detecta violação do índice único parcial aprovacao_uq_lote_pendente
+ * (migration 0043). O driver pg expõe code='23505' + constraint; o drizzle pode
+ * envelopar o erro original em `cause` dependendo da versão — checa os dois.
+ */
+function isViolacaoUnicidadePendente(err: unknown): boolean {
+  const candidatos = [err, (err as { cause?: unknown })?.cause];
+  return candidatos.some((c) => {
+    const e = c as { code?: string; constraint?: string } | undefined;
+    return e?.code === '23505' && e?.constraint === 'aprovacao_uq_lote_pendente';
+  });
 }
 
 export interface PendenciaItem {
@@ -358,7 +381,11 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
   let notaFiscalParaEmail = apPre.id;
   if (apPre.tipoAprovacao === 'recebimento_divergencia') {
     if (!apPre.loteId) throw new Error(`Aprovação ${apPre.id} sem loteId — recebimento_divergencia exige lote`);
-    opId = randomUUID();
+    // STK-01 (ACXEGDP-281): opId deterministico (id da aprovacao) em vez de
+    // randomUUID() por chamada. Duas invocacoes concorrentes geram o MESMO
+    // cod_int_ajuste, e a recuperacao de 1035 do cliente OMIE faz a segunda
+    // herdar os IDs da primeira em vez de duplicar o ajuste no ERP.
+    opId = apPre.id;
     const [loteRow] = await db.select().from(lote).where(eq(lote.id, apPre.loteId)).limit(1);
     if (!loteRow) throw new Error(`Lote ${apPre.loteId} não encontrado ao aprovar divergência`);
     if (!loteRow.produtoCodigoQ2p) {
@@ -470,19 +497,24 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
 
   // Transacao: update aprovacao + lote (+ grava movimentacao se OMIE foi chamado)
   const resultado = await db.transaction(async (tx) => {
-    // Re-ler dentro da tx para evitar race com rejeicao concorrente
-    const [ap] = await tx.select().from(aprovacao).where(eq(aprovacao.id, input.id)).limit(1);
-    if (!ap) throw new AprovacaoNaoEncontradaError(input.id);
-    if (ap.status !== 'pendente') throw new AprovacaoStatusInvalidoError(input.id, ap.status);
-
-    await tx
+    // Claim atomico (STK-01, ACXEGDP-281): so a transacao que efetivamente muda
+    // pendente->aprovada prossegue. O SELECT+check anterior tinha janela TOCTOU —
+    // duas aprovacoes concorrentes passavam ambas no check e o segundo UPDATE
+    // sobrescrevia o primeiro silenciosamente (inclusive aprovar vs rejeitar).
+    const [ap] = await tx
       .update(aprovacao)
       .set({
         status: 'aprovada',
         aprovadoPor: input.usuarioId,
         aprovadoEm: new Date(),
       })
-      .where(eq(aprovacao.id, input.id));
+      .where(and(eq(aprovacao.id, input.id), eq(aprovacao.status, 'pendente')))
+      .returning();
+    if (!ap) {
+      const [check] = await tx.select().from(aprovacao).where(eq(aprovacao.id, input.id)).limit(1);
+      if (!check) throw new AprovacaoNaoEncontradaError(input.id);
+      throw new AprovacaoStatusInvalidoError(input.id, check.status);
+    }
 
     const statusLote =
       ap.tipoAprovacao === 'recebimento_divergencia' || ap.tipoAprovacao === 'entrada_manual'
@@ -609,12 +641,9 @@ export async function rejeitar(input: RejeitarInput): Promise<{ id: string }> {
   const db = getDb();
 
   const resultado = await db.transaction(async (tx) => {
-    const [ap] = await tx.select().from(aprovacao).where(eq(aprovacao.id, input.id)).limit(1);
-    if (!ap) throw new AprovacaoNaoEncontradaError(input.id);
-    if (ap.status !== 'pendente') throw new AprovacaoStatusInvalidoError(input.id, ap.status);
-    checarNivel(input.perfilUsuario, ap.precisaNivel);
-
-    await tx
+    // Claim atomico (STK-01): mesmo padrao de aprovar(). checarNivel roda DEPOIS
+    // do update — se falhar, o throw faz rollback da transacao inteira.
+    const [ap] = await tx
       .update(aprovacao)
       .set({
         status: 'rejeitada',
@@ -622,7 +651,14 @@ export async function rejeitar(input: RejeitarInput): Promise<{ id: string }> {
         aprovadoEm: new Date(),
         rejeicaoMotivo: input.motivo,
       })
-      .where(eq(aprovacao.id, input.id));
+      .where(and(eq(aprovacao.id, input.id), eq(aprovacao.status, 'pendente')))
+      .returning();
+    if (!ap) {
+      const [check] = await tx.select().from(aprovacao).where(eq(aprovacao.id, input.id)).limit(1);
+      if (!check) throw new AprovacaoNaoEncontradaError(input.id);
+      throw new AprovacaoStatusInvalidoError(input.id, check.status);
+    }
+    checarNivel(input.perfilUsuario, ap.precisaNivel);
 
     // Caminho com lote (recebimento_divergencia/entrada_manual): marca lote rejeitado
     if (ap.loteId) {
@@ -705,12 +741,27 @@ export async function resubmeter(input: ResubmeterInput): Promise<{ id: string; 
     throw new Error('Motivo obrigatório ao re-submeter aprovação rejeitada');
   }
   const db = getDb();
+  let loteIdAlvo = '';
   const resultado = await db.transaction(async (tx) => {
     const [ap] = await tx.select().from(aprovacao).where(eq(aprovacao.id, input.id)).limit(1);
     if (!ap) throw new AprovacaoNaoEncontradaError(input.id);
     if (ap.status !== 'rejeitada') {
       throw new AprovacaoStatusInvalidoError(input.id, ap.status);
     }
+    if (!ap.loteId) throw new Error(`Aprovação ${ap.id} sem lote não pode ser re-submetida`);
+    loteIdAlvo = ap.loteId;
+
+    // STK-07 (ACXEGDP-287): duplo-clique/retry de rede chamava resubmeter 2x e
+    // criava DUAS aprovacoes pendentes pro mesmo lote — cada uma, aprovada, rodava
+    // o dual OMIE de novo. Este check da a mensagem amigavel; a garantia real
+    // contra corrida e o indice unico parcial aprovacao_uq_lote_pendente
+    // (migration 0043) — a violacao e mapeada pra ResubmissaoDuplicadaError abaixo.
+    const [pendenteExistente] = await tx
+      .select({ id: aprovacao.id })
+      .from(aprovacao)
+      .where(and(eq(aprovacao.loteId, ap.loteId), eq(aprovacao.status, 'pendente')))
+      .limit(1);
+    if (pendenteExistente) throw new ResubmissaoDuplicadaError(ap.loteId);
 
     const [nova] = await tx
       .insert(aprovacao)
@@ -726,7 +777,6 @@ export async function resubmeter(input: ResubmeterInput): Promise<{ id: string; 
       })
       .returning();
 
-    if (!ap.loteId) throw new Error(`Aprovação ${ap.id} sem lote não pode ser re-submetida`);
     const [loteRow] = await tx
       .update(lote)
       .set({
@@ -746,6 +796,14 @@ export async function resubmeter(input: ResubmeterInput): Promise<{ id: string; 
       novaAprovacao: nova!,
       lote: loteRow!,
     };
+  }).catch((err: unknown) => {
+    // Corrida real (duas re-submissoes concorrentes passam ambas no check acima):
+    // o indice unico parcial derruba a segunda no INSERT — traduz pro mesmo erro
+    // amigavel do check de aplicacao.
+    if (isViolacaoUnicidadePendente(err)) {
+      throw new ResubmissaoDuplicadaError(loteIdAlvo);
+    }
+    throw err;
   });
 
   // EML-04: o campo "produto" do e-mail mostrava o FORNECEDOR (lote não guarda a
@@ -910,14 +968,17 @@ async function aprovarEntradaNacional(
   }
 
   await db.transaction(async (tx) => {
-    const [apFresh] = await tx.select().from(aprovacao).where(eq(aprovacao.id, ap.id)).limit(1);
-    if (!apFresh) throw new AprovacaoNaoEncontradaError(ap.id);
-    if (apFresh.status !== 'pendente') throw new AprovacaoStatusInvalidoError(ap.id, apFresh.status);
-
-    await tx
+    // Claim atomico (STK-01): so quem muda pendente->aprovada prossegue.
+    const [apFresh] = await tx
       .update(aprovacao)
       .set({ status: 'aprovada', aprovadoPor: input.usuarioId, aprovadoEm: new Date() })
-      .where(eq(aprovacao.id, ap.id));
+      .where(and(eq(aprovacao.id, ap.id), eq(aprovacao.status, 'pendente')))
+      .returning();
+    if (!apFresh) {
+      const [check] = await tx.select().from(aprovacao).where(eq(aprovacao.id, ap.id)).limit(1);
+      if (!check) throw new AprovacaoNaoEncontradaError(ap.id);
+      throw new AprovacaoStatusInvalidoError(ap.id, check.status);
+    }
 
     const updateMov: Record<string, unknown> = {
       statusOmie: 'concluida',
@@ -1163,14 +1224,20 @@ async function aprovarSaidaManual(
   // Persistencia: aprovacao + movimentacao + reserva (em transacao)
   const sinalMv = ap.tipoAprovacao === 'retorno_comodato' ? 1 : -1;
   await db.transaction(async (tx) => {
-    const [apFresh] = await tx.select().from(aprovacao).where(eq(aprovacao.id, ap.id)).limit(1);
-    if (!apFresh) throw new AprovacaoNaoEncontradaError(ap.id);
-    if (apFresh.status !== 'pendente') throw new AprovacaoStatusInvalidoError(ap.id, apFresh.status);
-
-    await tx
+    // Claim atomico (STK-01): o SELECT+check anterior tinha TOCTOU real aqui —
+    // como o passo seguinte e um UPDATE por id em movimentacao (nao um INSERT),
+    // nao havia constraint pra derrubar o perdedor da corrida: um duplo-clique
+    // sobrescrevia aprovado_por/aprovado_em silenciosamente com 200 OK.
+    const [apFresh] = await tx
       .update(aprovacao)
       .set({ status: 'aprovada', aprovadoPor: input.usuarioId, aprovadoEm: new Date() })
-      .where(eq(aprovacao.id, ap.id));
+      .where(and(eq(aprovacao.id, ap.id), eq(aprovacao.status, 'pendente')))
+      .returning();
+    if (!apFresh) {
+      const [check] = await tx.select().from(aprovacao).where(eq(aprovacao.id, ap.id)).limit(1);
+      if (!check) throw new AprovacaoNaoEncontradaError(ap.id);
+      throw new AprovacaoStatusInvalidoError(ap.id, check.status);
+    }
 
     // Monta update da movimentacao conforme tipo de resultado OMIE
     const updateMov: Record<string, unknown> = { updatedAt: new Date() };

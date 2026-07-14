@@ -14,7 +14,11 @@ const mockTx = {
   set: vi.fn().mockReturnThis(),
   insert: vi.fn().mockReturnThis(),
   values: vi.fn().mockReturnThis(),
-  returning: vi.fn().mockResolvedValue([{ id: 'nova-apr' }]),
+  // Pos STK-01: o claim atomico (update...returning) devolve a linha reivindicada —
+  // o mock devolve a mesma linha do limit() pra manter o fluxo do service.
+  returning: vi.fn().mockResolvedValue([
+    { id: 'apr-1', loteId: 'lote-1', status: 'pendente', precisaNivel: 'gestor', tipoAprovacao: 'entrada_manual', lancadoPor: 'u-op' },
+  ]),
   innerJoin: vi.fn().mockReturnThis(),
   orderBy: vi.fn().mockResolvedValue([]),
   execute: vi.fn().mockResolvedValue({ rows: [] }),
