@@ -16,6 +16,7 @@ vi.mock('@atlas/db', () => ({
   movimentacao: { __id: 'movimentacao' },
   lote: { __id: 'lote' },
   localidadeCorrelacao: { __id: 'localidadeCorrelacao' },
+  aprovacao: { __id: 'aprovacao' },
 }));
 
 vi.mock('@atlas/integration-omie', () => ({
@@ -52,18 +53,32 @@ interface ChainMock {
   set: ReturnType<typeof vi.fn>;
 }
 
-function chainComMov(mov: Record<string, unknown> | null): ChainMock {
-  // db.select().from().where().limit(1) -> [mov?]
+function chainComMov(
+  mov: Record<string, unknown> | null,
+  opts: {
+    /**
+     * Linhas devolvidas por selects em `aprovacao` — o guard de aprovacao do
+     * retry de saida manual (STK-03). Default: uma aprovacao 'aprovada' existe.
+     */
+    aprovacaoRows?: unknown[];
+  } = {},
+): ChainMock {
+  // db.select().from().where().limit(1) -> [mov?] (ou aprovacaoRows p/ tabela aprovacao)
   // db.update().set().where() -> Promise<void>
   // where() retorna chain (encadeavel) na select-chain; quando vier de set(), deve retornar promise.
   // Solucao: where retorna THIS, mas limit retorna a lista. set retorna um sub-chain com where=Promise.
   const limitResolved = mov ? [mov] : [];
+  const aprovacaoRows = opts.aprovacaoRows ?? [{ id: 'apr-aprovada' }];
+  let currentRows: unknown[] = limitResolved;
   const setSpy = vi.fn();
   const chain: ChainMock = {
     select: vi.fn().mockReturnThis() as never,
-    from: vi.fn().mockReturnThis() as never,
+    from: vi.fn((table: { __id?: string }) => {
+      currentRows = table?.__id === 'aprovacao' ? aprovacaoRows : limitResolved;
+      return chain;
+    }) as never,
     where: vi.fn().mockReturnThis() as never,
-    limit: vi.fn(() => Promise.resolve(limitResolved)) as never,
+    limit: vi.fn(() => Promise.resolve(currentRows)) as never,
     update: vi.fn().mockReturnThis() as never,
     set: setSpy as never,
   };
@@ -328,6 +343,23 @@ describe('retentarOperacaoPendente — saida manual sem lote (STK-03)', () => {
     await expect(
       retentarOperacaoPendente({ movimentacaoId: 'mov-sm-1', ator: { userId: 'g', role: 'gestor' } }),
     ).rejects.toThrow(/valor unitário/i);
+  });
+
+  it('BLOQUEIA retry de saida manual ainda nao aprovada (mov nasce pendente_q2p na submissao)', async () => {
+    // Sem este guard, o retry executaria o ajuste OMIE de uma operacao que o
+    // gestor nunca aprovou (ou rejeitou) — contornando o fluxo de aprovacao.
+    const { getDb } = await import('@atlas/core');
+    const omieSaida = await import('../services/omie-saida.service.js');
+    const omie = await import('@atlas/integration-omie');
+    const chain = chainComMov({ ...movBase }, { aprovacaoRows: [] });
+    vi.mocked(getDb).mockReturnValue(chain as never);
+    vi.mocked(omieSaida.resolverCorrelacaoCompletaGalpao).mockResolvedValue({ acxe: '111', q2p: '222' });
+
+    await expect(
+      retentarOperacaoPendente({ movimentacaoId: 'mov-sm-1', ator: { userId: 'g', role: 'gestor' } }),
+    ).rejects.toThrow(/aprova/i);
+    expect(omie.incluirAjusteEstoque).not.toHaveBeenCalled();
+    expect(omie.listarAjusteEstoque).not.toHaveBeenCalled();
   });
 
   it('retorno_comodato: erro explicito (aguarda STK-03b), nao silencia', async () => {

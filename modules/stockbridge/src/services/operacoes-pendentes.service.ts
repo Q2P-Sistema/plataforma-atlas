@@ -417,6 +417,21 @@ async function retentarQ2pSaidaManual(args: {
     );
   }
 
+  // GUARDA DE APROVACAO: movimentacoes de saida manual nascem 'pendente_q2p' na
+  // SUBMISSAO (saida-manual.service), antes do gestor decidir. Sem este check, o
+  // retry executaria o ajuste OMIE de uma operacao nao aprovada (ou rejeitada),
+  // contornando o fluxo de aprovacao inteiro. Retry so vale pos-aprovacao.
+  const [aprAprovada] = await db
+    .select({ id: aprovacao.id })
+    .from(aprovacao)
+    .where(and(eq(aprovacao.movimentacaoId, mov.id), eq(aprovacao.status, 'aprovada')))
+    .limit(1);
+  if (!aprAprovada) {
+    throw new Error(
+      `Movimentação ${mov.id} ainda não tem aprovação concluída — a pendência Q2P só é retentável depois que o gestor aprovar a saída`,
+    );
+  }
+
   const correlacao = await resolverCorrelacaoCompletaGalpao(mov.galpao);
   if (!correlacao.q2p) {
     throw new Error(`Galpão ${mov.galpao} sem correlato Q2P — não é possível retentar`);
