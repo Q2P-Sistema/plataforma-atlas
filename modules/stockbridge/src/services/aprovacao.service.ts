@@ -1244,6 +1244,10 @@ async function aprovarSaidaManual(
 
     if (resultadoOmie.kind === 'dual') {
       const d = resultadoOmie.dual;
+      // STK-03 (ACXEGDP-283): persiste o valor unitario usado na chamada OMIE.
+      // O retry de pendencia Q2P reusa este valor — recalcular do preco vivo
+      // gravaria um custo DIFERENTE do que ACXE ja registrou.
+      updateMov.custoUnitarioBrl = String(valorUnitario);
       if (d.acxe) {
         updateMov.mvAcxe = sinalMv;
         updateMov.dtAcxe = new Date();
@@ -1326,8 +1330,12 @@ async function aprovarSaidaManual(
  * empresa com saldo (caso comum em retorno comodato divergente, onde o produto
  * recebido pode nao ter saldo no destino). Caller deve tratar o caso 0 — OMIE
  * REJEITA ajuste com valor=0 (erro 400) apesar do que parecia ate descobrirmos.
+ *
+ * Exportada para o retry de saida manual (operacoes-pendentes, STK-03) como
+ * FALLBACK para movimentacoes antigas sem custo_unitario_brl persistido — o
+ * caminho normal do retry reusa o valor gravado na aprovacao original.
  */
-async function consultarValorUnitarioProduto(
+export async function consultarValorUnitarioProduto(
   produtoCodigoAcxe: number,
   galpao: string,
   empresa: 'acxe' | 'q2p',

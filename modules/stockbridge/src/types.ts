@@ -84,11 +84,33 @@ export function isStatusOmiePendente(status: StatusOmie): boolean {
 /**
  * Sufixos do cod_int_ajuste enviado ao OMIE. Combinados com o op_id da
  * movimentacao para identificar de forma unica cada chamada IncluirAjusteEstoque.
+ *
+ * Os sufixos de saida manual (STK-03, ACXEGDP-283) sao LOAD-BEARING em dois
+ * pontos que precisam concordar byte a byte: a chamada original em
+ * omie-saida.service.ts e o retry em operacoes-pendentes.service.ts (que
+ * verifica via ListarAjusteEstoque se a chamada anterior chegou a persistir).
  */
 export const COD_INT_AJUSTE_SUFIXO = {
+  // Recebimento (fluxo com lote)
   acxeTrf: 'acxe-trf',
   q2pEnt: 'q2p-ent',
   acxeFaltando: 'acxe-faltando',
+  // Saidas manuais SAI (amostra/descarte/quebra = PER; inventario_menos = INV)
+  saidaPerAcxe: 'saida-per-acxe',
+  saidaPerQ2p: 'saida-per-q2p',
+  saidaInvAcxe: 'saida-inv-acxe',
+  saidaInvQ2p: 'saida-inv-q2p',
+  // Transferencia intra-CNPJ (TRF origem -> destino)
+  trfIntraAcxe: 'trf-intra-acxe',
+  trfIntraQ2p: 'trf-intra-q2p',
+  // Comodato (TRF origem -> TROCA 90.0.1)
+  comodatoTrfAcxe: 'comodato-trf-acxe',
+  comodatoTrfQ2p: 'comodato-trf-q2p',
+  // Retorno de comodato (SAI baixa no TROCA + ENT no destino, por empresa)
+  retBaixaAcxe: 'ret-baixa-acxe',
+  retEntradaAcxe: 'ret-entrada-acxe',
+  retBaixaQ2p: 'ret-baixa-q2p',
+  retEntradaQ2p: 'ret-entrada-q2p',
 } as const;
 
 export type CodIntAjusteSufixo = (typeof COD_INT_AJUSTE_SUFIXO)[keyof typeof COD_INT_AJUSTE_SUFIXO];
