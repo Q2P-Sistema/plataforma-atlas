@@ -93,7 +93,7 @@ export function BPEstruturaBancosPage() {
   if (isLoading) return (
     <div className="p-6 max-w-[1440px] mx-auto space-y-5">
       <div className="h-8 w-64 bg-atlas-border rounded animate-pulse" />
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {Array.from({ length: 4 }, (_, i) => <div key={i} className="h-48 rounded-xl bg-atlas-border animate-pulse" />)}
       </div>
     </div>
@@ -108,7 +108,7 @@ export function BPEstruturaBancosPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {bancos.map((b) => (
           <div
             key={b.id}

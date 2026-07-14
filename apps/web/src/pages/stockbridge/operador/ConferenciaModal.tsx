@@ -232,7 +232,7 @@ export function ConferenciaModal({ item, onClose, onSucesso }: Props) {
             onChange={(e) => setObs(e.target.value)}
             rows={3}
             placeholder={motivoObrigatorio ? 'Ex: 2 big bags avariados na conferência física' : 'Material conferido, embalagens íntegras'}
-            className={`w-full px-3 py-2 border rounded text-sm outline-none ${motivoObrigatorio && !obs.trim() ? 'border-red-300' : 'border-atlas-border'}`}
+            className={`w-full px-3 py-2 border rounded text-sm outline-none ${motivoObrigatorio && !obs.trim() ? 'border-red-400 bg-red-50 dark:border-red-600 dark:bg-red-900/20' : 'border-atlas-border'}`}
           />
         </div>
 

@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { CreditCard, FileText, Landmark } from 'lucide-react';
 import { bpChartColors, ErrorState } from '@atlas/ui';
 import { fmtMi } from './format.js';
 
@@ -37,7 +38,7 @@ function TotalCard({
   cor,
 }: {
   titulo: string;
-  icone: string;
+  icone: React.ReactNode;
   limite: number;
   usado: number;
   disp: number;
@@ -47,7 +48,7 @@ function TotalCard({
   return (
     <div className="bg-atlas-card border border-atlas-border rounded-xl p-5" style={{ borderTopColor: cor, borderTopWidth: 3 }}>
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-xl" aria-hidden>{icone}</span>
+        <span className="flex items-center" aria-hidden>{icone}</span>
         <h2 className="text-sm font-bold uppercase tracking-wider">{titulo}</h2>
       </div>
       <div className="text-3xl font-bold tabular-nums" style={{ color: cor }}>{fmtMi(limite)}</div>
@@ -83,7 +84,7 @@ export function BPLimitesPage() {
   if (isLoading) return (
     <div className="p-6 max-w-[1440px] mx-auto space-y-5">
       <div className="h-8 w-64 bg-atlas-border rounded animate-pulse" />
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {Array.from({ length: 3 }, (_, i) => <div key={i} className="h-48 rounded-xl bg-atlas-border animate-pulse" />)}
       </div>
     </div>
@@ -113,10 +114,10 @@ export function BPLimitesPage() {
         <p className="text-xs text-atlas-muted mt-1">Totais agregados de crédito bancário ativo — visão de tesouraria.</p>
       </div>
 
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        <TotalCard titulo="Antecipação" icone="📄" {...totalAntecip} cor={bpChartColors.laranja} />
-        <TotalCard titulo="FINIMP" icone="🏛" {...totalFinimp} cor={bpChartColors.ocre} />
-        <TotalCard titulo="Cheque Especial" icone="💳" {...totalCheque} cor={bpChartColors.azul} />
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <TotalCard titulo="Antecipação" icone={<FileText size={20} />} {...totalAntecip} cor={bpChartColors.laranja} />
+        <TotalCard titulo="FINIMP" icone={<Landmark size={20} />} {...totalFinimp} cor={bpChartColors.ocre} />
+        <TotalCard titulo="Cheque Especial" icone={<CreditCard size={20} />} {...totalCheque} cor={bpChartColors.azul} />
       </div>
 
       <div className="bg-atlas-card border border-atlas-border rounded-xl p-5">

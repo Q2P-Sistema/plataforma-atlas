@@ -118,7 +118,10 @@ export function Sidebar({
         </div>
 
         {/* Modules */}
-        <nav className="flex-1 py-3 px-2 space-y-1 overflow-y-auto">
+        {/* Colapsado: overflow visivel (senao o flyout absoluto e recortado pelo
+            scroll container — overflow-y:auto forca clipping nos 2 eixos). A lista
+            de icones e curta o suficiente pra dispensar scroll nesse modo. */}
+        <nav className={`flex-1 py-3 px-2 space-y-1 ${collapsed ? 'overflow-visible' : 'overflow-y-auto'}`}>
           {modules.map((mod) => {
             const Icon = mod.icon;
             const isActive = currentPath.startsWith(mod.path);
@@ -126,7 +129,7 @@ export function Sidebar({
             const showSub = isActive && isEnabled && mod.subItems && !collapsed;
 
             return (
-              <div key={mod.id}>
+              <div key={mod.id} className="relative group">
                 <button
                   onClick={() => {
                     if (isEnabled) {
@@ -135,6 +138,7 @@ export function Sidebar({
                     }
                   }}
                   disabled={!isEnabled}
+                  aria-haspopup={collapsed && isEnabled && mod.subItems && mod.subItems.length > 0 ? 'true' : undefined}
                   title={collapsed ? mod.name : undefined}
                   className={`
                     w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium
@@ -157,70 +161,36 @@ export function Sidebar({
                   )}
                 </button>
                 {showSub && (
-                  <div className="ml-4 mt-0.5 space-y-0.5 border-l border-atlas-border/50 pl-2">
-                    {mod.subItems!.map((sub, subIdx) => {
-                      const SubIcon = sub.icon;
-                      const isSubActive =
-                        sub.path === mod.path
-                          ? currentPath === sub.path
-                          : currentPath.startsWith(sub.path);
-                      // Cabecalho de secao quando o grupo muda em relacao ao
-                      // item visivel anterior (itens ja chegam filtrados por role).
-                      const showGroupHeader =
-                        sub.group != null && sub.group !== mod.subItems![subIdx - 1]?.group;
-                      return (
-                        <div key={sub.id}>
-                          {showGroupHeader && (
-                            <div className={`px-2.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-atlas-muted/60 select-none ${subIdx > 0 ? 'pt-2.5' : 'pt-1'}`}>
-                              {sub.group}
-                            </div>
-                          )}
-                        <button
-                          onClick={() => {
-                            onNavigate(sub.path);
-                            setMobileOpen(false);
-                          }}
-                          className={`
-                            w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs font-medium
-                            transition-colors focus:outline-none focus:ring-2 focus:ring-acxe
-                            ${
-                              isSubActive
-                                ? 'text-acxe bg-acxe/5'
-                                : 'text-atlas-muted hover:text-atlas-text hover:bg-atlas-border/30'
-                            }
-                          `}
-                        >
-                          <SubIcon size={14} className="shrink-0" />
-                          <span className="truncate">{sub.name}</span>
-                          {sub.badges && sub.badges.length > 0 ? (
-                            <span className="ml-auto inline-flex items-center gap-1">
-                              {sub.badges
-                                .filter((b) => b.count > 0)
-                                .map((b, i) => (
-                                  <span
-                                    key={i}
-                                    title={b.title}
-                                    className={`inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[10px] font-bold text-white rounded-full ${
-                                      b.color === 'emerald'
-                                        ? 'bg-success'
-                                        : b.color === 'amber'
-                                          ? 'bg-warn'
-                                          : 'bg-crit'
-                                    }`}
-                                  >
-                                    {b.count > 99 ? '99+' : b.count}
-                                  </span>
-                                ))}
-                            </span>
-                          ) : sub.badge != null && sub.badge > 0 ? (
-                            <span className="ml-auto inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[10px] font-bold text-white bg-crit rounded-full">
-                              {sub.badge > 99 ? '99+' : sub.badge}
-                            </span>
-                          ) : null}
-                        </button>
-                        </div>
-                      );
-                    })}
+                  <div className="ml-4 mt-0.5 border-l border-atlas-border/50 pl-2">
+                    <SubItemsList
+                      mod={mod}
+                      currentPath={currentPath}
+                      onPick={(path) => {
+                        onNavigate(path);
+                        setMobileOpen(false);
+                      }}
+                    />
+                  </div>
+                )}
+                {/* UI-C (ACXEGDP-263): flyout dos subitens com a sidebar colapsada —
+                    antes o colapso simplesmente escondia a navegacao interna do
+                    modulo. CSS-only (group-hover/focus-within); pl-2 no wrapper
+                    mantem a area de hover continua entre o botao e o painel. */}
+                {collapsed && isEnabled && mod.subItems && mod.subItems.length > 0 && (
+                  <div className="absolute left-full top-0 z-50 hidden group-hover:block group-focus-within:block pl-2">
+                    <div className="min-w-56 max-w-72 bg-atlas-card border border-atlas-border rounded-lg shadow-lg p-2">
+                      <div className="px-2.5 pb-1.5 pt-1 text-xs font-semibold text-atlas-text border-b border-atlas-border/60 mb-1">
+                        {mod.name}
+                      </div>
+                      <SubItemsList
+                        mod={mod}
+                        currentPath={currentPath}
+                        onPick={(path) => {
+                          onNavigate(path);
+                          setMobileOpen(false);
+                        }}
+                      />
+                    </div>
                   </div>
                 )}
               </div>
@@ -254,5 +224,85 @@ export function Sidebar({
         )}
       </aside>
     </>
+  );
+}
+
+
+/**
+ * Lista de subitens de um modulo (com cabecalhos de secao e badges).
+ * Compartilhada entre o modo expandido (inline) e o flyout do modo colapsado.
+ */
+function SubItemsList({
+  mod,
+  currentPath,
+  onPick,
+}: {
+  mod: SidebarModule;
+  currentPath: string;
+  onPick: (path: string) => void;
+}) {
+  return (
+    <div className="space-y-0.5">
+      {mod.subItems!.map((sub, subIdx) => {
+        const SubIcon = sub.icon;
+        const isSubActive =
+          sub.path === mod.path
+            ? currentPath === sub.path
+            : currentPath.startsWith(sub.path);
+        // Cabecalho de secao quando o grupo muda em relacao ao
+        // item visivel anterior (itens ja chegam filtrados por role).
+        const showGroupHeader =
+          sub.group != null && sub.group !== mod.subItems![subIdx - 1]?.group;
+        return (
+          <div key={sub.id}>
+            {showGroupHeader && (
+              <div className={`px-2.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-atlas-muted/60 select-none ${subIdx > 0 ? 'pt-2.5' : 'pt-1'}`}>
+                {sub.group}
+              </div>
+            )}
+            <button
+              onClick={() => onPick(sub.path)}
+              className={`
+                w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs font-medium
+                transition-colors focus:outline-none focus:ring-2 focus:ring-acxe
+                ${
+                  isSubActive
+                    ? 'text-acxe bg-acxe/5'
+                    : 'text-atlas-muted hover:text-atlas-text hover:bg-atlas-border/30'
+                }
+              `}
+            >
+              <SubIcon size={14} className="shrink-0" />
+              <span className="truncate">{sub.name}</span>
+              {sub.badges && sub.badges.length > 0 ? (
+                <span className="ml-auto inline-flex items-center gap-1">
+                  {sub.badges
+                    .filter((b) => b.count > 0)
+                    .map((b, i) => (
+                      <span
+                        key={i}
+                        title={b.title}
+                        className={`inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[10px] font-bold text-white rounded-full ${
+                          b.color === 'emerald'
+                            ? 'bg-success'
+                            : b.color === 'amber'
+                              ? 'bg-warn'
+                              : 'bg-crit'
+                        }`}
+                      >
+                        {b.count > 99 ? '99+' : b.count}
+                      </span>
+                    ))}
+                </span>
+              ) : sub.badge != null && sub.badge > 0 ? (
+                <span className="ml-auto inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[10px] font-bold text-white bg-crit rounded-full">
+                  {sub.badge > 99 ? '99+' : sub.badge}
+                </span>
+              ) : null}
+            </button>
+          </div>
+        );
+      })}
+    </div>
   );
 }

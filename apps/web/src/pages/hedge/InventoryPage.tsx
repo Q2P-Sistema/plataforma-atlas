@@ -40,7 +40,7 @@ const ORIGEM_LABELS: Record<string, string> = {
 
 const ORIGEM_COLORS: Record<string, string> = {
   em_transito: '#f59e0b',
-  importado_no_chao: '#3b82f6',
+  importado_no_chao: chartColors.info,
   nacional: '#10b981',
 };
 
@@ -160,7 +160,7 @@ export function InventoryPage() {
   const pieData = Array.from(byOrigem.entries()).map(([origem, data]) => ({
     name: ORIGEM_LABELS[origem] ?? origem,
     value: data.brl,
-    color: ORIGEM_COLORS[origem] ?? '#6b7280',
+    color: ORIGEM_COLORS[origem] ?? chartColors.neutral,
   }));
 
   return (
@@ -214,7 +214,7 @@ export function InventoryPage() {
 
       {/* KPI Strip — 5 fases */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-        <KpiCard label="Marítimo / Trânsito" value={fmtBrlM(transitoBrl)} color="#8492a6" src="acxe" sub="Câmbio ainda flutuante" />
+        <KpiCard label="Marítimo / Trânsito" value={fmtBrlM(transitoBrl)} color={chartColors.slate} src="acxe" sub="Câmbio ainda flutuante" />
         <KpiCard label="Importado no Chão" value={fmtBrlM(importadoBrl)} color={chartColors.acxe} src="acxe" sub="NF entrada emitida" />
         <KpiCard label="Nacional Q2P" value={fmtBrlM(nacionalBrl)} color={chartColors.q2p} src="q2p" sub="Distribuição ativa" />
         <KpiCard label="Total Consolidado" value={fmtBrlM(totalBrl)} color={chartColors.success} src="calc" sub={`${totalItens} produtos`} />
@@ -269,7 +269,7 @@ export function InventoryPage() {
                 <div className="flex justify-between border-b border-atlas-border/50 pb-1">
                   <span className="text-atlas-muted">Origem</span>
                   <span className="font-mono text-atlas-text">
-                    <span className="inline-block w-2 h-2 rounded-full mr-1" style={{ backgroundColor: ORIGEM_COLORS[d.origem] ?? '#6b7280' }} />
+                    <span className="inline-block w-2 h-2 rounded-full mr-1" style={{ backgroundColor: ORIGEM_COLORS[d.origem] ?? chartColors.neutral }} />
                     {ORIGEM_LABELS[d.origem] ?? d.origem}
                   </span>
                 </div>

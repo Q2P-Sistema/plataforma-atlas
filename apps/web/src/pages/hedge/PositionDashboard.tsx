@@ -146,7 +146,7 @@ export function PositionDashboard() {
   const ptaxAtual = ptaxData?.atual;
   const ptaxSubiu = (ptaxAtual?.variacao_pct ?? 0) > 0;
   const ptaxNeutro = (ptaxAtual?.variacao_pct ?? 0) === 0;
-  const ptaxColor = ptaxNeutro ? '#6b7280' : ptaxSubiu ? chartColors.crit : chartColors.success;
+  const ptaxColor = ptaxNeutro ? chartColors.neutral : ptaxSubiu ? chartColors.crit : chartColors.success;
   const ptaxArrow = ptaxNeutro ? '' : ptaxSubiu ? '▲' : '▼';
   const ptaxVarStr = ptaxAtual ? `${ptaxArrow} ${fmtNum(Math.abs(ptaxAtual.variacao_pct), 2)}%` : '';
 
@@ -154,7 +154,7 @@ export function PositionDashboard() {
   const var30 = kpis.variacao_30d_pct ?? 0;
   const var30Subiu = var30 > 0;
   const var30Neutro = var30 === 0;
-  const var30Color = var30Neutro ? '#6b7280' : var30Subiu ? chartColors.crit : chartColors.success;
+  const var30Color = var30Neutro ? chartColors.neutral : var30Subiu ? chartColors.crit : chartColors.success;
   const var30Arrow = var30Neutro ? '' : var30Subiu ? '▲' : '▼';
   const var30Str = `${var30Arrow} ${fmtNum(Math.abs(var30), 2)}%`.trim();
 

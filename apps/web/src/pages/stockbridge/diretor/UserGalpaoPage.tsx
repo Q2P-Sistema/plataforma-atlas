@@ -94,7 +94,7 @@ export function UserGalpaoPage() {
   );
 
   return (
-    <div className="p-6 max-w-5xl">
+    <div className="p-6 max-w-7xl">
       <div className="mb-5">
         <h1 className="text-2xl font-serif text-atlas-ink mb-1">Vinculação Usuário × Galpão</h1>
         <p className="text-sm text-atlas-muted">

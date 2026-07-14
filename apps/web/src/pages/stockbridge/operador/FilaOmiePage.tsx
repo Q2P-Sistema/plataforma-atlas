@@ -131,7 +131,7 @@ export function FilaOmiePage() {
   }
 
   return (
-    <div className="p-6 max-w-5xl">
+    <div className="p-6 max-w-7xl">
       <div className="mb-6">
         <h1 className="text-2xl font-serif text-atlas-ink mb-1">Recebimento</h1>
         <p className="text-sm text-atlas-muted">

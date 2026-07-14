@@ -657,7 +657,7 @@ function SaidaManualModal({ sku, onClose, onSuccess, galpoesDisponiveis }: Saida
                 placeholder="0,000"
                 className={`w-full px-3 py-2 border rounded text-sm font-serif bg-atlas-bg ${
                   qtdEmKg > saldoDisponivelKg && qtdEmKg > 0
-                    ? 'border-red-400'
+                    ? 'border-red-400 dark:border-red-600'
                     : 'border-atlas-border'
                 }`}
               />

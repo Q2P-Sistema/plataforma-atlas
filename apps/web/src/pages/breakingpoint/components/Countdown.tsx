@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
+import { CheckCircle2 } from 'lucide-react';
 
 export interface CountdownProps {
   semana: number | null;
   label: string;
-  icon: string;
+  icon: React.ReactNode;
   sub?: string;
 }
 
@@ -25,7 +26,7 @@ export function Countdown({ semana, label, icon, sub }: CountdownProps) {
   if (!semana) {
     return (
       <div className="flex-1 bg-atlas-card border border-green-500/30 rounded-xl p-5 text-center">
-        <div className="text-2xl mb-1" aria-hidden>✅</div>
+        <div className="mb-1 flex justify-center" aria-hidden><CheckCircle2 size={24} className="text-green-600 dark:text-green-400" /></div>
         <div className="text-xs text-green-600 dark:text-green-400 font-semibold uppercase tracking-wider">{label}</div>
         <div className="text-xs text-atlas-muted mt-1">Sem risco nos 180 dias</div>
       </div>
@@ -47,7 +48,7 @@ export function Countdown({ semana, label, icon, sub }: CountdownProps) {
       role="status"
       aria-label={`${label}: ${dias} dias restantes`}
     >
-      <div className="text-2xl mb-1" aria-hidden>{icon}</div>
+      <div className="mb-1 flex justify-center" aria-hidden>{icon}</div>
       <div className="text-xs uppercase tracking-wider opacity-70">{label}</div>
       <div className="text-3xl font-bold tabular-nums my-1">{count}</div>
       <div className="text-xs font-semibold">dias restantes</div>

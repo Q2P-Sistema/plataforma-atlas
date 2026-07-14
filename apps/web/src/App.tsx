@@ -470,16 +470,12 @@ function ModuleRoute({
   moduleName: string;
   enabled: boolean;
 }) {
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    if (!enabled) {
-      navigate('/', { replace: true });
-    }
-  }, [enabled, navigate]);
-
+  // UI-C (ACXEGDP-263): módulo indisponível mostrava um redirect silencioso pra
+  // home — quem clicava num link direto ficava sem saber o motivo. Agora mostra
+  // uma tela explicativa (perfil sem acesso OU módulo desativado — o backend
+  // expõe um boolean só, então a mensagem cobre os dois casos).
   if (!enabled) {
-    return null;
+    return <ModulePlaceholder name={moduleName} variante="indisponivel" />;
   }
 
   return <ModulePlaceholder name={moduleName} />;
