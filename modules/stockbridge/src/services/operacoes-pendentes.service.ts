@@ -258,6 +258,9 @@ interface MovimentacaoRow {
   galpao: string | null;
   galpaoDestino: string | null;
   custoUnitarioBrl: string | null;
+  // Retorno de comodato (STK-03b): par baixa/entrada linkado pela origem.
+  tipoMovimento: string;
+  movimentacaoOrigemId: string | null;
 }
 
 async function retentarQ2p(args: {
@@ -407,9 +410,9 @@ async function retentarQ2pSaidaManual(args: {
   const { mov } = args;
 
   if (mov.subtipo === 'retorno_comodato') {
-    throw new Error(
-      `Movimentação ${mov.id} é retorno de comodato — o retry das 2 pernas Q2P (baixa TROCA + entrada destino) ainda não está disponível. Acione o admin (STK-03b).`,
-    );
+    // STK-03b: 2 pernas Q2P independentes (baixa TROCA + entrada destino) em
+    // 2 movimentacoes distintas — fluxo dedicado.
+    return retentarQ2pRetornoComodato(args);
   }
   if (!mov.produtoCodigoAcxe || !mov.galpao) {
     throw new Error(
@@ -592,6 +595,194 @@ async function retentarQ2pSaidaManual(args: {
     );
     throw err;
   }
+}
+
+/**
+ * Retry Q2P do RETORNO DE COMODATO (STK-03b, ACXEGDP-283) — estruturalmente
+ * diferente das outras saidas manuais: sao DUAS movimentacoes (baixa do TROCA,
+ * tipo 'ajuste', e entrada no destino, tipo 'entrada_manual') pareadas por
+ * movimentacao_origem_id, e DUAS pernas Q2P com cod_int_ajuste proprios
+ * (ret-baixa-q2p, ret-entrada-q2p) derivados do opId DA ENTRADA (o mesmo usado
+ * por executarRetornoComodatoOmieDual na aprovacao).
+ *
+ * A falha original pode ter sido ENTRE as pernas (baixa Q2P ok, entrada Q2P
+ * nao) — por isso cada perna e verificada independentemente via
+ * incluirAjusteIdempotente(verificarAntes=true) e so roda para a movimentacao
+ * que ainda esta pendente_q2p. Clicar em qualquer uma das duas resolve a
+ * operacao inteira; a outra some do painel junto.
+ */
+async function retentarQ2pRetornoComodato(args: {
+  mov: MovimentacaoRow;
+  ator: RetentarInput['ator'];
+}): Promise<RetentarResult> {
+  const db = getDb();
+  const { mov } = args;
+
+  if (!mov.movimentacaoOrigemId) {
+    throw new Error(`Movimentação ${mov.id} de retorno_comodato sem movimentacao_origem_id`);
+  }
+
+  // Localiza o PAR baixa/entrada a partir da origem (o clique pode ter vindo
+  // de qualquer uma das duas linhas).
+  const par = await db
+    .select()
+    .from(movimentacao)
+    .where(
+      and(
+        eq(movimentacao.movimentacaoOrigemId, mov.movimentacaoOrigemId),
+        eq(movimentacao.subtipo, 'retorno_comodato'),
+        eq(movimentacao.ativo, true),
+      ),
+    );
+  const baixa = par.find((m) => m.tipoMovimento === 'ajuste');
+  const entrada = par.find((m) => m.tipoMovimento === 'entrada_manual');
+  if (!baixa || !entrada) {
+    throw new Error(
+      `Par baixa/entrada do retorno de comodato incompleto para origem ${mov.movimentacaoOrigemId} (baixa=${baixa?.id ?? 'ausente'}, entrada=${entrada?.id ?? 'ausente'})`,
+    );
+  }
+
+  // GUARDA DE APROVACAO (mesma do fluxo geral): as duas movimentacoes nascem
+  // pendente_q2p na submissao; retry so vale depois que o gestor aprovou.
+  // A aprovacao do retorno e linkada a ENTRADA.
+  const [aprAprovada] = await db
+    .select({ id: aprovacao.id })
+    .from(aprovacao)
+    .where(and(eq(aprovacao.movimentacaoId, entrada.id), eq(aprovacao.status, 'aprovada')))
+    .limit(1);
+  if (!aprAprovada) {
+    throw new Error(
+      `Retorno de comodato ${mov.movimentacaoOrigemId} ainda não tem aprovação concluída — a pendência Q2P só é retentável depois que o gestor aprovar`,
+    );
+  }
+
+  if (!baixa.produtoCodigoAcxe || !entrada.produtoCodigoAcxe || !entrada.galpao) {
+    throw new Error(
+      `Retorno de comodato ${mov.movimentacaoOrigemId} sem produto/galpão persistidos — não é possível reconstruir as chamadas Q2P`,
+    );
+  }
+
+  // Todas as pernas do retorno usam o opId da ENTRADA (aprovarSaidaManual passa
+  // mov.opId de ap.movimentacaoId — a entrada — para executarRetornoComodatoOmieDual).
+  const opId = entrada.opId;
+
+  const troca = await resolverCodigosLocaisTroca();
+  if (!troca.q2p) {
+    throw new Error('Localidade TROCA (90.0.1) sem correlato Q2P — não é possível retentar retorno de comodato');
+  }
+  const corrDestino = await resolverCorrelacaoCompletaGalpao(entrada.galpao);
+  if (!corrDestino.q2p) {
+    throw new Error(`Galpão destino ${entrada.galpao} sem correlato Q2P — não é possível retentar`);
+  }
+
+  const resolverValor = async (registro: typeof baixa, rotulo: string): Promise<number> => {
+    const persistido = registro.custoUnitarioBrl != null ? Number(registro.custoUnitarioBrl) : 0;
+    if (persistido > 0) return persistido;
+    logger.warn(
+      { movimentacaoId: registro.id, rotulo },
+      'custo_unitario_brl ausente no retorno de comodato — usando preço vivo como fallback',
+    );
+    const vivo = await consultarValorUnitarioProduto(
+      Number(registro.produtoCodigoAcxe),
+      entrada.galpao ?? '',
+      'q2p',
+    );
+    if (vivo <= 0) {
+      throw new Error(
+        `Sem valor unitário disponível para a perna '${rotulo}' do retorno (produto ${registro.produtoCodigoAcxe}) — OMIE rejeita ajuste com valor 0`,
+      );
+    }
+    return vivo;
+  };
+
+  const executarPerna = async (
+    registro: typeof baixa,
+    perna: 'baixa' | 'entrada',
+  ): Promise<{ jaExistia: boolean }> => {
+    const sufixo = perna === 'baixa' ? COD_INT_AJUSTE_SUFIXO.retBaixaQ2p : COD_INT_AJUSTE_SUFIXO.retEntradaQ2p;
+    const codInt = buildCodIntAjuste(opId, sufixo);
+    const valor = Number(new Decimal(await resolverValor(registro, perna)).toFixed(2));
+    const quantidade = Number(new Decimal(Math.abs(Number(registro.quantidadeKg))).toFixed(3));
+    const idProdutoQ2p = await resolverCodigoProdutoOmie(Number(registro.produtoCodigoAcxe), 'q2p');
+
+    try {
+      const res = await incluirAjusteIdempotente(
+        'q2p',
+        codInt,
+        {
+          codigoLocalEstoque: perna === 'baixa' ? String(troca.q2p) : String(corrDestino.q2p),
+          idProduto: idProdutoQ2p,
+          dataAtual: formatarDataOmie(),
+          quantidade,
+          observacao: `Retry Q2P retorno comodato — ${perna} (op ${opId})`.slice(0, 240),
+          origem: 'AJU',
+          // Espelha executarRetornoComodatoOmieDual: baixa=SAI/INV, entrada=ENT/INV
+          tipo: perna === 'baixa' ? 'SAI' : 'ENT',
+          motivo: 'INV',
+          valor,
+        },
+        { verificarAntes: true },
+      );
+
+      await db
+        .update(movimentacao)
+        .set({
+          idMovestQ2p: res.idMovest,
+          idAjusteQ2p: res.idAjuste,
+          mvQ2p: perna === 'baixa' ? -1 : 1,
+          dtQ2p: new Date(),
+          idUserQ2p: args.ator.userId,
+          statusOmie: 'concluida',
+          ultimoErroOmie: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(movimentacao.id, registro.id));
+
+      logger.info(
+        { movimentacaoId: registro.id, opId, perna, jaExistia: res.jaExistia, ator: args.ator },
+        'Perna Q2P do retorno de comodato concluída via retry',
+      );
+      return { jaExistia: res.jaExistia };
+    } catch (err) {
+      const novasTentativas = (registro.tentativasQ2p ?? 0) + 1;
+      await db
+        .update(movimentacao)
+        .set({
+          tentativasQ2p: novasTentativas,
+          ultimoErroOmie: {
+            lado: 'q2p',
+            mensagem: (err as Error)?.message ?? 'erro desconhecido',
+            timestamp: new Date().toISOString(),
+          },
+          updatedAt: new Date(),
+        })
+        .where(eq(movimentacao.id, registro.id));
+      logger.warn(
+        { movimentacaoId: registro.id, opId, perna, tentativasQ2p: novasTentativas, err },
+        'Perna Q2P do retorno de comodato falhou no retry — incrementando tentativas',
+      );
+      throw err;
+    }
+  };
+
+  // Executa apenas as pernas ainda pendentes — a falha original pode ter sido
+  // entre a baixa e a entrada, e um retry anterior pode ja ter resolvido uma.
+  let algumaJaExistia = false;
+  if (baixa.statusOmie === 'pendente_q2p') {
+    const r = await executarPerna(baixa, 'baixa');
+    algumaJaExistia = algumaJaExistia || r.jaExistia;
+  }
+  if (entrada.statusOmie === 'pendente_q2p') {
+    const r = await executarPerna(entrada, 'entrada');
+    algumaJaExistia = algumaJaExistia || r.jaExistia;
+  }
+
+  return {
+    movimentacaoId: mov.id,
+    statusOmie: 'concluida',
+    jaExistiaNoOmie: algumaJaExistia,
+    tentativasQ2p: mov.tentativasQ2p,
+  };
 }
 
 async function retentarAcxeFaltando(args: {
