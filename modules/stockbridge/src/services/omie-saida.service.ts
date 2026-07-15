@@ -96,20 +96,28 @@ export async function resolverCodigoProdutoOmie(
   if (empresa === 'acxe') return codigoAcxe;
 
   const db = getDb();
-  const result = await db.execute<{ codigo_q2p: string | null }>(sql`
-    SELECT pq.codigo_produto::text AS codigo_q2p
+  // LEFT JOIN: mesmo sem correlato Q2P, recupera a descrição ACXE para que a
+  // mensagem de erro identifique o produto pelo nome — o código OMIE (10 dígitos)
+  // não significa nada para o usuário e fica só no log (ACXEGDP-313).
+  const result = await db.execute<{ codigo_q2p: string | null; descricao: string | null }>(sql`
+    SELECT pq.codigo_produto::text AS codigo_q2p, pa.descricao
     FROM public."tbl_produtos_ACXE" pa
-    INNER JOIN public."tbl_produtos_Q2P" pq ON pq.descricao = pa.descricao
+    LEFT JOIN public."tbl_produtos_Q2P" pq ON pq.descricao = pa.descricao
     WHERE pa.codigo_produto = ${codigoAcxe}::bigint
+    ORDER BY pq.codigo_produto ASC NULLS LAST
     LIMIT 1
   `);
-  const codigo = result.rows[0]?.codigo_q2p;
-  if (!codigo) {
+  const row = result.rows[0];
+  if (!row?.codigo_q2p) {
+    logger.warn({ codigoAcxe, descricao: row?.descricao ?? null }, 'Produto ACXE sem correlato Q2P');
+    const produto = row?.descricao?.trim()
+      ? `"${row.descricao.trim()}"`
+      : 'não identificado no cadastro ACXE';
     throw new CorrelacaoOmieAusenteError(
-      `produto ACXE ${codigoAcxe} não tem correlato Q2P (match por descrição em tbl_produtos_Q2P)`,
+      `produto ${produto} não tem correlato na Q2P (match por descrição) — cadastre o produto na Q2P com a descrição exata`,
     );
   }
-  return Number(codigo);
+  return Number(row.codigo_q2p);
 }
 
 export async function resolverCodigosLocaisTroca(): Promise<{ acxe: string | null; q2p: string | null }> {

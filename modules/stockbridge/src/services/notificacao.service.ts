@@ -146,8 +146,8 @@ export async function enviarAlertaProdutoSemCorrelato(args: {
   const corpoHtml = `
     <p>Durante o recebimento da <strong>NF ${escapeHtml(args.notaFiscal)}</strong>, o produto abaixo não possui correlato cadastrado na Q2P (correspondência por descrição textual).</p>
     ${emailDataList([
-      { label: 'Código ACXE', valor: args.codigoProdutoAcxe },
-      { label: 'Descrição ACXE', valor: args.descricaoProduto },
+      { label: 'Produto (descrição ACXE)', valor: args.descricaoProduto },
+      { label: 'NF', valor: args.notaFiscal },
     ])}
     ${emailActionBox(`
       <ol style="margin:0;padding-left:18px;">
@@ -155,6 +155,7 @@ export async function enviarAlertaProdutoSemCorrelato(args: {
         <li>Aguardar a sincronização (próximo ciclo do n8n).</li>
         <li>Tentar novamente o recebimento no StockBridge.</li>
       </ol>`)}
+    <p style="color:#9ca3af;font-size:12px;margin-top:16px;">Ref. técnica — código OMIE ACXE: ${escapeHtml(String(args.codigoProdutoAcxe))}</p>
   `;
   const { html, text } = buildEmailLayout({
     titulo: 'Produto não encontrado na Q2P',
@@ -648,7 +649,7 @@ export async function enviarDigestComodatosVencidos(args: {
     .map(
       (c) => `<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;margin:10px 0;">
         <div style="font-size:14px;font-weight:600;color:#111827;">${escapeHtml(c.cliente ?? 'sem cliente informado')} · vencido há ${c.diasVencido} dia${c.diasVencido === 1 ? '' : 's'}${c.fase === 'escalada' ? ' <span style="color:#9a3412;font-weight:600;">(escalado)</span>' : ''}</div>
-        <div style="font-size:13px;color:#374151;margin-top:4px;">${escapeHtml(c.produtoDescricao)} (SKU ${escapeHtml(c.produtoCodigoAcxe)}) — ${fmtKg(c.quantidadeKg)}</div>
+        <div style="font-size:13px;color:#374151;margin-top:4px;">${escapeHtml(c.produtoDescricao)} — ${fmtKg(c.quantidadeKg)}</div>
         <div style="font-size:12px;color:#6b7280;margin-top:4px;">Galpão ${escapeHtml(c.galpaoOrigem)} · saída ${fmtDataBr(c.dtSaida)} · retorno previsto ${fmtDataBr(c.dtPrevistaRetorno)}</div>
       </div>`,
     )

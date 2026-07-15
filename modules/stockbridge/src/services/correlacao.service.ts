@@ -11,15 +11,53 @@ export interface Correlacao {
 }
 
 export class CorrelacaoNaoEncontradaError extends Error {
+  // ACXEGDP-313: a mensagem identifica produto/local por descrição — os códigos
+  // OMIE (numéricos, 10 dígitos) não significam nada para o operador e ficam
+  // apenas nos campos estruturados (logs/e-mail).
   constructor(
     public readonly codigoProdutoAcxe: number,
     public readonly codigoLocalEstoqueAcxe: number,
+    contexto?: { produtoLabel?: string | null; localLabel?: string | null },
   ) {
+    const produto = contexto?.produtoLabel?.trim()
+      ? `"${contexto.produtoLabel.trim()}"`
+      : 'da NF (não identificado no cadastro ACXE)';
+    const local = contexto?.localLabel?.trim() ?? 'não identificado';
     super(
-      `Produto ACXE ${codigoProdutoAcxe} não tem correlato na Q2P (match por descrição). ` +
-        `Local de estoque destino: ${codigoLocalEstoqueAcxe}.`,
+      `Produto ${produto} não tem correlato na Q2P (match por descrição). ` +
+        `Cadastre o produto na Q2P com a descrição exata e tente o recebimento novamente. ` +
+        `Local de estoque destino: ${local}.`,
     );
     this.name = 'CorrelacaoNaoEncontradaError';
+  }
+}
+
+/**
+ * ACXEGDP-313: resolve rótulos legíveis (descrição do produto + código/nome do
+ * local) para compor a mensagem de erro ao usuário. Best-effort — se a consulta
+ * falhar, o erro sai com os fallbacks genéricos e os códigos seguem só no log.
+ */
+async function resolverContextoLegivel(
+  codigoProdutoAcxe: number,
+  codigoLocalEstoqueAcxe: number,
+): Promise<{ produtoLabel: string | null; localLabel: string | null }> {
+  try {
+    const pool = getPool();
+    const result = await pool.query(
+      `
+      SELECT
+        (SELECT p.descricao FROM public."tbl_produtos_ACXE" p
+          WHERE p.codigo_produto = $1 LIMIT 1) AS produto_label,
+        (SELECT l.codigo || ' — ' || l.descricao FROM public."tbl_locaisEstoques_ACXE" l
+          WHERE l.codigo_local_estoque = $2 LIMIT 1) AS local_label
+      `,
+      [codigoProdutoAcxe, codigoLocalEstoqueAcxe],
+    );
+    const row = result.rows[0] as { produto_label?: string | null; local_label?: string | null } | undefined;
+    return { produtoLabel: row?.produto_label ?? null, localLabel: row?.local_label ?? null };
+  } catch (err) {
+    logger.warn({ err, codigoProdutoAcxe, codigoLocalEstoqueAcxe }, 'Falha ao resolver contexto legível do erro de correlação');
+    return { produtoLabel: null, localLabel: null };
   }
 }
 
@@ -64,7 +102,11 @@ export async function getCorrelacao(
       { codigoProdutoAcxe, codigoLocalEstoqueAcxe },
       'Correlação ACXE→Q2P não encontrada',
     );
-    throw new CorrelacaoNaoEncontradaError(codigoProdutoAcxe, codigoLocalEstoqueAcxe);
+    throw new CorrelacaoNaoEncontradaError(
+      codigoProdutoAcxe,
+      codigoLocalEstoqueAcxe,
+      await resolverContextoLegivel(codigoProdutoAcxe, codigoLocalEstoqueAcxe),
+    );
   }
 
   const row = result.rows[0] as {

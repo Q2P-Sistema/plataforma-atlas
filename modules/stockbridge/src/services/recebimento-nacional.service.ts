@@ -8,16 +8,20 @@ import type { UnidadeMedida, SubtipoMovimento } from '../types.js';
 
 const logger = createLogger('stockbridge:recebimento-nacional');
 
+// ACXEGDP-313: mensagens sem UUID/código OMIE — não identificam nada para o
+// operador. Os identificadores internos ficam nos campos estruturados (logs).
 export class LocalidadeNaoElegivelError extends Error {
   constructor(public readonly localidadeId: string, motivo: string) {
-    super(`Localidade ${localidadeId} não elegivel para recebimento nacional: ${motivo}`);
+    super(`Local de estoque selecionado não é elegível para recebimento nacional: ${motivo}`);
     this.name = 'LocalidadeNaoElegivelError';
   }
 }
 
 export class ProdutoNaoEncontradoError extends Error {
-  constructor(public readonly codigoProdutoAcxe: number) {
-    super(`Produto ${codigoProdutoAcxe} não encontrado em tbl_produtos_ACXE`);
+  constructor(public readonly codigoProdutoAcxe: number, itemLabel?: string) {
+    super(
+      `Produto ${itemLabel ? `do ${itemLabel} ` : ''}não encontrado no cadastro OMIE — atualize a página e selecione o produto novamente`,
+    );
     this.name = 'ProdutoNaoEncontradoError';
   }
 }
@@ -234,17 +238,19 @@ export async function processarRecebimentoNacional(
     throw new Error('Recebimento precisa de pelo menos 1 item');
   }
 
-  // Valida cada item antes de tocar o banco
-  for (const it of input.itens) {
+  // Valida cada item antes de tocar o banco. ACXEGDP-313: itens identificados
+  // pela posição no formulário — o código OMIE não significa nada para o operador.
+  for (const [idx, it] of input.itens.entries()) {
     const codigoProduto = it.empresa === 'acxe' ? it.produtoCodigoAcxe : it.produtoCodigoQ2p;
+    const rotulo = `item ${idx + 1} (${it.empresa.toUpperCase()})`;
     if (!Number.isFinite(codigoProduto) || (codigoProduto ?? 0) <= 0) {
-      throw new Error(`Item inválido: código de produto deve ser número positivo para empresa ${it.empresa}`);
+      throw new Error(`Produto inválido no ${rotulo} — selecione o produto novamente`);
     }
     if (!Number.isFinite(it.quantidade) || it.quantidade <= 0) {
-      throw new Error(`Item (${it.empresa} cod ${codigoProduto}): quantidade deve ser positiva`);
+      throw new Error(`Quantidade do ${rotulo} deve ser positiva`);
     }
     if (!Number.isFinite(it.valorUnitarioReferenciaBrl) || it.valorUnitarioReferenciaBrl <= 0) {
-      throw new Error(`Item (${it.empresa} cod ${codigoProduto}): valor unitário de referência deve ser positivo`);
+      throw new Error(`Valor unitário de referência do ${rotulo} deve ser positivo`);
     }
   }
 
@@ -281,25 +287,26 @@ export async function processarRecebimentoNacional(
       if (!loc) {
         throw new LocalidadeNaoElegivelError(
           it.localidadeId,
-          'não encontrada ou e espelhada (ACXE+Q2P) — nacional não aceita espelhados',
+          'não encontrado ou é espelhado (ACXE+Q2P) — o recebimento nacional não aceita locais espelhados',
         );
       }
       if (loc.empresa !== it.empresa) {
         throw new LocalidadeNaoElegivelError(
           it.localidadeId,
-          `empresa do item (${it.empresa}) não bate com empresa da localidade (${loc.empresa})`,
+          `a empresa do item (${it.empresa.toUpperCase()}) não bate com a empresa do local ${loc.codigo} (${loc.empresa.toUpperCase()})`,
         );
       }
       const codigoProduto = it.empresa === 'acxe' ? it.produtoCodigoAcxe! : it.produtoCodigoQ2p!;
       const chaveDescricao = `${it.empresa}:${codigoProduto}`;
       const prod = produtosByCodigo.get(chaveDescricao);
       if (!prod) {
-        throw new ProdutoNaoEncontradoError(codigoProduto);
+        logger.warn({ codigoProduto, empresa: it.empresa, nf: nfNorm }, 'Produto do recebimento nacional não encontrado no cadastro');
+        throw new ProdutoNaoEncontradoError(codigoProduto, `item ${idx + 1} (${it.empresa.toUpperCase()})`);
       }
 
       const quantidadeKg = quantidadesKg[idx]!;
       if (quantidadeKg <= 0) {
-        throw new Error(`Item ${it.empresa} cod ${codigoProduto}: quantidade em Kg <= 0`);
+        throw new Error(`Quantidade em Kg do item ${idx + 1} ("${prod.descricao}") deve ser positiva`);
       }
 
       const custoUnitarioBrl = Number(
