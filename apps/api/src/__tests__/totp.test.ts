@@ -139,6 +139,7 @@ vi.mock('@atlas/core', () => ({
       return Promise.resolve(n);
     }),
     expire: vi.fn(() => Promise.resolve(1)),
+    ttl: vi.fn(() => Promise.resolve(1800)),
     ping: vi.fn().mockResolvedValue('PONG'),
   }),
   createLogger: () => ({

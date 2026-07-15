@@ -37,8 +37,30 @@ const TWOFA_ATTEMPTS_TTL = 900; // 15 min
 
 const router: Router = Router();
 
+// SEG-09 (ACXEGDP-247): o lockout antigo era por CONTA apenas — um atacante que
+// soubesse o e-mail da vítima errava a senha 5× de propósito e trancava a conta
+// por 30 min, repetível indefinidamente (DoS direcionado). Defesa em camadas:
+//  1. contador por (IP, conta) em Redis: 5 falhas → 30 min (este arquivo);
+//  2. throttle bruto por IP na rota de login (loginLimiter, abaixo);
+//  3. backstop por conta em packages/auth/rate-limit.ts (25 falhas → 30 min)
+//     contra ataque distribuído por muitos IPs.
+// A vítima logando do próprio IP não é afetada pelas camadas 1 e 2.
+const LOGIN_FAIL_PREFIX = 'atlas:auth:login-fail:';
+const LOGIN_FAIL_MAX = 5;
+const LOGIN_FAIL_TTL = 1800; // 30 min
+
+const loginLimiter = createIpRateLimiter({ prefix: 'login', windowMs: 15 * 60 * 1000, limit: 30 });
+
+function extrairIp(req: Request): string {
+  return (
+    (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ??
+    req.socket.remoteAddress ??
+    'unknown'
+  );
+}
+
 // POST /api/v1/auth/login
-router.post('/api/v1/auth/login', async (req: Request, res: Response) => {
+router.post('/api/v1/auth/login', loginLimiter, async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
 
@@ -47,7 +69,25 @@ router.post('/api/v1/auth/login', async (req: Request, res: Response) => {
       return;
     }
 
-    // Rate limit check
+    const ipAddress = extrairIp(req);
+    const failKey = `${LOGIN_FAIL_PREFIX}${ipAddress}:${String(email).toLowerCase()}`;
+    const redis = getRedis();
+
+    // SEG-09 camada 1: par (IP, conta) bloqueado por excesso de falhas
+    const falhasIpConta = Number((await redis.get(failKey)) ?? 0);
+    if (falhasIpConta >= LOGIN_FAIL_MAX) {
+      const ttl = await redis.ttl(failKey);
+      const minutos = Math.max(1, Math.ceil((ttl > 0 ? ttl : LOGIN_FAIL_TTL) / 60));
+      sendError(
+        res,
+        'TOO_MANY_ATTEMPTS',
+        `Muitas tentativas de login. Tente novamente em ${minutos} minutos`,
+        429,
+      );
+      return;
+    }
+
+    // SEG-09 camada 3: backstop por conta (ataque distribuído)
     const rateLimit = await checkLoginRateLimit(email);
     if (rateLimit.locked) {
       sendError(
@@ -81,12 +121,18 @@ router.post('/api/v1/auth/login', async (req: Request, res: Response) => {
     const valid = await verifyPassword(user.passwordHash, password);
     if (!valid) {
       await recordFailedLogin(email);
+      // SEG-09 camada 1: registra a falha do par (IP, conta)
+      const novasFalhas = await redis.incr(failKey);
+      if (novasFalhas === 1) {
+        await redis.expire(failKey, LOGIN_FAIL_TTL);
+      }
       sendError(res, 'INVALID_CREDENTIALS', 'E-mail ou senha incorretos', 401);
       return;
     }
 
-    // Reset failed logins on success
+    // Reset failed logins on success (conta + par IP/conta)
     await resetFailedLogins(user.id);
+    await redis.del(failKey);
 
     // Check 2FA
     if (user.totpEnabled && user.totpSecret) {
@@ -101,10 +147,7 @@ router.post('/api/v1/auth/login', async (req: Request, res: Response) => {
       return;
     }
 
-    // Create session
-    const ipAddress =
-      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ??
-      req.socket.remoteAddress;
+    // Create session (ipAddress já extraído no topo do handler — SEG-09)
     const userAgent = req.headers['user-agent'];
 
     const session = await createSession(user.id, ipAddress, userAgent);
