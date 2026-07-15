@@ -4,6 +4,24 @@ import { eq } from 'drizzle-orm';
 
 const logger = createLogger('hedge:estoque');
 
+/**
+ * MOD-15 (ACXEGDP-278): a selecao era gravada como JSON.stringify em coluna
+ * JSONB (string dupla-serializada). Agora grava o array nativo; a leitura
+ * aceita os dois formatos (bancos com o valor legado seguem funcionando).
+ */
+function lerLocalidadesAtivas(valor: unknown): string[] | null {
+  if (Array.isArray(valor)) return valor as string[];
+  if (typeof valor === 'string') {
+    try {
+      const parsed = JSON.parse(valor) as unknown;
+      return Array.isArray(parsed) ? (parsed as string[]) : null;
+    } catch {
+      return null; // null = todas selecionadas
+    }
+  }
+  return null;
+}
+
 interface EstoqueFiltros {
   empresa?: 'acxe' | 'q2p';
 }
@@ -24,10 +42,7 @@ export async function getEstoque(filtros: EstoqueFiltros = {}): Promise<EstoqueA
 
   // Load active localidades selection from config
   const [selRow] = await db.select().from(configMotor).where(eq(configMotor.chave, 'localidades_ativas')).limit(1);
-  let localidadesAtivas: string[] | null = null;
-  if (selRow?.valor) {
-    try { localidadesAtivas = JSON.parse(String(selRow.valor)); } catch { /* null = all selected */ }
-  }
+  const localidadesAtivas = lerLocalidadesAtivas(selRow?.valor);
 
   const conditions: string[] = [];
   const params: (string | string[])[] = [];
@@ -94,10 +109,7 @@ export async function getLocalidades(): Promise<{ localidades: LocalidadeInfo[];
 
   // Load saved selection
   const [selRow] = await db.select().from(configMotor).where(eq(configMotor.chave, 'localidades_ativas')).limit(1);
-  let selList: string[] | null = null;
-  if (selRow?.valor) {
-    try { selList = JSON.parse(String(selRow.valor)); } catch { /* all selected */ }
-  }
+  const selList = lerLocalidadesAtivas(selRow?.valor);
 
   const { rows } = await pool.query(`
     SELECT
@@ -129,11 +141,17 @@ export async function getLocalidades(): Promise<{ localidades: LocalidadeInfo[];
 
 export async function salvarLocalidadesAtivas(localidades: string[]): Promise<void> {
   const db = getDb();
-  const valor = JSON.stringify(localidades);
-  const [existing] = await db.select().from(configMotor).where(eq(configMotor.chave, 'localidades_ativas')).limit(1);
-  if (existing) {
-    await db.update(configMotor).set({ valor }).where(eq(configMotor.chave, 'localidades_ativas'));
-  } else {
-    await db.insert(configMotor).values({ chave: 'localidades_ativas', valor, descricao: 'Localidades de estoque ativas para cálculo' });
-  }
+  // Array jsonb nativo (MOD-15) + upsert atomico na PK (chave) — o SELECT+branch
+  // anterior tinha corrida de insert duplicado.
+  await db
+    .insert(configMotor)
+    .values({
+      chave: 'localidades_ativas',
+      valor: localidades,
+      descricao: 'Localidades de estoque ativas para cálculo',
+    })
+    .onConflictDoUpdate({
+      target: configMotor.chave,
+      set: { valor: localidades, updatedAt: new Date() },
+    });
 }

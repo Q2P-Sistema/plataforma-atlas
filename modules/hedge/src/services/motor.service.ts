@@ -2,6 +2,8 @@ import Decimal from 'decimal.js';
 import { desc, eq, inArray } from 'drizzle-orm';
 import { getDb, getPool, createLogger } from '@atlas/core';
 import { bucketMensal, configMotor, ndfTaxas } from '@atlas/db';
+import { fetchPtaxAtual } from '@atlas/integration-bcb';
+import { parseDataCivilLocal } from './datas.js';
 
 const logger = createLogger('hedge:motor');
 
@@ -178,6 +180,17 @@ export async function calcularMotor(params: MotorParams): Promise<MotorResult> {
   const hoje = new Date();
   const recomendacoes: Recomendacao[] = [];
 
+  // MOD-09 (ACXEGDP-278): custo NDF com PTAX spot real (mesma formula do
+  // criarNdf: gap × (taxa − spot)), nao o proxy de spread fixo 2% que o
+  // comentario antigo prometia mas nao entregava. PTAX indisponivel → mantem o
+  // proxy antigo com warn (o motor e advisory; nao pode cair por causa do BCB).
+  let ptaxSpot: Decimal | null = null;
+  try {
+    ptaxSpot = new Decimal((await fetchPtaxAtual()).venda);
+  } catch (err) {
+    logger.warn({ err }, 'PTAX indisponivel — custo NDF usa proxy de spread 2%');
+  }
+
   for (const bucket of buckets) {
     const pagarUsdRaw = new Decimal(bucket.pagarUsd ?? '0');
     const parcelaEstNaoPago = totalPagarAll.isZero()
@@ -188,8 +201,9 @@ export async function calcularMotor(params: MotorParams): Promise<MotorResult> {
 
     if (pagarUsd.isZero()) continue;
 
-    // Calculate days to maturity
-    const vencimento = new Date(bucket.mesRef);
+    // Calculate days to maturity — parse LOCAL (MOD-08): new Date('YYYY-MM-01')
+    // e UTC-midnight e os getters locais devolviam o mes anterior.
+    const vencimento = parseDataCivilLocal(bucket.mesRef);
     vencimento.setMonth(vencimento.getMonth() + 1);
     vencimento.setDate(0);
     const diasAteVencimento = Math.max(
@@ -206,9 +220,10 @@ export async function calcularMotor(params: MotorParams): Promise<MotorResult> {
     const l1Target = pagarUsd.times(camadas.l1_pct).div(100);
     const gapL1 = Decimal.max(new Decimal(0), l1Target.minus(ndfUsd));
 
-    // NDF cost: gap * (taxa_ndf - ptax_spot) — we approximate with taxa as cost indicator
+    // Custo NDF: gap × (taxa_ndf − ptax_spot), em Decimal ponta a ponta (MOD-09).
+    // Sem PTAX (fallback raro), proxy antigo: taxa × 2% de spread.
     const custoNdfBrl = gapL1.gt(0) && taxaNdf > 0
-      ? gapL1.times(new Decimal(taxaNdf).minus(taxaNdf * 0.98)).round()
+      ? gapL1.times(new Decimal(taxaNdf).minus(ptaxSpot ?? new Decimal(taxaNdf).times('0.98'))).round()
       : new Decimal(0);
 
     const status: 'ok' | 'sub_hedged' = coberturaAtual.gte(camadas.l1_pct) ? 'ok' : 'sub_hedged';

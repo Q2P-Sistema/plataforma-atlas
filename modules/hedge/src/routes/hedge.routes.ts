@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { requireAuth, requireRole, requireModule, csrfProtection } from '@atlas/auth';
 import { createLogger, cached, invalidate, sendSuccess, sendError } from '@atlas/core';
-import { calcularPosicao, recalcularBuckets, getHistorico } from '../services/posicao.service.js';
+import { calcularPosicao, recalcularBuckets } from '../services/posicao.service.js';
 import { calcularMotor } from '../services/motor.service.js';
 import { getVariacao30d } from '../services/ptax.service.js';
 import { criarNdf, ativarNdf, liquidarNdf, cancelarNdf, listarNdfs, NdfError } from '../services/ndf.service.js';
@@ -9,7 +9,7 @@ import { getHistoricoPtax } from '../services/ptax.service.js';
 import { simularMargem } from '../services/simulacao.service.js';
 import { getEstoque, getLocalidades, salvarLocalidadesAtivas } from '../services/estoque.service.js';
 import { listarAlertas, marcarLido, resolver, gerarAlertas } from '../services/alerta.service.js';
-import { getConfig, updateConfig, getTaxasNdf, inserirTaxaNdf } from '../services/config.service.js';
+import { getConfig, updateConfig, getTaxasNdf, inserirTaxaNdf, ConfigInvalidaError } from '../services/config.service.js';
 
 
 const logger = createLogger('hedge:routes');
@@ -69,28 +69,10 @@ router.get('/api/v1/hedge/posicao', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/v1/hedge/posicao/historico
-router.get('/api/v1/hedge/posicao/historico', async (req: Request, res: Response) => {
-  try {
-    const dias = parseInt(req.query.dias as string, 10) || 90;
-    const snapshots = await getHistorico(dias);
-
-    sendSuccess(
-      res,
-      snapshots.map((s) => ({
-        data_ref: s.dataRef,
-        exposure_usd: Number(s.exposureUsd),
-        ndf_ativo_usd: Number(s.ndfAtivoUsd),
-        gap_usd: Number(s.gapUsd),
-        cobertura_pct: Number(s.coberturaPct),
-        ptax_ref: Number(s.ptaxRef),
-      })),
-    );
-  } catch (err) {
-    logger.error({ err }, 'Erro ao buscar historico');
-    sendError(res, 'INTERNAL_ERROR', 'Erro ao buscar historico', 500);
-  }
-});
+// MOD-06 (ACXEGDP-277): GET /posicao/historico removido — o endpoint lia
+// hedge.posicao_snapshot, que nada popula (salvarSnapshot nao tinha chamador) e
+// nenhum frontend consome. Codigo morto ponta a ponta; a tabela permanece para
+// uma futura feature de historico de exposicao.
 
 // ── Motor de Minima Variancia ──────────────────────────────
 
@@ -308,6 +290,9 @@ router.put('/api/v1/hedge/estoque/localidades', async (req: Request, res: Respon
     await salvarLocalidadesAtivas(localidades_ativas);
     invalidate('atlas:hedge:localidades').catch(() => {});
     invalidate('atlas:hedge:posicao:*').catch(() => {});
+    // MOD-14 (ACXEGDP-278): getEstoque filtra por localidades_ativas — sem esta
+    // invalidacao a tela de estoque mostrava o agregado antigo por ate 1h (TTL 3600).
+    invalidate('atlas:hedge:estoque:*').catch(() => {});
     sendSuccess(res, { localidades_ativas });
   } catch (err) {
     logger.error({ err }, 'Erro ao salvar localidades');
@@ -367,7 +352,14 @@ router.patch('/api/v1/hedge/config', requireRole('diretor'), async (req: Request
     const { chave, valor } = req.body;
     await updateConfig(chave, valor);
     sendSuccess(res, { chave, valor });
-  } catch (err) { logger.error({ err }, 'Erro ao atualizar config do hedge'); sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
+  } catch (err) {
+    if (err instanceof ConfigInvalidaError) {
+      sendError(res, 'VALIDATION_ERROR', err.message, 400);
+      return;
+    }
+    logger.error({ err }, 'Erro ao atualizar config do hedge');
+    sendError(res, 'INTERNAL_ERROR', 'Erro', 500);
+  }
 });
 
 router.get('/api/v1/hedge/taxas-ndf', async (req: Request, res: Response) => {
