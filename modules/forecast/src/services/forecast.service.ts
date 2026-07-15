@@ -3,7 +3,7 @@ import { getConfig, type ForecastConfig } from './config.service.js';
 import { getFamilias, type FamiliaEstoque } from './familia.service.js';
 import { getVendas12mByCodigo } from './vendas.service.js';
 import { getChegadasPorProduto } from './pedidos.service.js';
-import { getSazFactors } from './sazonalidade.service.js';
+import { getSazFactorsTodas, fatoresEfetivos } from './sazonalidade.service.js';
 import { dataLocalISO, mesLocalBR } from './datas.js';
 
 const logger = createLogger('forecast:engine');
@@ -99,6 +99,9 @@ export async function buildForecastFamilia(
   chegadasMap: Map<string, Array<{ data: string; qtd: number; valor_brl: number }>>,
   config: ForecastConfig,
   ajustesDemanda: Record<string, number> = {},
+  // MOD-10: sazonalidade pré-carregada pelo chamador (1 query para todas as
+  // famílias) — antes eram 2 SELECTs POR família dentro do loop.
+  sazPorFamilia?: Map<string, Map<number, number>>,
 ): Promise<FamiliaForecast> {
   const hoje = new Date();
   const horizonte = config.horizonte_dias;
@@ -118,8 +121,8 @@ export async function buildForecastFamilia(
   }
   const vendaDiariaMedia = vendas12m > 0 ? vendas12m / 365 : 0;
 
-  // Sazonalidade — load all 12 months for this family
-  const sazFactors = await getSazFactors(familia.familia_id);
+  // Sazonalidade — 12 meses efetivos desta família (mapa pré-carregado ou fetch avulso)
+  const sazFactors = fatoresEfetivos(familia.familia_id, sazPorFamilia ?? (await getSazFactorsTodas()));
   const mesAtual = mesLocalBR(hoje);
   const sazAtual = sazFactors.get(mesAtual) ?? 1.0;
   const vendaDiariaSaz = vendaDiariaMedia * (1 + config.variacao_anual_pct / 100) * sazAtual;
@@ -304,11 +307,12 @@ export async function buildForecastFamilia(
  * Runs forecast for all families or a specific one.
  */
 export async function calcularForecast(familiaId?: string, ajustesDemanda: Record<string, number> = {}): Promise<FamiliaForecast[]> {
-  const [config, familias, vendasMap, chegadasMap] = await Promise.all([
+  const [config, familias, vendasMap, chegadasMap, sazPorFamilia] = await Promise.all([
     getConfig(),
     getFamilias(),
     getVendas12mByCodigo(),
     getChegadasPorProduto(),
+    getSazFactorsTodas(),
   ]);
 
   const alvo = familiaId
@@ -317,7 +321,7 @@ export async function calcularForecast(familiaId?: string, ajustesDemanda: Recor
 
   const results: FamiliaForecast[] = [];
   for (const fam of alvo) {
-    const forecast = await buildForecastFamilia(fam, vendasMap, chegadasMap, config, ajustesDemanda);
+    const forecast = await buildForecastFamilia(fam, vendasMap, chegadasMap, config, ajustesDemanda, sazPorFamilia);
     results.push(forecast);
   }
 

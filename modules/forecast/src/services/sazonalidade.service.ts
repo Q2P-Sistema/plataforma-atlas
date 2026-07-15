@@ -74,24 +74,38 @@ export async function getSazFactor(familiaId: string, mes: number): Promise<numb
  * Returns Map<mes, fator>.
  */
 export async function getSazFactors(familiaId: string): Promise<Map<number, number>> {
+  const mapa = await getSazFactorsTodas();
+  return fatoresEfetivos(familiaId, mapa);
+}
+
+/**
+ * MOD-10 (ACXEGDP-279): carrega a sazonalidade INTEIRA em 1 query.
+ * Antes, getSazFactors fazia 2 SELECTs por família (o _DEFAULT re-buscado N×)
+ * dentro do loop do calcularForecast — 2N queries por cálculo.
+ * Retorna Map<familiaId, Map<mes, fator>> (inclui '_DEFAULT').
+ */
+export async function getSazFactorsTodas(): Promise<Map<string, Map<number, number>>> {
   const db = getDb();
+  const rows = await db.select().from(configSazonalidade);
 
-  const familyRows = await db
-    .select()
-    .from(configSazonalidade)
-    .where(eq(configSazonalidade.familiaId, familiaId));
+  const porFamilia = new Map<string, Map<number, number>>();
+  for (const r of rows) {
+    if (!porFamilia.has(r.familiaId)) porFamilia.set(r.familiaId, new Map());
+    porFamilia.get(r.familiaId)!.set(r.mes, Number(r.fatorUsuario ?? r.fatorSugerido));
+  }
+  return porFamilia;
+}
 
-  const defaultRows = await db
-    .select()
-    .from(configSazonalidade)
-    .where(eq(configSazonalidade.familiaId, '_DEFAULT'));
-
-  const defaultMap = new Map(defaultRows.map((r) => [r.mes, Number(r.fatorUsuario ?? r.fatorSugerido)]));
-  const familyMap = new Map(familyRows.map((r) => [r.mes, Number(r.fatorUsuario ?? r.fatorSugerido)]));
-
+/** Fatores efetivos de uma família (fallback _DEFAULT → 1.0) a partir do mapa pré-carregado. */
+export function fatoresEfetivos(
+  familiaId: string,
+  mapa: Map<string, Map<number, number>>,
+): Map<number, number> {
+  const familyMap = mapa.get(familiaId);
+  const defaultMap = mapa.get('_DEFAULT');
   const result = new Map<number, number>();
   for (let m = 1; m <= 12; m++) {
-    result.set(m, familyMap.get(m) ?? defaultMap.get(m) ?? 1.0);
+    result.set(m, familyMap?.get(m) ?? defaultMap?.get(m) ?? 1.0);
   }
   return result;
 }

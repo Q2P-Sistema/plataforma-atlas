@@ -32,7 +32,12 @@ export async function getPedidosEmRota(): Promise<PedidoEmRota[]> {
       pa.descricao,
       (pc.nqtde - COALESCE(pc.nqtderec, 0))::numeric AS qtd_pendente,
       pc.ddtprevisao AS data_chegada,
-      pc.nvaltot::numeric AS valor_brl,
+      -- MOD-11 (ACXEGDP-279): valor PROPORCIONAL ao pendente. Antes era
+      -- nvaltot (pedido inteiro) com qtd_pendente (só o restante) — pedido
+      -- 50% recebido dobrava o preco/kg derivado no forecast. Usa nvalunit;
+      -- fallback nvaltot/nqtde quando o unitario nao veio preenchido.
+      (COALESCE(NULLIF(pc.nvalunit, 0), pc.nvaltot / NULLIF(pc.nqtde, 0), 0)
+        * (pc.nqtde - COALESCE(pc.nqtderec, 0)))::numeric AS valor_brl,
       pc.ncodfor::text AS ncodfor
     FROM "tbl_pedidosCompras_ACXE" pc
     JOIN "tbl_produtos_ACXE" pa ON pa.codigo_produto = pc.ncodprod

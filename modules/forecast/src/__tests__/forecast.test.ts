@@ -8,14 +8,14 @@ vi.mock('@atlas/core', () => ({
 }));
 
 // Mock sazonalidade — return factor 1.0 for all months by default
+// (MOD-10: buildForecastFamilia agora usa o mapa pré-carregado via fatoresEfetivos)
 vi.mock('../services/sazonalidade.service.js', () => ({
-  getSazFactors: vi.fn().mockResolvedValue(
-    new Map(Array.from({ length: 12 }, (_, i) => [i + 1, 1.0])),
-  ),
+  getSazFactorsTodas: vi.fn().mockResolvedValue(new Map()),
+  fatoresEfetivos: vi.fn(() => new Map(Array.from({ length: 12 }, (_, i) => [i + 1, 1.0]))),
 }));
 
 import { buildForecastFamilia } from '../services/forecast.service.js';
-import { getSazFactors } from '../services/sazonalidade.service.js';
+import { fatoresEfetivos } from '../services/sazonalidade.service.js';
 import type { FamiliaEstoque } from '../services/familia.service.js';
 import type { ForecastConfig } from '../services/config.service.js';
 
@@ -213,7 +213,7 @@ describe('buildForecastFamilia — sazonalidade', () => {
     const currentMonth = new Date().getMonth() + 1;
     const sazMap = new Map(Array.from({ length: 12 }, (_, i) => [i + 1, 1.0] as [number, number]));
     sazMap.set(currentMonth, 1.5);
-    (getSazFactors as ReturnType<typeof vi.fn>).mockResolvedValueOnce(sazMap);
+    (fatoresEfetivos as ReturnType<typeof vi.fn>).mockReturnValueOnce(sazMap);
 
     const vendasMap = new Map([['SKU-A', 100 * 365]]);
     const chegadasMap = new Map<string, Array<{ data: string; qtd: number; valor_brl: number }>>();
