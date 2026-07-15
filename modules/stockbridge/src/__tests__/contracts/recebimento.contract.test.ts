@@ -51,8 +51,6 @@ vi.mock('@atlas/db', () => ({
 }));
 
 vi.mock('@atlas/integration-omie', () => ({
-  // Classe dummy: rotas/services importam o binding (STK-10); instanceof falso cai no handler seguinte.
-  NotaFiscalMultiItemError: class NotaFiscalMultiItemError extends Error {},
   consultarNF: vi.fn(),
   incluirAjusteEstoque: vi.fn(),
   isMockMode: () => true,
@@ -78,9 +76,12 @@ describe('POST /api/v1/stockbridge/recebimento — contratos', () => {
     const res = await request(app).post('/api/v1/stockbridge/recebimento').send({
       nf: '123',
       cnpj: 'acxe',
-      quantidade_input: 10,
-      unidade_input: 'litros', // invalido
-      localidade_id: '00000000-0000-0000-0000-000000000100',
+      itens: [{
+        produto_codigo_acxe: 1001,
+        quantidade_input: 10,
+        unidade_input: 'litros', // invalido
+        localidade_id: '00000000-0000-0000-0000-000000000100',
+      }],
     });
     expect(res.status).toBe(400);
     expect(res.body.error.message).toMatch(/unidade_input/);
@@ -90,9 +91,12 @@ describe('POST /api/v1/stockbridge/recebimento — contratos', () => {
     const res = await request(app).post('/api/v1/stockbridge/recebimento').send({
       nf: '123',
       cnpj: 'acxe',
-      quantidade_input: 10,
-      unidade_input: 't',
-      localidade_id: 'not-a-uuid',
+      itens: [{
+        produto_codigo_acxe: 1001,
+        quantidade_input: 10,
+        unidade_input: 't',
+        localidade_id: 'not-a-uuid',
+      }],
     });
     expect(res.status).toBe(400);
     expect(res.body.error.message).toMatch(/localidade_id/);
@@ -102,16 +106,22 @@ describe('POST /api/v1/stockbridge/recebimento — contratos', () => {
     const res = await request(app).post('/api/v1/stockbridge/recebimento').send({
       nf: '123',
       cnpj: 'outro',
-      quantidade_input: 10,
-      unidade_input: 't',
-      localidade_id: '00000000-0000-0000-0000-000000000100',
+      itens: [{
+        produto_codigo_acxe: 1001,
+        quantidade_input: 10,
+        unidade_input: 't',
+        localidade_id: '00000000-0000-0000-0000-000000000100',
+      }],
     });
     expect(res.status).toBe(400);
     expect(res.body.error.message).toMatch(/cnpj/);
   });
 });
 
-describe('POST /api/v1/stockbridge/recebimento — erro estruturado OMIE (US2)', () => {
+// Feature 013: o fluxo por item devolve 201 com desfechos em data.itens[]; o
+// mapeamento OmieAjusteError→502 permanece como defesa em profundidade (caminhos
+// legados compartilham o helper dual). Estes contratos fixam esse mapeamento.
+describe('POST /api/v1/stockbridge/recebimento — erro estruturado OMIE (defesa em profundidade)', () => {
   let app: express.Express;
 
   beforeAll(async () => {
@@ -190,9 +200,12 @@ describe('POST /api/v1/stockbridge/recebimento — erro estruturado OMIE (US2)',
     const res = await request(app).post('/api/v1/stockbridge/recebimento').send({
       nf: '300',
       cnpj: 'acxe',
-      quantidade_input: 25_000,
-      unidade_input: 'kg',
-      localidade_id: '00000000-0000-0000-0000-000000000100',
+      itens: [{
+        produto_codigo_acxe: 1001,
+        quantidade_input: 25_000,
+        unidade_input: 'kg',
+        localidade_id: '00000000-0000-0000-0000-000000000100',
+      }],
     });
 
     expect(res.status).toBe(502);
@@ -217,9 +230,12 @@ describe('POST /api/v1/stockbridge/recebimento — erro estruturado OMIE (US2)',
     const res = await request(app).post('/api/v1/stockbridge/recebimento').send({
       nf: '301',
       cnpj: 'acxe',
-      quantidade_input: 25_000,
-      unidade_input: 'kg',
-      localidade_id: '00000000-0000-0000-0000-000000000100',
+      itens: [{
+        produto_codigo_acxe: 1001,
+        quantidade_input: 25_000,
+        unidade_input: 'kg',
+        localidade_id: '00000000-0000-0000-0000-000000000100',
+      }],
     });
 
     expect(res.status).toBe(502);

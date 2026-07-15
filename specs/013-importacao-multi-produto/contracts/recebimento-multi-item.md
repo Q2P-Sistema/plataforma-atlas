@@ -87,10 +87,13 @@ Regras Zod adicionais: `itens` não-vazio; `produto_codigo_acxe` único dentro d
 **Portão 2 — escrita (best-effort por item)**. Passou o Portão 1 ⇒ resposta é sempre `201`; o desfecho de cada item vem em `data.itens[].status`:
 - `provisorio` — conferiu, OMIE dual OK.
 - `aguardando_aprovacao` — divergência; foi para o gestor (OMIE diferido).
-- `pendente_q2p` — ACXE OK, Q2P falhou; recuperável no painel de operações pendentes (por item).
+- `pendente_q2p` — ACXE OK, Q2P falhou; movimentação parcial persistida, recuperável no painel de operações pendentes (retry por movimentação — **não** por re-`POST`).
 - `falha_acxe` — ACXE falhou; item **não** persistido; re-submeter a NF completa esse item (idempotência por produto pula os já concluídos).
+- `ja_recebido` — item já constava recebido (re-submissão parcial ou corrida perdida no índice 23505); nada duplicado.
 
-> **Recebimento resumível**: como a idempotência é por (NF, empresa, produto), re-`POST` da mesma NF reprocessa só os itens que ainda não concluíram; itens `provisorio`/`aguardando_aprovacao` já existentes não duplicam (índice + checagem `produtoDaNfJaRecebido`).
+`data.resumo` = `{ recebidos, aguardandoAprovacao, pendentesOmie, falhas, jaRecebidos }`.
+
+> **Recebimento resumível**: como a idempotência é por (NF, empresa, produto), re-`POST` da mesma NF reprocessa só os itens que **não persistiram** (ex.: `falha_acxe`); itens `provisorio`/`aguardando_aprovacao`/`pendente_q2p` já têm registro ativo e voltam como `ja_recebido` (o `pendente_q2p` conclui pelo painel, não pelo re-`POST`).
 
 ---
 

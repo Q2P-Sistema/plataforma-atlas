@@ -26,7 +26,7 @@ Adicionar em `packages/integrations/omie/src/stockbridge/mock.ts` fixtures de NF
 
 **US3 — tudo-ou-nada:** buscar a NF mock com 1 produto sem correlato. Confirmar. Esperado: `409 PRODUTO_SEM_CORRELATO` nomeando o produto pela descrição; **zero** ajustes no mock; nenhum lote criado.
 
-**Resumível:** simular falha de Q2P num item (fixture de erro). Confirmar NF de 3 → 2 `provisorio` + 1 `pendente_q2p`. Re-`POST` da mesma NF → só o item pendente é reprocessado; os 2 concluídos não duplicam.
+**Resumível:** simular falha de **ACXE** num item (fixture de erro). Confirmar NF de 3 → 2 `provisorio` + 1 `falha_acxe` (nada persistido do item que falhou). Re-`POST` da mesma NF → só o item que falhou é reprocessado; os 2 concluídos voltam como `ja_recebido`. (Falha de **Q2P** é diferente: a movimentação parcial fica persistida como `pendente_q2p` e conclui pelo painel de Movimentações, não por re-`POST`.)
 
 ---
 

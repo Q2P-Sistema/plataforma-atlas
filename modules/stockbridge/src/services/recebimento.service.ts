@@ -6,20 +6,21 @@ import { lote, movimentacao, movimentacaoLegado, aprovacao, localidade, localida
 import {
   consultarNF,
   isMockMode,
-  NotaFiscalMultiItemError,
   type ConsultarNFResponse,
+  type ItemNF,
 } from '@atlas/integration-omie';
-import { getCorrelacao, CorrelacaoNaoEncontradaError } from './correlacao.service.js';
+import { getCorrelacao, CorrelacaoNaoEncontradaError, type Correlacao } from './correlacao.service.js';
 import { converterParaKg, normalizarNumeroNf } from './motor.service.js';
 import { validarNfRecebivel } from './nf-validacao.service.js';
 import { formatarDataOmie } from './omie-shared.js';
 import {
   enviarAlertaProdutoSemCorrelato,
   enviarAlertaAprovacaoPendente,
+  enviarAlertaAprovacaoPendenteImportacaoLote,
   enviarAlertaPendenciaOmie,
   enviarNotificacaoRecebimentoConcluido,
+  enviarNotificacaoRecebimentoConcluidoLote,
   enviarAlertaNfIndeterminada,
-  enviarAlertaNfMultiItem,
 } from './notificacao.service.js';
 import { incluirAjusteIdempotente } from './omie-idempotente.js';
 import { COD_INT_AJUSTE_SUFIXO, buildCodIntAjuste, CNPJ_ACXE, CNPJ_Q2P_MATRIZ } from '../types.js';
@@ -71,23 +72,47 @@ export class ImportacaoApenasAcxeError extends Error {
 }
 
 /**
- * STK-10 (ACXEGDP-289): consultarNF com alerta de admin quando a NF tem mais de
- * um item de produto. O modelo suporta 1 produto por NF — antes, o det[0] era
- * lido silenciosamente (valor unitário inflado + itens 2..n perdidos). O alerta
- * segue o mesmo padrão do CorrelacaoNaoEncontradaError: e-mail fora do caminho
- * crítico + rethrow pro erro tipado chegar à rota (422).
+ * Feature 013 (ACXEGDP-115): erro de validação do Portão 1 do recebimento
+ * multi-item — o pedido é inválido (item fora da NF, motivo de divergência
+ * ausente, cobertura incompleta). Nada foi escrito. Rota mapeia para 422.
+ * ACXEGDP-313: as mensagens identificam produtos pela DESCRIÇÃO, nunca por
+ * código OMIE.
  */
-async function consultarNFComAlertaMultiItem(
-  cnpj: 'acxe' | 'q2p',
-  numero: number,
-): Promise<ConsultarNFResponse> {
-  try {
-    return await consultarNF(cnpj, numero);
-  } catch (err) {
-    if (err instanceof NotaFiscalMultiItemError) {
-      void enviarAlertaNfMultiItem({ nf: String(numero), cnpj, totalItens: err.totalItens });
-    }
-    throw err;
+export class ValidacaoRecebimentoError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ValidacaoRecebimentoError';
+  }
+}
+
+/**
+ * Feature 013 — política tudo-ou-nada: um ou mais produtos da NF não têm
+ * correlato na Q2P; a NF INTEIRA é bloqueada sem nenhuma escrita. Carrega a
+ * lista para a mensagem nomear todos de uma vez (FR-009/FR-010).
+ */
+export class ProdutosSemCorrelatoError extends Error {
+  constructor(
+    public readonly notaFiscal: string,
+    public readonly produtos: Array<{ codigoProdutoAcxe: number; descricao: string }>,
+  ) {
+    const nomes = produtos.map((p) => `"${p.descricao}"`).join(', ');
+    super(
+      `A NF ${notaFiscal} não pode ser recebida: ${produtos.length === 1 ? 'o produto' : 'os produtos'} ${nomes} ` +
+        `não ${produtos.length === 1 ? 'tem' : 'têm'} correlato na Q2P (match por descrição). ` +
+        'Cadastre na Q2P com a descrição exata e tente novamente — nenhum item da NF foi recebido.',
+    );
+    this.name = 'ProdutosSemCorrelatoError';
+  }
+}
+
+/** Feature 013 — quantidade recebida maior que a da NF em um item (regra do item único, por item). */
+export class QuantidadeExcedeNfError extends Error {
+  constructor(public readonly produtoDescricao: string) {
+    super(
+      `Quantidade recebida não pode ser maior que a quantidade da NF (produto "${produtoDescricao}"). ` +
+        'Registre o recebimento normal e depois lance uma entrada manual do excedente.',
+    );
+    this.name = 'QuantidadeExcedeNfError';
   }
 }
 
@@ -121,34 +146,46 @@ async function aplicarValidacaoNf(numero: number, cnpj: 'acxe' | 'q2p'): Promise
 }
 
 /**
- * Idempotencia de recebimento: a NF ja foi processada — no Atlas OU no legado PHP?
- *
- * Consulta tres fontes:
- *  - `stockbridge.movimentacao` (entrada_nf ativa) — recebimentos nascidos no Atlas.
- *  - `stockbridge.movimentacao_legado` (migration 0038) — historico importado do
- *    MySQL legado. Sem isso, uma NF que o sistema PHP ja processou poderia ser
- *    reprocessada no Atlas, gerando ajuste DUPLICADO no OMIE.
- *  - `stockbridge.lote` em aguardando_aprovacao/provisorio (STK-02, ACXEGDP-282) —
- *    o fluxo divergente cria apenas lote+aprovacao (nenhuma movimentacao); sem esta
- *    checagem a mesma NF continuava "livre" ate o gestor decidir, permitindo um
- *    segundo recebimento e ajuste OMIE duplicado apos as duas aprovacoes.
- *    Lote rejeitado ou em transito NAO bloqueia (re-receber e legitimo nesses casos).
- *
- * STK-09 (ACXEGDP-288): a chave inclui a EMPRESA — a numeracao de NF e por
- * emissor, entao NF 300 da ACXE nao pode bloquear NF 300 da Q2P. As consultas em
- * movimentacao e lote filtram por empresa/cnpj; a do legado permanece so por NF
- * (dados antigos sem a coluna — bloquear a mais e o lado conservador).
- *
- * `nfNormalizada` deve vir de `normalizarNumeroNf` (zero-padded 8 digitos) — e o
- * formato em que ambas as tabelas gravam a NF.
+ * Historico legado PHP (migration 0038): checagem por NF inteira — o legado era
+ * single-item, entao qualquer registro da NF significa que ela ja entrou no
+ * estoque pela plataforma antiga. Bloqueia a NF toda (lado conservador).
  */
-async function nfJaProcessada(
+async function nfProcessadaNoLegado(
+  db: ReturnType<typeof getDb>,
+  nfNormalizada: string,
+): Promise<boolean> {
+  const rows = await db
+    .select({ id: movimentacaoLegado.id })
+    .from(movimentacaoLegado)
+    .where(and(eq(movimentacaoLegado.notaFiscal, nfNormalizada), eq(movimentacaoLegado.ativo, true)))
+    .limit(1);
+  return rows.length > 0;
+}
+
+/**
+ * Idempotencia POR PRODUTO (feature 013, migration 0046): este produto desta NF
+ * ja foi recebido — ou esta com recebimento em andamento?
+ *
+ * Consulta duas fontes:
+ *  - `stockbridge.movimentacao` (entrada_nf ativa do produto) — recebimentos Atlas.
+ *  - `stockbridge.lote` aberto do produto (STK-02, ACXEGDP-282) — o fluxo
+ *    divergente cria apenas lote+aprovacao; sem esta checagem o mesmo produto
+ *    continuava "livre" ate o gestor decidir. Lote rejeitado/em transito NAO
+ *    bloqueia (re-receber e legitimo).
+ *
+ * A checagem do legado PHP fica em nfProcessadaNoLegado (por NF — dado antigo
+ * nao tem granularidade de produto).
+ *
+ * STK-09 (ACXEGDP-288): numeracao de NF e por emissor — a chave inclui a empresa.
+ */
+async function produtoDaNfJaRecebido(
   db: ReturnType<typeof getDb>,
   nfNormalizada: string,
   cnpj: 'acxe' | 'q2p',
+  produtoCodigoAcxe: number,
 ): Promise<boolean> {
   const cnpjLote = cnpj === 'acxe' ? CNPJ_ACXE : CNPJ_Q2P_MATRIZ;
-  const [atlas, legado, loteAberto] = await Promise.all([
+  const [atlas, loteAberto] = await Promise.all([
     db
       .select({ id: movimentacao.id })
       .from(movimentacao)
@@ -157,17 +194,8 @@ async function nfJaProcessada(
           eq(movimentacao.notaFiscal, nfNormalizada),
           eq(movimentacao.tipoMovimento, 'entrada_nf'),
           eq(movimentacao.empresa, cnpj),
+          eq(movimentacao.produtoCodigoAcxe, produtoCodigoAcxe),
           eq(movimentacao.ativo, true),
-        ),
-      )
-      .limit(1),
-    db
-      .select({ id: movimentacaoLegado.id })
-      .from(movimentacaoLegado)
-      .where(
-        and(
-          eq(movimentacaoLegado.notaFiscal, nfNormalizada),
-          eq(movimentacaoLegado.ativo, true),
         ),
       )
       .limit(1),
@@ -178,13 +206,14 @@ async function nfJaProcessada(
         and(
           eq(lote.notaFiscal, nfNormalizada),
           eq(lote.cnpj, cnpjLote),
+          eq(lote.produtoCodigoAcxe, produtoCodigoAcxe),
           inArray(lote.status, ['aguardando_aprovacao', 'provisorio']),
           eq(lote.ativo, true),
         ),
       )
       .limit(1),
   ]);
-  return atlas.length > 0 || legado.length > 0 || loteAberto.length > 0;
+  return atlas.length > 0 || loteAberto.length > 0;
 }
 
 /**
@@ -196,10 +225,14 @@ async function nfJaProcessada(
  * apPre.id), aqui nao existe entidade persistida antes do OMIE — o opId e derivado
  * da chave estavel da operacao (NF normalizada + empresa + produto).
  *
- * `tentativa` = quantas movimentacoes INATIVAS (soft-deleted) a NF ja teve: um
- * reprocessamento legitimo apos estorno ganha opId NOVO (senao herdaria os IDs do
- * ajuste OMIE antigo via 1035), enquanto concorrentes da mesma tentativa leem o
- * mesmo contador e colidem no mesmo cod_int_ajuste — que e o objetivo.
+ * A chave ja inclui o PRODUTO — por isso a feature 013 (multi-item) nao mudou
+ * nada aqui: cada produto da NF gera seu proprio opId naturalmente.
+ *
+ * `tentativa` = quantas movimentacoes INATIVAS (soft-deleted) o PRODUTO ja teve
+ * nesta NF: um reprocessamento legitimo apos estorno ganha opId NOVO (senao
+ * herdaria os IDs do ajuste OMIE antigo via 1035), enquanto concorrentes da mesma
+ * tentativa leem o mesmo contador e colidem no mesmo cod_int_ajuste — que e o
+ * objetivo.
  *
  * movimentacao.op_id e uuid: o sha256 e reformatado como UUID (hex valido).
  */
@@ -215,11 +248,15 @@ export function opIdDeterministicoRecebimento(args: {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
 }
 
-/** Conta movimentacoes entrada_nf INATIVAS da NF — o `tentativa` do opId deterministico. */
+/**
+ * Conta movimentacoes entrada_nf INATIVAS do PRODUTO nesta NF — o `tentativa` do
+ * opId deterministico. Feature 013: por produto (antes era por NF inteira).
+ */
 async function contarTentativasAnteriores(
   db: ReturnType<typeof getDb>,
   nfNormalizada: string,
   cnpj: 'acxe' | 'q2p',
+  produtoCodigoAcxe: number,
 ): Promise<number> {
   const rows = await db
     .select({ n: sql<number>`count(*)::int` })
@@ -229,6 +266,7 @@ async function contarTentativasAnteriores(
         eq(movimentacao.notaFiscal, nfNormalizada),
         eq(movimentacao.tipoMovimento, 'entrada_nf'),
         eq(movimentacao.empresa, cnpj),
+        eq(movimentacao.produtoCodigoAcxe, produtoCodigoAcxe),
         eq(movimentacao.ativo, false),
       ),
     )
@@ -237,16 +275,21 @@ async function contarTentativasAnteriores(
 }
 
 /**
- * STK-01b: traducao do backstop 23505 do indice movimentacao_nf_idempotencia_idx.
+ * STK-01b: traducao do backstop 23505 do indice de idempotencia de entrada
+ * (movimentacao_nf_entrada_idempotencia_idx, migration 0046 — por NF+empresa+produto).
  * Se duas submissoes concorrentes passam pela checagem de idempotencia, o OMIE ja
- * deduplicou via cod_int_ajuste identico; a 2a transacao cai aqui e vira o mesmo
- * erro amigavel da checagem de aplicacao.
+ * deduplicou via cod_int_ajuste identico; a 2a transacao cai aqui.
  */
 function isViolacaoIdempotenciaNf(err: unknown): boolean {
   const candidatos = [err, (err as { cause?: unknown })?.cause];
   return candidatos.some((c) => {
     const e = c as { code?: string; constraint?: string } | undefined;
-    return e?.code === '23505' && e?.constraint === 'movimentacao_nf_idempotencia_idx';
+    return (
+      e?.code === '23505' &&
+      (e?.constraint === 'movimentacao_nf_entrada_idempotencia_idx' ||
+        // nome pre-0046, mantido para ambientes onde a migration ainda nao rodou
+        e?.constraint === 'movimentacao_nf_idempotencia_idx')
+    );
   });
 }
 
@@ -288,6 +331,90 @@ export class OmieAjusteError extends Error {
   }
 }
 
+// ── Agregação e rateio (feature 013) ───────────────────────
+
+/**
+ * Uma linha "agregada" da NF: os det[] do OMIE colapsados por produto. Duas
+ * linhas do MESMO produto na mesma NF (raro — 0 casos em 12 meses de PROD) são
+ * somadas: a idempotência é por (NF, empresa, produto), então cada produto gera
+ * exatamente uma entrada — a massa e o valor totais são preservados (FR-013).
+ */
+export interface ItemNfAgregado {
+  nCodProd: number;
+  xProd: string;
+  codigoLocalEstoque: string;
+  /** Quantidade fiscal total do produto, em kg (soma das linhas convertidas). */
+  qtdNfKg: number;
+  /** Valor comercial total das linhas (Σ vUnCom×qCom) — peso do rateio. */
+  pesoValorComercial: number;
+  /** Unidade da primeira linha (para exibição na fila). */
+  unidadeOriginal: UnidadeMedida;
+  /** Quantidade na unidade original da primeira linha (só exibição; se agregado, soma em kg). */
+  qtdOriginal: number;
+  /** vUnCom da primeira linha (custo unitário comercial — gravado em lote.custo_brl_kg como hoje). */
+  vUnCom: number;
+}
+
+/** Colapsa os det[] da NF por produto (ver ItemNfAgregado). */
+export function agruparItensNf(itens: ItemNF[]): ItemNfAgregado[] {
+  const porProduto = new Map<number, ItemNfAgregado>();
+  for (const it of itens) {
+    const unidade = normalizarUnidade(it.uCom);
+    const qtdKg = Number(new Decimal(converterParaKg(it.qCom, unidade)).toFixed(3));
+    const peso = new Decimal(it.vUnCom).times(it.qCom);
+    const atual = porProduto.get(it.nCodProd);
+    if (!atual) {
+      porProduto.set(it.nCodProd, {
+        nCodProd: it.nCodProd,
+        xProd: it.xProd,
+        codigoLocalEstoque: it.codigoLocalEstoque,
+        qtdNfKg: qtdKg,
+        pesoValorComercial: peso.toNumber(),
+        unidadeOriginal: unidade,
+        qtdOriginal: it.qCom,
+        vUnCom: it.vUnCom,
+      });
+    } else {
+      atual.qtdNfKg = Number(new Decimal(atual.qtdNfKg).plus(qtdKg).toFixed(3));
+      atual.pesoValorComercial = new Decimal(atual.pesoValorComercial).plus(peso).toNumber();
+      // Linhas agregadas perdem a unidade original — exibe a soma em kg.
+      atual.unidadeOriginal = 'kg';
+      atual.qtdOriginal = atual.qtdNfKg;
+    }
+  }
+  return [...porProduto.values()];
+}
+
+/**
+ * Rateio do valor total da NF (com tributos — base de custo confirmada em 15/07)
+ * entre os produtos, proporcional ao valor comercial de cada um (D2 do research).
+ * O RESÍDUO de arredondamento vai para o último item, garantindo Σ = vNF exato
+ * (SC-003). Para N=1 devolve [vNF] — reduz exatamente à fórmula single-item.
+ * Pesos todos zero (NF sem valores comerciais) → rateio igualitário.
+ */
+export function ratearValorNf(vNF: number, pesos: number[]): number[] {
+  if (pesos.length === 0) return [];
+  const total = new Decimal(vNF);
+  const somaPesos = pesos.reduce((acc, p) => acc.plus(p), new Decimal(0));
+  const efetivos = somaPesos.gt(0) ? pesos.map((p) => new Decimal(p)) : pesos.map(() => new Decimal(1));
+  const somaEfetiva = somaPesos.gt(0) ? somaPesos : new Decimal(pesos.length);
+
+  const valores: number[] = [];
+  let acumulado = new Decimal(0);
+  for (let i = 0; i < efetivos.length; i += 1) {
+    if (i === efetivos.length - 1) {
+      valores.push(total.minus(acumulado).toDecimalPlaces(2).toNumber());
+    } else {
+      const fatia = total.times(efetivos[i]!).div(somaEfetiva).toDecimalPlaces(2);
+      valores.push(fatia.toNumber());
+      acumulado = acumulado.plus(fatia);
+    }
+  }
+  return valores;
+}
+
+// ── Fila ───────────────────────────────────────────────────
+
 export interface FilaItemOmie {
   nf: string;
   tipo: SubtipoMovimento;
@@ -298,13 +425,16 @@ export interface FilaItemOmie {
   qtdKg: number;
   localidadeCodigo: string;
   dtEmissao: string;
+  /** Valor TOTAL do produto na NF em BRL (fatia rateada do vNF, com tributos) — feature 013. */
   custoBrl: number;
 }
 
 /**
  * Consulta a fila de NFs pendentes para recebimento.
  * No MVP, suporta dois modos:
- *  - Busca por NF especifica (parametro `nf`): consulta OMIE diretamente (padrao legado)
+ *  - Busca por NF especifica (parametro `nf`): consulta OMIE diretamente (padrao legado).
+ *    Feature 013: devolve UM item por PRODUTO da NF (multi-item destravado); produtos
+ *    ja recebidos ficam de fora (recebimento resumivel).
  *  - Lista completa (sem `nf`): retorna dados sinteticos em mock; em producao vai
  *    depender de sync de NFe pelo n8n (a ser wireado em fase futura).
  */
@@ -326,35 +456,40 @@ export async function getFilaOmie(params: {
     }
     const nfNormalizada = normalizarNumeroNf(params.nf);
 
-    // Idempotencia: ja processada (Atlas ou legado)?
-    // OMIE retorna nNF zero-padded (ex: "00000300") e e nesse formato que gravamos.
-    // Operador tipicamente digita "300" — normalizamos antes de comparar.
-    if (await nfJaProcessada(db, nfNormalizada, params.cnpj)) {
+    // Historico legado PHP: NF inteira ja processada → nada a receber.
+    if (await nfProcessadaNoLegado(db, nfNormalizada)) {
       return [];
     }
 
-    const omieData = await consultarNFComAlertaMultiItem(params.cnpj, numero);
+    const omieData = await consultarNF(params.cnpj, numero);
     // Feature 012: bloqueia NF cancelada / não-emitida-pela-ACXE (fail-open se indeterminado).
     // Lê da tbl_nf_header sincronizada (flag cancelada + CNPJ do emitente), não do retorno ao vivo.
     await aplicarValidacaoNf(numero, params.cnpj);
-    const unidadeNormalizada = normalizarUnidade(omieData.uCom);
-    const qtdKg = Number(new Decimal(converterParaKg(omieData.qCom, unidadeNormalizada)).toFixed(3));
+
+    const agregados = agruparItensNf(omieData.itens);
+    const valores = ratearValorNf(omieData.vNF, agregados.map((a) => a.pesoValorComercial));
     const tipo = inferirSubtipoEntrada(omieData);
 
-    return [
-      {
+    // Recebimento resumivel: produto ja recebido sai da fila; os demais aparecem.
+    const pendencias = await Promise.all(
+      agregados.map((a) => produtoDaNfJaRecebido(db, nfNormalizada, params.cnpj!, a.nCodProd)),
+    );
+
+    return agregados
+      .map((a, i) => ({ agregado: a, valorRateado: valores[i]!, jaRecebido: pendencias[i]! }))
+      .filter((x) => !x.jaRecebido)
+      .map(({ agregado, valorRateado }) => ({
         nf: String(omieData.nNF),
         tipo,
-        cnpj: params.cnpj,
-        produto: { codigo: omieData.nCodProd, nome: omieData.xProd },
-        qtdOriginal: omieData.qCom,
-        unidade: unidadeNormalizada,
-        qtdKg,
-        localidadeCodigo: omieData.codigoLocalEstoque,
+        cnpj: params.cnpj!,
+        produto: { codigo: agregado.nCodProd, nome: agregado.xProd },
+        qtdOriginal: agregado.qtdOriginal,
+        unidade: agregado.unidadeOriginal,
+        qtdKg: agregado.qtdNfKg,
+        localidadeCodigo: agregado.codigoLocalEstoque,
         dtEmissao: omieData.dEmi,
-        custoBrl: omieData.vUnCom,
-      },
-    ];
+        custoBrl: valorRateado,
+      }));
   }
 
   // Caso 2: lista — mock retorna amostra em dev; prod retorna vazio com TODO
@@ -391,41 +526,93 @@ export async function getFilaOmie(params: {
   return [];
 }
 
-export interface ProcessarRecebimentoInput {
-  nf: string;
-  cnpj: 'acxe' | 'q2p';
+// ── Recebimento (multi-item, feature 013) ──────────────────
+
+/** Um produto da NF conferido pelo operador (linha do formulario). */
+export interface ItemRecebimentoImportacaoInput {
+  /** Identifica a linha da NF (veio da fila). */
+  produtoCodigoAcxe: number;
   quantidadeInput: number;
   unidadeInput: UnidadeMedida;
   localidadeId: string;
   observacoes?: string;
   /** Operador escolhe (Faltando|Varredura) quando ha divergencia. Obrigatorio se houver delta. */
   tipoDivergencia?: 'faltando' | 'varredura';
+}
+
+export interface ProcessarRecebimentoInput {
+  nf: string;
+  cnpj: 'acxe' | 'q2p';
+  itens: ItemRecebimentoImportacaoInput[];
   userId: string;
 }
 
-export interface ProcessarRecebimentoResult {
-  loteId: string;
-  loteCodigo: string;
-  status: 'provisorio' | 'aguardando_aprovacao';
+export type StatusItemRecebimento =
+  | 'provisorio'
+  | 'aguardando_aprovacao'
+  | 'pendente_q2p'
+  | 'falha_acxe'
+  | 'ja_recebido';
+
+export interface ItemRecebimentoResult {
+  produtoCodigoAcxe: number;
+  /** Descrição do produto (para a UI — ACXEGDP-313: nunca só o código). */
+  produto: string;
+  status: StatusItemRecebimento;
+  loteId?: string;
+  loteCodigo?: string;
   movimentacaoId?: string;
   aprovacaoId?: string;
   deltaKg?: number;
   tipoDivergencia?: 'faltando' | 'varredura';
   omie?: {
-    acxe: { idMovest: string; idAjuste: string };
-    q2p: { idMovest: string; idAjuste: string };
+    acxe?: { idMovest: string; idAjuste: string };
+    q2p?: { idMovest: string; idAjuste: string };
+  };
+  mensagemErro?: string;
+}
+
+export interface ProcessarRecebimentoResult {
+  nf: string;
+  itens: ItemRecebimentoResult[];
+  resumo: {
+    recebidos: number;
+    aguardandoAprovacao: number;
+    pendentesOmie: number;
+    falhas: number;
+    jaRecebidos: number;
   };
 }
 
+/** Item pronto para o Portão 2: input do operador + linha da NF + correlação resolvida. */
+interface ItemPreparado {
+  input: ItemRecebimentoImportacaoInput;
+  agregado: ItemNfAgregado;
+  valorItemBrl: number;
+  qtdFisicaKg: number;
+  deltaKg: number;
+  temDivergencia: boolean;
+  correlacao: Correlacao;
+  localidadeNome: string;
+  fornecedorNome: string;
+  correlacaoLocal: { codigoLocalEstoqueAcxe: number; codigoLocalEstoqueQ2p: number };
+}
+
 /**
- * Processa um recebimento de NF com conferencia fisica.
- * Fluxo transacional:
- *   1. Valida idempotencia (NF ja processada?)
- *   2. Consulta NF no OMIE do CNPJ emissor
- *   3. Resolve correlacao ACXE↔Q2P (lanca erro + notifica admin se nao existe)
- *   4. Calcula divergencia: confere → provisorio; nao confere → aguardando_aprovacao
- *   5. Se confere: chama OMIE ACXE + OMIE Q2P (ambos sucesso → commit)
- *   6. Persiste lote + movimentacao com ambos os lados OU aprovacao pendente
+ * Processa o recebimento de uma NF de importação com 1..N produtos (feature 013).
+ *
+ * Dois portões (D5 do research):
+ *  - PORTÃO 1 — validação tudo-ou-nada: NF fiscal (cancelada/emitente), cobertura
+ *    dos itens, quantidades, localidades e correlação ACXE↔Q2P de TODOS os
+ *    produtos, ANTES de qualquer escrita no OMIE. Qualquer falha → erro tipado,
+ *    zero efeito colateral (FR-009).
+ *  - PORTÃO 2 — escrita best-effort por item: cada produto conferido entra pelo
+ *    caminho do single-item (dual OMIE → lote provisório + movimentação; ou
+ *    divergência → lote + aprovação). Falha de OMIE em um item vira pendência
+ *    DAQUELE item (recuperável), sem derrubar os demais (FR-012).
+ *
+ * Idempotência por (NF, empresa, produto) — migration 0046: re-submeter uma NF
+ * parcialmente recebida completa só os produtos faltantes (resumível).
  */
 export async function processarRecebimento(
   input: ProcessarRecebimentoInput,
@@ -436,129 +623,303 @@ export async function processarRecebimento(
     throw new ImportacaoApenasAcxeError();
   }
   // Normaliza para o formato OMIE (zero-padded 8 digitos para NFs numericas).
-  // Sem isso, operador digitando "300" enquanto OMIE retorna "00000300" passa
-  // pela checagem de idempotencia mesmo com o registro ja gravado no DB.
-  // Reescreve input.nf para que toda a logica downstream (insert, OMIE,
-  // notificacao) use a forma canonica.
+  // Reescreve input.nf para que toda a logica downstream use a forma canonica.
   input = { ...input, nf: normalizarNumeroNf(input.nf) };
 
-  // 1. Idempotencia (Atlas + legado PHP) — STK-09: por NF + empresa
-  if (await nfJaProcessada(db, input.nf, input.cnpj)) {
+  if (!input.itens || input.itens.length === 0) {
+    throw new ValidacaoRecebimentoError('Informe pelo menos um item para o recebimento.');
+  }
+  const codigosInput = input.itens.map((i) => i.produtoCodigoAcxe);
+  if (new Set(codigosInput).size !== codigosInput.length) {
+    throw new ValidacaoRecebimentoError('Há produto repetido nos itens do recebimento — cada produto da NF entra uma única vez.');
+  }
+
+  // Historico legado PHP: NF inteira ja processada (dado antigo e por NF).
+  if (await nfProcessadaNoLegado(db, input.nf)) {
     throw new NotaFiscalJaProcessadaError(input.nf);
   }
 
-  // 2. Consulta NF no OMIE (lado do CNPJ emissor)
-  const omieData = await consultarNFComAlertaMultiItem(input.cnpj, Number(input.nf) || 0);
-  // Feature 012: valida cancelamento/emitente ANTES de qualquer escrita (lote/mov/ajuste).
-  // Bloqueio aqui garante zero efeito colateral (FR-002/FR-008). Lê da tbl_nf_header sincronizada.
+  // Consulta NF no OMIE (lado do CNPJ emissor) + validação fiscal (feature 012)
+  // ANTES de qualquer escrita — bloqueio aqui garante zero efeito colateral.
+  const omieData = await consultarNF(input.cnpj, Number(input.nf) || 0);
   await aplicarValidacaoNf(Number(input.nf) || 0, input.cnpj);
-  const qtdNfKg = Number(new Decimal(converterParaKg(omieData.qCom, normalizarUnidade(omieData.uCom))).toFixed(3));
-  const qtdFisicaKg = Number(new Decimal(converterParaKg(input.quantidadeInput, input.unidadeInput)).toFixed(3));
-  const deltaKg = Number(new Decimal(qtdFisicaKg).minus(qtdNfKg).toFixed(3));
-  // Tolerancia de 1 kg (antes era 0.01 t = 10 kg — aperto agora que a unidade e maior).
-  const temDivergencia = Math.abs(deltaKg) > 1;
 
-  // 3. Localidade destino (da requisicao)
-  const [loc] = await db
-    .select()
-    .from(localidade)
-    .where(and(eq(localidade.id, input.localidadeId), eq(localidade.ativo, true)))
-    .limit(1);
-  if (!loc) {
-    // ACXEGDP-313: sem UUID na mensagem — não identifica nada para o operador.
-    logger.warn({ localidadeId: input.localidadeId, nf: input.nf }, 'Localidade não encontrada ou inativa');
-    throw new Error('Local de estoque selecionado não encontrado ou inativo — atualize a página e tente novamente');
+  const agregados = agruparItensNf(omieData.itens);
+  const valores = ratearValorNf(omieData.vNF, agregados.map((a) => a.pesoValorComercial));
+  const agregadoPorProduto = new Map(agregados.map((a, i) => [a.nCodProd, { agregado: a, valorItemBrl: valores[i]! }]));
+
+  // ── PORTÃO 1 — validação tudo-ou-nada ──────────────────────────────────────
+
+  // 1a. Todo item do request pertence à NF?
+  for (const item of input.itens) {
+    if (!agregadoPorProduto.has(item.produtoCodigoAcxe)) {
+      throw new ValidacaoRecebimentoError(
+        `O item informado (código de produto ${item.produtoCodigoAcxe}) não pertence à NF ${input.nf}. Recarregue a busca da NF.`,
+      );
+    }
   }
 
-  const [corr] = await db
-    .select()
-    .from(localidadeCorrelacao)
-    .where(eq(localidadeCorrelacao.localidadeId, input.localidadeId))
-    .limit(1);
-  if (!corr || !corr.codigoLocalEstoqueAcxe || !corr.codigoLocalEstoqueQ2p) {
-    throw new Error(
-      `Localidade ${loc.codigo} não tem correlação ACXE↔Q2P completa. Configure em stockbridge.localidade_correlacao.`,
+  // 1b. Idempotência por produto (resumível): separa o que já entrou.
+  const statusJaRecebido = await Promise.all(
+    input.itens.map((i) => produtoDaNfJaRecebido(db, input.nf, input.cnpj, i.produtoCodigoAcxe)),
+  );
+  const jaRecebidos = input.itens.filter((_, i) => statusJaRecebido[i]);
+  const pendentesInput = input.itens.filter((_, i) => !statusJaRecebido[i]);
+  if (pendentesInput.length === 0) {
+    throw new NotaFiscalJaProcessadaError(input.nf);
+  }
+
+  // 1c. Cobertura: todo produto da NF ainda não recebido precisa estar no request
+  // (recebimento parcial por escolha está fora de escopo — spec/Out of Scope).
+  const codigosPendentesReq = new Set(pendentesInput.map((i) => i.produtoCodigoAcxe));
+  const faltantes: string[] = [];
+  for (const a of agregados) {
+    if (codigosPendentesReq.has(a.nCodProd)) continue;
+    const jaEntrou = await produtoDaNfJaRecebido(db, input.nf, input.cnpj, a.nCodProd);
+    if (!jaEntrou) faltantes.push(a.xProd);
+  }
+  if (faltantes.length > 0) {
+    throw new ValidacaoRecebimentoError(
+      `A NF ${input.nf} tem ${faltantes.length === 1 ? 'um produto que não foi informado' : 'produtos que não foram informados'} no recebimento: ` +
+        `${faltantes.map((f) => `"${f}"`).join(', ')}. Confira todos os produtos da NF — o recebimento é da nota inteira.`,
     );
   }
 
-  // 4. Correlacao de produto ACXE↔Q2P (match textual de descricao)
-  let correlacao;
-  try {
-    correlacao = await getCorrelacao(omieData.nCodProd, corr.codigoLocalEstoqueAcxe);
-  } catch (err) {
-    if (err instanceof CorrelacaoNaoEncontradaError) {
-      void enviarAlertaProdutoSemCorrelato({
-        codigoProdutoAcxe: err.codigoProdutoAcxe,
-        notaFiscal: input.nf,
-        descricaoProduto: omieData.xProd,
-      });
+  // 1d. Localidades (batch, únicas) — existência + correlação ACXE↔Q2P completa.
+  const localidadeIds = [...new Set(pendentesInput.map((i) => i.localidadeId))];
+  const [locs, corrs] = await Promise.all([
+    db
+      .select()
+      .from(localidade)
+      .where(and(inArray(localidade.id, localidadeIds), eq(localidade.ativo, true))),
+    db.select().from(localidadeCorrelacao).where(inArray(localidadeCorrelacao.localidadeId, localidadeIds)),
+  ]);
+  const locPorId = new Map(locs.map((l) => [l.id, l]));
+  const corrPorLocalidade = new Map(corrs.map((c) => [c.localidadeId, c]));
+  for (const item of pendentesInput) {
+    const loc = locPorId.get(item.localidadeId);
+    if (!loc) {
+      // ACXEGDP-313: sem UUID na mensagem — não identifica nada para o operador.
+      logger.warn({ localidadeId: item.localidadeId, nf: input.nf }, 'Localidade não encontrada ou inativa');
+      throw new ValidacaoRecebimentoError(
+        'Local de estoque selecionado não encontrado ou inativo — atualize a página e tente novamente',
+      );
     }
-    throw err;
+    const corr = corrPorLocalidade.get(item.localidadeId);
+    if (!corr || !corr.codigoLocalEstoqueAcxe || !corr.codigoLocalEstoqueQ2p) {
+      throw new ValidacaoRecebimentoError(
+        `Localidade ${loc.codigo} não tem correlação ACXE↔Q2P completa. Configure em stockbridge.localidade_correlacao.`,
+      );
+    }
   }
 
-  // 5. Se tem divergencia: fluxo de aprovacao (nao toca OMIE ainda)
-  if (temDivergencia) {
-    if (!input.observacoes || input.observacoes.trim().length === 0) {
-      throw new Error('Motivo da divergência é obrigatório');
+  // 1e. Quantidades: divergência por item (tolerância de 1 kg, como o single-item)
+  // + regras de excedente e motivo obrigatório — TUDO validado antes de escrever.
+  const preparados: ItemPreparado[] = [];
+  for (const item of pendentesInput) {
+    const { agregado, valorItemBrl } = agregadoPorProduto.get(item.produtoCodigoAcxe)!;
+    const qtdFisicaKg = Number(new Decimal(converterParaKg(item.quantidadeInput, item.unidadeInput)).toFixed(3));
+    const deltaKg = Number(new Decimal(qtdFisicaKg).minus(agregado.qtdNfKg).toFixed(3));
+    const temDivergencia = Math.abs(deltaKg) > 1;
+    if (temDivergencia) {
+      // Fiel ao legado (NotaFiscalController.php:307): so aceita "recebido < NF".
+      if (deltaKg > 0) {
+        throw new QuantidadeExcedeNfError(agregado.xProd);
+      }
+      if (!item.observacoes || item.observacoes.trim().length === 0) {
+        throw new ValidacaoRecebimentoError(`Motivo da divergência é obrigatório (produto "${agregado.xProd}").`);
+      }
+      if (!item.tipoDivergencia) {
+        throw new ValidacaoRecebimentoError(
+          `Tipo de divergência (faltando/varredura) é obrigatório quando há delta (produto "${agregado.xProd}").`,
+        );
+      }
     }
-    if (!input.tipoDivergencia) {
-      throw new Error('Tipo de divergência (faltando/varredura) é obrigatório quando ha delta');
-    }
-    // Fiel ao legado (NotaFiscalController.php:307): so aceita "recebido < NF".
-    // Excedente nao e tratado — operador deveria registrar a entrada normal e
-    // depois lancar uma entrada manual da diferenca.
-    if (deltaKg > 0) {
-      throw new Error('Quantidade recebida não pode ser maior que a quantidade da NF');
-    }
-    return processarRecebimentoComDivergencia({
-      input,
-      omieData,
-      qtdNfKg,
+    const corr = corrPorLocalidade.get(item.localidadeId)!;
+    preparados.push({
+      input: item,
+      agregado,
+      valorItemBrl,
       qtdFisicaKg,
       deltaKg,
-      tipoDivergencia: input.tipoDivergencia,
-      localidadeCodigoQ2p: corr.codigoLocalEstoqueQ2p,
-      correlacao,
+      temDivergencia,
+      correlacao: null as unknown as Correlacao, // preenchida em 1f
+      localidadeNome: locPorId.get(item.localidadeId)!.nome,
+      fornecedorNome: omieData.cRazao,
+      correlacaoLocal: {
+        codigoLocalEstoqueAcxe: corr.codigoLocalEstoqueAcxe!,
+        codigoLocalEstoqueQ2p: corr.codigoLocalEstoqueQ2p!,
+      },
     });
   }
 
-  // 6. Sem divergencia: chama OMIE dos dois lados antes de persistir
-  // Fiel ao legado: ACXE = transferencia (origem trânsito da NF → destino escolhido),
-  // Q2P = entrada inicial. Valor unitario diferente em cada lado.
-  // opId identifica esta operacao em ambos os lados via cod_int_ajuste — habilita
-  // retry idempotente em caso de falha na 2a chamada (vide US2).
-  // STK-01b (ACXEGDP-311): deterministico, nao random — submissoes concorrentes da
-  // mesma NF compartilham cod_int_ajuste e a recuperacao 1035 deduplica no OMIE.
-  const tentativa = await contarTentativasAnteriores(db, input.nf, input.cnpj);
+  // 1f. Correlação de produto ACXE↔Q2P de TODOS os itens (tudo-ou-nada, FR-009):
+  // um produto sem correlato bloqueia a NF inteira, com alerta ops por produto.
+  const semCorrelato: Array<{ codigoProdutoAcxe: number; descricao: string }> = [];
+  for (const prep of preparados) {
+    try {
+      prep.correlacao = await getCorrelacao(prep.agregado.nCodProd, prep.correlacaoLocal.codigoLocalEstoqueAcxe);
+    } catch (err) {
+      if (err instanceof CorrelacaoNaoEncontradaError) {
+        semCorrelato.push({ codigoProdutoAcxe: prep.agregado.nCodProd, descricao: prep.agregado.xProd });
+        void enviarAlertaProdutoSemCorrelato({
+          codigoProdutoAcxe: prep.agregado.nCodProd,
+          notaFiscal: input.nf,
+          descricaoProduto: prep.agregado.xProd,
+        });
+      } else {
+        throw err;
+      }
+    }
+  }
+  if (semCorrelato.length > 0) {
+    throw new ProdutosSemCorrelatoError(input.nf, semCorrelato);
+  }
+
+  // ── PORTÃO 2 — escrita best-effort por item ────────────────────────────────
+
+  const resultados: ItemRecebimentoResult[] = jaRecebidos.map((i) => ({
+    produtoCodigoAcxe: i.produtoCodigoAcxe,
+    produto: agregadoPorProduto.get(i.produtoCodigoAcxe)!.agregado.xProd,
+    status: 'ja_recebido' as const,
+  }));
+
+  const divergentesOk: Array<{ prep: ItemPreparado; aprovacaoId: string; loteCodigo: string }> = [];
+  const concluidosOk: Array<{ prep: ItemPreparado; loteCodigo: string }> = [];
+
+  for (const prep of preparados) {
+    if (prep.temDivergencia) {
+      const r = await processarItemComDivergencia(db, input, prep);
+      resultados.push(r);
+      if (r.status === 'aguardando_aprovacao') {
+        divergentesOk.push({ prep, aprovacaoId: r.aprovacaoId!, loteCodigo: r.loteCodigo! });
+      }
+    } else {
+      const r = await processarItemLimpo(db, input, prep);
+      resultados.push(r);
+      if (r.status === 'provisorio') {
+        concluidosOk.push({ prep, loteCodigo: r.loteCodigo! });
+      }
+    }
+  }
+
+  // ── Notificações consolidadas (fora do caminho crítico) ────────────────────
+
+  if (divergentesOk.length === 1) {
+    // Paridade com o single-item: 1 divergência = alerta individual com link.
+    const { prep, aprovacaoId, loteCodigo } = divergentesOk[0]!;
+    void enviarAlertaAprovacaoPendente({
+      aprovacaoId,
+      tipoAprovacao: 'recebimento_divergencia',
+      nivel: 'gestor',
+      loteCodigo,
+      produto: prep.correlacao.descricao,
+      quantidadeKg: prep.qtdFisicaKg,
+      detalhes: `Divergência ${prep.input.tipoDivergencia} de ${Math.abs(prep.deltaKg).toFixed(3)} kg — ${prep.input.observacoes ?? ''}`,
+    });
+  } else if (divergentesOk.length > 1) {
+    // Feature 013 (FR-015): digest — um e-mail por gestor com todos os itens da NF.
+    void enviarAlertaAprovacaoPendenteImportacaoLote({
+      notaFiscal: input.nf,
+      nivel: 'gestor',
+      itens: divergentesOk.map(({ prep }) => ({
+        produto: prep.correlacao.descricao,
+        quantidadeKg: prep.qtdFisicaKg,
+        deltaKg: prep.deltaKg,
+        tipoDivergencia: prep.input.tipoDivergencia!,
+      })),
+    });
+  }
+
+  if (concluidosOk.length === 1 && preparados.length === 1) {
+    // Paridade com o single-item: NF de um produto mantém a confirmação atual.
+    const { prep, loteCodigo } = concluidosOk[0]!;
+    void enviarNotificacaoRecebimentoConcluido({
+      operadorUserId: input.userId,
+      loteCodigo,
+      notaFiscal: input.nf,
+      produto: prep.correlacao.descricao,
+      quantidadeKg: prep.qtdFisicaKg,
+      fornecedor: omieData.cRazao ?? null,
+      localidade: prep.localidadeNome,
+    });
+  } else if (concluidosOk.length > 0) {
+    void enviarNotificacaoRecebimentoConcluidoLote({
+      operadorUserId: input.userId,
+      notaFiscal: input.nf,
+      fornecedor: omieData.cRazao ?? null,
+      itens: concluidosOk.map(({ prep, loteCodigo }) => ({
+        loteCodigo,
+        produto: prep.correlacao.descricao,
+        quantidadeKg: prep.qtdFisicaKg,
+        localidade: prep.localidadeNome,
+      })),
+    });
+  }
+
+  const resumo = {
+    recebidos: resultados.filter((r) => r.status === 'provisorio').length,
+    aguardandoAprovacao: resultados.filter((r) => r.status === 'aguardando_aprovacao').length,
+    pendentesOmie: resultados.filter((r) => r.status === 'pendente_q2p').length,
+    falhas: resultados.filter((r) => r.status === 'falha_acxe').length,
+    jaRecebidos: resultados.filter((r) => r.status === 'ja_recebido').length,
+  };
+
+  return { nf: input.nf, itens: resultados, resumo };
+}
+
+/**
+ * Caminho limpo de UM produto (T009): dual OMIE → lote provisório + movimentação.
+ * É a lógica single-item de sempre, parametrizada por item — preserva opId
+ * determinístico, recuperação de pendência Q2P e o backstop 23505.
+ * Nunca lança para falha de OMIE: devolve o desfecho no resultado (Portão 2).
+ */
+async function processarItemLimpo(
+  db: ReturnType<typeof getDb>,
+  input: ProcessarRecebimentoInput,
+  prep: ItemPreparado,
+): Promise<ItemRecebimentoResult> {
+  const { agregado, correlacao, valorItemBrl, qtdFisicaKg } = prep;
+  const base: Pick<ItemRecebimentoResult, 'produtoCodigoAcxe' | 'produto'> = {
+    produtoCodigoAcxe: agregado.nCodProd,
+    produto: agregado.xProd,
+  };
+
+  // STK-01b: deterministico por (NF, empresa, PRODUTO, tentativa) — concorrentes
+  // colidem no mesmo cod_int_ajuste e a recuperacao 1035 deduplica no OMIE.
+  const tentativa = await contarTentativasAnteriores(db, input.nf, input.cnpj, agregado.nCodProd);
   const opId = opIdDeterministicoRecebimento({
     nfNormalizada: input.nf,
     cnpj: input.cnpj,
     codigoProdutoAcxe: correlacao.codigoProdutoAcxe,
     tentativa,
   });
+
   let idACXE: { idMovest: string; idAjuste: string };
   let idQ2P: { idMovest: string; idAjuste: string } | null = null;
   let pendenciaQ2P: { erro: OmieAjusteError } | null = null;
   try {
     const dualRes = await executarAjusteOmieDual({
       opId,
-      codigoLocalEstoqueAcxeOrigem: omieData.codigoLocalEstoque,
-      codigoLocalEstoqueAcxeDestino: corr.codigoLocalEstoqueAcxe,
-      codigoLocalEstoqueQ2p: corr.codigoLocalEstoqueQ2p,
+      codigoLocalEstoqueAcxeOrigem: agregado.codigoLocalEstoque,
+      codigoLocalEstoqueAcxeDestino: prep.correlacaoLocal.codigoLocalEstoqueAcxe,
+      codigoLocalEstoqueQ2p: prep.correlacaoLocal.codigoLocalEstoqueQ2p,
       codigoProdutoAcxe: correlacao.codigoProdutoAcxe,
       codigoProdutoQ2p: correlacao.codigoProdutoQ2p,
       quantidadeKg: qtdFisicaKg,
-      valorUnitarioAcxe: calcularValorUnitarioAcxe(omieData.vNF, qtdNfKg),
-      valorUnitarioQ2p: calcularValorUnitarioQ2p(omieData.vNF, qtdNfKg),
+      valorUnitarioAcxe: calcularValorUnitarioAcxe(valorItemBrl, agregado.qtdNfKg),
+      valorUnitarioQ2p: calcularValorUnitarioQ2p(valorItemBrl, agregado.qtdNfKg),
       notaFiscal: input.nf,
       observacaoSufixo: 'sem divergências',
     });
     idACXE = dualRes.idACXE;
     idQ2P = dualRes.idQ2P;
   } catch (err) {
-    // ACXE falha: nada foi escrito em lugar nenhum, propaga e operador retenta limpo.
+    // ACXE falha: nada foi escrito para este item — desfecho falha_acxe, os
+    // demais itens da NF seguem (re-submeter completa só os faltantes).
     if (err instanceof OmieAjusteError && err.lado === 'acxe') {
-      throw err;
+      logger.error({ nf: input.nf, produto: agregado.nCodProd, err: err.message }, 'Item falhou no ajuste ACXE');
+      return { ...base, status: 'falha_acxe', mensagemErro: err.message };
     }
     // Q2P falha apos ACXE ok: temos idACXE no erro, persistiremos movimentacao parcial.
     if (err instanceof OmieAjusteError && err.lado === 'q2p' && err.idACXE) {
@@ -570,130 +931,125 @@ export async function processarRecebimento(
   }
 
   // Persistir lote + movimentacao em uma transacao (pode ser completa ou parcial)
-  const resultado = await db.transaction(async (tx) => {
-    const codigo = await proximoCodigoLote(tx, 'L');
-    const [loteCriado] = await tx
-      .insert(lote)
-      .values({
-        codigo,
-        produtoCodigoAcxe: correlacao.codigoProdutoAcxe,
-        produtoCodigoQ2p: correlacao.codigoProdutoQ2p,
-        fornecedorNome: omieData.cRazao,
-        quantidadeFisicaKg: String(qtdFisicaKg),
-        quantidadeFiscalKg: String(qtdNfKg),
-        custoBrlKg: omieData.vUnCom > 0 ? String(omieData.vUnCom) : null,
-        valorTotalNfBrl: omieData.vNF > 0 ? String(omieData.vNF) : null,
-        codigoLocalEstoqueOrigemAcxe: omieData.codigoLocalEstoque,
-        status: 'provisorio',
-        estagioTransito: null,
-        localidadeId: input.localidadeId,
-        cnpj: input.cnpj === 'acxe' ? 'Acxe Matriz' : 'Q2P Matriz',
-        notaFiscal: input.nf,
-        manual: false,
-        dtEntrada: new Date().toISOString().slice(0, 10),
-      })
-      .returning();
+  let resultado: { loteId: string; loteCodigo: string; movimentacaoId: string };
+  try {
+    resultado = await db.transaction(async (tx) => {
+      const codigo = await proximoCodigoLote(tx, 'L');
+      const [loteCriado] = await tx
+        .insert(lote)
+        .values({
+          codigo,
+          produtoCodigoAcxe: correlacao.codigoProdutoAcxe,
+          produtoCodigoQ2p: correlacao.codigoProdutoQ2p,
+          fornecedorNome: prep.fornecedorNome,
+          quantidadeFisicaKg: String(qtdFisicaKg),
+          quantidadeFiscalKg: String(agregado.qtdNfKg),
+          custoBrlKg: agregado.vUnCom > 0 ? String(agregado.vUnCom) : null,
+          // Feature 013 (D3): valor rateado DESTE produto (com tributos) — para NF
+          // de item unico continua igual ao vNF (rateio de 1 = total).
+          valorTotalNfBrl: valorItemBrl > 0 ? String(valorItemBrl) : null,
+          codigoLocalEstoqueOrigemAcxe: agregado.codigoLocalEstoque,
+          status: 'provisorio',
+          estagioTransito: null,
+          localidadeId: prep.input.localidadeId,
+          cnpj: input.cnpj === 'acxe' ? 'Acxe Matriz' : 'Q2P Matriz',
+          notaFiscal: input.nf,
+          manual: false,
+          dtEntrada: new Date().toISOString().slice(0, 10),
+        })
+        .returning();
 
-    const [movCriada] = await tx
-      .insert(movimentacao)
-      .values({
-        notaFiscal: input.nf,
-        tipoMovimento: 'entrada_nf',
-        subtipo: inferirSubtipoEntrada(omieData),
-        loteId: loteCriado!.id,
-        // STK-09: empresa participa da chave de idempotencia (migration 0044)
-        empresa: input.cnpj,
-        quantidadeKg: String(qtdFisicaKg),
-        mvAcxe: 1,
-        dtAcxe: new Date(),
-        idMovestAcxe: idACXE.idMovest,
-        idAjusteAcxe: idACXE.idAjuste,
-        idUserAcxe: input.userId,
-        mvQ2p: pendenciaQ2P ? null : 1,
-        dtQ2p: pendenciaQ2P ? null : new Date(),
-        idMovestQ2p: idQ2P?.idMovest ?? null,
-        idAjusteQ2p: idQ2P?.idAjuste ?? null,
-        idUserQ2p: pendenciaQ2P ? null : input.userId,
-        observacoes: input.observacoes ?? null,
-        opId,
-        statusOmie: pendenciaQ2P ? 'pendente_q2p' : 'concluida',
-        tentativasQ2p: pendenciaQ2P ? 1 : 0,
-        ultimoErroOmie: pendenciaQ2P
-          ? {
-              lado: 'q2p',
-              mensagem: (pendenciaQ2P.erro.originalError as Error)?.message ?? 'erro desconhecido',
-              timestamp: new Date().toISOString(),
-            }
-          : null,
-      })
-      .returning();
+      const [movCriada] = await tx
+        .insert(movimentacao)
+        .values({
+          notaFiscal: input.nf,
+          tipoMovimento: 'entrada_nf',
+          subtipo: inferirSubtipoPorNumeroNf(input.nf),
+          loteId: loteCriado!.id,
+          // STK-09 + feature 013: empresa E produto participam da chave de
+          // idempotencia (migrations 0044 + 0046).
+          empresa: input.cnpj,
+          produtoCodigoAcxe: correlacao.codigoProdutoAcxe,
+          produtoCodigoQ2p: correlacao.codigoProdutoQ2p,
+          quantidadeKg: String(qtdFisicaKg),
+          mvAcxe: 1,
+          dtAcxe: new Date(),
+          idMovestAcxe: idACXE.idMovest,
+          idAjusteAcxe: idACXE.idAjuste,
+          idUserAcxe: input.userId,
+          mvQ2p: pendenciaQ2P ? null : 1,
+          dtQ2p: pendenciaQ2P ? null : new Date(),
+          idMovestQ2p: idQ2P?.idMovest ?? null,
+          idAjusteQ2p: idQ2P?.idAjuste ?? null,
+          idUserQ2p: pendenciaQ2P ? null : input.userId,
+          observacoes: prep.input.observacoes ?? null,
+          opId,
+          statusOmie: pendenciaQ2P ? 'pendente_q2p' : 'concluida',
+          tentativasQ2p: pendenciaQ2P ? 1 : 0,
+          ultimoErroOmie: pendenciaQ2P
+            ? {
+                lado: 'q2p',
+                mensagem: (pendenciaQ2P.erro.originalError as Error)?.message ?? 'erro desconhecido',
+                timestamp: new Date().toISOString(),
+              }
+            : null,
+        })
+        .returning();
 
-    return { loteId: loteCriado!.id, loteCodigo: loteCriado!.codigo, movimentacaoId: movCriada!.id };
-  }).catch((err: unknown) => {
+      return { loteId: loteCriado!.id, loteCodigo: loteCriado!.codigo, movimentacaoId: movCriada!.id };
+    });
+  } catch (err: unknown) {
     // STK-01b: concorrente perdeu a corrida no indice de idempotencia — o OMIE ja
-    // foi deduplicado via cod_int_ajuste identico; reporta como NF ja processada.
+    // foi deduplicado via cod_int_ajuste identico; o produto ja esta recebido.
     if (isViolacaoIdempotenciaNf(err)) {
-      throw new NotaFiscalJaProcessadaError(input.nf);
+      return { ...base, status: 'ja_recebido' };
     }
     throw err;
-  });
+  }
 
-  // Se pendente, lanca erro enriquecido para a rota retornar 502 estruturado.
-  // O operador tem 1 retentativa via endpoint /operacoes-pendentes/:id/retentar.
   if (pendenciaQ2P) {
-    // Notifica admin/gestor fora do caminho critico (fire-and-forget)
+    // Notifica ops fora do caminho critico; o item fica recuperavel no painel de
+    // movimentacoes pendentes (retry por movimentacao). Os DEMAIS itens seguem.
     void enviarAlertaPendenciaOmie({
       movimentacaoId: resultado.movimentacaoId,
       opId,
       notaFiscal: input.nf,
       ladoPendente: 'q2p',
       mensagemErro: (pendenciaQ2P.erro.originalError as Error)?.message ?? 'erro desconhecido',
-      // 1ª tentativa acabou de falhar (tentativas_q2p=1 na movimentação); retries
-      // subsequentes notificam via operacoes-pendentes com o contador real (EML-19).
       tentativas: 1,
     });
-    throw new OmieAjusteError('q2p', pendenciaQ2P.erro.originalError, {
-      idACXE,
-      opId,
+    return {
+      ...base,
+      status: 'pendente_q2p',
+      loteId: resultado.loteId,
+      loteCodigo: resultado.loteCodigo,
       movimentacaoId: resultado.movimentacaoId,
-      recoverable: true,
-      tentativasRestantes: 1,
-    });
+      omie: { acxe: idACXE },
+      mensagemErro: (pendenciaQ2P.erro.originalError as Error)?.message ?? 'erro desconhecido',
+    };
   }
 
-  // Recebimento limpo (sem divergencia, ambos os lados OMIE ok): confirma para
-  // operador + gestores + Comex fora do caminho critico (fire-and-forget).
-  void enviarNotificacaoRecebimentoConcluido({
-    operadorUserId: input.userId,
-    loteCodigo: resultado.loteCodigo,
-    notaFiscal: input.nf,
-    produto: correlacao.descricao,
-    quantidadeKg: qtdFisicaKg,
-    fornecedor: omieData.cRazao ?? null,
-    localidade: loc.nome,
-  });
-
   return {
+    ...base,
+    status: 'provisorio',
     loteId: resultado.loteId,
     loteCodigo: resultado.loteCodigo,
-    status: 'provisorio',
     movimentacaoId: resultado.movimentacaoId,
     omie: { acxe: idACXE, q2p: idQ2P! },
   };
 }
 
-async function processarRecebimentoComDivergencia(args: {
-  input: ProcessarRecebimentoInput;
-  omieData: ConsultarNFResponse;
-  qtdNfKg: number;
-  qtdFisicaKg: number;
-  deltaKg: number;
-  tipoDivergencia: 'faltando' | 'varredura';
-  localidadeCodigoQ2p: number;
-  correlacao: Awaited<ReturnType<typeof getCorrelacao>>;
-}): Promise<ProcessarRecebimentoResult> {
-  const db = getDb();
-  const { input, omieData, qtdNfKg, qtdFisicaKg, deltaKg, tipoDivergencia, correlacao } = args;
+/**
+ * Caminho divergente de UM produto: lote aguardando_aprovacao + aprovacao
+ * (recebimento_divergencia) — NÃO toca OMIE (o dual acontece na aprovação do
+ * gestor, por item). A notificação é consolidada pelo caller (FR-015).
+ */
+async function processarItemComDivergencia(
+  db: ReturnType<typeof getDb>,
+  input: ProcessarRecebimentoInput,
+  prep: ItemPreparado,
+): Promise<ItemRecebimentoResult> {
+  const { agregado, correlacao, valorItemBrl, qtdFisicaKg, deltaKg } = prep;
 
   const resultado = await db.transaction(async (tx) => {
     const codigo = await proximoCodigoLote(tx, 'L');
@@ -703,14 +1059,16 @@ async function processarRecebimentoComDivergencia(args: {
         codigo,
         produtoCodigoAcxe: correlacao.codigoProdutoAcxe,
         produtoCodigoQ2p: correlacao.codigoProdutoQ2p,
-        fornecedorNome: omieData.cRazao,
+        fornecedorNome: prep.fornecedorNome,
         quantidadeFisicaKg: String(qtdFisicaKg),
-        quantidadeFiscalKg: String(qtdNfKg),
-        custoBrlKg: omieData.vUnCom > 0 ? String(omieData.vUnCom) : null,
-        valorTotalNfBrl: omieData.vNF > 0 ? String(omieData.vNF) : null,
-        codigoLocalEstoqueOrigemAcxe: omieData.codigoLocalEstoque,
+        quantidadeFiscalKg: String(agregado.qtdNfKg),
+        custoBrlKg: agregado.vUnCom > 0 ? String(agregado.vUnCom) : null,
+        // Feature 013 (D3): valor rateado do produto — a aprovação recomputa o
+        // valor/kg a partir de valor_total_nf_brl / quantidade_fiscal_kg.
+        valorTotalNfBrl: valorItemBrl > 0 ? String(valorItemBrl) : null,
+        codigoLocalEstoqueOrigemAcxe: agregado.codigoLocalEstoque,
         status: 'aguardando_aprovacao',
-        localidadeId: input.localidadeId,
+        localidadeId: prep.input.localidadeId,
         cnpj: input.cnpj === 'acxe' ? 'Acxe Matriz' : 'Q2P Matriz',
         notaFiscal: input.nf,
         manual: false,
@@ -724,10 +1082,10 @@ async function processarRecebimentoComDivergencia(args: {
         loteId: loteCriado!.id,
         precisaNivel: 'gestor',
         tipoAprovacao: 'recebimento_divergencia',
-        quantidadePrevistaKg: String(qtdNfKg),
+        quantidadePrevistaKg: String(agregado.qtdNfKg),
         quantidadeRecebidaKg: String(qtdFisicaKg),
-        tipoDivergencia,
-        observacoes: input.observacoes ?? null,
+        tipoDivergencia: prep.input.tipoDivergencia!,
+        observacoes: prep.input.observacoes ?? null,
         lancadoPor: input.userId,
       })
       .returning();
@@ -735,24 +1093,15 @@ async function processarRecebimentoComDivergencia(args: {
     return { loteId: loteCriado!.id, loteCodigo: loteCriado!.codigo, aprovacaoId: aprovCriada!.id };
   });
 
-  // T062: notificar gestor sobre nova pendencia (fora da transacao — email nao bloqueia)
-  void enviarAlertaAprovacaoPendente({
-    aprovacaoId: resultado.aprovacaoId,
-    tipoAprovacao: 'recebimento_divergencia',
-    nivel: 'gestor',
-    loteCodigo: resultado.loteCodigo,
-    produto: correlacao.descricao,
-    quantidadeKg: qtdFisicaKg,
-    detalhes: `Divergência ${tipoDivergencia} de ${Math.abs(deltaKg).toFixed(3)} kg — ${input.observacoes ?? ''}`,
-  });
-
   return {
+    produtoCodigoAcxe: agregado.nCodProd,
+    produto: agregado.xProd,
+    status: 'aguardando_aprovacao',
     loteId: resultado.loteId,
     loteCodigo: resultado.loteCodigo,
-    status: 'aguardando_aprovacao',
     aprovacaoId: resultado.aprovacaoId,
     deltaKg,
-    tipoDivergencia,
+    tipoDivergencia: prep.input.tipoDivergencia,
   };
 }
 
@@ -892,6 +1241,8 @@ export async function transferirDiferencaAcxe(args: {
  * `$vUnCom_Total = ceil(($vNF / $qtd_recebida_api * 1.145) * 100) / 100`).
  * Equivale ao unitario BRL/kg da NF acrescido de markup interno de 14,5%
  * (impostos/serviços) arredondado para cima a 2 casas.
+ * Feature 013: em NF multi-item, `vNF` aqui é o valor RATEADO do produto — a
+ * fórmula por item é idêntica à do single-item (para N=1, rateio = vNF total).
  */
 export function calcularValorUnitarioQ2p(vNF: number, qtdNfKg: number): number {
   if (!Number.isFinite(vNF) || !Number.isFinite(qtdNfKg) || qtdNfKg <= 0) return 0;
@@ -903,6 +1254,7 @@ export function calcularValorUnitarioQ2p(vNF: number, qtdNfKg: number): number {
  * Correção sobre o legado: legado enviava `vUnCom` (valor base, sem tributos).
  * Agora enviamos `vNF/qtdNfKg` arredondado a 2 casas — auditoria mais fiel,
  * mesmo que OMIE em TRF/TRF acabe usando custo médio do estoque de origem.
+ * Feature 013: em NF multi-item, `vNF` é o valor rateado do produto.
  */
 export function calcularValorUnitarioAcxe(vNF: number, qtdNfKg: number): number {
   if (!Number.isFinite(vNF) || !Number.isFinite(qtdNfKg) || qtdNfKg <= 0) return 0;

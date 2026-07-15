@@ -59,8 +59,6 @@ vi.mock('@atlas/db', () => ({
 }));
 
 vi.mock('@atlas/integration-omie', () => ({
-  // Classe dummy: rotas/services importam o binding (STK-10); instanceof falso cai no handler seguinte.
-  NotaFiscalMultiItemError: class NotaFiscalMultiItemError extends Error {},
   consultarNF: vi.fn(),
   incluirAjusteEstoque: vi.fn(),
   isMockMode: () => true,
@@ -72,15 +70,19 @@ function nfProduto(): ConsultarNFResponse {
     nNF: 300,
     cChaveNFe: 'CHAVE',
     dEmi: '15/04/2026',
-    nCodProd: 4_452_881_285,
-    codigoLocalEstoque: '4498926337',
-    qCom: 25_000,
-    uCom: 'KG',
-    xProd: 'PEAD 5502',
-    vUnCom: 1.2,
     vNF: 30_000,
     nCodCli: 12345,
     cRazao: 'FORNECEDOR',
+    itens: [
+      {
+        nCodProd: 4_452_881_285,
+        codigoLocalEstoque: '4498926337',
+        qCom: 25_000,
+        uCom: 'KG',
+        xProd: 'PEAD 5502',
+        vUnCom: 1.2,
+      },
+    ],
   };
 }
 
@@ -130,9 +132,14 @@ describe('Validação de NF no recebimento — contratos (feature 012)', () => {
     const res = await request(app).post('/api/v1/stockbridge/recebimento').send({
       nf: '5212',
       cnpj: 'acxe',
-      quantidade_input: 25_000,
-      unidade_input: 'kg',
-      localidade_id: '00000000-0000-0000-0000-000000000100',
+      itens: [
+        {
+          produto_codigo_acxe: 4_452_881_285,
+          quantidade_input: 25_000,
+          unidade_input: 'kg',
+          localidade_id: '00000000-0000-0000-0000-000000000100',
+        },
+      ],
     });
     expect(res.status).toBe(422);
     expect(res.body.error.code).toBe('NF_CANCELADA');
