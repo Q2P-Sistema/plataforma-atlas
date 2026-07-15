@@ -1,7 +1,7 @@
 import { eq, sql, and, ne, desc, isNull } from 'drizzle-orm';
 import Decimal from 'decimal.js';
 import { getDb, createLogger } from '@atlas/core';
-import { movimentacao, lote, localidadeCorrelacao, aprovacao } from '@atlas/db';
+import { movimentacao, lote, localidade, localidadeCorrelacao, aprovacao } from '@atlas/db';
 import type { Perfil, StatusOmie, SubtipoMovimento } from '../types.js';
 import { COD_INT_AJUSTE_SUFIXO, buildCodIntAjuste } from '../types.js';
 import { incluirAjusteIdempotente } from './omie-idempotente.js';
@@ -14,8 +14,26 @@ import {
   resolverCodigoProdutoOmie,
 } from './omie-saida.service.js';
 import { consultarValorUnitarioProduto } from './aprovacao.service.js';
+import { resolverDescricaoProdutoAcxe } from './produto-descricao.js';
 
 const logger = createLogger('stockbridge:operacoes-pendentes');
+
+/**
+ * ACXEGDP-313: rótulo legível de uma localidade para mensagens de erro ao
+ * usuário — o UUID interno não identifica nada para o operador. Best-effort.
+ */
+async function labelLocalidade(db: ReturnType<typeof getDb>, localidadeId: string): Promise<string> {
+  try {
+    const [loc] = await db
+      .select({ codigo: localidade.codigo, nome: localidade.nome })
+      .from(localidade)
+      .where(eq(localidade.id, localidadeId))
+      .limit(1);
+    return loc ? `${loc.codigo} — ${loc.nome}` : 'não identificada';
+  } catch {
+    return 'não identificada';
+  }
+}
 
 /**
  * Limite de retentativas que o OPERADOR pode fazer no lado Q2P.
@@ -312,7 +330,9 @@ async function retentarQ2p(args: {
     .where(eq(localidadeCorrelacao.localidadeId, loteRow.localidadeId))
     .limit(1);
   if (!corr?.codigoLocalEstoqueQ2p) {
-    throw new Error(`Localidade ${loteRow.localidadeId} sem correlato Q2P`);
+    throw new Error(
+      `Local de estoque ${await labelLocalidade(db, loteRow.localidadeId)} sem correlato Q2P (lote ${loteRow.codigo})`,
+    );
   }
   if (!loteRow.produtoCodigoQ2p) {
     throw new Error(`Lote ${loteRow.codigo} sem produtoCodigoQ2p`);
@@ -715,8 +735,9 @@ async function retentarQ2pRetornoComodato(args: {
       'q2p',
     );
     if (vivo <= 0) {
+      const produtoLabel = await resolverDescricaoProdutoAcxe(db, Number(registro.produtoCodigoAcxe));
       throw new Error(
-        `Sem valor unitário disponível para a perna '${rotulo}' do retorno (produto ${registro.produtoCodigoAcxe}) — OMIE rejeita ajuste com valor 0`,
+        `Sem valor unitário disponível para a perna '${rotulo}' do retorno (produto ${produtoLabel}) — OMIE rejeita ajuste com valor 0`,
       );
     }
     return vivo;
@@ -836,7 +857,9 @@ async function retentarAcxeFaltando(args: {
     .where(eq(localidadeCorrelacao.localidadeId, loteRow.localidadeId))
     .limit(1);
   if (!corr?.codigoLocalEstoqueAcxe) {
-    throw new Error(`Localidade ${loteRow.localidadeId} sem correlato ACXE`);
+    throw new Error(
+      `Local de estoque ${await labelLocalidade(db, loteRow.localidadeId)} sem correlato ACXE (lote ${loteRow.codigo})`,
+    );
   }
 
   // Recupera tipoDivergencia da aprovacao mais recente do lote (status 'aprovada').

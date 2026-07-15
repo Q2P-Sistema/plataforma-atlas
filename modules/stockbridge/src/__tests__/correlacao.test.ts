@@ -44,6 +44,26 @@ describe('correlacao.service#getCorrelacao', () => {
     await expect(getCorrelacao(99_999, 4498926337)).rejects.toThrow(CorrelacaoNaoEncontradaError);
   });
 
+  it('mensagem de erro traz descrição do produto e local legível — nunca o código OMIE (ACXEGDP-313)', async () => {
+    const { getPool } = await import('@atlas/core');
+    const queryMock = vi
+      .fn()
+      // 1a chamada: correlacao nao encontrada
+      .mockResolvedValueOnce({ rows: [] })
+      // 2a chamada: enriquecimento com rotulos legiveis
+      .mockResolvedValueOnce({
+        rows: [{ produto_label: 'PP RAFIA CINZA', local_label: '11.1 — GALPÃO SJC' }],
+      });
+    vi.mocked(getPool).mockReturnValue({ query: queryMock } as never);
+
+    const err = (await getCorrelacao(4475057315, 4498926337).catch((e) => e)) as Error;
+    expect(err).toBeInstanceOf(CorrelacaoNaoEncontradaError);
+    expect(err.message).toContain('"PP RAFIA CINZA"');
+    expect(err.message).toContain('11.1 — GALPÃO SJC');
+    expect(err.message).not.toContain('4475057315');
+    expect(err.message).not.toContain('4498926337');
+  });
+
   it('match de descricao e case-sensitive (comportamento legado)', async () => {
     const { getPool } = await import('@atlas/core');
     const queryMock = vi.fn().mockResolvedValue({ rows: [] });

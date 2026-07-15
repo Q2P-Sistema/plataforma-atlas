@@ -465,7 +465,9 @@ export async function processarRecebimento(
     .where(and(eq(localidade.id, input.localidadeId), eq(localidade.ativo, true)))
     .limit(1);
   if (!loc) {
-    throw new Error(`Localidade ${input.localidadeId} não encontrada ou inativa`);
+    // ACXEGDP-313: sem UUID na mensagem — não identifica nada para o operador.
+    logger.warn({ localidadeId: input.localidadeId, nf: input.nf }, 'Localidade não encontrada ou inativa');
+    throw new Error('Local de estoque selecionado não encontrado ou inativo — atualize a página e tente novamente');
   }
 
   const [corr] = await db
