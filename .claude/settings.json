@@ -2,5 +2,10 @@
   "enabledPlugins": {
     "typescript-lsp@claude-plugins-official": true,
     "context7@claude-plugins-official": true
+  },
+  "permissions": {
+    "allow": [
+      "Bash(pnpm --filter @atlas/integrations-omie test)"
+    ]
   }
 }

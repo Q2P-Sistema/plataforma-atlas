@@ -1,0 +1,22 @@
+Mensagem para enviar à OrbitIA — resposta ao ponto em aberto do item 2.1
+(Relatório de Correções Round 3, F38)
+Formatação WhatsApp: *texto* = negrito
+
+========================================================================
+
+Oi, pessoal! Sobre o ponto em aberto que vocês descreveram no item 2.1 do
+relatório de correções (o `codigo_categoria` sem fonte de dado no sistema
+legado do Q2P):
+
+O valor a ser enviado é *fixo: 1.01.03* — não varia por produto nem por
+família. Não é necessário nenhum mapeamento via API "Listar Categorias".
+
+Podem usar esse código diretamente no payload de todos os pedidos de
+venda. Qualquer dúvida, é só chamar!
+
+========================================================================
+(Para referência interna, não incluir no envio)
+
+Verificado no espelho do OMIE (tbl_categorias_ACXE / tbl_categorias_Q2P):
+1.01.03 = "Clientes - Revenda de Mercadoria", categoria de receita,
+DRE nível 3 "Receita Bruta de Vendas". Idêntico nas duas filiais.

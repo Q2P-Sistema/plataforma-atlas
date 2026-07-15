@@ -1,0 +1,37 @@
+Mensagem de WhatsApp para envio junto com o relatório
+(crm-orbitia-relatorio-executivo-round2.pdf)
+Formatação WhatsApp: *texto* = negrito
+
+========================================================================
+VERSÃO PRINCIPAL
+========================================================================
+
+Oi, pessoal! Tudo bem?
+
+Concluímos a 2ª rodada de testes do CRM e preparei um relatório técnico
+detalhado com tudo o que encontramos — segue em anexo (PDF).
+
+Resumo rápido:
+• 49 pontos no total
+• Da 1ª rodada, 9 de 12 já foram corrigidos — valeu! ✅
+• Nesta rodada mapeamos 37 novos itens, organizados por tela e severidade
+
+Destaco 3 itens *críticos* que hoje impedem o uso em produção:
+1. Pedidos não chegam ao OMIE (o CRM mostra "enviado", mas não integra)
+2. Não dá pra cadastrar regras de comissão (fica tudo zerado)
+3. Cliente novo não sincroniza ao OMIE
+
+O relatório traz, item a item, o comportamento atual, o esperado e as pistas
+técnicas. Qualquer dúvida é só chamar, fico à disposição pra alinhar. Abraço!
+
+
+========================================================================
+VERSÃO CURTA (alternativa)
+========================================================================
+
+Oi, pessoal! Segue o relatório da 2ª rodada de testes do CRM (PDF em anexo) —
+49 pontos no total, organizados por tela e severidade.
+
+⚠️ Atenção pros 3 itens *críticos* que travam o uso em produção: pedidos que
+não chegam ao OMIE, comissão que não pode ser cadastrada e cliente novo que
+não sincroniza. Detalhes completos no documento. Qualquer dúvida, é só chamar!

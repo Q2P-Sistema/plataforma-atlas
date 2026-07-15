@@ -42,3 +42,6 @@ apps/web/dist/
 
 # Portainer deploy env (contains secrets)
 deploy/portainer/*.env
+
+# Documentos PDF não são versionados (fonte .md fica no repo; PDFs são gerados/recebidos)
+docs/**/*.pdf
