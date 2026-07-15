@@ -485,7 +485,7 @@ export async function processarRecebimento(
     correlacao = await getCorrelacao(omieData.nCodProd, corr.codigoLocalEstoqueAcxe);
   } catch (err) {
     if (err instanceof CorrelacaoNaoEncontradaError) {
-      await enviarAlertaProdutoSemCorrelato({
+      void enviarAlertaProdutoSemCorrelato({
         codigoProdutoAcxe: err.codigoProdutoAcxe,
         notaFiscal: input.nf,
         descricaoProduto: omieData.xProd,
@@ -646,6 +646,8 @@ export async function processarRecebimento(
       notaFiscal: input.nf,
       ladoPendente: 'q2p',
       mensagemErro: (pendenciaQ2P.erro.originalError as Error)?.message ?? 'erro desconhecido',
+      // 1ª tentativa acabou de falhar (tentativas_q2p=1 na movimentação); retries
+      // subsequentes notificam via operacoes-pendentes com o contador real (EML-19).
       tentativas: 1,
     });
     throw new OmieAjusteError('q2p', pendenciaQ2P.erro.originalError, {
@@ -732,7 +734,7 @@ async function processarRecebimentoComDivergencia(args: {
   });
 
   // T062: notificar gestor sobre nova pendencia (fora da transacao — email nao bloqueia)
-  await enviarAlertaAprovacaoPendente({
+  void enviarAlertaAprovacaoPendente({
     aprovacaoId: resultado.aprovacaoId,
     tipoAprovacao: 'recebimento_divergencia',
     nivel: 'gestor',

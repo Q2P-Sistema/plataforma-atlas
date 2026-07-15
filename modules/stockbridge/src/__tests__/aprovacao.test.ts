@@ -468,11 +468,14 @@ describe('aprovacao.service#rejeitar', () => {
       })) as never,
     );
     await rejeitar({ id: 'apr-1', usuarioId: 'u1', perfilUsuario: 'gestor', motivo: 'Motivo teste' });
-    expect(sendEmail).toHaveBeenCalledWith(
-      expect.objectContaining({
-        to: 'operador@test.local',
-        subject: expect.stringContaining('rejeitado'),
-      }),
+    // EML-20: notificação virou fire-and-forget (void) — aguarda flush dos microtasks
+    await vi.waitFor(() =>
+      expect(sendEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'operador@test.local',
+          subject: expect.stringContaining('rejeitado'),
+        }),
+      ),
     );
   });
 

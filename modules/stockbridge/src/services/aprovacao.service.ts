@@ -600,6 +600,8 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
       notaFiscal: notaFiscalParaEmail,
       ladoPendente: pendencia.tipo === 'pendente_q2p' ? 'q2p' : 'acxe-faltando',
       mensagemErro: pendencia.mensagemErro,
+      // 1ª tentativa acabou de falhar (tentativas_q2p=1 na movimentação); retries
+      // subsequentes notificam via operacoes-pendentes com o contador real (EML-19).
       tentativas: 1,
     });
   }
@@ -607,7 +609,7 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
   // Notifica operador fora da transacao (email nao bloqueia).
   // Comex entra em copia so quando e recebimento divergente concluido COM SUCESSO
   // (sem pendencia OMIE) — o estoque efetivamente entrou.
-  await enviarNotificacaoAprovacaoOperador({
+  void enviarNotificacaoAprovacaoOperador({
     operadorUserId: resultado.operadorId,
     aprovacaoId: input.id,
     tipoAprovacao: resultado.tipoAprovacao,
@@ -711,7 +713,7 @@ export async function rejeitar(input: RejeitarInput): Promise<{ id: string }> {
   logger.info({ aprovacaoId: input.id, perfilUsuario: input.perfilUsuario }, 'Aprovação rejeitada');
 
   // Notifica o operador que lancou a divergencia/saida (fora da transacao)
-  await enviarNotificacaoRejeicaoOperador({
+  void enviarNotificacaoRejeicaoOperador({
     operadorUserId: resultado.operadorId,
     aprovacaoId: input.id,
     loteId: resultado.loteId,
@@ -814,7 +816,7 @@ export async function resubmeter(input: ResubmeterInput): Promise<{ id: string; 
   const descricaoProduto = await resolverDescricaoProdutoAcxe(db, resultado.lote.produtoCodigoAcxe);
 
   // Notifica gestor/diretor da nova pendencia (fora da transacao — email nao bloqueia commit)
-  await enviarAlertaAprovacaoPendente({
+  void enviarAlertaAprovacaoPendente({
     aprovacaoId: resultado.novaAprovacao.id,
     tipoAprovacao: resultado.novaAprovacao.tipoAprovacao,
     nivel: resultado.novaAprovacao.precisaNivel,
@@ -1009,7 +1011,7 @@ async function aprovarEntradaNacional(
   );
 
   // Notifica operador fora da transacao
-  await enviarNotificacaoAprovacaoOperador({
+  void enviarNotificacaoAprovacaoOperador({
     operadorUserId: ap.lancadoPor,
     aprovacaoId: ap.id,
     tipoAprovacao: ap.tipoAprovacao,
@@ -1345,7 +1347,7 @@ async function aprovarSaidaManual(
   );
 
   // Notifica operador (fora da tx)
-  await enviarNotificacaoAprovacaoOperador({
+  void enviarNotificacaoAprovacaoOperador({
     operadorUserId: ap.lancadoPor,
     aprovacaoId: ap.id,
     tipoAprovacao: ap.tipoAprovacao,

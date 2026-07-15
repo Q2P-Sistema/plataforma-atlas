@@ -310,7 +310,7 @@ export async function registrarSaidaManual(
   // EML-05: o e-mail mostrava só o número do SKU cru ("Item: SKU 819 @ G01 — 819").
   // Resolve a descrição real e evita duplicar o SKU no rótulo.
   const descricaoProduto = await resolverDescricaoProdutoAcxe(db, input.produtoCodigoAcxe);
-  await enviarAlertaAprovacaoPendente({
+  void enviarAlertaAprovacaoPendente({
     aprovacaoId: resultado.aprovacaoId,
     tipoAprovacao,
     nivel,
@@ -648,7 +648,7 @@ export async function registrarRetornoComodato(
 
   // EML-05: descrição real do produto recebido no lugar do SKU cru.
   const descricaoRecebido = await resolverDescricaoProdutoAcxe(db, input.produtoCodigoAcxeRecebido);
-  await enviarAlertaAprovacaoPendente({
+  void enviarAlertaAprovacaoPendente({
     aprovacaoId: resultado.aprovacaoId,
     tipoAprovacao: 'retorno_comodato',
     nivel: 'gestor',

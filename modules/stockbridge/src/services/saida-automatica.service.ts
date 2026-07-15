@@ -162,7 +162,7 @@ export async function processarSaidaAutomatica(
 
   // 4. Notificacao fora da transacao (email nao bloqueia)
   if (debitoCruzado) {
-    await enviarAlertaDebitoCruzado({
+    void enviarAlertaDebitoCruzado({
       notaFiscal: input.nf,
       cnpjEmissor: input.cnpjEmissor,
       cnpjFisico: cnpjFisico!,
