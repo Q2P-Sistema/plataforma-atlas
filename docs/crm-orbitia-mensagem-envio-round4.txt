@@ -1,0 +1,37 @@
+Mensagem de WhatsApp para envio junto com o relatório
+(crm-orbitia-devolutiva-round4.pdf)
+Formatação WhatsApp: *texto* = negrito
+
+========================================================================
+
+Oi, pessoal! Concluímos a validação da Round 3 de vocês — segue em anexo
+(PDF).
+
+Resumo rápido:
+• Dos 15 itens do relatório, 10 corresponderam ao critério descrito
+• 5 não corresponderam, ou só em parte — detalhes no documento
+• 6 pontos novos observados durante os testes
+
+Dois destaques que valem atenção antes dos próximos passos:
+1. O cadastro de cliente (item 2.4) segue sem sincronizar com o OMIE em
+   nenhuma das 6 tentativas testadas — inclusive com uma delas retornando
+   sucesso (201) para um registro que não existe nas consultas seguintes
+2. Na Central de Logs de Erro (nova tela), aparece um registro técnico
+   que pode ajudar a fechar o item do pedido: 'SourceProduto' object has
+   no attribute 'codigo_categoria', do job sync_daemon/Produtos
+
+O relatório traz, item a item, o critério e o que foi observado, com a
+evidência coletada. Qualquer dúvida é só chamar!
+
+
+========================================================================
+VERSÃO CURTA (alternativa)
+========================================================================
+
+Oi, pessoal! Segue o relatório da validação da Round 3 (PDF em anexo) —
+15 itens do relatório de correções + 2 funcionalidades novas, com
+critério e evidência item a item.
+
+10 corresponderam ao descrito, 5 não corresponderam (ou só em parte), e
+6 pontos novos foram observados. Detalhes completos no documento.
+Qualquer dúvida, é só chamar!
