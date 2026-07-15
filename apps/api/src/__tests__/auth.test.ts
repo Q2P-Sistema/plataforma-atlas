@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
@@ -45,6 +45,9 @@ const mockUser = {
 
 // Session store reserved for future test expansions
 const _mockSessionStore: Record<string, any> = {}; void _mockSessionStore;
+
+// SEG-09: estado do stub de Redis (contador de falhas por IP+conta do login)
+const redisStore: Record<string, string> = {};
 
 vi.mock('@atlas/core', () => ({
   // PR #72 moveu o envelope para @atlas/core — o mock precisa expor as funcoes
@@ -127,8 +130,27 @@ vi.mock('@atlas/core', () => ({
   getPool: () => ({
     query: vi.fn().mockResolvedValue({ rows: [{ '?column?': 1 }] }),
   }),
+  // SEG-09: o login agora usa Redis pro contador por (IP, conta) — stub
+  // stateful compartilhado entre requests do mesmo teste (limpo em beforeEach).
   getRedis: () => ({
     ping: vi.fn().mockResolvedValue('PONG'),
+    get: vi.fn((key: string) => Promise.resolve(redisStore[key] ?? null)),
+    setex: vi.fn((key: string, _ttl: number, value: string) => {
+      redisStore[key] = value;
+      return Promise.resolve('OK');
+    }),
+    del: vi.fn((...keys: string[]) => {
+      let n = 0;
+      for (const k of keys) if (k in redisStore) { delete redisStore[k]; n++; }
+      return Promise.resolve(n);
+    }),
+    incr: vi.fn((key: string) => {
+      const n = Number(redisStore[key] ?? 0) + 1;
+      redisStore[key] = String(n);
+      return Promise.resolve(n);
+    }),
+    expire: vi.fn(() => Promise.resolve(1)),
+    ttl: vi.fn(() => Promise.resolve(1800)),
   }),
   createLogger: () => ({
     info: vi.fn(),
@@ -217,6 +239,11 @@ describe('Auth Routes', () => {
   });
 
   describe('POST /api/v1/auth/login', () => {
+    beforeEach(() => {
+      // SEG-09: zera o contador de falhas por (IP, conta) entre testes
+      for (const k of Object.keys(redisStore)) delete redisStore[k];
+    });
+
     it('returns 200 + cookie with correct credentials', async () => {
       const res = await request(app)
         .post('/api/v1/auth/login')
@@ -250,6 +277,49 @@ describe('Auth Routes', () => {
 
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    });
+
+    describe('SEG-09 — lockout por (IP, conta), não por conta', () => {
+      it('6ª tentativa do mesmo IP+conta → 429, mas a vítima loga de outro IP', async () => {
+        for (let i = 0; i < 5; i++) {
+          const r = await request(app)
+            .post('/api/v1/auth/login')
+            .set('X-Forwarded-For', '10.0.0.66')
+            .send({ email: 'admin@test.com', password: 'wrong-password' });
+          expect(r.status).toBe(401);
+        }
+        // atacante bloqueado — mesmo com a senha CERTA (par IP+conta travado)
+        const bloqueado = await request(app)
+          .post('/api/v1/auth/login')
+          .set('X-Forwarded-For', '10.0.0.66')
+          .send({ email: 'admin@test.com', password: 'correct-password' });
+        expect(bloqueado.status).toBe(429);
+        expect(bloqueado.body.error.code).toBe('TOO_MANY_ATTEMPTS');
+
+        // a CONTA não foi trancada: a vítima loga normalmente de outro IP —
+        // este é exatamente o DoS direcionado que o lockout antigo permitia
+        const vitima = await request(app)
+          .post('/api/v1/auth/login')
+          .set('X-Forwarded-For', '187.55.1.2')
+          .send({ email: 'admin@test.com', password: 'correct-password' });
+        expect(vitima.status).toBe(200);
+      });
+
+      it('login com sucesso zera o contador do par IP+conta', async () => {
+        for (let i = 0; i < 4; i++) {
+          await request(app)
+            .post('/api/v1/auth/login')
+            .set('X-Forwarded-For', '10.0.0.77')
+            .send({ email: 'admin@test.com', password: 'wrong-password' });
+        }
+        expect(redisStore['atlas:auth:login-fail:10.0.0.77:admin@test.com']).toBe('4');
+        const ok = await request(app)
+          .post('/api/v1/auth/login')
+          .set('X-Forwarded-For', '10.0.0.77')
+          .send({ email: 'admin@test.com', password: 'correct-password' });
+        expect(ok.status).toBe(200);
+        expect(redisStore['atlas:auth:login-fail:10.0.0.77:admin@test.com']).toBeUndefined();
+      });
     });
   });
 
