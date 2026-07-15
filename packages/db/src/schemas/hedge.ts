@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   pgSchema,
   uuid,
@@ -178,6 +179,11 @@ export const alerta = hedgeSchema.table(
   (table) => [
     index('alerta_severidade_idx').on(table.severidade),
     index('alerta_lido_idx').on(table.lido),
+    // MOD-05 (ACXEGDP-276, migration 0045): no maximo 1 alerta ABERTO por
+    // bucket+tipo — gerarAlertas usa ON CONFLICT DO UPDATE neste indice.
+    uniqueIndex('alerta_uq_bucket_tipo_aberto')
+      .on(table.bucketId, table.tipo)
+      .where(sql`resolvido = false`),
   ],
 );
 
