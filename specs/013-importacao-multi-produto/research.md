@@ -38,7 +38,7 @@ Depois, por item, aplica-se **a mesma fórmula de hoje**, trocando `vNF`→`valo
 
 **Reconciliação de resíduo**: soma de `valorItem_i` arredondados pode diferir de `vNF` por centavos. Para garantir `Σ valorItem_i = vNF` exato, o último item (ou o de maior peso) recebe o resíduo. Sem isso, o custo total lançado divergiria do total da NF (SC-003).
 
-**Alternativa rejeitada**: usar `det[i].vUnCom` cru (sem tributos) por item. Rejeitada porque **reduziria a base de custo** vs. o praticado hoje (que embute tributos via `vNF`), criando inconsistência de CMC/custo médio entre NF single e multi-item. Registrada como premissa reversível na spec — se o negócio preferir custo sem tributos, troca-se a base, mas o default preserva o histórico.
+**Alternativa rejeitada**: usar `det[i].vUnCom` cru (sem tributos) por item. Rejeitada porque **reduziria a base de custo** vs. o praticado hoje (que embute tributos via `vNF`), criando inconsistência de CMC/custo médio entre NF single e multi-item. **Confirmada com o negócio em 15/07: base com tributos, como hoje** — decisão travada, não mais reversível sem novo aval.
 
 ---
 

@@ -93,4 +93,4 @@ apps/web/src/pages/stockbridge/operador/
 Notas de design (não são violações):
 - **Migration 0046** (índice de idempotência por produto) é necessária porque o índice atual (0044) limita `entrada_nf` a uma por (NF, empresa); é split, não alteração destrutiva, e a chave nova é superconjunto da antiga (ver [data-model.md](./data-model.md) §1).
 - **Contrato de `POST /recebimento`** passa a `itens[]` (unificado single/multi). Seguro pré-produção (Princípio V); a suíte single-item é a guarda de regressão do caso N=1.
-- **Fórmula de rateio** e **base de custo** (com vs. sem tributos) documentadas como premissa reversível em [research.md](./research.md) §D2 — default preserva a base histórica (com tributos).
+- **Base de custo** do rateio **confirmada em 15/07: com tributos, como hoje** (ver [research.md](./research.md) §D2). A fórmula de arredondamento/reconciliação de resíduo fica para a implementação.
