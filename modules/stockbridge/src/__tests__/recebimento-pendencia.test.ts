@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { processarRecebimento, OmieAjusteError } from '../services/recebimento.service.js';
+import { processarRecebimento } from '../services/recebimento.service.js';
 
-// Spies para controlar OMIE chamada por chamada
+// Feature 013: o recebimento processa 1..N itens por NF; falha de OMIE em um item
+// vira DESFECHO daquele item (pendente_q2p | falha_acxe), não erro do lote. Estes
+// testes fixam, para N=1, exatamente a semântica de persistência/OMIE de sempre
+// (guarda de regressão do single-item) — só o envelope do resultado mudou.
+
 const incluirSpy = vi.fn();
 const listarSpy = vi.fn();
 const consultarNFSpy = vi.fn();
@@ -37,8 +41,6 @@ vi.mock('@atlas/db', () => ({
 }));
 
 vi.mock('@atlas/integration-omie', () => ({
-  // Classe dummy: rotas/services importam o binding (STK-10); instanceof falso cai no handler seguinte.
-  NotaFiscalMultiItemError: class NotaFiscalMultiItemError extends Error {},
   incluirAjusteEstoque: (...args: unknown[]) => incluirSpy(...args),
   listarAjusteEstoque: (...args: unknown[]) => listarSpy(...args),
   consultarNF: (...args: unknown[]) => consultarNFSpy(...args),
@@ -48,115 +50,128 @@ vi.mock('@atlas/integration-omie', () => ({
 interface ChainMock {
   select: ReturnType<typeof vi.fn>;
   from: ReturnType<typeof vi.fn>;
-  where: ReturnType<typeof vi.fn>;
-  limit: ReturnType<typeof vi.fn>;
   insert: ReturnType<typeof vi.fn>;
   values: ReturnType<typeof vi.fn>;
   returning: ReturnType<typeof vi.fn>;
-  update: ReturnType<typeof vi.fn>;
-  set: ReturnType<typeof vi.fn>;
   execute: ReturnType<typeof vi.fn>;
   transaction: (fn: (tx: ChainMock) => Promise<unknown>) => Promise<unknown>;
 }
 
+/**
+ * Chain mock por-tabela: from(tabela) devolve um "leaf" que resolve as rows
+ * daquela tabela tanto em .limit() quanto por await direto (thenable) — o
+ * serviço tem consultas awaited em pontos diferentes (batch de localidades usa
+ * where sem limit; idempotência usa limit(1); Promise.all mistura as duas).
+ */
 function criarChain(rowsByTable: Map<{ __id: string }, unknown[]>): ChainMock {
-  let currentRows: unknown[] = [];
   const chain: ChainMock = {
-    select: vi.fn().mockReturnThis() as never,
+    select: vi.fn(() => chain) as never,
     from: vi.fn((table: { __id: string }) => {
-      currentRows = rowsByTable.get(table) ?? [];
-      return chain;
+      const rows = rowsByTable.get(table) ?? [];
+      const leaf = {
+        where: vi.fn(() => leaf),
+        innerJoin: vi.fn(() => leaf),
+        limit: vi.fn(() => Promise.resolve(rows)),
+        then: (res?: (v: unknown[]) => unknown, rej?: (e: unknown) => unknown) =>
+          Promise.resolve(rows).then(res, rej),
+      };
+      return leaf;
     }) as never,
-    where: vi.fn().mockReturnThis() as never,
-    limit: vi.fn(() => Promise.resolve(currentRows)) as never,
     insert: vi.fn().mockReturnThis() as never,
     values: vi.fn().mockReturnThis() as never,
     returning: vi.fn() as never,
-    update: vi.fn().mockReturnThis() as never,
-    set: vi.fn().mockReturnThis() as never,
     execute: vi.fn().mockResolvedValue({ rows: [{ next_val: '42' }] }) as never,
     transaction: async (fn) => fn(chain),
   };
   return chain;
 }
 
-const inputBase = {
-  nf: '300',
-  cnpj: 'acxe' as const,
-  quantidadeInput: 25_000,
-  unidadeInput: 'kg' as const,
-  localidadeId: '00000000-0000-0000-0000-000000000100',
-  userId: '00000000-0000-0000-0000-000000000001',
-};
+const LOCALIDADE_ID = '00000000-0000-0000-0000-000000000100';
+
+function inputBase(nf: string) {
+  return {
+    nf,
+    cnpj: 'acxe' as const,
+    itens: [
+      {
+        produtoCodigoAcxe: 1001,
+        quantidadeInput: 25_000,
+        unidadeInput: 'kg' as const,
+        localidadeId: LOCALIDADE_ID,
+      },
+    ],
+    userId: '00000000-0000-0000-0000-000000000001',
+  };
+}
+
+function nfOmie(nNF: string) {
+  return {
+    nNF, cChaveNFe: 'C', dEmi: '15/04/2026',
+    vNF: 30_000, nCodCli: 1, cRazao: 'FORN MOCK',
+    itens: [{
+      nCodProd: 1001, codigoLocalEstoque: '999',
+      qCom: 25_000, uCom: 'KG', xProd: 'PEAD', vUnCom: 1.2,
+    }],
+  };
+}
+
+function rowsPadrao(dbMod: Record<string, { __id: string }>) {
+  return new Map<{ __id: string }, unknown[]>([
+    [dbMod.movimentacao as never, []], // idempotencia: produto nao recebido
+    [dbMod.lote as never, []],
+    [dbMod.movimentacaoLegado as never, []],
+    [dbMod.localidade as never, [{ id: LOCALIDADE_ID, codigo: 'EXT', nome: 'Extrema', ativo: true }]],
+    [dbMod.localidadeCorrelacao as never, [{
+      localidadeId: LOCALIDADE_ID,
+      codigoLocalEstoqueAcxe: 111,
+      codigoLocalEstoqueQ2p: 222,
+    }]],
+  ]);
+}
+
+beforeEach(() => {
+  incluirSpy.mockReset();
+  listarSpy.mockReset();
+  consultarNFSpy.mockReset();
+  poolQuerySpy.mockReset();
+  poolQuerySpy.mockResolvedValue({
+    rows: [{
+      codigo_produto_acxe: 1001,
+      codigo_produto_q2p: 2001,
+      descricao: 'PEAD',
+      codigo_local_estoque_acxe: 111,
+      codigo_local_estoque_q2p: 222,
+    }],
+  });
+});
 
 describe('processarRecebimento — falha Q2P apos ACXE ok (US2)', () => {
-  beforeEach(() => {
-    incluirSpy.mockReset();
-    listarSpy.mockReset();
-    consultarNFSpy.mockReset();
-    poolQuerySpy.mockReset();
-  });
-
-  it('grava movimentacao com status_omie=pendente_q2p e lanca erro recoverable', async () => {
+  it('grava movimentacao com status_omie=pendente_q2p e devolve o item pendente (recuperavel)', async () => {
     // OMIE: ACXE ok, Q2P falha
     incluirSpy
       .mockResolvedValueOnce({ idMovest: 'M-ACXE', idAjuste: 'A-ACXE', descricaoStatus: 'ok' })
       .mockRejectedValueOnce(new Error('OMIE Q2P 503 Service Unavailable'));
-
-    consultarNFSpy.mockResolvedValue({
-      nNF: '00000300', cChaveNFe: 'C', dEmi: '15/04/2026',
-      nCodProd: 1001, codigoLocalEstoque: '999',
-      qCom: 25_000, uCom: 'KG', xProd: 'PEAD',
-      vUnCom: 1.2, vNF: 30_000,
-      nCodCli: 1, cRazao: 'FORN MOCK',
-    });
-
-    poolQuerySpy.mockResolvedValue({
-      rows: [{
-        codigo_produto_acxe: 1001,
-        codigo_produto_q2p: 2001,
-        descricao: 'PEAD',
-        codigo_local_estoque_acxe: 111,
-        codigo_local_estoque_q2p: 222,
-      }],
-    });
+    consultarNFSpy.mockResolvedValue(nfOmie('00000300'));
 
     const dbMod = await import('@atlas/db');
-    const rows = new Map<{ __id: string }, unknown[]>([
-      [dbMod.movimentacao as never, []], // idempotencia: nao processada
-      [dbMod.localidade as never, [{ id: inputBase.localidadeId, codigo: 'EXT', ativo: true }]],
-      [dbMod.localidadeCorrelacao as never, [{
-        localidadeId: inputBase.localidadeId,
-        codigoLocalEstoqueAcxe: 111,
-        codigoLocalEstoqueQ2p: 222,
-      }]],
-    ]);
-    const chain = criarChain(rows);
+    const chain = criarChain(rowsPadrao(dbMod as never));
     chain.returning
       .mockResolvedValueOnce([{ id: 'lote-1', codigo: 'L042' }])
       .mockResolvedValueOnce([{ id: 'mov-1' }]);
-
     const { getDb } = await import('@atlas/core');
     vi.mocked(getDb).mockReturnValue(chain as never);
 
-    let capturedErr: unknown;
-    try {
-      await processarRecebimento(inputBase);
-    } catch (err) {
-      capturedErr = err;
-    }
+    const res = await processarRecebimento(inputBase('300'));
 
-    // 1) Erro lancado e OmieAjusteError enriquecido
-    expect(capturedErr).toBeInstanceOf(OmieAjusteError);
-    const ajErr = capturedErr as OmieAjusteError;
-    expect(ajErr.lado).toBe('q2p');
-    expect(ajErr.recoverable).toBe(true);
-    expect(ajErr.opId).toMatch(/^[0-9a-f-]{36}$/);
-    expect(ajErr.movimentacaoId).toBe('mov-1');
-    expect(ajErr.tentativasRestantes).toBe(1);
-    expect(ajErr.idACXE).toEqual({ idMovest: 'M-ACXE', idAjuste: 'A-ACXE' });
+    // 1) Desfecho por item: pendente_q2p, com os dados de recuperacao
+    expect(res.resumo).toMatchObject({ recebidos: 0, pendentesOmie: 1, falhas: 0 });
+    const item = res.itens[0]!;
+    expect(item.status).toBe('pendente_q2p');
+    expect(item.movimentacaoId).toBe('mov-1');
+    expect(item.omie?.acxe).toEqual({ idMovest: 'M-ACXE', idAjuste: 'A-ACXE' });
+    expect(item.mensagemErro).toMatch(/OMIE Q2P 503/);
 
-    // 2) Movimentacao foi inserida com status_omie=pendente_q2p
+    // 2) Movimentacao foi inserida com status_omie=pendente_q2p (semântica intacta)
     const valuesCalls = (chain.values as ReturnType<typeof vi.fn>).mock.calls as Array<[Record<string, unknown>]>;
     const movInsert = valuesCalls.find((c) => c[0] && 'idMovestAcxe' in c[0]);
     expect(movInsert).toBeDefined();
@@ -169,7 +184,10 @@ describe('processarRecebimento — falha Q2P apos ACXE ok (US2)', () => {
       idUserQ2p: null,
       statusOmie: 'pendente_q2p',
       tentativasQ2p: 1,
-      opId: ajErr.opId,
+      // Feature 013: produto entra na chave de idempotencia (migration 0046)
+      produtoCodigoAcxe: 1001,
+      produtoCodigoQ2p: 2001,
+      empresa: 'acxe',
     });
     expect(movInsert![0].ultimoErroOmie).toMatchObject({
       lado: 'q2p',
@@ -182,49 +200,20 @@ describe('processarRecebimento — falha Q2P apos ACXE ok (US2)', () => {
 });
 
 describe('processarRecebimento — falha ACXE (US2)', () => {
-  beforeEach(() => {
-    incluirSpy.mockReset();
-    listarSpy.mockReset();
-    consultarNFSpy.mockReset();
-    poolQuerySpy.mockReset();
-  });
-
-  it('NAO grava nada quando ACXE falha (estado limpo)', async () => {
+  it('NAO grava nada quando ACXE falha (estado limpo; item falha_acxe)', async () => {
     incluirSpy.mockRejectedValueOnce(new Error('OMIE ACXE 504 Gateway Timeout'));
-
-    consultarNFSpy.mockResolvedValue({
-      nNF: '00000301', cChaveNFe: 'C', dEmi: '15/04/2026',
-      nCodProd: 1001, codigoLocalEstoque: '999',
-      qCom: 25_000, uCom: 'KG', xProd: 'PEAD',
-      vUnCom: 1.2, vNF: 30_000,
-      nCodCli: 1, cRazao: 'FORN MOCK',
-    });
-
-    poolQuerySpy.mockResolvedValue({
-      rows: [{
-        codigo_produto_acxe: 1001,
-        codigo_produto_q2p: 2001,
-        descricao: 'PEAD',
-        codigo_local_estoque_acxe: 111,
-        codigo_local_estoque_q2p: 222,
-      }],
-    });
+    consultarNFSpy.mockResolvedValue(nfOmie('00000301'));
 
     const dbMod = await import('@atlas/db');
-    const rows = new Map<{ __id: string }, unknown[]>([
-      [dbMod.movimentacao as never, []],
-      [dbMod.localidade as never, [{ id: inputBase.localidadeId, codigo: 'EXT', ativo: true }]],
-      [dbMod.localidadeCorrelacao as never, [{
-        localidadeId: inputBase.localidadeId,
-        codigoLocalEstoqueAcxe: 111,
-        codigoLocalEstoqueQ2p: 222,
-      }]],
-    ]);
-    const chain = criarChain(rows);
+    const chain = criarChain(rowsPadrao(dbMod as never));
     const { getDb } = await import('@atlas/core');
     vi.mocked(getDb).mockReturnValue(chain as never);
 
-    await expect(processarRecebimento({ ...inputBase, nf: '301' })).rejects.toThrow(OmieAjusteError);
+    const res = await processarRecebimento(inputBase('301'));
+
+    expect(res.resumo).toMatchObject({ recebidos: 0, pendentesOmie: 0, falhas: 1 });
+    expect(res.itens[0]!.status).toBe('falha_acxe');
+    expect(res.itens[0]!.mensagemErro).toMatch(/OMIE ACXE/);
 
     // OMIE chamado uma vez (so ACXE), Q2P nao foi tentado
     expect(incluirSpy).toHaveBeenCalledTimes(1);
@@ -235,95 +224,37 @@ describe('processarRecebimento — falha ACXE (US2)', () => {
     expect(chain.values).not.toHaveBeenCalled();
   });
 
-  it('erro ACXE tem stateClean implicito (sem opId nem movimentacaoId)', async () => {
+  it('item falha_acxe sai limpo (sem loteId nem movimentacaoId — re-submeter completa)', async () => {
     incluirSpy.mockRejectedValueOnce(new Error('OMIE ACXE down'));
-
-    consultarNFSpy.mockResolvedValue({
-      nNF: '00000302', cChaveNFe: 'C', dEmi: '15/04/2026',
-      nCodProd: 1001, codigoLocalEstoque: '999',
-      qCom: 25_000, uCom: 'KG', xProd: 'PEAD',
-      vUnCom: 1.2, vNF: 30_000,
-      nCodCli: 1, cRazao: 'FORN MOCK',
-    });
-    poolQuerySpy.mockResolvedValue({
-      rows: [{
-        codigo_produto_acxe: 1001, codigo_produto_q2p: 2001, descricao: 'PEAD',
-        codigo_local_estoque_acxe: 111, codigo_local_estoque_q2p: 222,
-      }],
-    });
+    consultarNFSpy.mockResolvedValue(nfOmie('00000302'));
 
     const dbMod = await import('@atlas/db');
-    const rows = new Map<{ __id: string }, unknown[]>([
-      [dbMod.movimentacao as never, []],
-      [dbMod.localidade as never, [{ id: inputBase.localidadeId, codigo: 'EXT', ativo: true }]],
-      [dbMod.localidadeCorrelacao as never, [{
-        localidadeId: inputBase.localidadeId,
-        codigoLocalEstoqueAcxe: 111,
-        codigoLocalEstoqueQ2p: 222,
-      }]],
-    ]);
-    const chain = criarChain(rows);
+    const chain = criarChain(rowsPadrao(dbMod as never));
     const { getDb } = await import('@atlas/core');
     vi.mocked(getDb).mockReturnValue(chain as never);
 
-    let capturedErr: unknown;
-    try {
-      await processarRecebimento({ ...inputBase, nf: '302' });
-    } catch (err) {
-      capturedErr = err;
-    }
+    const res = await processarRecebimento(inputBase('302'));
 
-    expect(capturedErr).toBeInstanceOf(OmieAjusteError);
-    const ajErr = capturedErr as OmieAjusteError;
-    expect(ajErr.lado).toBe('acxe');
+    const item = res.itens[0]!;
+    expect(item.status).toBe('falha_acxe');
     // ACXE-fail nao popula campos de recovery porque estado e limpo
-    expect(ajErr.movimentacaoId).toBeUndefined();
-    expect(ajErr.recoverable).toBeUndefined();
+    expect(item.loteId).toBeUndefined();
+    expect(item.movimentacaoId).toBeUndefined();
   });
 });
 
 describe('processarRecebimento — recebimento limpo notifica operador + Comex', () => {
-  beforeEach(() => {
-    incluirSpy.mockReset();
-    listarSpy.mockReset();
-    consultarNFSpy.mockReset();
-    poolQuerySpy.mockReset();
-  });
-
   it('sem divergencia e OMIE ok: dispara email "Recebimento concluido" incluindo o Comex', async () => {
     // OMIE: ACXE ok + Q2P ok (sucesso total → lote provisorio)
     incluirSpy
       .mockResolvedValueOnce({ idMovest: 'M-ACXE', idAjuste: 'A-ACXE', descricaoStatus: 'ok' })
       .mockResolvedValueOnce({ idMovest: 'M-Q2P', idAjuste: 'A-Q2P', descricaoStatus: 'ok' });
-
     // qCom == quantidadeInput (25_000 kg) → delta 0 → sem divergencia
-    consultarNFSpy.mockResolvedValue({
-      nNF: '00000400', cChaveNFe: 'C', dEmi: '15/04/2026',
-      nCodProd: 1001, codigoLocalEstoque: '999',
-      qCom: 25_000, uCom: 'KG', xProd: 'PEAD',
-      vUnCom: 1.2, vNF: 30_000,
-      nCodCli: 1, cRazao: 'FORN MOCK',
-    });
-
-    poolQuerySpy.mockResolvedValue({
-      rows: [{
-        codigo_produto_acxe: 1001, codigo_produto_q2p: 2001, descricao: 'PEAD',
-        codigo_local_estoque_acxe: 111, codigo_local_estoque_q2p: 222,
-      }],
-    });
+    consultarNFSpy.mockResolvedValue(nfOmie('00000400'));
 
     const dbMod = await import('@atlas/db');
-    const rows = new Map<{ __id: string }, unknown[]>([
-      [dbMod.movimentacao as never, []], // idempotencia: nao processada
-      [dbMod.localidade as never, [{ id: inputBase.localidadeId, codigo: 'EXT', nome: 'Extrema', ativo: true }]],
-      [dbMod.localidadeCorrelacao as never, [{
-        localidadeId: inputBase.localidadeId,
-        codigoLocalEstoqueAcxe: 111,
-        codigoLocalEstoqueQ2p: 222,
-      }]],
-      // resolverEmailOperador: email do operador que lancou
-      [dbMod.users as never, [{ email: 'operador@acxe.local' }]],
-    ]);
+    const rows = rowsPadrao(dbMod as never);
+    rows.set((dbMod as never as Record<string, { __id: string }>).users as never, [{ email: 'operador@acxe.local' }]);
     const chain = criarChain(rows);
     chain.returning
       .mockResolvedValueOnce([{ id: 'lote-9', codigo: 'L100' }])
@@ -333,8 +264,9 @@ describe('processarRecebimento — recebimento limpo notifica operador + Comex',
     vi.mocked(core.getDb).mockReturnValue(chain as never);
     vi.mocked(core.sendEmail).mockClear(); // mock compartilhado no arquivo
 
-    const res = await processarRecebimento({ ...inputBase, nf: '400' });
-    expect(res.status).toBe('provisorio');
+    const res = await processarRecebimento(inputBase('400'));
+    expect(res.itens[0]!.status).toBe('provisorio');
+    expect(res.resumo.recebidos).toBe(1);
 
     // Email e fire-and-forget (void) — aguarda flush dos microtasks
     await vi.waitFor(() => expect(core.sendEmail).toHaveBeenCalled());

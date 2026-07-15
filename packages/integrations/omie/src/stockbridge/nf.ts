@@ -2,38 +2,31 @@ import { callOmie, isMockMode, type OmieCnpj } from '../client.js';
 import { mockConsultarNF } from './mock.js';
 
 /**
- * STK-10 (ACXEGDP-289): NF com mais de um item de produto. O modelo do
- * StockBridge (herdado do legado PHP) pressupoe 1 produto por NF — ler so o
- * det[0] silenciosamente inflava o valor unitario (vNF total / qtd do item 1)
- * e os itens 2..n nunca entravam em estoque. Ate multi-item virar feature,
- * rejeitamos explicitamente.
+ * Feature 013 (ACXEGDP-115): a NF pode ter N itens de produto — cada `det[i]`
+ * vira um ItemNF. Historico: o modelo herdado do PHP lia so o det[0]
+ * silenciosamente (valor unitario inflado + itens 2..n perdidos); o STK-10
+ * (ACXEGDP-289) trocou isso por bloqueio explicito; a feature 013 destrava o
+ * multi-item de verdade — o consumidor (recebimento) processa item a item.
  */
-export class NotaFiscalMultiItemError extends Error {
-  constructor(
-    public readonly notaFiscal: number,
-    public readonly totalItens: number,
-  ) {
-    super(
-      `A NF ${notaFiscal} tem ${totalItens} itens de produto — o recebimento suporta apenas NF de item único. ` +
-        'Contate o admin para processar esta NF manualmente.',
-    );
-    this.name = 'NotaFiscalMultiItemError';
-  }
-}
-
-export interface ConsultarNFResponse {
-  nNF: number;
-  cChaveNFe: string;
-  dEmi: string;
+export interface ItemNF {
   nCodProd: number;
   codigoLocalEstoque: string;
   qCom: number;
   uCom: string;
   xProd: string;
   vUnCom: number;
+}
+
+export interface ConsultarNFResponse {
+  nNF: number;
+  cChaveNFe: string;
+  dEmi: string;
+  /** Valor total da NF (com tributos) — do cabecalho (ICMSTot), nao por item. */
   vNF: number;
   nCodCli: number;
   cRazao: string;
+  /** 1..N itens de produto da NF, na ordem do det[] do OMIE. */
+  itens: ItemNF[];
 }
 
 /**
@@ -51,13 +44,18 @@ export async function consultarNF(cnpj: OmieCnpj, numeroNota: number): Promise<C
     params: { nCodNF: 0, nNF: numeroNota },
   }, { retries: 2 }); // STK-23: leitura idempotente — retry em falha transiente
 
-  // STK-10: det[0] silencioso mascarava NF multi-item (valor unitario inflado
-  // pelo vNF total + itens 2..n perdidos). Rejeita explicito.
-  if ((raw.det?.length ?? 0) > 1) {
-    throw new NotaFiscalMultiItemError(numeroNota, raw.det!.length);
-  }
-  const det = raw.det?.[0];
-  if (!det || !det.prod || !det.nfProdInt) {
+  const dets = raw.det ?? [];
+  const itens: ItemNF[] = dets
+    .filter((det) => det?.prod && det?.nfProdInt)
+    .map((det) => ({
+      nCodProd: det.nfProdInt.nCodProd,
+      codigoLocalEstoque: det.prod.codigo_local_estoque,
+      qCom: det.prod.qCom,
+      uCom: det.prod.uCom,
+      xProd: det.prod.xProd,
+      vUnCom: det.prod.vUnCom,
+    }));
+  if (itens.length === 0) {
     throw new Error(`NF ${numeroNota} nao possui itens ou estrutura invalida no OMIE`);
   }
 
@@ -65,15 +63,10 @@ export async function consultarNF(cnpj: OmieCnpj, numeroNota: number): Promise<C
     nNF: raw.ide.nNF,
     cChaveNFe: raw.compl.cChaveNFe,
     dEmi: raw.ide.dEmi,
-    nCodProd: det.nfProdInt.nCodProd,
-    codigoLocalEstoque: det.prod.codigo_local_estoque,
-    qCom: det.prod.qCom,
-    uCom: det.prod.uCom,
-    xProd: det.prod.xProd,
-    vUnCom: det.prod.vUnCom,
     vNF: raw.total.ICMSTot.vNF,
     nCodCli: raw.nfDestInt.nCodCli,
     cRazao: raw.nfDestInt.cRazao,
+    itens,
   };
 }
 

@@ -1,8 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // STK-02 (ACXEGDP-282): o fluxo divergente cria apenas lote (aguardando_aprovacao)
-// + aprovacao — nenhuma movimentacao. nfJaProcessada precisa considerar esses lotes
+// + aprovacao — nenhuma movimentacao. A idempotencia precisa considerar esses lotes
 // abertos, senao a mesma NF pode ser recebida de novo antes da decisao do gestor.
+//
+// Feature 013: a checagem virou POR PRODUTO (produtoDaNfJaRecebido) e roda DEPOIS
+// da consulta da NF no OMIE (precisa dos produtos da nota) — so o historico legado
+// PHP continua checado por NF antes do OMIE. Com todos os produtos ja recebidos,
+// o resultado segue NotaFiscalJaProcessadaError.
 
 vi.mock('@atlas/core', () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
@@ -13,7 +18,12 @@ vi.mock('@atlas/core', () => ({
   emailDataList: () => '',
   emailActionBox: (html: string) => html,
   escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
-  getPool: () => ({ query: vi.fn() }),
+  getPool: () => ({
+    query: (sql: string) =>
+      typeof sql === 'string' && sql.includes('tbl_nf_header')
+        ? Promise.resolve({ rows: [{ cancelada: false, emitente_acxe: true }] })
+        : Promise.resolve({ rows: [] }),
+  }),
 }));
 
 vi.mock('@atlas/db', () => ({
@@ -27,17 +37,12 @@ vi.mock('@atlas/db', () => ({
 }));
 
 const consultarNFSpy = vi.fn();
-vi.mock('@atlas/integration-omie', async (importOriginal) => {
-  // NotaFiscalMultiItemError REAL: o service faz instanceof no catch (STK-10).
-  const real = await importOriginal<typeof import('@atlas/integration-omie')>();
-  return {
-    NotaFiscalMultiItemError: real.NotaFiscalMultiItemError,
-    incluirAjusteEstoque: vi.fn(),
-    listarAjusteEstoque: vi.fn(),
-    consultarNF: (...args: unknown[]) => consultarNFSpy(...args),
-    isMockMode: () => true,
-  };
-});
+vi.mock('@atlas/integration-omie', () => ({
+  incluirAjusteEstoque: vi.fn(),
+  listarAjusteEstoque: vi.fn(),
+  consultarNF: (...args: unknown[]) => consultarNFSpy(...args),
+  isMockMode: () => true,
+}));
 
 import { getDb } from '@atlas/core';
 import {
@@ -54,51 +59,70 @@ interface RespostasPorTabela {
 
 /**
  * Mock de db onde cada select() resolve conforme a TABELA passada ao from() —
- * necessario porque nfJaProcessada faz 3 selects em Promise.all sobre tabelas
- * diferentes e o resultado precisa divergir entre elas.
+ * necessario porque a idempotencia faz selects em Promise.all sobre tabelas
+ * diferentes e o resultado precisa divergir entre elas. O leaf e thenable
+ * (feature 013: ha consultas awaited sem .limit()).
  */
 function dbComRespostasPorTabela(rows: RespostasPorTabela) {
   return {
-    select: vi.fn(() => {
-      let alvo: keyof RespostasPorTabela | undefined;
-      const mini = {
-        from: vi.fn((t: { __id?: keyof RespostasPorTabela }) => {
-          alvo = t?.__id;
-          return mini;
-        }),
-        where: vi.fn(() => mini),
-        limit: vi.fn(() => Promise.resolve((alvo && rows[alvo]) || [])),
-      };
-      return mini;
-    }),
+    select: vi.fn(() => ({
+      from: vi.fn((t: { __id?: keyof RespostasPorTabela }) => {
+        const data = (t?.__id && rows[t.__id]) || [];
+        const leaf = {
+          where: vi.fn(() => leaf),
+          innerJoin: vi.fn(() => leaf),
+          limit: vi.fn(() => Promise.resolve(data)),
+          then: (res?: (v: unknown[]) => unknown, rej?: (e: unknown) => unknown) =>
+            Promise.resolve(data).then(res, rej),
+        };
+        return leaf;
+      }),
+    })),
   };
 }
 
 const inputBase = {
   nf: '300',
   cnpj: 'acxe' as const,
-  quantidadeInput: 1000,
-  unidadeInput: 'kg' as const,
-  localidadeId: 'loc-1',
+  itens: [
+    {
+      produtoCodigoAcxe: 1001,
+      quantidadeInput: 1000,
+      unidadeInput: 'kg' as const,
+      localidadeId: 'loc-1',
+    },
+  ],
   userId: 'user-1',
 };
 
-describe('nfJaProcessada considera lote aberto do fluxo divergente (STK-02)', () => {
+const nfOmie = {
+  nNF: '00000300', cChaveNFe: 'C', dEmi: '15/04/2026',
+  vNF: 30_000, nCodCli: 1, cRazao: 'FORN',
+  itens: [{
+    nCodProd: 1001, codigoLocalEstoque: '999',
+    qCom: 1000, uCom: 'KG', xProd: 'PEAD', vUnCom: 1.2,
+  }],
+};
+
+describe('idempotencia considera lote aberto do fluxo divergente (STK-02)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    consultarNFSpy.mockResolvedValue(nfOmie);
   });
 
-  it('processarRecebimento rejeita NF com lote aguardando_aprovacao ativo (sem consultar OMIE)', async () => {
+  it('processarRecebimento rejeita NF cujo produto tem lote aguardando_aprovacao ativo', async () => {
     const db = dbComRespostasPorTabela({
       lote: [{ id: 'lote-aberto' }],
     });
     vi.mocked(getDb).mockReturnValue(db as never);
 
     await expect(processarRecebimento(inputBase)).rejects.toThrow(NotaFiscalJaProcessadaError);
-    expect(consultarNFSpy).not.toHaveBeenCalled();
+    // Feature 013: a checagem por produto exige os produtos da NF — consultarNF
+    // roda ANTES da idempotencia por produto (1 chamada, sem escrita).
+    expect(consultarNFSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('getFilaOmie oculta NF com lote aguardando_aprovacao ativo', async () => {
+  it('getFilaOmie oculta produto com lote aguardando_aprovacao ativo (fila vazia)', async () => {
     const db = dbComRespostasPorTabela({
       lote: [{ id: 'lote-aberto' }],
     });
@@ -107,27 +131,36 @@ describe('nfJaProcessada considera lote aberto do fluxo divergente (STK-02)', ()
     const items = await getFilaOmie({ nf: '300', cnpj: 'acxe' });
 
     expect(items).toEqual([]);
-    expect(consultarNFSpy).not.toHaveBeenCalled();
   });
 
   it('NF sem movimentacao/legado/lote-aberto passa da idempotencia (lote rejeitado nao bloqueia)', async () => {
-    // O mock resolve [] para as 3 consultas — equivale a "so existe lote rejeitado",
+    // O mock resolve [] para todas as consultas — equivale a "so existe lote rejeitado",
     // que o predicado (status IN aguardando_aprovacao/provisorio) exclui de proposito.
     const db = dbComRespostasPorTabela({});
     vi.mocked(getDb).mockReturnValue(db as never);
-    consultarNFSpy.mockRejectedValue(new Error('SENTINELA: passou da idempotencia'));
+    consultarNFSpy.mockRejectedValue(new Error('SENTINELA: passou da checagem do legado'));
 
-    await expect(processarRecebimento(inputBase)).rejects.toThrow('SENTINELA: passou da idempotencia');
+    await expect(processarRecebimento(inputBase)).rejects.toThrow('SENTINELA');
     expect(consultarNFSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('movimentacao entrada_nf ativa continua bloqueando (comportamento pre-existente preservado)', async () => {
+  it('movimentacao entrada_nf ativa do produto continua bloqueando (pre-existente preservado)', async () => {
     const db = dbComRespostasPorTabela({
       movimentacao: [{ id: 'mov-1' }],
     });
     vi.mocked(getDb).mockReturnValue(db as never);
 
     await expect(processarRecebimento(inputBase)).rejects.toThrow(NotaFiscalJaProcessadaError);
+  });
+
+  it('historico legado PHP bloqueia a NF inteira ANTES de consultar o OMIE', async () => {
+    const db = dbComRespostasPorTabela({
+      movimentacaoLegado: [{ id: 'legado-1' }],
+    });
+    vi.mocked(getDb).mockReturnValue(db as never);
+
+    await expect(processarRecebimento(inputBase)).rejects.toThrow(NotaFiscalJaProcessadaError);
+    expect(consultarNFSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -156,29 +189,5 @@ describe('importação ACXE-only (STK-12)', () => {
 
     await expect(getFilaOmie({ nf: '300', cnpj: 'q2p' })).rejects.toThrow(/apenas para NF emitida pela ACXE/);
     expect(consultarNFSpy).not.toHaveBeenCalled();
-  });
-});
-
-// STK-10 (ACXEGDP-289): NF multi-item rejeitada com alerta ao admin — antes o
-// det[0] era lido silenciosamente (valor unitário inflado, itens 2..n perdidos).
-describe('NF multi-item rejeitada com alerta (STK-10)', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('processarRecebimento propaga NotaFiscalMultiItemError e dispara e-mail ao admin', async () => {
-    const { NotaFiscalMultiItemError } = await import('@atlas/integration-omie');
-    const { sendEmail } = await import('@atlas/core');
-    const db = dbComRespostasPorTabela({});
-    vi.mocked(getDb).mockReturnValue(db as never);
-    consultarNFSpy.mockRejectedValue(new NotaFiscalMultiItemError(300, 4));
-
-    await expect(processarRecebimento(inputBase)).rejects.toThrow(/4 itens/);
-
-    // Alerta é fire-and-forget — aguarda o microtask antes de assertar
-    await new Promise((r) => setImmediate(r));
-    expect(sendEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ subject: expect.stringContaining('itens bloqueada') }),
-    );
   });
 });

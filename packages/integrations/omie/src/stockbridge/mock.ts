@@ -38,25 +38,60 @@ export function __injectMockAjuste(cnpj: OmieCnpj, ajuste: AjusteEstoqueListado)
   ajustesRegistrados.push({ ...ajuste, cnpj });
 }
 
+/**
+ * Fixtures de NF por final do numero (feature 013 — multi-item):
+ *  - final 2 → 2 itens (ambos com correlato: PEAD 5502 + PP RAFIA)
+ *  - final 3 → 3 itens (PEAD 5502 + PP RAFIA + "PRODUTO SEM CORRELATO MOCK")
+ *  - demais  → 1 item (PEAD 5502 — comportamento historico, single-item)
+ * Card ACXEGDP-301: qCom=25 com uCom='t' (25 t = 25.000 kg) exercita a
+ * conversao de unidade real (converterParaKg) em dev.
+ */
 export function mockConsultarNF(cnpj: OmieCnpj, numeroNota: number): ConsultarNFResponse {
-  // Produto real com correlato ACXE↔Q2P (match por descricao "PEAD 5502").
-  // Permite testar o fluxo completo de recebimento em dev sem bater em API real.
-  // Card ACXEGDP-301: qCom=25_000 com uCom='t' criava drift Kg/t (25 mil TONELADAS);
-  // 25 t = 25.000 kg — mesma massa pretendida, e dev em mock passa a exercitar a
-  // conversao de unidade real (converterParaKg).
-  return {
-    nNF: numeroNota,
-    cChaveNFe: `MOCK-CHAVE-${cnpj}-${numeroNota}`,
-    dEmi: '15/04/2026',
+  const localEstoque = cnpj === 'acxe' ? '4498926337' : '8115873874';
+  const itemPead = {
     nCodProd: cnpj === 'acxe' ? 4_452_881_285 : 3_033_098_357,
-    codigoLocalEstoque: cnpj === 'acxe' ? '4498926337' : '8115873874',
+    codigoLocalEstoque: localEstoque,
     qCom: 25,
     uCom: 't',
     xProd: 'PEAD 5502',
     vUnCom: 1.2,
-    vNF: 30_000,
+  };
+  const itemPpRafia = {
+    nCodProd: cnpj === 'acxe' ? 4_452_881_290 : 3_033_098_360,
+    codigoLocalEstoque: localEstoque,
+    qCom: 10,
+    uCom: 't',
+    xProd: 'PP RAFIA',
+    vUnCom: 1.5,
+  };
+  const itemSemCorrelato = {
+    nCodProd: 4_452_889_999,
+    codigoLocalEstoque: localEstoque,
+    qCom: 5,
+    uCom: 't',
+    xProd: 'PRODUTO SEM CORRELATO MOCK',
+    vUnCom: 2,
+  };
+
+  const final = numeroNota % 10;
+  const itens =
+    final === 2 ? [itemPead, itemPpRafia]
+    : final === 3 ? [itemPead, itemPpRafia, itemSemCorrelato]
+    : [itemPead];
+
+  // vNF proporcional ao valor comercial (mantendo os 30_000 historicos p/ 1 item
+  // de 25 t — os testes single-item existentes dependem desse numero).
+  const somaComercial = itens.reduce((acc, it) => acc + it.vUnCom * it.qCom * 1000, 0);
+  const vNF = Math.round(somaComercial);
+
+  return {
+    nNF: numeroNota,
+    cChaveNFe: `MOCK-CHAVE-${cnpj}-${numeroNota}`,
+    dEmi: '15/04/2026',
+    vNF,
     nCodCli: 12345,
     cRazao: 'FORNECEDOR MOCK',
+    itens,
   };
 }
 

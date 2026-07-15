@@ -1,7 +1,7 @@
 export { callOmie, isMockMode, OmieApiError, type OmieCnpj, type OmieEndpoint, type OmieCredentials } from './client.js';
 
 // StockBridge integration
-export { consultarNF, NotaFiscalMultiItemError, type ConsultarNFResponse } from './stockbridge/nf.js';
+export { consultarNF, type ConsultarNFResponse, type ItemNF } from './stockbridge/nf.js';
 export {
   incluirAjusteEstoque,
   type AjusteTipo,

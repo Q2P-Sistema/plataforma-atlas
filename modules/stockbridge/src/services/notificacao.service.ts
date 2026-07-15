@@ -178,44 +178,6 @@ export async function enviarAlertaProdutoSemCorrelato(args: {
  * (fail-open) e alerta o admin para revisão posterior. Espelha o padrão de
  * `enviarAlertaProdutoSemCorrelato` — fora de transação, não bloqueia, try/catch logado.
  */
-/**
- * STK-10 (ACXEGDP-289): NF multi-item rejeitada no recebimento — o modelo
- * suporta 1 produto por NF. O admin decide como processar (manual no OMIE ou
- * desdobrar a NF).
- */
-export async function enviarAlertaNfMultiItem(args: {
-  nf: string;
-  cnpj: 'acxe' | 'q2p';
-  totalItens: number;
-}): Promise<void> {
-  const to = getOpsEmail();
-  const subject = `StockBridge — NF ${args.nf} com ${args.totalItens} itens bloqueada no recebimento (${args.cnpj.toUpperCase()})`;
-  const corpoHtml = `
-    <p>O recebimento da <strong>NF ${escapeHtml(args.nf)}</strong> (${args.cnpj.toUpperCase()}) foi <strong>bloqueado</strong>: a NF tem <strong>${args.totalItens} itens</strong> de produto e o StockBridge suporta apenas NF de item único.</p>
-    ${emailDataList([
-      { label: 'NF', valor: args.nf },
-      { label: 'Itens', valor: String(args.totalItens) },
-    ])}
-    ${emailActionBox(`
-      <ol style="margin:0;padding-left:18px;">
-        <li>Conferir a NF ${escapeHtml(args.nf)} no OMIE.</li>
-        <li>Processar a entrada manualmente no OMIE ou desdobrar a NF por item.</li>
-      </ol>`)}
-  `;
-  const { html, text } = buildEmailLayout({
-    titulo: 'NF multi-item bloqueada no recebimento',
-    variante: 'alerta',
-    corpoHtml,
-    ctaLabel: 'Abrir fila de recebimento',
-    ctaUrl: `${getConfig().APP_URL}/stockbridge/fila`,
-  });
-  try {
-    await sendEmail({ to, cc: alertaOpsCc(to), subject, html, text });
-  } catch (err) {
-    logger.error({ err, args }, 'Falha ao enviar email de alerta de NF multi-item');
-  }
-}
-
 export async function enviarAlertaNfIndeterminada(args: {
   nf: string;
   cnpj: 'acxe' | 'q2p';
@@ -394,6 +356,70 @@ export async function enviarAlertaRecebimentoNacionalLote(args: {
     }
   } catch (err) {
     logger.error({ err, notaFiscal: args.notaFiscal }, 'Falha ao enviar digest de recebimento nacional');
+  }
+}
+
+/**
+ * Feature 013 (FR-015): digest de divergências de uma NF de IMPORTAÇÃO multi-item.
+ * Espelha o EML-09 do nacional — quando 2+ produtos da mesma NF divergem, cada
+ * gestor recebe UM e-mail com a tabela dos itens, em vez de um alerta por item.
+ * (Com 1 item divergente, o caller usa enviarAlertaAprovacaoPendente — paridade
+ * com o comportamento single-item.)
+ */
+export async function enviarAlertaAprovacaoPendenteImportacaoLote(args: {
+  notaFiscal: string;
+  nivel: 'gestor' | 'diretor';
+  itens: Array<{
+    produto: string;
+    quantidadeKg: number;
+    deltaKg: number;
+    tipoDivergencia: 'faltando' | 'varredura';
+  }>;
+}): Promise<void> {
+  if (args.itens.length === 0) return;
+  const destinatarios = await resolverEmailsAprovadores(args.nivel);
+  if (destinatarios.length === 0) return;
+  const config = getConfig();
+  const linkPainel = `${config.APP_URL}/stockbridge/aprovacoes`;
+  const n = args.itens.length;
+  const subject = `StockBridge — Recebimento NF ${args.notaFiscal}: ${n} itens com divergência aguardando aprovação`;
+  const linhas = args.itens
+    .map(
+      (it) => `<tr>
+        <td style="padding:6px 12px 6px 0;font-size:13px;color:#111827;">${escapeHtml(it.produto)}</td>
+        <td style="padding:6px 12px;font-size:13px;color:#6b7280;white-space:nowrap;">${it.tipoDivergencia === 'faltando' ? 'Faltando' : 'Varredura'} · ${fmtKg(Math.abs(it.deltaKg))} a menos</td>
+        <td style="padding:6px 0 6px 12px;font-size:13px;color:#111827;font-weight:600;text-align:right;white-space:nowrap;">${fmtKg(it.quantidadeKg)}</td>
+      </tr>`,
+    )
+    .join('');
+  const corpoHtml = `
+    <p>O recebimento de importação da <strong>NF ${escapeHtml(args.notaFiscal)}</strong> tem <strong>${n} itens</strong> com divergência física × fiscal aguardando sua aprovação. Os demais itens da NF que conferiram já entraram no estoque.</p>
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 16px;margin:16px 0;">
+      <table role="presentation" width="100%" style="border-collapse:collapse;">
+        <thead><tr>
+          <th style="text-align:left;padding:4px 12px 8px 0;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Produto</th>
+          <th style="text-align:left;padding:4px 12px 8px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Divergência</th>
+          <th style="text-align:right;padding:4px 0 8px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Qtd. recebida</th>
+        </tr></thead>
+        <tbody>${linhas}</tbody>
+      </table>
+    </div>
+  `;
+  const { html, text } = buildEmailLayout({
+    titulo: 'Divergências de recebimento aguardando aprovação',
+    variante: 'info',
+    corpoHtml,
+    ctaLabel: 'Abrir aprovações pendentes',
+    ctaUrl: linkPainel,
+  });
+  try {
+    const results = await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html, text })));
+    const falhas = logFalhasEnvio(results, destinatarios, { notaFiscal: args.notaFiscal });
+    if (falhas < destinatarios.length) {
+      logger.info({ notaFiscal: args.notaFiscal, itens: n, enviados: destinatarios.length - falhas, falhas }, 'Digest de divergencias de importacao enviado');
+    }
+  } catch (err) {
+    logger.error({ err, notaFiscal: args.notaFiscal }, 'Falha ao enviar digest de divergencias de importacao');
   }
 }
 
@@ -605,6 +631,67 @@ export async function enviarNotificacaoRecebimentoConcluido(args: {
     }
   } catch (err) {
     logger.error({ err, args }, 'Falha ao enviar confirmacao de recebimento concluido');
+  }
+}
+
+/**
+ * Feature 013: confirmação de recebimento de NF multi-item concluído — um e-mail
+ * com a tabela dos produtos que entraram (ACXE + Q2P), em vez de um por lote.
+ * Mesmos destinatários do single-item (EML-14): operador que lançou + Comex.
+ */
+export async function enviarNotificacaoRecebimentoConcluidoLote(args: {
+  operadorUserId: string;
+  notaFiscal: string;
+  fornecedor: string | null;
+  itens: Array<{ loteCodigo: string; produto: string; quantidadeKg: number; localidade: string }>;
+}): Promise<void> {
+  if (args.itens.length === 0) return;
+  const emailOperador = await resolverEmailOperador(args.operadorUserId);
+  const destinatarios = [
+    ...new Set([emailOperador, getComexEmail()].filter((e): e is string => !!e)),
+  ];
+  if (destinatarios.length === 0) {
+    logger.warn({ notaFiscal: args.notaFiscal }, 'Nenhum destinatario para confirmacao de recebimento');
+    return;
+  }
+  const n = args.itens.length;
+  const plural = n === 1 ? 'produto' : 'produtos';
+  const subject = `StockBridge — Recebimento concluído (NF ${args.notaFiscal}, ${n} ${plural})`;
+  const linhas = args.itens
+    .map(
+      (it) => `<tr>
+        <td style="padding:6px 12px 6px 0;font-size:13px;color:#111827;">${escapeHtml(it.produto)}</td>
+        <td style="padding:6px 12px;font-size:13px;color:#6b7280;white-space:nowrap;">${escapeHtml(it.loteCodigo)} · ${escapeHtml(it.localidade)}</td>
+        <td style="padding:6px 0 6px 12px;font-size:13px;color:#111827;font-weight:600;text-align:right;white-space:nowrap;">${fmtKg(it.quantidadeKg)}</td>
+      </tr>`,
+    )
+    .join('');
+  const corpoHtml = `
+    <p>O recebimento da <strong>NF ${escapeHtml(args.notaFiscal)}</strong> foi registrado no StockBridge. Os ajustes de estoque já foram aplicados no OMIE (ACXE + Q2P) para os ${plural} abaixo.</p>
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 16px;margin:16px 0;">
+      <table role="presentation" width="100%" style="border-collapse:collapse;">
+        <thead><tr>
+          <th style="text-align:left;padding:4px 12px 8px 0;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Produto</th>
+          <th style="text-align:left;padding:4px 12px 8px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Lote · Local</th>
+          <th style="text-align:right;padding:4px 0 8px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Quantidade</th>
+        </tr></thead>
+        <tbody>${linhas}</tbody>
+      </table>
+    </div>
+    ${args.fornecedor ? `<p style="color:#6b7280;font-size:13px;">Fornecedor: ${escapeHtml(args.fornecedor)}</p>` : ''}
+  `;
+  const { html, text } = buildEmailLayout({ titulo: 'Recebimento concluído', variante: 'sucesso', corpoHtml });
+  try {
+    const results = await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html, text })));
+    const falhas = logFalhasEnvio(results, destinatarios, { notaFiscal: args.notaFiscal });
+    if (falhas < destinatarios.length) {
+      logger.info(
+        { notaFiscal: args.notaFiscal, itens: n, enviados: destinatarios.length - falhas, falhas },
+        'Confirmacao de recebimento multi-item enviada',
+      );
+    }
+  } catch (err) {
+    logger.error({ err, notaFiscal: args.notaFiscal }, 'Falha ao enviar confirmacao de recebimento multi-item');
   }
 }
 

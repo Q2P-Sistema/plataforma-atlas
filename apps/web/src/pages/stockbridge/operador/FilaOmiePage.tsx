@@ -61,7 +61,8 @@ export function FilaOmiePage() {
   const [aba, setAba] = useState<Aba>('importacao');
   const [buscaNf, setBuscaNf] = useState('');
   const [queryKey, setQueryKey] = useState<{ nf?: string; cnpj?: string }>({});
-  const [selecionado, setSelecionado] = useState<FilaItem | null>(null);
+  // Feature 013: a conferência é da NF inteira — o modal recebe TODOS os itens.
+  const [selecionados, setSelecionados] = useState<FilaItem[] | null>(null);
   const [resubmitendo, setResubmitendo] = useState<MinhaRejeicao | null>(null);
 
   // Lista de lancamentos de RECEBIMENTO rejeitados (com lote) — saidas manuais
@@ -177,16 +178,16 @@ export function FilaOmiePage() {
           itens={itens}
           isLoading={isLoading}
           error={error}
-          onSelecionar={setSelecionado}
+          onReceber={setSelecionados}
         />
       )}
 
-      {selecionado && (
+      {selecionados && selecionados.length > 0 && (
         <ConferenciaModal
-          item={selecionado}
-          onClose={() => setSelecionado(null)}
+          itens={selecionados}
+          onClose={() => setSelecionados(null)}
           onSucesso={() => {
-            setSelecionado(null);
+            setSelecionados(null);
             setBuscaNf('');
             setQueryKey({});
           }}
@@ -284,7 +285,8 @@ interface ImportacaoSectionProps {
   itens: FilaItem[];
   isLoading: boolean;
   error: unknown;
-  onSelecionar: (it: FilaItem) => void;
+  /** Feature 013: recebe TODOS os itens da NF — a conferência é da nota inteira. */
+  onReceber: (itens: FilaItem[]) => void;
 }
 
 function ImportacaoSection({
@@ -295,8 +297,9 @@ function ImportacaoSection({
   itens,
   isLoading,
   error,
-  onSelecionar,
+  onReceber,
 }: ImportacaoSectionProps) {
+  const multiItem = itens.length > 1;
   return (
     <>
       <form onSubmit={handleBuscar} className="flex items-end gap-3 mb-6 p-4 bg-atlas-card border border-atlas-border rounded-lg">
@@ -338,7 +341,7 @@ function ImportacaoSection({
         {itens.map((item) => {
           const tipoCfg = TIPO_LABEL[item.tipo] ?? { label: item.tipo, color: 'bg-atlas-muted/20 text-atlas-muted' };
           return (
-            <div key={item.nf} className="bg-atlas-card border border-atlas-border rounded-lg p-4 flex items-center gap-4">
+            <div key={`${item.nf}-${item.produto.codigo}`} className="bg-atlas-card border border-atlas-border rounded-lg p-4 flex items-center gap-4">
               <span className={`text-xs font-semibold px-2 py-1 rounded ${tipoCfg.color}`}>{tipoCfg.label}</span>
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-3 mb-1">
@@ -353,15 +356,33 @@ function ImportacaoSection({
                 <div className="font-serif text-xl text-atlas-ink">{item.qtdKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}<span className="text-xs text-atlas-muted ml-1">kg</span></div>
                 <div className="text-xs text-atlas-muted">= {(item.qtdKg / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 3 })} t</div>
               </div>
-              <button
-                onClick={() => onSelecionar(item)}
-                className="px-4 py-2 bg-atlas-btn-bg text-atlas-btn-text rounded text-sm font-medium hover:opacity-90"
-              >
-                Receber →
-              </button>
+              {/* Feature 013: a NF é recebida por inteiro — NF de vários produtos
+                  tem um botão único abaixo da lista; NF de um produto mantém o
+                  botão no próprio cartão. */}
+              {!multiItem && (
+                <button
+                  onClick={() => onReceber(itens)}
+                  className="px-4 py-2 bg-atlas-btn-bg text-atlas-btn-text rounded text-sm font-medium hover:opacity-90"
+                >
+                  Receber →
+                </button>
+              )}
             </div>
           );
         })}
+        {multiItem && (
+          <div className="bg-atlas-card border border-atlas-border rounded-lg p-4 flex items-center justify-between gap-4">
+            <div className="text-sm text-atlas-muted">
+              Esta NF tem <strong className="text-atlas-ink">{itens.length} produtos</strong> — a conferência e o recebimento são da nota inteira.
+            </div>
+            <button
+              onClick={() => onReceber(itens)}
+              className="px-4 py-2 bg-atlas-btn-bg text-atlas-btn-text rounded text-sm font-medium hover:opacity-90 whitespace-nowrap"
+            >
+              Receber os {itens.length} produtos →
+            </button>
+          </div>
+        )}
       </div>
     </>
   );

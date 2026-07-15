@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   pgSchema,
   uuid,
@@ -12,6 +13,7 @@ import {
   smallint,
   jsonb,
   index,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { users } from './atlas.js';
 
@@ -178,6 +180,17 @@ export const movimentacao = stockbridgeSchema.table(
     index('movimentacao_lote_idx').on(t.loteId),
     index('movimentacao_sku_galpao_empresa_idx').on(t.produtoCodigoAcxe, t.galpao, t.empresa),
     index('movimentacao_criado_por_idx').on(t.criadoPor, t.createdAt),
+    // Migration 0046 (ACXEGDP-115): idempotencia de entrada_nf por PRODUTO —
+    // N produtos da mesma NF convivem, cada um idempotente na sua linha.
+    uniqueIndex('movimentacao_nf_entrada_idempotencia_idx')
+      .on(t.notaFiscal, t.empresa, t.produtoCodigoAcxe)
+      .where(
+        sql`tipo_movimento = 'entrada_nf' AND ativo = true AND empresa IS NOT NULL AND produto_codigo_acxe IS NOT NULL`,
+      ),
+    // Migration 0046: saida_automatica mantém a chave da 0044 (por NF+empresa).
+    uniqueIndex('movimentacao_nf_saida_idempotencia_idx')
+      .on(t.notaFiscal, t.empresa)
+      .where(sql`tipo_movimento = 'saida_automatica' AND ativo = true AND empresa IS NOT NULL`),
   ],
 );
 

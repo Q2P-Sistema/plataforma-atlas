@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// STK-10 (ACXEGDP-289): consultarNF lia so det[0] silenciosamente — NF
-// multi-item inflava o valor unitario (vNF total / qtd do item 1) e os itens
-// 2..n nunca entravam em estoque. Agora rejeita explicito com erro tipado.
+// Feature 013 (ACXEGDP-115): consultarNF mapeia TODOS os det[] para itens[].
+// Historico: o det[0] silencioso (pre-STK-10) inflava valor e perdia itens 2..n;
+// o STK-10 bloqueava multi-item; a 013 destrava — cada det vira um ItemNF.
 
 vi.mock('@atlas/core', () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
@@ -18,7 +18,7 @@ vi.mock('../client.js', async (importOriginal) => {
   };
 });
 
-import { consultarNF, NotaFiscalMultiItemError } from '../stockbridge/nf.js';
+import { consultarNF } from '../stockbridge/nf.js';
 
 function rawNf(itens: number) {
   const det = Array.from({ length: itens }, (_, i) => ({
@@ -27,7 +27,7 @@ function rawNf(itens: number) {
       qCom: 25_000,
       uCom: 'KG',
       xProd: `PRODUTO ${i + 1}`,
-      vUnCom: 1.2,
+      vUnCom: 1.2 + i,
     },
     nfProdInt: { nCodProd: 1000 + i },
   }));
@@ -40,32 +40,44 @@ function rawNf(itens: number) {
   };
 }
 
-describe('consultarNF — NF multi-item (STK-10)', () => {
+describe('consultarNF — itens[] (feature 013)', () => {
   beforeEach(() => callOmieSpy.mockReset());
 
-  it('NF de item único segue funcionando', async () => {
+  it('NF de item único vira itens[] de tamanho 1', async () => {
     callOmieSpy.mockResolvedValue(rawNf(1));
 
     const res = await consultarNF('acxe', 300);
 
-    expect(res.nCodProd).toBe(1000);
-    expect(res.qCom).toBe(25_000);
+    expect(res.itens).toHaveLength(1);
+    expect(res.itens[0]!.nCodProd).toBe(1000);
+    expect(res.itens[0]!.qCom).toBe(25_000);
+    expect(res.vNF).toBe(30_000);
   });
 
-  it('NF com 2+ itens → NotaFiscalMultiItemError (não lê det[0] silenciosamente)', async () => {
+  it('NF com 3 itens mapeia todos, na ordem do det[], sem lançar', async () => {
     callOmieSpy.mockResolvedValue(rawNf(3));
 
-    await expect(consultarNF('acxe', 300)).rejects.toThrow(NotaFiscalMultiItemError);
-    await expect(consultarNF('acxe', 300)).rejects.toThrow(/3 itens/);
+    const res = await consultarNF('acxe', 300);
+
+    expect(res.itens).toHaveLength(3);
+    expect(res.itens.map((i) => i.nCodProd)).toEqual([1000, 1001, 1002]);
+    expect(res.itens.map((i) => i.xProd)).toEqual(['PRODUTO 1', 'PRODUTO 2', 'PRODUTO 3']);
+    expect(res.itens.map((i) => i.vUnCom)).toEqual([1.2, 2.2, 3.2]);
   });
 
-  it('erro carrega nf e totalItens para o alerta admin', async () => {
-    callOmieSpy.mockResolvedValue(rawNf(2));
+  it('NF sem itens (det vazio) → erro de estrutura inválida', async () => {
+    callOmieSpy.mockResolvedValue({ ...rawNf(1), det: [] });
 
-    const err = await consultarNF('acxe', 555).catch((e: unknown) => e);
+    await expect(consultarNF('acxe', 300)).rejects.toThrow(/nao possui itens/);
+  });
 
-    expect(err).toBeInstanceOf(NotaFiscalMultiItemError);
-    expect((err as NotaFiscalMultiItemError).notaFiscal).toBe(555);
-    expect((err as NotaFiscalMultiItemError).totalItens).toBe(2);
+  it('det com linha malformada (sem prod/nfProdInt) é descartada; demais seguem', async () => {
+    const raw = rawNf(2);
+    (raw.det as unknown[]).push({ prod: null, nfProdInt: null });
+    callOmieSpy.mockResolvedValue(raw);
+
+    const res = await consultarNF('acxe', 300);
+
+    expect(res.itens).toHaveLength(2);
   });
 });

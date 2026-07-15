@@ -14,17 +14,31 @@ describe('OMIE integration — mock mode', () => {
     process.env.OMIE_MODE = originalMode;
   });
 
-  it('consultarNF retorna payload sintetico deterministico', async () => {
+  it('consultarNF retorna payload sintetico deterministico (1 item)', async () => {
     const res = await consultarNF('acxe', 1234);
     expect(res.nNF).toBe(1234);
-    expect(res.codigoLocalEstoque).toBe('4498926337'); // SANTO ANDRE 11.1 ACXE
-    expect(res.qCom).toBe(25);
-    expect(res.uCom).toBe('t');
+    expect(res.itens).toHaveLength(1);
+    expect(res.itens[0]!.codigoLocalEstoque).toBe('4498926337'); // SANTO ANDRE 11.1 ACXE
+    expect(res.itens[0]!.qCom).toBe(25);
+    expect(res.itens[0]!.uCom).toBe('t');
+    expect(res.vNF).toBe(30_000);
   });
 
   it('consultarNF para Q2P retorna codigo de localidade Q2P', async () => {
     const res = await consultarNF('q2p', 5678);
-    expect(res.codigoLocalEstoque).toBe('8115873874');
+    expect(res.itens[0]!.codigoLocalEstoque).toBe('8115873874');
+  });
+
+  it('feature 013: NF com final 2 → 2 itens; final 3 → 3 itens (um sem correlato)', async () => {
+    const nf2 = await consultarNF('acxe', 4302);
+    expect(nf2.itens).toHaveLength(2);
+    expect(nf2.itens.map((i) => i.xProd)).toEqual(['PEAD 5502', 'PP RAFIA']);
+
+    const nf3 = await consultarNF('acxe', 4303);
+    expect(nf3.itens).toHaveLength(3);
+    expect(nf3.itens[2]!.xProd).toBe('PRODUTO SEM CORRELATO MOCK');
+    // vNF = soma comercial das linhas (25t×1.2 + 10t×1.5 + 5t×2.0)
+    expect(nf3.vNF).toBe(30_000 + 15_000 + 10_000);
   });
 
   it('incluirAjusteEstoque retorna idMovest e idAjuste sinteticos', async () => {

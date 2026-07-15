@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { createLogger } from '@atlas/core';
 import { requireOperador } from '../middleware/role.js';
 import { requireArmazemVinculado } from '../middleware/armazem-vinculado.js';
-import { NotaFiscalMultiItemError } from '@atlas/integration-omie';
 import {
   getFilaOmie,
   NotaFiscalCanceladaError,
@@ -38,10 +37,6 @@ router.get('/api/v1/stockbridge/fila', requireOperador, requireArmazemVinculado,
     }
     if (err instanceof ImportacaoApenasAcxeError) {
       res.status(422).json({ data: null, error: { code: 'IMPORTACAO_APENAS_ACXE', userMessage: err.message, message: err.message } });
-      return;
-    }
-    if (err instanceof NotaFiscalMultiItemError) {
-      res.status(422).json({ data: null, error: { code: 'NF_MULTI_ITEM', userMessage: err.message, message: err.message } });
       return;
     }
     if (err instanceof NotaFiscalNaoEmitidaPelaAcxeError) {
