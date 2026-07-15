@@ -406,6 +406,27 @@ describe('US3 — produto sem correlato bloqueia a NF inteira (T029/T030)', () =
   });
 });
 
+// ── Trava de deploy: migration 0046 ausente ────────────────
+
+describe('Migration 0046 ausente (índice antigo por NF+empresa)', () => {
+  it('NF multi-item que viola o índice ANTIGO → erro explícito (não ja_recebido silencioso)', async () => {
+    const chain = await cenarioTresProdutos();
+    // O 2º INSERT de lote (produto 2) dispara a violação do índice PRE-0046.
+    const err23505Antigo = Object.assign(new Error('duplicate key'), {
+      code: '23505',
+      constraint: 'movimentacao_nf_idempotencia_idx',
+    });
+    let inserts = 0;
+    (chain.returning as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      inserts += 1;
+      if (inserts === 3) return Promise.reject(err23505Antigo); // lote do 2º produto
+      return Promise.resolve([{ id: `id-${inserts}`, codigo: `L${inserts}` }]);
+    });
+
+    await expect(processarRecebimento(inputTresItens())).rejects.toThrow(/migration 0046 pendente/);
+  });
+});
+
 // ── Resumível (T031) ───────────────────────────────────────
 
 describe('Recebimento resumível (idempotência por produto, migration 0046)', () => {

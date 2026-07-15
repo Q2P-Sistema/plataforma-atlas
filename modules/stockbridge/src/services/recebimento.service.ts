@@ -275,22 +275,24 @@ async function contarTentativasAnteriores(
 }
 
 /**
- * STK-01b: traducao do backstop 23505 do indice de idempotencia de entrada
- * (movimentacao_nf_entrada_idempotencia_idx, migration 0046 — por NF+empresa+produto).
+ * STK-01b: traducao do backstop 23505 do indice de idempotencia de entrada.
  * Se duas submissoes concorrentes passam pela checagem de idempotencia, o OMIE ja
  * deduplicou via cod_int_ajuste identico; a 2a transacao cai aqui.
+ *
+ * Distingue o indice NOVO (0046, por NF+empresa+produto) do ANTIGO (0044, por
+ * NF+empresa): violacao do antigo numa NF multi-item significa que a migration
+ * 0046 nao foi aplicada — o caller converte em erro operacional claro em vez de
+ * marcar o produto como ja_recebido (o que deixaria o ajuste OMIE orfao).
  */
-function isViolacaoIdempotenciaNf(err: unknown): boolean {
+function constraintIdempotenciaViolada(err: unknown): 'nova' | 'antiga' | null {
   const candidatos = [err, (err as { cause?: unknown })?.cause];
-  return candidatos.some((c) => {
+  for (const c of candidatos) {
     const e = c as { code?: string; constraint?: string } | undefined;
-    return (
-      e?.code === '23505' &&
-      (e?.constraint === 'movimentacao_nf_entrada_idempotencia_idx' ||
-        // nome pre-0046, mantido para ambientes onde a migration ainda nao rodou
-        e?.constraint === 'movimentacao_nf_idempotencia_idx')
-    );
-  });
+    if (e?.code !== '23505') continue;
+    if (e.constraint === 'movimentacao_nf_entrada_idempotencia_idx') return 'nova';
+    if (e.constraint === 'movimentacao_nf_idempotencia_idx') return 'antiga';
+  }
+  return null;
 }
 
 export interface OmieAjusteErrorContext {
@@ -795,7 +797,7 @@ export async function processarRecebimento(
         divergentesOk.push({ prep, aprovacaoId: r.aprovacaoId!, loteCodigo: r.loteCodigo! });
       }
     } else {
-      const r = await processarItemLimpo(db, input, prep);
+      const r = await processarItemLimpo(db, input, prep, { multiItem: preparados.length > 1 });
       resultados.push(r);
       if (r.status === 'provisorio') {
         concluidosOk.push({ prep, loteCodigo: r.loteCodigo! });
@@ -878,6 +880,7 @@ async function processarItemLimpo(
   db: ReturnType<typeof getDb>,
   input: ProcessarRecebimentoInput,
   prep: ItemPreparado,
+  opts: { multiItem: boolean },
 ): Promise<ItemRecebimentoResult> {
   const { agregado, correlacao, valorItemBrl, qtdFisicaKg } = prep;
   const base: Pick<ItemRecebimentoResult, 'produtoCodigoAcxe' | 'produto'> = {
@@ -999,10 +1002,27 @@ async function processarItemLimpo(
       return { loteId: loteCriado!.id, loteCodigo: loteCriado!.codigo, movimentacaoId: movCriada!.id };
     });
   } catch (err: unknown) {
+    const viol = constraintIdempotenciaViolada(err);
     // STK-01b: concorrente perdeu a corrida no indice de idempotencia — o OMIE ja
     // foi deduplicado via cod_int_ajuste identico; o produto ja esta recebido.
-    if (isViolacaoIdempotenciaNf(err)) {
+    if (viol === 'nova' || (viol === 'antiga' && !opts.multiItem)) {
       return { ...base, status: 'ja_recebido' };
+    }
+    if (viol === 'antiga') {
+      // Indice antigo (por NF+empresa) numa NF multi-item: a migration 0046 nao
+      // foi aplicada neste banco. NAO pode virar ja_recebido — o ajuste OMIE
+      // deste produto acabou de ser feito e ficaria orfao e invisivel. Erro
+      // explicito (500) para acionar o admin; os itens ja concluidos estao
+      // persistidos e idempotentes (re-buscar a NF mostra o que falta).
+      logger.error(
+        { nf: input.nf, produto: agregado.nCodProd },
+        'Migration 0046 ausente: indice de idempotencia por produto nao existe — NF multi-item interrompida apos ajuste OMIE',
+      );
+      throw new Error(
+        `O banco ainda não suporta NF com múltiplos produtos (migration 0046 pendente). ` +
+          `O ajuste do produto "${agregado.xProd}" foi feito no OMIE mas não pôde ser registrado na plataforma — ` +
+          'acione o administrador antes de tentar novamente.',
+      );
     }
     throw err;
   }

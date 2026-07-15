@@ -126,9 +126,9 @@ Monorepo modular: `packages/integrations/omie/`, `packages/db/`, `modules/stockb
 
 - [x] T035 [P] Remover o bloqueio multi-item obsoleto — mapeamento `NF_MULTI_ITEM`→422 em `recebimento.routes.ts` e `fila.routes.ts`; `enviarAlertaNfMultiItem` em `notificacao.service.ts`; `consultarNFComAlertaMultiItem` (simplifica para chamada direta); testes que assertavam o bloqueio.
 - [x] T036 [P] Atualizar a seção StockBridge do `CLAUDE.md` — recebimento de importação passa a suportar multi-produto (idempotência por (NF, empresa, produto), migration 0046).
-- [ ] T037 Rodar `frontend-design-reviewer` sobre o diff de UI (convenção do projeto para mudanças visuais).
+- [x] T037 Rodar `frontend-design-reviewer` sobre o diff de UI (convenção do projeto para mudanças visuais).
 - [x] T038 Validação quickstart.md — `OMIE_MODE=mock` (US1/US2/US3 manuais) + `pnpm --filter @atlas/stockbridge test` + `pnpm --filter @atlas/integrations-omie test` + `tsc --noEmit` nos pacotes tocados verdes.
-- [ ] T039 Nota de paridade (Princípio V) — registrar no roteiro de validação paralela que multi-item de importação é nova capacidade; paridade = comparar recebimento pela plataforma × processo manual OMIE das NFs multi-item.
+- [x] T039 Nota de paridade (Princípio V) — registrar no roteiro de validação paralela que multi-item de importação é nova capacidade; paridade = comparar recebimento pela plataforma × processo manual OMIE das NFs multi-item.
 
 ---
 

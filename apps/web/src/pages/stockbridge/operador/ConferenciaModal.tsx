@@ -84,12 +84,12 @@ const STATUS_RESULTADO: Record<ItemResultado['status'], { icone: typeof CheckCir
   pendente_q2p: {
     icone: Clock,
     classe: 'text-amber-700 dark:text-amber-400',
-    label: () => 'Parcial: ACXE registrado, Q2P pendente — retente pelo painel de Movimentações',
+    label: () => 'Parcial: ACXE registrado, Q2P pendente — acompanhe pelo painel de Movimentações; a operação fará a retentativa',
   },
   falha_acxe: {
     icone: XCircle,
     classe: 'text-red-700 dark:text-red-400',
-    label: () => 'Falha no OMIE ACXE — nada foi gravado deste produto; busque a NF novamente para completar',
+    label: () => 'Falha na integração com o OMIE (lado ACXE) — nada foi gravado deste produto; busque a NF novamente para completar',
   },
   ja_recebido: {
     icone: CheckCircle2,
@@ -175,17 +175,28 @@ export function ConferenciaModal({ itens, onClose, onSucesso }: Props) {
   });
 
   if (resultado) {
-    const tudoOk = resultado.resumo.pendentesOmie === 0 && resultado.resumo.falhas === 0;
+    const { resumo } = resultado;
+    const tudoOk = resumo.pendentesOmie === 0 && resumo.falhas === 0;
+    const partesResumo = [
+      resumo.recebidos > 0 && `${resumo.recebidos} recebido${resumo.recebidos > 1 ? 's' : ''}`,
+      resumo.aguardandoAprovacao > 0 && `${resumo.aguardandoAprovacao} aguardando aprovação`,
+      resumo.pendentesOmie > 0 && `${resumo.pendentesOmie} pendente${resumo.pendentesOmie > 1 ? 's' : ''} no OMIE`,
+      resumo.falhas > 0 && `${resumo.falhas} falha${resumo.falhas > 1 ? 's' : ''}`,
+      resumo.jaRecebidos > 0 && `${resumo.jaRecebidos} já recebido${resumo.jaRecebidos > 1 ? 's' : ''}`,
+    ].filter(Boolean) as string[];
     return (
-      <Modal open title={`Recebimento — NF ${resultado.nf}`} onClose={() => { onClose(); onSucesso(); }}>
+      <Modal open maxWidth={multiItem ? 'xl' : 'md'} title={`Recebimento — NF ${resultado.nf}`} onClose={() => { onClose(); onSucesso(); }}>
         <div className="py-2">
-          <div className="mb-4 flex justify-center">
+          <div className="mb-3 flex justify-center">
             {tudoOk ? (
               <CheckCircle2 size={44} className="text-success" aria-hidden />
             ) : (
               <AlertTriangle size={44} className="text-warn" aria-hidden />
             )}
           </div>
+          {multiItem && (
+            <p className="text-center text-sm text-atlas-muted mb-4">{partesResumo.join(' · ')}</p>
+          )}
           <ul className="space-y-2 mb-4">
             {resultado.itens.map((r) => {
               const cfg = STATUS_RESULTADO[r.status];
@@ -217,6 +228,7 @@ export function ConferenciaModal({ itens, onClose, onSucesso }: Props) {
   return (
     <Modal
       open
+      maxWidth={multiItem ? 'xl' : 'md'}
       title={multiItem ? `Conferência — NF ${nf} (${itens.length} produtos)` : `Conferência — ${itens[0]!.produto.nome}`}
       onClose={onClose}
     >
@@ -231,19 +243,24 @@ export function ConferenciaModal({ itens, onClose, onSucesso }: Props) {
           )}
         </div>
 
-        {calculados.map(({ form, item, qtdFisicaKg, deltaKg, temDivergencia, excedente, motivoObrigatorio }) => (
-          <div
+        {calculados.map(({ form, item, qtdFisicaKg, deltaKg, temDivergencia, excedente, motivoObrigatorio, valido }, idx) => (
+          <fieldset
             key={form.produtoCodigo}
-            className={multiItem ? 'border border-atlas-border rounded-lg p-3 space-y-3' : 'space-y-4'}
+            className={
+              multiItem
+                ? `border rounded-lg p-3 space-y-3 ${valido ? 'border-atlas-border' : 'border-amber-300 dark:border-amber-700'}`
+                : 'space-y-4 border-0 p-0 m-0'
+            }
           >
             {multiItem && (
-              <div className="flex items-baseline justify-between">
-                <span className="font-serif text-atlas-ink">{item.produto.nome}</span>
-                <span className="text-xs text-atlas-muted">
+              <legend className="px-1 font-serif text-atlas-ink">
+                {item.produto.nome}
+                <span className="ml-2 text-xs text-atlas-muted font-sans">
                   NF: {item.qtdKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg
                 </span>
-              </div>
+              </legend>
             )}
+            {!multiItem && <legend className="sr-only">{item.produto.nome}</legend>}
             {!multiItem && (
               <div className="flex justify-between text-sm">
                 <span className="text-atlas-muted">Qtd NF:</span>
@@ -260,6 +277,7 @@ export function ConferenciaModal({ itens, onClose, onSucesso }: Props) {
                 <input
                   value={form.qtdInput}
                   onChange={(e) => atualizar(form.produtoCodigo, { qtdInput: e.target.value })}
+                  autoFocus={idx === 0}
                   className={`w-full px-3 py-2 border rounded text-lg font-serif outline-none ${temDivergencia && qtdFisicaKg > 0 ? 'border-amber-400 bg-amber-50 dark:bg-amber-900/20' : 'border-atlas-border'}`}
                 />
                 <select
@@ -353,7 +371,7 @@ export function ConferenciaModal({ itens, onClose, onSucesso }: Props) {
                 className={`w-full px-3 py-2 border rounded text-sm outline-none ${motivoObrigatorio && !form.obs.trim() ? 'border-red-400 bg-red-50 dark:border-red-600 dark:bg-red-900/20' : 'border-atlas-border'}`}
               />
             </div>
-          </div>
+          </fieldset>
         ))}
 
         {recebimentoMut.isError && (
@@ -367,13 +385,14 @@ export function ConferenciaModal({ itens, onClose, onSucesso }: Props) {
           <button
             onClick={() => recebimentoMut.mutate()}
             disabled={!podeConfirmar || recebimentoMut.isPending}
+            title={!podeConfirmar ? 'Preencha a quantidade e a localidade de todos os produtos (e o motivo, quando houver divergência)' : undefined}
             className={`px-5 py-2 rounded text-sm font-medium ${podeConfirmar && !recebimentoMut.isPending ? 'bg-atlas-btn-bg text-atlas-btn-text hover:opacity-90' : 'bg-atlas-muted/20 text-atlas-muted cursor-not-allowed'}`}
           >
             {recebimentoMut.isPending
               ? 'Enviando…'
               : totalDivergentes > 0
                 ? multiItem
-                  ? `Registrar recebimento (${totalDivergentes} com divergência)`
+                  ? `Registrar recebimento (${totalDivergentes} produto${totalDivergentes > 1 ? 's' : ''} com divergência)`
                   : 'Registrar com divergência'
                 : multiItem
                   ? `Confirmar recebimento dos ${itens.length} produtos`
