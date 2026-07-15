@@ -54,7 +54,9 @@ Cobrir:
 
 Pré-condição: `OMIE_MODE=real` + credenciais ACXE/Q2P; migration `0046` aplicada (via DBeaver, como as 0042–0045).
 
-1. Escolher uma NF de importação **multi-produto real** (ex., das identificadas: NF 5336 = PEBD 101 + PEBD 323; NF 5288 = três PEBDs). Confirmar que os produtos têm correlato Q2P (senão cai no tudo-ou-nada — cadastrar antes).
+> **Escolha da NF de teste — mãe × filhote (verificado em 15/07):** o recebimento processa **NFs filhote** (CFOP 3.949) ou NF sem filhote; a **NF mãe** (CFOP 3.102, a nacionalização) nunca passa pela tela — as multi-produto "óbvias" (ex.: 5336, 5288) são mães e **não servem** de teste. O caso real é a **filhote de carga mista** (2 produtos na mesma carreta): ocorreram 4 em 12 meses (3657, 4053, 4157, 4925), e 2 delas passaram pelo legado PHP com **uma única movimentação** — o 2º produto ficou de fora (o bug det[0] em produção). O teste real acontece na **próxima filhote mista** que chegar.
+
+1. Escolher uma NF **filhote** de importação **multi-produto real** (padrão das 4 históricas: duas resinas somando ~25–27 t na mesma carreta). Confirmar que os produtos têm correlato Q2P (senão cai no tudo-ou-nada — cadastrar antes).
 2. Receber pela plataforma; conferir no OMIE que **cada** produto entrou em ACXE (transferência) e Q2P (entrada) com quantidade e valor da sua linha.
 3. **Paridade de valor**: `Σ` dos valores lançados = total da NF; custo/kg de cada produto coerente com a linha (não inflado). Comparar com o que o processo manual teria feito.
 4. **Idempotência**: repetir a busca/recebimento da mesma NF → bloqueado, sem duplicar OMIE.
