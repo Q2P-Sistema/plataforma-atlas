@@ -87,7 +87,7 @@ export function FilaOmiePage() {
   });
 
   // Auto-abrir modal de re-submeter quando o email manda o usuario para
-  // /stockbridge/recebimento#rejeicao=<id>. Tentativa em todo render — guard
+  // /stockbridge/fila#rejeicao=<id>. Tentativa em todo render — guard
   // por ref garante que so abrimos uma vez e nao reabrimos se o usuario fechar.
   const hashHandledRef = useRef(false);
   useEffect(() => {

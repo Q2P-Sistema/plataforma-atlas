@@ -257,7 +257,7 @@
       ],
       "typeVersion": 2,
       "parameters": {
-        "jsCode": "\nlet html;\ntry{\n  const ai=$('IA Sintese').first().json;\n  let t = ai && ai.content && ai.content[0] && ai.content[0].text;\n  if(t){ t=t.trim().replace(/^```html\\s*/i,'').replace(/^```\\s*/,'').replace(/```$/,'').trim(); }\n  html = (t && t.length>40) ? t : null;\n}catch(e){ html=null; }\nconst prep=$('Preparar Dados').first().json;\nif(!html) html=prep.fallbackHtml;\nreturn [{ json: { assunto: prep.assunto, html } }];\n"
+        "jsCode": "\nlet html;\ntry{\n  const ai=$('IA Sintese').first().json;\n  let t = ai && ai.content && ai.content[0] && ai.content[0].text;\n  if(t){ t=t.trim().replace(/^```html\\s*/i,'').replace(/^```\\s*/,'').replace(/```$/,'').trim(); }\n  // EML-22 (ACXEGDP-255): valida a ESTRUTURA da saida da IA, nao so o tamanho.\n  // HTML sem titulo/secoes (resposta truncada, fora do formato ou com fence\n  // markdown sobrando) cai no fallback deterministico do Preparar Dados.\n  const estruturaOk = !!t\n    && t.length > 200\n    && /<h[12][\\s>]/i.test(t)\n    && /<\\/(p|li|td|h[1-6])>/i.test(t)\n    && !/```/.test(t);\n  html = estruturaOk ? t : null;\n}catch(e){ html=null; }\nconst prep=$('Preparar Dados').first().json;\nif(!html) html=prep.fallbackHtml;\nreturn [{ json: { assunto: prep.assunto, html } }];\n"
       }
     },
     {
@@ -273,7 +273,7 @@
         "resource": "mail",
         "fromEmail": "sistema@q2p.com.br",
         "fromName": "Sistema Integrador Q2P",
-        "toEmail": "flavio@livemind.com.br,flavio.endo@acxe-polimeros.com.br",
+        "toEmail": "={{ $env.TI_RESUMO_DESTINATARIOS || 'flavio@livemind.com.br,flavio.endo@acxe-polimeros.com.br' }}",
         "subject": "={{ $json.assunto }}",
         "contentType": "text/html",
         "contentValue": "={{ $json.html }}",

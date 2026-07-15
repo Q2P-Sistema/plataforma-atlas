@@ -141,6 +141,7 @@ export async function enviarAlertaProdutoSemCorrelato(args: {
   descricaoProduto: string;
 }): Promise<void> {
   const to = getOpsEmail();
+  const linkFila = `${getConfig().APP_URL}/stockbridge/fila`;
   const subject = `StockBridge — Produto sem correlato Q2P (NF ${args.notaFiscal})`;
   const corpoHtml = `
     <p>Durante o recebimento da <strong>NF ${escapeHtml(args.notaFiscal)}</strong>, o produto abaixo não possui correlato cadastrado na Q2P (correspondência por descrição textual).</p>
@@ -159,6 +160,9 @@ export async function enviarAlertaProdutoSemCorrelato(args: {
     titulo: 'Produto não encontrado na Q2P',
     variante: 'alerta',
     corpoHtml,
+    // EML-11: link para a tela onde o recebimento é re-tentado após o cadastro.
+    ctaLabel: 'Abrir fila de recebimento',
+    ctaUrl: linkFila,
   });
   try {
     await sendEmail({ to, cc: alertaOpsCc(to), subject, html, text });
@@ -201,6 +205,8 @@ export async function enviarAlertaNfMultiItem(args: {
     titulo: 'NF multi-item bloqueada no recebimento',
     variante: 'alerta',
     corpoHtml,
+    ctaLabel: 'Abrir fila de recebimento',
+    ctaUrl: `${getConfig().APP_URL}/stockbridge/fila`,
   });
   try {
     await sendEmail({ to, cc: alertaOpsCc(to), subject, html, text });
@@ -229,6 +235,9 @@ export async function enviarAlertaNfIndeterminada(args: {
     titulo: 'NF recebida sem validação completa',
     variante: 'alerta',
     corpoHtml,
+    // EML-11: movimentações é onde o gestor confere/estorna o recebimento.
+    ctaLabel: 'Abrir movimentações',
+    ctaUrl: `${getConfig().APP_URL}/stockbridge/movimentacoes`,
   });
   try {
     await sendEmail({ to, cc: alertaOpsCc(to), subject, html, text });
@@ -263,7 +272,14 @@ export async function enviarAlertaDebitoCruzado(args: {
       `O setor contábil deve emitir a NF de transferência <strong>${args.cnpjFisico.toUpperCase()} → ${args.cnpjEmissor.toUpperCase()}</strong> para regularizar a posição fiscal. A divergência será fechada automaticamente quando a NF de regularização for processada.`,
     )}
   `;
-  const { html, text } = buildEmailLayout({ titulo: 'Débito cruzado detectado', variante: 'alerta', corpoHtml });
+  const { html, text } = buildEmailLayout({
+    titulo: 'Débito cruzado detectado',
+    variante: 'alerta',
+    corpoHtml,
+    // EML-11: a divergência fiscal aberta pelo débito cruzado vive nesta tela.
+    ctaLabel: 'Abrir pendências fiscais',
+    ctaUrl: `${getConfig().APP_URL}/stockbridge/pendencias-fiscais`,
+  });
   try {
     await sendEmail({ to, cc: alertaOpsCc(to), subject, html, text });
   } catch (err) {
@@ -288,7 +304,9 @@ export async function enviarAlertaAprovacaoPendente(args: {
   const config = getConfig();
   const linkPainel = `${config.APP_URL}/stockbridge/aprovacoes`;
   const tipoLabel = labelTipoAprovacao(args.tipoAprovacao);
-  const subject = `StockBridge — Aprovação pendente (${args.nivel}) — ${tipoLabel}`;
+  // EML-03: nível humanizado — antes o enum cru ("gestor") vazava no assunto.
+  const nivelLabel = args.nivel === 'diretor' ? 'Diretor' : 'Gestor';
+  const subject = `StockBridge — Aprovação pendente (${nivelLabel}) — ${tipoLabel}`;
   const corpoHtml = `
     <p>Uma nova pendência aguarda sua aprovação no StockBridge.</p>
     ${emailDataList([
@@ -393,7 +411,9 @@ export async function enviarAlertaPendenciaOmie(args: {
 }): Promise<void> {
   const to = getOpsEmail();
   const config = getConfig();
-  const linkPainel = `${config.APP_URL}/stockbridge/operacoes-pendentes`;
+  // EML-11: as pendências OMIE aparecem em Movimentações — a rota
+  // /stockbridge/operacoes-pendentes não existe no SPA (link caía no redirect /).
+  const linkPainel = `${config.APP_URL}/stockbridge/movimentacoes`;
   const ladoLabel = args.ladoPendente === 'q2p' ? 'OMIE Q2P' : 'OMIE ACXE (transferência da diferença)';
   const subject = `StockBridge — Pendência OMIE (NF ${args.notaFiscal})`;
   const corpoHtml = `
@@ -410,7 +430,7 @@ export async function enviarAlertaPendenciaOmie(args: {
     titulo: 'Operação OMIE pendente',
     variante: 'erro',
     corpoHtml,
-    ctaLabel: 'Abrir painel de operações pendentes',
+    ctaLabel: 'Abrir movimentações pendentes',
     ctaUrl: linkPainel,
   });
   try {
@@ -457,13 +477,17 @@ export async function enviarNotificacaoRejeicaoOperador(args: {
     logger.warn({ args }, 'Operador sem email cadastrado — notificacao de rejeicao nao enviada');
     return;
   }
-  const subject = `StockBridge — Seu lançamento foi rejeitado`;
   const config = getConfig();
-  const paginaPath = args.fluxo === 'recebimento' ? '/stockbridge/recebimento' : '/stockbridge/saida-manual';
-  const paginaLabel = args.fluxo === 'recebimento' ? 'Recebimento' : 'Saída Manual';
+  // EML-11: a tela de recebimento é /stockbridge/fila — o link antigo
+  // (/stockbridge/recebimento) não existe no SPA e caía no redirect para /.
+  const paginaPath = args.fluxo === 'recebimento' ? '/stockbridge/fila' : '/stockbridge/saida-manual';
+  const paginaLabel = args.fluxo === 'recebimento' ? 'Fila de Recebimento' : 'Saída Manual';
   const acaoLabel = args.fluxo === 'recebimento' ? 'Reenviar agora' : 'Lançar novamente';
   const link = `${config.APP_URL}${paginaPath}#rejeicao=${args.aprovacaoId}`;
   const tipoLabel = labelTipoAprovacao(args.tipoAprovacao);
+  // EML-12: tipo humanizado no assunto — o operador identifica de qual
+  // lançamento se trata sem abrir o e-mail.
+  const subject = `StockBridge — Lançamento rejeitado (${tipoLabel})`;
   const corpoHtml = `
     <p>O gestor/diretor rejeitou um lançamento (${escapeHtml(tipoLabel)}) que você fez no StockBridge.</p>
     <p><strong>Motivo informado:</strong></p>
@@ -488,7 +512,8 @@ export async function enviarNotificacaoAprovacaoOperador(args: {
   operadorUserId: string;
   aprovacaoId: string;
   tipoAprovacao: string;
-  loteId: string;
+  /** Apenas referência técnica de rodapé — alguns fluxos passam id de movimentação. */
+  loteId?: string;
   /**
    * True quando se trata de um recebimento divergente concluido com SUCESSO (gestor
    * aprovou + ambos os lados OMIE ok). Nesse caso a caixa de Comex entra em copia —
@@ -501,8 +526,9 @@ export async function enviarNotificacaoAprovacaoOperador(args: {
     logger.warn({ args }, 'Operador sem email cadastrado — notificacao de aprovacao nao enviada');
     return;
   }
-  const subject = `StockBridge — Seu lançamento foi aprovado`;
   const tipoLabel = labelTipoAprovacao(args.tipoAprovacao);
+  // EML-12: tipo humanizado no assunto.
+  const subject = `StockBridge — Lançamento aprovado (${tipoLabel})`;
   const extraDivergencia =
     args.tipoAprovacao === 'recebimento_divergencia'
       ? '<p>O ajuste foi registrado automaticamente no OMIE (ACXE + Q2P) com a quantidade aprovada.</p>'
@@ -511,7 +537,7 @@ export async function enviarNotificacaoAprovacaoOperador(args: {
     <p>Um lançamento que você fez no StockBridge foi aprovado pelo gestor/diretor.</p>
     <p><strong>Tipo:</strong> ${escapeHtml(tipoLabel)}</p>
     ${extraDivergencia}
-    <p style="color:#6b7280;font-size:12px;margin-top:16px;">Aprovação: ${escapeHtml(args.aprovacaoId)} · Lote: ${escapeHtml(args.loteId)}</p>
+    <p style="color:#6b7280;font-size:12px;margin-top:16px;">Ref. técnica — aprovação: ${escapeHtml(args.aprovacaoId)}</p>
   `;
   const { html, text } = buildEmailLayout({ titulo: 'Lançamento aprovado', variante: 'sucesso', corpoHtml });
   try {
