@@ -78,7 +78,17 @@ export async function getVendasMensais(): Promise<FamiliaDemanda[]> {
       CASE WHEN SUM(ABS(m.qtde)) > 0 THEN ROUND(SUM(ABS(m.qtde)) / 730) ELSE 0 END AS venda_dia
     FROM "tbl_movimentacaoEstoqueHistorico_Q2P" m
     JOIN "tbl_produtos_Q2P" p ON p.codigo_produto = m.id_prod
-    LEFT JOIN "tbl_posicaoEstoque_Q2P" e ON e.ccodigo = p.codigo
+    -- MOD-12 (ACXEGDP-279): posicao PRE-AGREGADA por codigo. O join direto em
+    -- tbl_posicaoEstoque_Q2P (1 linha POR LOCAL) multiplicava o SUM da
+    -- movimentacao xN para SKU multi-local (PP-146 voltava 6 linhas) — inflava
+    -- volume_24m/contribuicao_pct e o estoque_total mostrava um local so.
+    LEFT JOIN (
+      SELECT ccodigo,
+             SUM(COALESCE(nsaldo, 0)) AS nsaldo,
+             SUM(COALESCE(npendente, 0)) AS npendente
+      FROM "tbl_posicaoEstoque_Q2P"
+      GROUP BY ccodigo
+    ) e ON e.ccodigo = p.codigo
     WHERE m.des_origem = 'Venda de Produto'
       AND (m.cancelamento IS NULL OR m.cancelamento != 'S')
       AND m.dt_mov >= CURRENT_DATE - INTERVAL '24 months'

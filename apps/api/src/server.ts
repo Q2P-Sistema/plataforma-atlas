@@ -38,7 +38,10 @@ app.use(authRouter);
 app.use(adminRouter);
 
 // Module routes (feature-flag gated)
-registerModuleRoutes(app);
+// MOD-13 (ACXEGDP-280): top-level await — os routers de módulo precisam estar
+// montados ANTES do error handler (senão next(err) escapa para o handler HTML
+// default) e antes do listen (janela de 404 no boot).
+await registerModuleRoutes(app);
 
 // Global error handler (must be last)
 app.use(globalErrorHandler);
