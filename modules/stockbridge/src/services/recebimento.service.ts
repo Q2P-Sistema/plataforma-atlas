@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { eq, and, sql, inArray } from 'drizzle-orm';
 import Decimal from 'decimal.js';
 import { getDb, createLogger } from '@atlas/core';
@@ -185,6 +185,69 @@ async function nfJaProcessada(
       .limit(1),
   ]);
   return atlas.length > 0 || legado.length > 0 || loteAberto.length > 0;
+}
+
+/**
+ * STK-01b (ACXEGDP-311): opId deterministico para o caminho feliz do recebimento.
+ *
+ * Duas submissoes concorrentes da mesma NF precisam gerar o MESMO cod_int_ajuste
+ * para que a recuperacao de 1035 do cliente OMIE deduplique a 2a chamada (mesma
+ * tecnica do STK-01 na aprovacao, PR #65). Diferente da aprovacao (que ancora em
+ * apPre.id), aqui nao existe entidade persistida antes do OMIE — o opId e derivado
+ * da chave estavel da operacao (NF normalizada + empresa + produto).
+ *
+ * `tentativa` = quantas movimentacoes INATIVAS (soft-deleted) a NF ja teve: um
+ * reprocessamento legitimo apos estorno ganha opId NOVO (senao herdaria os IDs do
+ * ajuste OMIE antigo via 1035), enquanto concorrentes da mesma tentativa leem o
+ * mesmo contador e colidem no mesmo cod_int_ajuste — que e o objetivo.
+ *
+ * movimentacao.op_id e uuid: o sha256 e reformatado como UUID (hex valido).
+ */
+export function opIdDeterministicoRecebimento(args: {
+  nfNormalizada: string;
+  cnpj: 'acxe' | 'q2p';
+  codigoProdutoAcxe: number;
+  tentativa: number;
+}): string {
+  const h = createHash('sha256')
+    .update(`recebimento:${args.nfNormalizada}:${args.cnpj}:${args.codigoProdutoAcxe}:${args.tentativa}`)
+    .digest('hex');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
+}
+
+/** Conta movimentacoes entrada_nf INATIVAS da NF — o `tentativa` do opId deterministico. */
+async function contarTentativasAnteriores(
+  db: ReturnType<typeof getDb>,
+  nfNormalizada: string,
+  cnpj: 'acxe' | 'q2p',
+): Promise<number> {
+  const rows = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(movimentacao)
+    .where(
+      and(
+        eq(movimentacao.notaFiscal, nfNormalizada),
+        eq(movimentacao.tipoMovimento, 'entrada_nf'),
+        eq(movimentacao.empresa, cnpj),
+        eq(movimentacao.ativo, false),
+      ),
+    )
+    .limit(1);
+  return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * STK-01b: traducao do backstop 23505 do indice movimentacao_nf_idempotencia_idx.
+ * Se duas submissoes concorrentes passam pela checagem de idempotencia, o OMIE ja
+ * deduplicou via cod_int_ajuste identico; a 2a transacao cai aqui e vira o mesmo
+ * erro amigavel da checagem de aplicacao.
+ */
+function isViolacaoIdempotenciaNf(err: unknown): boolean {
+  const candidatos = [err, (err as { cause?: unknown })?.cause];
+  return candidatos.some((c) => {
+    const e = c as { code?: string; constraint?: string } | undefined;
+    return e?.code === '23505' && e?.constraint === 'movimentacao_nf_idempotencia_idx';
+  });
 }
 
 export interface OmieAjusteErrorContext {
@@ -462,7 +525,15 @@ export async function processarRecebimento(
   // Q2P = entrada inicial. Valor unitario diferente em cada lado.
   // opId identifica esta operacao em ambos os lados via cod_int_ajuste — habilita
   // retry idempotente em caso de falha na 2a chamada (vide US2).
-  const opId = randomUUID();
+  // STK-01b (ACXEGDP-311): deterministico, nao random — submissoes concorrentes da
+  // mesma NF compartilham cod_int_ajuste e a recuperacao 1035 deduplica no OMIE.
+  const tentativa = await contarTentativasAnteriores(db, input.nf, input.cnpj);
+  const opId = opIdDeterministicoRecebimento({
+    nfNormalizada: input.nf,
+    cnpj: input.cnpj,
+    codigoProdutoAcxe: correlacao.codigoProdutoAcxe,
+    tentativa,
+  });
   let idACXE: { idMovest: string; idAjuste: string };
   let idQ2P: { idMovest: string; idAjuste: string } | null = null;
   let pendenciaQ2P: { erro: OmieAjusteError } | null = null;
@@ -556,6 +627,13 @@ export async function processarRecebimento(
       .returning();
 
     return { loteId: loteCriado!.id, loteCodigo: loteCriado!.codigo, movimentacaoId: movCriada!.id };
+  }).catch((err: unknown) => {
+    // STK-01b: concorrente perdeu a corrida no indice de idempotencia — o OMIE ja
+    // foi deduplicado via cod_int_ajuste identico; reporta como NF ja processada.
+    if (isViolacaoIdempotenciaNf(err)) {
+      throw new NotaFiscalJaProcessadaError(input.nf);
+    }
+    throw err;
   });
 
   // Se pendente, lanca erro enriquecido para a rota retornar 502 estruturado.
