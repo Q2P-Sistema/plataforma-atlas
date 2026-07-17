@@ -60,6 +60,7 @@ import { TransitoPage } from './pages/stockbridge/gestor/TransitoPage.js';
 import { SaidaManualPage } from './pages/stockbridge/operador/SaidaManualPage.js';
 import { ComodatoRetornoPage } from './pages/stockbridge/operador/ComodatoRetornoPage.js';
 import { MetricasPage } from './pages/stockbridge/diretor/MetricasPage.js';
+import { CockpitExecutivoPage } from './pages/stockbridge/diretor/CockpitExecutivoPage.js';
 import { FornecedoresPage } from './pages/stockbridge/diretor/FornecedoresPage.js';
 import { ConfigProdutosPage } from './pages/stockbridge/diretor/ConfigProdutosPage.js';
 import { LocalidadesPage } from './pages/stockbridge/gestor/LocalidadesPage.js';
@@ -83,6 +84,7 @@ import {
   Table,
   Users,
   Scale,
+  Wallet,
 } from 'lucide-react';
 
 const FORECAST_SUB_ITEMS: SidebarSubItem[] = [
@@ -111,6 +113,7 @@ const STOCKBRIDGE_SUB_ITEMS: SidebarSubItem[] = [
   { id: 'sb-comodato-retorno', name: 'Retorno Comodato', path: '/stockbridge/comodato-retorno', icon: RotateCcw, roles: ['operador', 'gestor', 'diretor'], group: 'Operação' },
   { id: 'sb-movimentacoes', name: 'Movimentações', path: '/stockbridge/movimentacoes', icon: Table, roles: ['operador', 'gestor', 'diretor'], group: 'Operação' },
   { id: 'sb-transito', name: 'Trânsito', path: '/stockbridge/transito', icon: Activity, roles: ['operador', 'gestor', 'diretor'], group: 'Operação' },
+  { id: 'sb-executivo', name: 'Visão Executiva', path: '/stockbridge/executivo', icon: Wallet, roles: ['diretor'], group: 'Gestão' },
   { id: 'sb-cockpit', name: 'Cockpit', path: '/stockbridge/cockpit', icon: LayoutDashboard, roles: ['gestor', 'diretor'], group: 'Gestão' },
   { id: 'sb-aprovacoes', name: 'Aprovações', path: '/stockbridge/aprovacoes', icon: Bell, roles: ['gestor', 'diretor'], group: 'Gestão' },
   { id: 'sb-divergencias', name: 'Divergências', path: '/stockbridge/divergencias', icon: AlertTriangle, roles: ['gestor', 'diretor'], group: 'Gestão' },
@@ -416,6 +419,7 @@ function ProtectedShell() {
             <Route index element={<SBIndexRedirect role={user.role} />} />
             <Route path="fila" element={<FilaOmiePage />} />
             <Route path="cockpit" element={<CockpitPage />} />
+            <Route path="executivo" element={<CockpitExecutivoPage />} />
             <Route path="custos" element={<CmcPage />} />
             <Route path="aprovacoes" element={<AprovacoesPage />} />
             <Route path="divergencias" element={<DivergenciasPage />} />
@@ -459,6 +463,9 @@ function ProtectedShell() {
 /** Redireciona a rota index do StockBridge pra tela certa por role. */
 function SBIndexRedirect({ role }: { role: string }) {
   if (role === 'operador') return <Navigate to="/stockbridge/fila" replace />;
+  // Diretor cai na Visão Executiva (ACXEGDP-314); o Cockpit operacional
+  // continua acessível pelo menu.
+  if (role === 'diretor') return <Navigate to="/stockbridge/executivo" replace />;
   return <Navigate to="/stockbridge/cockpit" replace />;
 }
 
