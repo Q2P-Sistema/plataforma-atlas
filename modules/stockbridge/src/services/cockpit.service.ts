@@ -257,7 +257,9 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
         ${nfValida}
         AND (
           h.n_id_receb > 0
-          OR ${recebidaViaMovimentacaoSql("LPAD(f.nf_filhote, 8, '0')")}
+          -- Feature 014: por PRODUTO — NF multi-produto parcialmente recebida
+          -- (feature 013, resumivel) so desconta os produtos que JA entraram.
+          OR ${recebidaViaMovimentacaoSql("LPAD(f.nf_filhote, 8, '0')", 'i.n_cod_prod')}
           OR ${recebidaViaLegadoSql("LPAD(f.nf_filhote, 8, '0')")}
         )
       GROUP BY mapa.pedido_acxe_omie, i.n_cod_prod
@@ -379,7 +381,8 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
               ${nfValida}
               AND (
                 h.n_id_receb > 0
-                OR ${recebidaViaMovimentacaoSql("LPAD(f.nf_filhote, 8, '0')")}
+                -- Feature 014: por PRODUTO (mesma razao do transito_recebido_filhotes)
+                OR ${recebidaViaMovimentacaoSql("LPAD(f.nf_filhote, 8, '0')", 'i.n_cod_prod')}
                 OR ${recebidaViaLegadoSql("LPAD(f.nf_filhote, 8, '0')")}
               )
             GROUP BY f.mapa_id, i.n_cod_prod
@@ -402,7 +405,8 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
           ${nfValida}
           AND LEFT(i.cfop, 1) = '3'
           AND h.d_emi >= $3::date
-          AND NOT ${recebidaViaMovimentacaoSql('h.n_nf')}
+          -- Feature 014: por PRODUTO — NF parcial mantem na pendencia so o produto que falta
+          AND NOT ${recebidaViaMovimentacaoSql('h.n_nf', 'i.n_cod_prod')}
           AND NOT ${recebidaViaLegadoSql('h.n_nf')}
           AND NOT EXISTS (
             SELECT 1 FROM stockbridge.nf_pedido_mapa mapa

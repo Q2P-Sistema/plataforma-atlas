@@ -34,6 +34,17 @@ interface MinhaRejeicao {
   rejeitadoEm: string;
 }
 
+/** Feature 014: item da fila real — NF filhote mapeada, emitida, com produto pendente. */
+interface FilaPendenteItem {
+  nfFilhote: string;
+  pedidoAcxeOmie: string;
+  produtosTotal: number;
+  produtosPendentes: number;
+  quantidadePendenteKg: number;
+  dtEmissao: string;
+  diasDesdeEmissao: number;
+}
+
 const TIPO_LABEL: Record<string, { label: string; color: string }> = {
   importacao: { label: 'Importação', color: 'bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-400' },
   devolucao_cliente: { label: 'Devolução', color: 'bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-400' },
@@ -125,10 +136,28 @@ export function FilaOmiePage() {
     staleTime: Infinity,
   });
 
+  // Feature 014: fila real — NFs filhote pendentes (lida do espelho Postgres,
+  // sem OMIE ao vivo — pode refazer no foco sem restrição de 40s).
+  const { data: filaPendente = [], isLoading: filaLoading } = useQuery<FilaPendenteItem[]>({
+    queryKey: ['stockbridge', 'fila-pendente'],
+    queryFn: async () => {
+      const body = await apiFetch('/api/v1/stockbridge/fila');
+      return body.data as FilaPendenteItem[];
+    },
+    enabled: aba === 'importacao',
+  });
+
   function handleBuscar(e: FormEvent) {
     e.preventDefault();
     if (!buscaNf.trim()) return;
     setQueryKey({ nf: buscaNf.trim(), cnpj: 'acxe' });
+  }
+
+  // Feature 014: clique num item da fila reusa 100% o fluxo de busca por NF —
+  // o detalhe por produto (e o ConferenciaModal) exigem a consulta OMIE ao vivo.
+  function selecionarDaFila(nf: string) {
+    setBuscaNf(nf);
+    setQueryKey({ nf, cnpj: 'acxe' });
   }
 
   return (
@@ -179,6 +208,9 @@ export function FilaOmiePage() {
           isLoading={isLoading}
           error={error}
           onReceber={setSelecionados}
+          filaPendente={filaPendente}
+          filaLoading={filaLoading}
+          onSelecionarDaFila={selecionarDaFila}
         />
       )}
 
@@ -190,6 +222,8 @@ export function FilaOmiePage() {
             setSelecionados(null);
             setBuscaNf('');
             setQueryKey({});
+            // Feature 014: NF recebida sai da fila pendente — recarrega a lista.
+            queryClient.invalidateQueries({ queryKey: ['stockbridge', 'fila-pendente'] });
           }}
         />
       )}
@@ -287,6 +321,17 @@ interface ImportacaoSectionProps {
   error: unknown;
   /** Feature 013: recebe TODOS os itens da NF — a conferência é da nota inteira. */
   onReceber: (itens: FilaItem[]) => void;
+  /** Feature 014: fila real de NFs filhote pendentes (sem busca ativa). */
+  filaPendente: FilaPendenteItem[];
+  filaLoading: boolean;
+  onSelecionarDaFila: (nf: string) => void;
+}
+
+/** Aging da NF na fila: verde até 3 dias, âmbar até 7, vermelho depois. */
+function agingFilaClass(dias: number): string {
+  if (dias <= 3) return 'text-green-700 dark:text-green-400';
+  if (dias <= 7) return 'text-amber-700 dark:text-amber-400';
+  return 'text-red-700 dark:text-red-400';
 }
 
 function ImportacaoSection({
@@ -298,6 +343,9 @@ function ImportacaoSection({
   isLoading,
   error,
   onReceber,
+  filaPendente,
+  filaLoading,
+  onSelecionarDaFila,
 }: ImportacaoSectionProps) {
   const multiItem = itens.length > 1;
   return (
@@ -323,9 +371,74 @@ function ImportacaoSection({
         </div>
       )}
 
+      {/* Feature 014: sem busca ativa, mostra a fila real de NFs pendentes
+          (lida do espelho — o detalhe por produto vem ao clicar, via busca OMIE). */}
       {!queryKey.nf && (
-        <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-atlas-border rounded-lg">
-          Informe um número de NF para buscar.
+        <div className="mb-4">
+          <h2 className="text-sm font-semibold text-atlas-ink mb-2">
+            Aguardando recebimento
+            {!filaLoading && filaPendente.length > 0 && (
+              <span className="ml-2 text-xs font-normal text-atlas-muted">
+                {filaPendente.length} {filaPendente.length === 1 ? 'nota fiscal' : 'notas fiscais'}
+              </span>
+            )}
+          </h2>
+
+          {filaLoading && <div className="p-6 text-sm text-atlas-muted">Carregando fila…</div>}
+
+          {!filaLoading && filaPendente.length === 0 && (
+            <div className="p-8 text-center text-sm text-atlas-muted border border-dashed border-atlas-border rounded-lg">
+              Nenhuma NF aguardando recebimento no momento. Você também pode buscar uma NF pelo número acima.
+            </div>
+          )}
+
+          {!filaLoading && filaPendente.length > 0 && (
+            <div className="flex flex-col gap-2">
+              {filaPendente.map((f) => {
+                const parcial = f.produtosPendentes < f.produtosTotal;
+                return (
+                  <div
+                    key={f.nfFilhote}
+                    className="bg-atlas-card border border-atlas-border rounded-lg px-4 py-3 flex items-center gap-4"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-baseline gap-3">
+                        <span className="font-mono text-sm text-atlas-ink">NF {f.nfFilhote}</span>
+                        <span className="text-xs text-atlas-muted">Pedido {f.pedidoAcxeOmie}</span>
+                        {parcial && (
+                          <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
+                            {f.produtosPendentes} de {f.produtosTotal} produtos pendentes
+                          </span>
+                        )}
+                        {!parcial && f.produtosTotal > 1 && (
+                          <span className="text-xs text-atlas-muted">{f.produtosTotal} produtos</span>
+                        )}
+                      </div>
+                      <div className="text-xs text-atlas-muted mt-0.5">
+                        <span className={agingFilaClass(f.diasDesdeEmissao)}>
+                          {f.diasDesdeEmissao === 0
+                            ? 'emitida hoje'
+                            : `emitida há ${f.diasDesdeEmissao} ${f.diasDesdeEmissao === 1 ? 'dia' : 'dias'}`}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-serif text-atlas-ink">
+                        {f.quantidadePendenteKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
+                        <span className="text-xs text-atlas-muted ml-1">kg</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => onSelecionarDaFila(f.nfFilhote)}
+                      className="px-4 py-2 bg-atlas-btn-bg text-atlas-btn-text rounded text-sm font-medium hover:opacity-90 whitespace-nowrap"
+                    >
+                      Buscar →
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

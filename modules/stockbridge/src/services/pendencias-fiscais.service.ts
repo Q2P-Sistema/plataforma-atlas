@@ -2,6 +2,7 @@ import { getPool, createLogger, getConfig } from '@atlas/core';
 import {
   recebidaViaMovimentacaoSql,
   recebidaViaLegadoSql,
+  produtoPendenteSql,
   nfValidaSql,
   colunaCanceladaExiste,
 } from './fiscal-recebida-sql.js';
@@ -25,11 +26,15 @@ export interface FilhoteItem {
   nfFilhote: string;
   posicao: number;
   qtdeKg: number;
+  /** true SOMENTE quando todos os produtos da filhote estão recebidos (feature 014). */
   recebida: boolean;
   fonteRecebimento: FonteRecebimento;
   nfEmitida: boolean;
   cancelada: boolean;
   diasDesdeEmissao: number | null;
+  /** Feature 014: granularidade por produto — permite exibir "2 de 3" no parcial. */
+  produtosTotal: number;
+  produtosRecebidos: number;
 }
 
 export interface PedidoPendencia {
@@ -97,6 +102,10 @@ interface FilhoteRow {
   in_mov: boolean;
   in_legado: boolean;
   cancelada: boolean;
+  // Feature 014: granularidade por produto
+  produtos_total: number;
+  produtos_recebidos: number;
+  recebido_kg: number | null;
 }
 
 interface SemMapaRow {
@@ -169,22 +178,36 @@ export async function getPendenciasFiscais(
     `);
 
     // 2) Filhotes (ativas) de cada mapa ativo: qtde (Σ q_com), recebimento por fonte, aging.
+    // Feature 014: granularidade por PRODUTO — uma filhote multi-produto parcialmente
+    // recebida (feature 013, resumível) conta produtos_recebidos < produtos_total e
+    // soma em recebido_kg só os kg dos produtos que de fato entraram.
+    const produtoPendenteFilhote = produtoPendenteSql({
+      nfExpr: "LPAD(f.nf_filhote, 8, '0')",
+      produtoExpr: 'i.n_cod_prod',
+      nIdRecebExpr: 'hf.n_id_receb',
+    });
     const filhotesRes = await pool.query<FilhoteRow>(`
       SELECT
         mapa.pedido_acxe_omie                      AS pedido_acxe_omie,
         f.nf_filhote                               AS nf_filhote,
         f.posicao                                  AS posicao,
-        (SELECT SUM(i.q_com) FROM public."tbl_nf_itens_ACXE" i WHERE i.n_id_nf = hf.n_id_nf)::float8 AS filhote_qtde_kg,
+        SUM(i.q_com)::float8                       AS filhote_qtde_kg,
         CASE WHEN hf.d_emi IS NOT NULL THEN (CURRENT_DATE - hf.d_emi::date) END AS dias_desde_emissao,
         (hf.n_id_nf IS NOT NULL)                   AS nf_emitida,
         (hf.n_id_receb > 0)                        AS receb_omie,
         ${recebidaViaMovimentacaoSql("LPAD(f.nf_filhote, 8, '0')")} AS in_mov,
         ${recebidaViaLegadoSql("LPAD(f.nf_filhote, 8, '0')")} AS in_legado,
-        ${canceladaExiste ? 'COALESCE(hf.cancelada, false)' : 'false'} AS cancelada
+        ${canceladaExiste ? 'COALESCE(hf.cancelada, false)' : 'false'} AS cancelada,
+        COUNT(i.n_cod_prod)::int                   AS produtos_total,
+        COUNT(*) FILTER (WHERE i.n_cod_prod IS NOT NULL AND NOT ${produtoPendenteFilhote})::int AS produtos_recebidos,
+        SUM(i.q_com) FILTER (WHERE NOT ${produtoPendenteFilhote})::float8 AS recebido_kg
       FROM stockbridge.nf_pedido_mapa mapa
       JOIN stockbridge.nf_pedido_filhote f ON f.mapa_id = mapa.id AND f.ativo = true
       LEFT JOIN public."tbl_nf_header_ACXE" hf ON hf.n_nf = LPAD(f.nf_filhote, 8, '0')
+      LEFT JOIN public."tbl_nf_itens_ACXE" i ON i.n_id_nf = hf.n_id_nf
       WHERE mapa.ativo = true
+      GROUP BY mapa.pedido_acxe_omie, f.nf_filhote, f.posicao,
+               hf.n_id_nf, hf.d_emi, hf.n_id_receb${canceladaExiste ? ', hf.cancelada' : ''}
       ORDER BY mapa.pedido_acxe_omie, f.posicao
     `);
 
@@ -206,7 +229,8 @@ export async function getPendenciasFiscais(
       LEFT JOIN stockbridge.config_produto cfg ON cfg.produto_codigo_acxe = i.n_cod_prod
       WHERE h.tp_nf = 0 AND LEFT(i.cfop, 1) = '3' AND h.d_emi >= $1::date
         ${nfValidaSql(canceladaExiste, 'h')}
-        AND NOT ${recebidaViaMovimentacaoSql('h.n_nf')}
+        -- Feature 014: por PRODUTO — NF parcial mantém na seção o produto que falta
+        AND NOT ${recebidaViaMovimentacaoSql('h.n_nf', 'i.n_cod_prod')}
         AND NOT ${recebidaViaLegadoSql('h.n_nf')}
         AND NOT EXISTS (SELECT 1 FROM stockbridge.nf_pedido_mapa mapa
                         WHERE LPAD(mapa.nf_mae, 8, '0') = h.n_nf)
@@ -225,7 +249,14 @@ export async function getPendenciasFiscais(
     for (const r of filhotesRes.rows) {
       // NF cancelada não é recebimento válido — não conta como recebida nem soma ao recebido.
       const cancelada = r.cancelada === true;
-      const recebida = !cancelada && (r.receb_omie || r.in_mov || r.in_legado);
+      const produtosTotal = Number(r.produtos_total ?? 0);
+      const produtosRecebidos = Number(r.produtos_recebidos ?? 0);
+      // Feature 014: "recebida" exige TODOS os produtos — sinais por NF (OMIE,
+      // legado) cobrem a NF inteira por definição; via Atlas (movimentacao),
+      // conta produto a produto (NF parcial da feature 013 fica recebida=false).
+      const recebida =
+        !cancelada &&
+        (r.receb_omie || r.in_legado || (produtosTotal > 0 && produtosRecebidos >= produtosTotal));
       const fonte: FonteRecebimento = !recebida
         ? null
         : r.receb_omie
@@ -245,12 +276,21 @@ export async function getPendenciasFiscais(
         nfEmitida: r.nf_emitida,
         cancelada,
         diasDesdeEmissao: r.dias_desde_emissao != null ? Number(r.dias_desde_emissao) : null,
+        produtosTotal,
+        produtosRecebidos,
       };
       const arr = filhotesByPedido.get(r.pedido_acxe_omie) ?? [];
       arr.push(item);
       filhotesByPedido.set(r.pedido_acxe_omie, arr);
-      if (recebida) {
-        recebidoByPedido.set(r.pedido_acxe_omie, (recebidoByPedido.get(r.pedido_acxe_omie) ?? 0) + qtde);
+      // Feature 014: soma o kg dos produtos efetivamente recebidos (recebido_kg),
+      // não a filhote inteira — parcial contribui só a parte que entrou, e o
+      // statusAgregado do pedido vira 'parcial' corretamente.
+      const recebidoKgRow = !cancelada && r.recebido_kg != null ? Number(r.recebido_kg) : 0;
+      if (recebidoKgRow > 0) {
+        recebidoByPedido.set(
+          r.pedido_acxe_omie,
+          (recebidoByPedido.get(r.pedido_acxe_omie) ?? 0) + recebidoKgRow,
+        );
       }
     }
 

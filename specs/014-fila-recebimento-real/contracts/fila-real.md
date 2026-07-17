@@ -41,4 +41,4 @@ Um endpoint muda de comportamento (`GET /fila` sem `nf`, hoje sempre vazio em mo
 
 - **Busca por NF (com `nf`)**: inalterada — segue a feature 013 (multi-item, idempotência por produto, dois portões).
 - **`ConferenciaModal`**: inalterado — a fila não interage com ele diretamente; o clique num item preenche o campo de busca e reaproveita o fluxo existente.
-- **Modo mock**: os 2 itens sintéticos atuais (`IMP-2026-0301`/`0302`) continuam existindo para dev sem banco populado — a fila real é um caminho adicional, condicionado a `isMockMode()` como hoje.
+- **Modo mock** *(ajustado na implementação)*: os 2 itens sintéticos antigos (`IMP-2026-0301`/`0302`, shape `FilaItemOmie`) foram removidos — manter dois shapes na mesma resposta obrigaria o front a lidar com ambos. A rota sem `nf` sempre roda a query real (`getFilaPendente`); em dev com `nf_pedido_mapa` vazio, a fila aparece vazia — popular via SQL do quickstart §1. `OMIE_MODE=mock` continua valendo para a busca por NF (o caminho que chama OMIE).

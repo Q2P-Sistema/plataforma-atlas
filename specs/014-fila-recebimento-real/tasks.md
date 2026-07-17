@@ -24,7 +24,7 @@ description: "Task list — Fila de Recebimento em Modo Real + Correção de Gra
 
 ## Phase 1: Setup
 
-- [ ] T001 Rodar a suíte `@atlas/stockbridge` atual como baseline verde (`pnpm --filter @atlas/stockbridge test`) e anotar a contagem — guarda de regressão.
+- [x] T001 Rodar a suíte `@atlas/stockbridge` atual como baseline verde (`pnpm --filter @atlas/stockbridge test`) e anotar a contagem — guarda de regressão.
 
 ---
 
@@ -34,9 +34,9 @@ description: "Task list — Fila de Recebimento em Modo Real + Correção de Gra
 
 **⚠️ CRITICAL**: nenhuma story começa antes desta fase fechar.
 
-- [ ] T002 Estender `recebidaViaMovimentacaoSql` em `modules/stockbridge/src/services/fiscal-recebida-sql.ts` com parâmetro opcional `produtoExpr` — sem o parâmetro, comportamento idêntico ao atual (compatibilidade retroativa para qualquer uso que não precise de granularidade).
-- [ ] T003 Nova função `produtoPendenteSql({nfExpr, produtoExpr, nIdRecebExpr})` em `fiscal-recebida-sql.ts` combinando as 3 fontes (n_id_receb OMIE por NF, legado por NF, Atlas por produto) — ver [data-model.md](./data-model.md) §1.
-- [ ] T004 [P] Testes unitários de `produtoPendenteSql`/`recebidaViaMovimentacaoSql(nf, produto)` em `modules/stockbridge/src/__tests__/` — produto com movimentação daquele produto específico → não pendente; produto sem movimentação (mesmo com outro produto da mesma NF recebido) → pendente; match via legado/n_id_receb → todos os produtos da NF contam como recebidos (limitação documentada).
+- [x] T002 Estender `recebidaViaMovimentacaoSql` em `modules/stockbridge/src/services/fiscal-recebida-sql.ts` com parâmetro opcional `produtoExpr` — sem o parâmetro, comportamento idêntico ao atual (compatibilidade retroativa para qualquer uso que não precise de granularidade).
+- [x] T003 Nova função `produtoPendenteSql({nfExpr, produtoExpr, nIdRecebExpr})` em `fiscal-recebida-sql.ts` combinando as 3 fontes (n_id_receb OMIE por NF, legado por NF, Atlas por produto) — ver [data-model.md](./data-model.md) §1.
+- [x] T004 [P] Testes unitários de `produtoPendenteSql`/`recebidaViaMovimentacaoSql(nf, produto)` em `modules/stockbridge/src/__tests__/` — produto com movimentação daquele produto específico → não pendente; produto sem movimentação (mesmo com outro produto da mesma NF recebido) → pendente; match via legado/n_id_receb → todos os produtos da NF contam como recebidos (limitação documentada).
 
 **Checkpoint**: checagem por produto pronta e testada isoladamente.
 
@@ -50,16 +50,16 @@ description: "Task list — Fila de Recebimento em Modo Real + Correção de Gra
 
 ### Tests for User Story 1
 
-- [ ] T005 [P] [US1] Teste Supertest — `GET /fila` sem `nf` devolve itens reais (banco com mapa/filhote/espelho mockados) em vez de `[]`.
-- [ ] T006 [P] [US1] Teste — NF single-item pendente aparece na fila com `produtosTotal=1, produtosPendentes=1`.
-- [ ] T007 [P] [US1] Teste — NF totalmente recebida não aparece na fila.
+- [x] T005 [P] [US1] Teste Supertest — `GET /fila` sem `nf` devolve itens reais (banco com mapa/filhote/espelho mockados) em vez de `[]`.
+- [x] T006 [P] [US1] Teste — NF single-item pendente aparece na fila com `produtosTotal=1, produtosPendentes=1`.
+- [x] T007 [P] [US1] Teste — NF totalmente recebida não aparece na fila.
 
 ### Implementation for User Story 1
 
-- [ ] T008 [US1] Implementar o Caso 2 de `getFilaOmie` (hoje `return []`) em `modules/stockbridge/src/services/recebimento.service.ts` — query sobre `nf_pedido_mapa`/`nf_pedido_filhote` (ativos) cruzada com `tbl_nf_header_ACXE`/`tbl_nf_itens_ACXE`, usando `produtoPendenteSql` (T003) por produto, agregada em `FilaQueueItem` (ver [data-model.md](./data-model.md) §2).
-- [ ] T009 [US1] Confirmar que o guard existente de `GET /fila` (`requireOperador` + `requireArmazemVinculado`, em `modules/stockbridge/src/routes/fila.routes.ts`) cobre o caminho sem `nf` sem mudança — não é rota nova, é o mesmo endpoint.
-- [ ] T010 [US1] UI — nova seção em `apps/web/src/pages/stockbridge/operador/FilaOmiePage.tsx` no lugar do placeholder `{!queryKey.nf && (...)}`: `useQuery` buscando `GET /fila` sem parâmetros quando não há busca ativa, renderizando a lista (NF, pedido, produtos pendentes, dias desde emissão) com estado de "fila vazia".
-- [ ] T011 [US1] UI — clique num item da fila preenche `buscaNf` e chama `handleBuscar` (já existe) — sem abrir `ConferenciaModal` diretamente (ver [research.md](./research.md) D5).
+- [x] T008 [US1] Implementar o Caso 2 de `getFilaOmie` (hoje `return []`) em `modules/stockbridge/src/services/recebimento.service.ts` — query sobre `nf_pedido_mapa`/`nf_pedido_filhote` (ativos) cruzada com `tbl_nf_header_ACXE`/`tbl_nf_itens_ACXE`, usando `produtoPendenteSql` (T003) por produto, agregada em `FilaQueueItem` (ver [data-model.md](./data-model.md) §2).
+- [x] T009 [US1] Confirmar que o guard existente de `GET /fila` (`requireOperador` + `requireArmazemVinculado`, em `modules/stockbridge/src/routes/fila.routes.ts`) cobre o caminho sem `nf` sem mudança — não é rota nova, é o mesmo endpoint.
+- [x] T010 [US1] UI — nova seção em `apps/web/src/pages/stockbridge/operador/FilaOmiePage.tsx` no lugar do placeholder `{!queryKey.nf && (...)}`: `useQuery` buscando `GET /fila` sem parâmetros quando não há busca ativa, renderizando a lista (NF, pedido, produtos pendentes, dias desde emissão) com estado de "fila vazia".
+- [x] T011 [US1] UI — clique num item da fila preenche `buscaNf` e chama `handleBuscar` (já existe) — sem abrir `ConferenciaModal` diretamente (ver [research.md](./research.md) D5).
 
 **Checkpoint**: MVP — fila real funciona ponta-a-ponta. **PARAR e VALIDAR** (quickstart §1).
 
@@ -73,22 +73,22 @@ description: "Task list — Fila de Recebimento em Modo Real + Correção de Gra
 
 ### Tests for User Story 2
 
-- [ ] T012 [P] [US2] Teste regressão single-item — `cockpit.service.ts` (3 usos: L260-261, L382-383, L405-406) produz resultado idêntico ao pré-correção para NF de 1 produto.
-- [ ] T013 [P] [US2] Teste regressão single-item — `cockpit-executivo.service.ts` (L424-425).
-- [ ] T014 [P] [US2] Teste regressão single-item — `pendencias-fiscais.service.ts` (L181-182, L209-210).
-- [ ] T015 [P] [US2] Teste regressão single-item — `nf-pedido-mapa.service.ts` (auto-desativação, L108-109).
-- [ ] T016 [P] [US2] Teste multi-produto parcial — `cockpit.service.ts` Parte A (`transito_recebido_filhotes`) não subtrai o produto pendente do trânsito local.
-- [ ] T017 [P] [US2] Teste multi-produto parcial — `cockpit.service.ts` Parte B (fallback sem-mapa) não some da lista com o produto ainda pendente.
-- [ ] T018 [P] [US2] Teste multi-produto parcial — `cockpit-executivo.service.ts` não conta o produto pendente como recebido no `transito_recebido_filhotes` valorizado.
-- [ ] T019 [P] [US2] Teste multi-produto parcial — `pendencias-fiscais.service.ts` marca a filhote como parcial (não recebida), identificando o produto que falta.
-- [ ] T020 [P] [US2] Teste multi-produto parcial — auto-desativação do mapa NÃO desativa enquanto houver produto pendente em qualquer filhote.
+- [x] T012 [P] [US2] Teste regressão single-item — `cockpit.service.ts` (3 usos: L260-261, L382-383, L405-406) produz resultado idêntico ao pré-correção para NF de 1 produto.
+- [x] T013 [P] [US2] Teste regressão single-item — `cockpit-executivo.service.ts` (L424-425).
+- [x] T014 [P] [US2] Teste regressão single-item — `pendencias-fiscais.service.ts` (L181-182, L209-210).
+- [x] T015 [P] [US2] Teste regressão single-item — `nf-pedido-mapa.service.ts` (auto-desativação, L108-109).
+- [x] T016 [P] [US2] Teste multi-produto parcial — `cockpit.service.ts` Parte A (`transito_recebido_filhotes`) não subtrai o produto pendente do trânsito local.
+- [x] T017 [P] [US2] Teste multi-produto parcial — `cockpit.service.ts` Parte B (fallback sem-mapa) não some da lista com o produto ainda pendente.
+- [x] T018 [P] [US2] Teste multi-produto parcial — `cockpit-executivo.service.ts` não conta o produto pendente como recebido no `transito_recebido_filhotes` valorizado.
+- [x] T019 [P] [US2] Teste multi-produto parcial — `pendencias-fiscais.service.ts` marca a filhote como parcial (não recebida), identificando o produto que falta.
+- [x] T020 [P] [US2] Teste multi-produto parcial — auto-desativação do mapa NÃO desativa enquanto houver produto pendente em qualquer filhote.
 
 ### Implementation for User Story 2
 
-- [ ] T021 [US2] Corrigir os 3 usos em `modules/stockbridge/src/services/cockpit.service.ts` (L260-261, L382-383, L405-406) para `recebidaViaMovimentacaoSql(nf, produto)` com o produto da linha (`i.n_cod_prod`).
-- [ ] T022 [US2] Corrigir o uso em `modules/stockbridge/src/services/cockpit-executivo.service.ts` (L424-425) — a CTE já agrupa por produto (`GROUP BY ... i.n_cod_prod`), só o filtro precisa acompanhar.
-- [ ] T023 [US2] Corrigir os 2 usos em `modules/stockbridge/src/services/pendencias-fiscais.service.ts` (L181-182, L209-210); estender `FilhoteItem` com `produtosTotal`/`produtosRecebidos` (ver [data-model.md](./data-model.md) §3); `recebida` só `true` quando todos os produtos estão recebidos.
-- [ ] T024 [US2] Corrigir a auto-desativação do mapa em `modules/stockbridge/src/services/nf-pedido-mapa.service.ts` (L108-109) para considerar produto, não só NF.
+- [x] T021 [US2] Corrigir os 3 usos em `modules/stockbridge/src/services/cockpit.service.ts` (L260-261, L382-383, L405-406) para `recebidaViaMovimentacaoSql(nf, produto)` com o produto da linha (`i.n_cod_prod`).
+- [x] T022 [US2] Corrigir o uso em `modules/stockbridge/src/services/cockpit-executivo.service.ts` (L424-425) — a CTE já agrupa por produto (`GROUP BY ... i.n_cod_prod`), só o filtro precisa acompanhar.
+- [x] T023 [US2] Corrigir os 2 usos em `modules/stockbridge/src/services/pendencias-fiscais.service.ts` (L181-182, L209-210); estender `FilhoteItem` com `produtosTotal`/`produtosRecebidos` (ver [data-model.md](./data-model.md) §3); `recebida` só `true` quando todos os produtos estão recebidos.
+- [x] T024 [US2] Corrigir a auto-desativação do mapa em `modules/stockbridge/src/services/nf-pedido-mapa.service.ts` (L108-109) para considerar produto, não só NF.
 
 **Checkpoint**: os 5 pontos corrigidos; single-item sem regressão; multi-produto parcial correto em todos.
 
@@ -102,14 +102,14 @@ description: "Task list — Fila de Recebimento em Modo Real + Correção de Gra
 
 ### Tests for User Story 3
 
-- [ ] T025 [P] [US3] Teste — NF mãe nunca aparece na fila (a query nunca itera `nf_mae` como item).
-- [ ] T026 [P] [US3] Teste — NF filhote cancelada/deletada no OMIE não aparece.
-- [ ] T027 [P] [US3] Teste — NF filhote sem `n_id_nf` (não sincronizada) não aparece.
-- [ ] T028 [P] [US3] Teste — itens da fila vêm ordenados por data de emissão mais antiga primeiro.
+- [x] T025 [P] [US3] Teste — NF mãe nunca aparece na fila (a query nunca itera `nf_mae` como item).
+- [x] T026 [P] [US3] Teste — NF filhote cancelada/deletada no OMIE não aparece.
+- [x] T027 [P] [US3] Teste — NF filhote sem `n_id_nf` (não sincronizada) não aparece.
+- [x] T028 [P] [US3] Teste — itens da fila vêm ordenados por data de emissão mais antiga primeiro.
 
 ### Implementation for User Story 3
 
-- [ ] T029 [US3] Confirmar/ajustar os filtros na query de T008 — `nfValidaSql` (cancelada/deletada, já usado por Pendências Fiscais) + `n_id_nf IS NOT NULL` + `ORDER BY d_emi ASC`.
+- [x] T029 [US3] Confirmar/ajustar os filtros na query de T008 — `nfValidaSql` (cancelada/deletada, já usado por Pendências Fiscais) + `n_id_nf IS NOT NULL` + `ORDER BY d_emi ASC`.
 
 **Checkpoint**: fila só mostra o acionável.
 
@@ -117,10 +117,10 @@ description: "Task list — Fila de Recebimento em Modo Real + Correção de Gra
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T030 [P] Atualizar a seção StockBridge do `CLAUDE.md` — fila real (fonte de dados, exclusões) + granularidade por produto corrigida nos 5 pontos.
+- [x] T030 [P] Atualizar a seção StockBridge do `CLAUDE.md` — fila real (fonte de dados, exclusões) + granularidade por produto corrigida nos 5 pontos.
 - [ ] T031 Rodar `frontend-design-reviewer` sobre o diff de `FilaOmiePage.tsx` (nova seção da fila).
-- [ ] T032 Validação quickstart.md — cenário manual de recebimento parcial (mock/dev) + `pnpm --filter @atlas/stockbridge test` + `tsc --noEmit` verdes.
-- [ ] T033 `pnpm --filter @atlas/web build` verde.
+- [x] T032 Validação quickstart.md — cenário manual de recebimento parcial (mock/dev) + `pnpm --filter @atlas/stockbridge test` + `tsc --noEmit` verdes.
+- [x] T033 `pnpm --filter @atlas/web build` verde.
 
 ---
 
