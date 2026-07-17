@@ -21,11 +21,18 @@ router.get('/api/v1/health', async (_req, res) => {
     checks.postgres = { status: 'down', error: err.message };
   }
 
-  // Redis
+  // Redis — com timeout explicito: getRedis() usa maxRetriesPerRequest=null, entao
+  // um ping com o Redis fora ficaria enfileirado (pendurado) em vez de rejeitar. O
+  // race garante que o health responda rapido reportando "down" nesse caso.
   const redisStart = Date.now();
   try {
     const redis = getRedis();
-    await redis.ping();
+    await Promise.race([
+      redis.ping(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('redis ping timeout')), 2_000),
+      ),
+    ]);
     checks.redis = { status: 'up', latency_ms: Date.now() - redisStart };
   } catch (err: any) {
     checks.redis = { status: 'down', error: err.message };
