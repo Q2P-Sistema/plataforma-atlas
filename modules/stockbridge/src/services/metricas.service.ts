@@ -81,8 +81,9 @@ let ptaxCache: { venda: number; fetchedAt: number } | null = null;
  * Retorna PTAX corrente (venda) consumindo o cliente BCB diretamente.
  * StockBridge nao depende do modulo @atlas/hedge — usa @atlas/integration-bcb
  * direto e cacheia em memoria. Fallback heuristico 5.0 se BCB falhar e cache vazio.
+ * Exportada tambem para o cockpit executivo (exposicao cambial em USD).
  */
-async function getPtaxCorrente(): Promise<number> {
+export async function getPtaxCorrente(): Promise<number> {
   if (ptaxCache && Date.now() - ptaxCache.fetchedAt < PTAX_CACHE_TTL_MS) {
     return ptaxCache.venda;
   }

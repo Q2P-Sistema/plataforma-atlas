@@ -5,6 +5,7 @@ import filaRouter from './fila.routes.js';
 import recebimentoRouter from './recebimento.routes.js';
 import recebimentoNacionalRouter from './recebimento-nacional.routes.js';
 import cockpitRouter from './cockpit.routes.js';
+import cockpitExecutivoRouter from './cockpit-executivo.routes.js';
 import aprovacaoRouter from './aprovacao.routes.js';
 import divergenciaRouter from './divergencia.routes.js';
 import transitoRouter from './transito.routes.js';
@@ -46,6 +47,8 @@ router.use(recebimentoRouter);
 router.use(recebimentoNacionalRouter);
 // US2 — Cockpit de estoque por produto (gestor/diretor)
 router.use(cockpitRouter);
+// Visão Executiva "onde está o dinheiro" (diretor) — ACXEGDP-314
+router.use(cockpitExecutivoRouter);
 // US3 — Aprovacoes hierarquicas
 router.use(aprovacaoRouter);
 // Divergencias (drill-down do cockpit) — gestor+
