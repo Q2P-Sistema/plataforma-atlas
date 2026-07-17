@@ -138,7 +138,11 @@ export function FilaOmiePage() {
 
   // Feature 014: fila real — NFs filhote pendentes (lida do espelho Postgres,
   // sem OMIE ao vivo — pode refazer no foco sem restrição de 40s).
-  const { data: filaPendente = [], isLoading: filaLoading } = useQuery<FilaPendenteItem[]>({
+  const {
+    data: filaPendente = [],
+    isLoading: filaLoading,
+    error: filaError,
+  } = useQuery<FilaPendenteItem[]>({
     queryKey: ['stockbridge', 'fila-pendente'],
     queryFn: async () => {
       const body = await apiFetch('/api/v1/stockbridge/fila');
@@ -149,7 +153,11 @@ export function FilaOmiePage() {
 
   function handleBuscar(e: FormEvent) {
     e.preventDefault();
-    if (!buscaNf.trim()) return;
+    // Campo vazio + busca ativa = voltar à fila (reset), em vez de no-op.
+    if (!buscaNf.trim()) {
+      if (queryKey.nf) setQueryKey({});
+      return;
+    }
     setQueryKey({ nf: buscaNf.trim(), cnpj: 'acxe' });
   }
 
@@ -158,6 +166,11 @@ export function FilaOmiePage() {
   function selecionarDaFila(nf: string) {
     setBuscaNf(nf);
     setQueryKey({ nf, cnpj: 'acxe' });
+  }
+
+  function voltarParaFila() {
+    setBuscaNf('');
+    setQueryKey({});
   }
 
   return (
@@ -210,7 +223,9 @@ export function FilaOmiePage() {
           onReceber={setSelecionados}
           filaPendente={filaPendente}
           filaLoading={filaLoading}
+          filaError={filaError}
           onSelecionarDaFila={selecionarDaFila}
+          onVoltarParaFila={voltarParaFila}
         />
       )}
 
@@ -324,10 +339,17 @@ interface ImportacaoSectionProps {
   /** Feature 014: fila real de NFs filhote pendentes (sem busca ativa). */
   filaPendente: FilaPendenteItem[];
   filaLoading: boolean;
+  filaError: unknown;
   onSelecionarDaFila: (nf: string) => void;
+  onVoltarParaFila: () => void;
 }
 
-/** Aging da NF na fila: verde até 3 dias, âmbar até 7, vermelho depois. */
+/**
+ * Aging da NF na fila do OPERADOR: verde ≤3 dias, âmbar ≤7, vermelho depois —
+ * limiares operacionais (a carreta emitida deveria chegar em poucos dias),
+ * deliberadamente mais apertados que os fiscais de PendenciasFiscaisPage
+ * (30/60 dias, visão gestor). Dark: tom 400, padrão da pasta operador.
+ */
 function agingFilaClass(dias: number): string {
   if (dias <= 3) return 'text-green-700 dark:text-green-400';
   if (dias <= 7) return 'text-amber-700 dark:text-amber-400';
@@ -345,7 +367,9 @@ function ImportacaoSection({
   onReceber,
   filaPendente,
   filaLoading,
+  filaError,
   onSelecionarDaFila,
+  onVoltarParaFila,
 }: ImportacaoSectionProps) {
   const multiItem = itens.length > 1;
   return (
@@ -365,6 +389,18 @@ function ImportacaoSection({
         </button>
       </form>
 
+      {/* Feature 014: com busca ativa, oferece o caminho de volta à fila —
+          sem isto o operador ficava preso no resultado da busca. */}
+      {queryKey.nf && (
+        <button
+          type="button"
+          onClick={onVoltarParaFila}
+          className="mb-3 text-sm text-atlas-muted hover:text-atlas-ink transition-colors"
+        >
+          ← Voltar à fila de recebimento
+        </button>
+      )}
+
       {error && (
         <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-sm text-red-800 dark:text-red-300">
           {(error as Error).message}
@@ -375,10 +411,10 @@ function ImportacaoSection({
           (lida do espelho — o detalhe por produto vem ao clicar, via busca OMIE). */}
       {!queryKey.nf && (
         <div className="mb-4">
-          <h2 className="text-sm font-semibold text-atlas-ink mb-2">
+          <h2 className="text-lg font-serif text-atlas-ink mb-2">
             Aguardando recebimento
             {!filaLoading && filaPendente.length > 0 && (
-              <span className="ml-2 text-xs font-normal text-atlas-muted">
+              <span className="ml-2 text-xs font-sans font-normal text-atlas-muted">
                 {filaPendente.length} {filaPendente.length === 1 ? 'nota fiscal' : 'notas fiscais'}
               </span>
             )}
@@ -386,8 +422,14 @@ function ImportacaoSection({
 
           {filaLoading && <div className="p-6 text-sm text-atlas-muted">Carregando fila…</div>}
 
-          {!filaLoading && filaPendente.length === 0 && (
-            <div className="p-8 text-center text-sm text-atlas-muted border border-dashed border-atlas-border rounded-lg">
+          {!filaLoading && filaError != null && (
+            <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-sm text-red-800 dark:text-red-300">
+              Não foi possível carregar a fila: {(filaError as Error).message}. Você ainda pode buscar uma NF pelo número acima.
+            </div>
+          )}
+
+          {!filaLoading && filaError == null && filaPendente.length === 0 && (
+            <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-atlas-border rounded-lg">
               Nenhuma NF aguardando recebimento no momento. Você também pode buscar uma NF pelo número acima.
             </div>
           )}
@@ -399,7 +441,7 @@ function ImportacaoSection({
                 return (
                   <div
                     key={f.nfFilhote}
-                    className="bg-atlas-card border border-atlas-border rounded-lg px-4 py-3 flex items-center gap-4"
+                    className="bg-atlas-card border border-atlas-border rounded-lg p-4 flex items-center gap-4"
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-baseline gap-3">

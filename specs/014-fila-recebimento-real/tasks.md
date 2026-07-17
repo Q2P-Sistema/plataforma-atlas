@@ -118,7 +118,7 @@ description: "Task list — Fila de Recebimento em Modo Real + Correção de Gra
 ## Phase 6: Polish & Cross-Cutting Concerns
 
 - [x] T030 [P] Atualizar a seção StockBridge do `CLAUDE.md` — fila real (fonte de dados, exclusões) + granularidade por produto corrigida nos 5 pontos.
-- [ ] T031 Rodar `frontend-design-reviewer` sobre o diff de `FilaOmiePage.tsx` (nova seção da fila).
+- [x] T031 Rodar `frontend-design-reviewer` sobre o diff de `FilaOmiePage.tsx` (nova seção da fila).
 - [x] T032 Validação quickstart.md — cenário manual de recebimento parcial (mock/dev) + `pnpm --filter @atlas/stockbridge test` + `tsc --noEmit` verdes.
 - [x] T033 `pnpm --filter @atlas/web build` verde.
 
