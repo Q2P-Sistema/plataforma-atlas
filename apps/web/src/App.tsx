@@ -282,9 +282,12 @@ function ProtectedShell() {
     },
   });
 
-  // Gestor/diretor sem 2FA configurado precisa ir para o setup.
+  // Gestor/diretor sem 2FA configurado precisa ir para o setup — a menos que a
+  // exigencia global de 2FA esteja desligada (AUTH_2FA_ENABLED=false, ex: UAT).
+  // two_factor_enforced ausente/undefined conta como habilitado (default seguro).
   const precisa2faSetup =
     !!user &&
+    user.two_factor_enforced !== false &&
     (user.role === 'gestor' || user.role === 'diretor') &&
     !user.totp_enabled &&
     location.pathname !== '/2fa/setup';

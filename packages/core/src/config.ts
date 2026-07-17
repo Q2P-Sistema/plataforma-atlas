@@ -70,6 +70,16 @@ const envSchema = z.object({
 
   // Chave compartilhada entre n8n e Atlas para endpoints de integracao (ex: saidas automaticas StockBridge)
   ATLAS_INTEGRATION_KEY: z.string().min(16).optional(),
+
+  // Exigencia global de 2FA (TOTP). Default true — em producao deve ficar ligado.
+  // Setar false (ex: UAT) desativa o desafio de 2FA no login E o setup forcado de
+  // gestor/diretor, para agilizar os testes. Nao altera dados: usuarios que ja
+  // configuraram 2FA mantem totp_enabled=true e voltam a ser desafiados assim que
+  // a flag religar. Diferente de boolString: aqui o default seguro e true.
+  AUTH_2FA_ENABLED: z
+    .enum(['true', 'false', '1', '0', ''])
+    .default('true')
+    .transform((v) => v !== 'false' && v !== '0'),
 });
 
 export type Env = z.infer<typeof envSchema>;

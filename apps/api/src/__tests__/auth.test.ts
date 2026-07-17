@@ -77,6 +77,7 @@ vi.mock('@atlas/core', () => ({
     MODULE_COMEXINSIGHT_ENABLED: false,
     MODULE_COMEXFLOW_ENABLED: false,
     MODULE_FORECAST_ENABLED: false,
+    AUTH_2FA_ENABLED: true,
   }),
   getConfig: () => ({
     DATABASE_URL: 'postgresql://test:test@localhost:5432/test',
@@ -92,6 +93,7 @@ vi.mock('@atlas/core', () => ({
     MODULE_COMEXINSIGHT_ENABLED: false,
     MODULE_COMEXFLOW_ENABLED: false,
     MODULE_FORECAST_ENABLED: false,
+    AUTH_2FA_ENABLED: true,
   }),
   getDb: () => ({
     select: () => ({
