@@ -28,6 +28,10 @@ services:
       MODULE_COMEXFLOW_ENABLED: ${MODULE_COMEXFLOW_ENABLED:-false}
       MODULE_FORECAST_ENABLED: ${MODULE_FORECAST_ENABLED:-false}
 
+      # ── Autenticação ─────────────────────────
+      # Default true (seguro p/ produção); setar false na env da stack desliga o 2FA (UAT/teste)
+      AUTH_2FA_ENABLED: ${AUTH_2FA_ENABLED:-true}
+
     deploy:
       mode: replicated
       replicas: 1

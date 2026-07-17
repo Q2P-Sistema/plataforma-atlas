@@ -16,6 +16,10 @@ build/
 !.env.example
 .envrc
 !.envrc.example
+# Env preenchido com segredos reais (deploy) — nunca versionar
+Atlas.env
+# Stack de UAT — gerenciada no Portainer, não versionar (referência local só)
+deploy/portainer/atlas-uat.stack.yml
 
 # Logs
 *.log
