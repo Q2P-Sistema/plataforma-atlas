@@ -86,6 +86,7 @@ vi.mock('@atlas/core', () => ({
     SESSION_SECRET: 'test-secret-1234567890',
     API_PORT: 3005,
     NODE_ENV: 'test',
+    AUTH_2FA_ENABLED: true,
   }),
   getDb: () => ({
     select: vi.fn(() => ({

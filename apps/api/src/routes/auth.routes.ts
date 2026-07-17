@@ -134,8 +134,9 @@ router.post('/api/v1/auth/login', loginLimiter, async (req: Request, res: Respon
     await resetFailedLogins(user.id);
     await redis.del(failKey);
 
-    // Check 2FA
-    if (user.totpEnabled && user.totpSecret) {
+    // Check 2FA (respeita a flag global AUTH_2FA_ENABLED; desligada, pula o desafio
+    // mesmo para quem ja tem totp_enabled — util em UAT/teste)
+    if (getConfig().AUTH_2FA_ENABLED && user.totpEnabled && user.totpSecret) {
       const tempToken = crypto.randomBytes(32).toString('hex');
       const redis = getRedis();
       await redis.setex(
@@ -182,6 +183,7 @@ router.post('/api/v1/auth/login', loginLimiter, async (req: Request, res: Respon
         role: user.role,
         totp_enabled: user.totpEnabled,
         last_login_at: user.lastLoginAt,
+        two_factor_enforced: getConfig().AUTH_2FA_ENABLED,
       },
       csrfToken: session.csrfToken,
       requires2FA: false,
@@ -286,6 +288,7 @@ router.post('/api/v1/auth/verify-2fa', async (req: Request, res: Response) => {
         role: user.role,
         totp_enabled: user.totpEnabled,
         last_login_at: user.lastLoginAt,
+        two_factor_enforced: getConfig().AUTH_2FA_ENABLED,
       },
       csrfToken: session.csrfToken,
       requires2FA: false,
@@ -581,6 +584,7 @@ router.get(
       role: user.role,
       totp_enabled: user.totpEnabled,
       last_login_at: user.lastLoginAt,
+      two_factor_enforced: getConfig().AUTH_2FA_ENABLED,
       csrfToken: req.session!.csrfToken,
     });
   },

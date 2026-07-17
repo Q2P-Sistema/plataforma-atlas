@@ -7,6 +7,10 @@ export interface AuthUser {
   role: 'operador' | 'gestor' | 'diretor';
   totp_enabled: boolean;
   last_login_at: string | null;
+  // Flag global AUTH_2FA_ENABLED vinda do backend (/me, login). Ausente => trata
+  // como habilitado (default seguro). Desligada, o ProtectedShell nao forca o
+  // setup de 2FA de gestor/diretor.
+  two_factor_enforced?: boolean;
 }
 
 interface AuthState {
