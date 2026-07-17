@@ -372,6 +372,18 @@ function ImportacaoSection({
   onVoltarParaFila,
 }: ImportacaoSectionProps) {
   const multiItem = itens.length > 1;
+  // Filtro local da fila (pedido do negócio, 17/07): com a fila real chegando a
+  // dezenas de NFs, filtra por número da NF ou do pedido — client-side, a lista
+  // já está carregada.
+  const [filtroFila, setFiltroFila] = useState('');
+  const filtro = filtroFila.trim().toLowerCase();
+  const filaFiltrada = filtro
+    ? filaPendente.filter(
+        (f) =>
+          f.nfFilhote.toLowerCase().includes(filtro) ||
+          f.pedidoAcxeOmie.toLowerCase().includes(filtro),
+      )
+    : filaPendente;
   return (
     <>
       <form onSubmit={handleBuscar} className="flex items-end gap-3 mb-6 p-4 bg-atlas-card border border-atlas-border rounded-lg">
@@ -411,14 +423,27 @@ function ImportacaoSection({
           (lida do espelho — o detalhe por produto vem ao clicar, via busca OMIE). */}
       {!queryKey.nf && (
         <div className="mb-4">
-          <h2 className="text-lg font-serif text-atlas-ink mb-2">
-            Aguardando recebimento
+          <div className="flex items-center justify-between mb-2 gap-3">
+            <h2 className="text-lg font-serif text-atlas-ink">
+              Aguardando recebimento
+              {!filaLoading && filaPendente.length > 0 && (
+                <span className="ml-2 text-xs font-sans font-normal text-atlas-muted">
+                  {filtro
+                    ? `${filaFiltrada.length} de ${filaPendente.length}`
+                    : `${filaPendente.length} ${filaPendente.length === 1 ? 'nota fiscal' : 'notas fiscais'}`}
+                </span>
+              )}
+            </h2>
             {!filaLoading && filaPendente.length > 0 && (
-              <span className="ml-2 text-xs font-sans font-normal text-atlas-muted">
-                {filaPendente.length} {filaPendente.length === 1 ? 'nota fiscal' : 'notas fiscais'}
-              </span>
+              <input
+                value={filtroFila}
+                onChange={(e) => setFiltroFila(e.target.value)}
+                placeholder="Filtrar por NF ou pedido…"
+                aria-label="Filtrar fila por número da NF ou do pedido"
+                className="w-64 px-3 py-1.5 border border-atlas-border bg-atlas-bg rounded text-sm outline-none focus:ring-2 focus:ring-atlas-accent"
+              />
             )}
-          </h2>
+          </div>
 
           {filaLoading && <div className="p-6 text-sm text-atlas-muted">Carregando fila…</div>}
 
@@ -434,9 +459,15 @@ function ImportacaoSection({
             </div>
           )}
 
-          {!filaLoading && filaPendente.length > 0 && (
+          {!filaLoading && filaPendente.length > 0 && filaFiltrada.length === 0 && (
+            <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-atlas-border rounded-lg">
+              Nenhuma NF corresponde ao filtro "{filtroFila.trim()}".
+            </div>
+          )}
+
+          {!filaLoading && filaFiltrada.length > 0 && (
             <div className="flex flex-col gap-2">
-              {filaPendente.map((f) => {
+              {filaFiltrada.map((f) => {
                 const parcial = f.produtosPendentes < f.produtosTotal;
                 return (
                   <div
