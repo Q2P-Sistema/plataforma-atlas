@@ -5,6 +5,7 @@ import { requireOperador } from '../middleware/role.js';
 import { requireArmazemVinculado } from '../middleware/armazem-vinculado.js';
 import {
   getFilaOmie,
+  getFilaPendente,
   NotaFiscalCanceladaError,
   NotaFiscalNaoEmitidaPelaAcxeError,
   ImportacaoApenasAcxeError,
@@ -23,6 +24,15 @@ router.get('/api/v1/stockbridge/fila', requireOperador, requireArmazemVinculado,
     const parsed = QuerySchema.safeParse(req.query);
     if (!parsed.success) {
       res.status(400).json({ data: null, error: { code: 'INVALID_QUERY', message: parsed.error.issues.map((i) => i.message).join(', ') } });
+      return;
+    }
+    // Feature 014 (ACXEGDP-299): sem `nf` → fila real (FilaQueueItem[], resumo
+    // por NF filhote pendente, lida do espelho); com `nf` → busca OMIE ao vivo
+    // (FilaItemOmie[], detalhe por produto — feature 013). Shapes distintos por
+    // desenho: o detalhe por produto só existe após a chamada OMIE.
+    if (!parsed.data.nf) {
+      const fila = await getFilaPendente();
+      res.json({ data: fila, error: null });
       return;
     }
     const items = await getFilaOmie({

@@ -421,7 +421,10 @@ async function consultarTransitoValorizado(): Promise<LinhaTransito[]> {
         ${nfValida}
         AND (
           h.n_id_receb > 0
-          OR ${recebidaViaMovimentacaoSql("LPAD(f.nf_filhote, 8, '0')")}
+          -- Feature 014: por PRODUTO — a CTE ja agrupa por i.n_cod_prod; sem o
+          -- filtro acompanhar, um produto pendente entrava com o peso total como
+          -- se estivesse recebido (NF multi-produto parcial, feature 013).
+          OR ${recebidaViaMovimentacaoSql("LPAD(f.nf_filhote, 8, '0')", 'i.n_cod_prod')}
           OR ${recebidaViaLegadoSql("LPAD(f.nf_filhote, 8, '0')")}
         )
       GROUP BY mapa.pedido_acxe_omie, i.n_cod_prod

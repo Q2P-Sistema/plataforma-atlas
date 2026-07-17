@@ -1,16 +1,16 @@
 import { createHash } from 'node:crypto';
 import { eq, and, sql, inArray } from 'drizzle-orm';
 import Decimal from 'decimal.js';
-import { getDb, createLogger } from '@atlas/core';
+import { getDb, getPool, createLogger } from '@atlas/core';
 import { lote, movimentacao, movimentacaoLegado, aprovacao, localidade, localidadeCorrelacao } from '@atlas/db';
 import {
   consultarNF,
-  isMockMode,
   type ConsultarNFResponse,
   type ItemNF,
 } from '@atlas/integration-omie';
 import { getCorrelacao, CorrelacaoNaoEncontradaError, type Correlacao } from './correlacao.service.js';
 import { converterParaKg, normalizarNumeroNf } from './motor.service.js';
+import { nfValidaSql, colunaCanceladaExiste, produtoPendenteSql } from './fiscal-recebida-sql.js';
 import { validarNfRecebivel } from './nf-validacao.service.js';
 import { formatarDataOmie } from './omie-shared.js';
 import {
@@ -494,38 +494,97 @@ export async function getFilaOmie(params: {
       }));
   }
 
-  // Caso 2: lista — mock retorna amostra em dev; prod retorna vazio com TODO
-  if (isMockMode()) {
-    const mocks: Array<Omit<FilaItemOmie, 'qtdKg'>> = [
-      {
-        nf: 'IMP-2026-0301',
-        tipo: 'importacao',
-        cnpj: 'acxe',
-        produto: { codigo: 90_000_301, nome: 'PP RAFIA (mock)' },
-        qtdOriginal: 980,
-        unidade: 'saco',
-        localidadeCodigo: '4498926337',
-        dtEmissao: '10/03/2026',
-        custoBrl: 1175,
-      },
-      {
-        nf: 'IMP-2026-0302',
-        tipo: 'importacao',
-        cnpj: 'q2p',
-        produto: { codigo: 90_000_302, nome: 'PS (mock)' },
-        qtdOriginal: 18_000,
-        unidade: 'kg',
-        localidadeCodigo: '8115873874',
-        dtEmissao: '12/03/2026',
-        custoBrl: 1490,
-      },
-    ];
-    return mocks.map((m) => ({ ...m, qtdKg: converterParaKg(m.qtdOriginal, m.unidade) }));
+  // Sem NF: o caminho da fila real e getFilaPendente() — a rota decide.
+  return [];
+}
+
+// ── Fila de recebimento em modo real (feature 014, ACXEGDP-299) ─────────────
+
+/**
+ * Um item da fila real: uma NF filhote mapeada, emitida e com produto pendente.
+ * Resumo por NF — o detalhe por produto (FilaItemOmie) so existe apos a consulta
+ * OMIE ao vivo, disparada quando o operador seleciona o item (busca por NF).
+ */
+export interface FilaQueueItem {
+  nfFilhote: string;
+  pedidoAcxeOmie: string;
+  produtosTotal: number;
+  produtosPendentes: number;
+  quantidadePendenteKg: number;
+  dtEmissao: string;
+  diasDesdeEmissao: number;
+}
+
+/**
+ * Lista as NFs filhote pendentes de recebimento — o "Caso 2" que era um stub
+ * (`return []`) desde a phase 3.5. Fonte: stockbridge.nf_pedido_mapa/filhote
+ * (feature 011, mantidas pelo n8n a partir da FUP do Comex), cruzadas AO VIVO
+ * com o espelho OMIE — nunca confiar em mapa.ativo isolado (mapa "zumbi" e
+ * inofensivo aqui: sem produto pendente, nao gera item).
+ *
+ * Exclusoes estruturais (US3): NF mae nunca aparece (so itera filhotes);
+ * cancelada/deletada fora (nfValidaSql); nao sincronizada fora (JOIN em
+ * tbl_nf_header exige n_id_nf). Granularidade POR PRODUTO (produtoPendenteSql):
+ * NF parcialmente recebida (feature 013, resumivel) permanece na fila com a
+ * contagem do que falta. Ordenacao: emissao mais antiga primeiro.
+ *
+ * Principio II: leitura 100% do espelho Postgres — zero chamada OMIE ao vivo.
+ */
+export async function getFilaPendente(): Promise<FilaQueueItem[]> {
+  const pool = getPool();
+  const nfValida = nfValidaSql(await colunaCanceladaExiste(pool), 'h');
+  const pendente = produtoPendenteSql({
+    nfExpr: "LPAD(f.nf_filhote, 8, '0')",
+    produtoExpr: 'i.n_cod_prod',
+    nIdRecebExpr: 'h.n_id_receb',
+  });
+
+  interface FilaPendenteRow {
+    nf_filhote: string;
+    pedido_acxe_omie: string;
+    produtos_total: number;
+    produtos_pendentes: number;
+    quantidade_pendente_kg: number | null;
+    dt_emissao: string;
+    dias_desde_emissao: number;
   }
 
-  // TODO(phase-3.5): em producao, listar NFs pendentes lendo do sync OMIE do n8n
-  logger.info('Fila OMIE em modo real: aguardando wireup de sync n8n');
-  return [];
+  try {
+    const res = await pool.query<FilaPendenteRow>(`
+      SELECT
+        f.nf_filhote                                                   AS nf_filhote,
+        mapa.pedido_acxe_omie                                          AS pedido_acxe_omie,
+        COUNT(*)::int                                                  AS produtos_total,
+        COUNT(*) FILTER (WHERE ${pendente})::int                       AS produtos_pendentes,
+        SUM(i.q_com) FILTER (WHERE ${pendente})::float8                AS quantidade_pendente_kg,
+        h.d_emi::text                                                  AS dt_emissao,
+        (CURRENT_DATE - h.d_emi::date)::int                            AS dias_desde_emissao
+      FROM stockbridge.nf_pedido_mapa mapa
+      JOIN stockbridge.nf_pedido_filhote f ON f.mapa_id = mapa.id AND f.ativo = true
+      JOIN public."tbl_nf_header_ACXE" h ON h.n_nf = LPAD(f.nf_filhote, 8, '0')
+      JOIN public."tbl_nf_itens_ACXE" i ON i.n_id_nf = h.n_id_nf
+      WHERE mapa.ativo = true
+        ${nfValida}
+      GROUP BY f.nf_filhote, mapa.pedido_acxe_omie, h.d_emi
+      HAVING COUNT(*) FILTER (WHERE ${pendente}) > 0
+      ORDER BY h.d_emi ASC, f.nf_filhote ASC
+    `);
+
+    return res.rows.map((r) => ({
+      nfFilhote: r.nf_filhote,
+      pedidoAcxeOmie: r.pedido_acxe_omie,
+      produtosTotal: Number(r.produtos_total),
+      produtosPendentes: Number(r.produtos_pendentes),
+      quantidadePendenteKg: r.quantidade_pendente_kg != null ? Number(r.quantidade_pendente_kg) : 0,
+      dtEmissao: r.dt_emissao,
+      diasDesdeEmissao: Number(r.dias_desde_emissao),
+    }));
+  } catch (err) {
+    // Fila e informativa — falha de banco nao pode derrubar a tela de recebimento
+    // (a busca por NF continua funcionando). Loga e devolve vazio.
+    logger.warn({ err: (err as Error).message }, 'getFilaPendente falhou — retornando vazio');
+    return [];
+  }
 }
 
 // ── Recebimento (multi-item, feature 013) ──────────────────

@@ -1,5 +1,5 @@
 import { getPool, createLogger } from '@atlas/core';
-import { recebidaViaMovimentacaoSql, recebidaViaLegadoSql } from './fiscal-recebida-sql.js';
+import { produtoPendenteSql } from './fiscal-recebida-sql.js';
 
 const logger = createLogger('stockbridge:nf-pedido-mapa');
 
@@ -95,6 +95,12 @@ export async function upsertNfPedidoMapa(items: NfPedidoMapaInput[]): Promise<Up
       // o mapa (mapa.ativo = false). "Recebida" = n_id_receb > 0 no OMIE OU
       // registrada em movimentacao/movimentacao_legado (ACXEGDP-183) — NFs antigas
       // recebidas no legado nunca tiveram n_id_receb preenchido no OMIE.
+      // Feature 014: granularidade por PRODUTO no caminho Atlas — uma filhote
+      // multi-produto parcialmente recebida (feature 013) mantém o mapa ATIVO
+      // enquanto qualquer produto estiver pendente (antes, 1 produto recebido
+      // bastava para a filhote "resolver" e o mapa fechar cedo demais).
+      // Filhote sem header sincronizado (h.n_id_nf NULL → itens NULL) conta como
+      // pendente, como antes.
       // Nota: entre execuções do n8n o cockpit permanece correto (lido ao vivo).
       if (nf_filhotes.length > 0) {
         const pendResult = await client.query<{ pendente: boolean }>(
@@ -102,11 +108,17 @@ export async function upsertNfPedidoMapa(items: NfPedidoMapaInput[]): Promise<Up
              SELECT 1
              FROM stockbridge.nf_pedido_filhote f
              LEFT JOIN public."tbl_nf_header_ACXE" h ON h.n_nf = LPAD(f.nf_filhote, 8, '0')
+             LEFT JOIN public."tbl_nf_itens_ACXE" i ON i.n_id_nf = h.n_id_nf
              WHERE f.mapa_id = $1
                AND f.ativo = true
-               AND (h.n_id_nf IS NULL OR h.n_id_receb = 0 OR h.n_id_receb IS NULL)
-               AND NOT ${recebidaViaMovimentacaoSql("LPAD(f.nf_filhote, 8, '0')")}
-               AND NOT ${recebidaViaLegadoSql("LPAD(f.nf_filhote, 8, '0')")}
+               AND (
+                 h.n_id_nf IS NULL
+                 OR ${produtoPendenteSql({
+                   nfExpr: "LPAD(f.nf_filhote, 8, '0')",
+                   produtoExpr: 'i.n_cod_prod',
+                   nIdRecebExpr: 'h.n_id_receb',
+                 })}
+               )
            ) AS pendente`,
           [mapaId],
         );
