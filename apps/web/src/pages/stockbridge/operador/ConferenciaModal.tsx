@@ -16,6 +16,7 @@ interface FilaItem {
   unidade: Unidade;
   qtdKg: number;
   localidadeCodigo: string;
+  dtEmissao: string;
   custoBrl: number;
 }
 
@@ -114,10 +115,16 @@ export function ConferenciaModal({ itens, onClose, onSucesso }: Props) {
     })),
   );
   const [resultado, setResultado] = useState<RecebimentoResult | null>(null);
+  // Checagem ativa da NF antes da conferência (pedido do negócio, 17/07 — após o
+  // recebimento acidental da NF mãe 5336): o operador vê NF, produtos e total e
+  // confirma que é o documento que tem em mãos. Informativa, não um "tem certeza?"
+  // seco — os dados é que revelam o engano (ex.: 2 produtos/76 t = carga inteira).
+  const [etapa, setEtapa] = useState<'confirmar' | 'conferir'>('confirmar');
 
   const nf = itens[0]!.nf;
   const cnpj = itens[0]!.cnpj;
   const multiItem = itens.length > 1;
+  const totalNfKg = itens.reduce((acc, it) => acc + it.qtdKg, 0);
 
   const { data: localidades = [] } = useQuery<Localidade[]>({
     queryKey: ['stockbridge', 'localidades', 'espelhadas'],
@@ -218,6 +225,61 @@ export function ConferenciaModal({ itens, onClose, onSucesso }: Props) {
               className="px-5 py-2 bg-atlas-btn-bg text-atlas-btn-text rounded text-sm font-medium"
             >
               Fechar
+            </button>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
+
+  // Etapa 1 — checagem ativa da NF: número em destaque + produtos + total, com
+  // os dados que revelam um engano (não um "tem certeza?" genérico).
+  if (etapa === 'confirmar') {
+    return (
+      <Modal open title="Confira a nota fiscal" onClose={onClose}>
+        <div className="space-y-4">
+          <div className="p-4 bg-atlas-bg rounded-lg text-center">
+            <div className="text-xs text-atlas-muted uppercase tracking-wide mb-1">Nota fiscal</div>
+            <div className="font-mono text-3xl text-atlas-ink">{nf}</div>
+            <div className="text-xs text-atlas-muted mt-1">
+              {cnpj.toUpperCase()} · emitida em {itens[0]!.dtEmissao}
+            </div>
+          </div>
+
+          <ul className="divide-y divide-atlas-border border border-atlas-border rounded-lg">
+            {itens.map((it) => (
+              <li key={it.produto.codigo} className="flex items-center justify-between px-3 py-2 text-sm">
+                <span className="text-atlas-ink">{it.produto.nome}</span>
+                <span className="font-serif text-atlas-ink">
+                  {it.qtdKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
+                  <span className="text-xs text-atlas-muted ml-1">kg</span>
+                </span>
+              </li>
+            ))}
+            <li className="flex items-center justify-between px-3 py-2 text-sm bg-atlas-bg rounded-b-lg">
+              <span className="text-atlas-muted">
+                Total · {itens.length} {itens.length === 1 ? 'produto' : 'produtos'}
+              </span>
+              <span className="font-serif font-semibold text-atlas-ink">
+                {totalNfKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
+                <span className="text-xs text-atlas-muted ml-1">kg</span>
+              </span>
+            </li>
+          </ul>
+
+          <p className="text-sm text-atlas-muted">
+            Confira o número e os produtos com o documento que você tem em mãos antes de continuar.
+          </p>
+
+          <div className="flex gap-2 justify-end">
+            <button onClick={onClose} className="px-4 py-2 border border-atlas-border rounded text-sm">
+              Não é esta NF
+            </button>
+            <button
+              onClick={() => setEtapa('conferir')}
+              className="px-5 py-2 bg-atlas-btn-bg text-atlas-btn-text rounded text-sm font-medium hover:opacity-90"
+            >
+              É esta — continuar →
             </button>
           </div>
         </div>
