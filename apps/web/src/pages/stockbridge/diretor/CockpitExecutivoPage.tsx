@@ -88,8 +88,8 @@ export function CockpitExecutivoPage() {
     // leitura de extrato, uma rolagem, sem tabelas largas.
     <div className="p-6 max-w-5xl">
       <header className="mb-8">
-        <div className="text-[11px] uppercase tracking-[0.18em] text-atlas-muted mb-1">StockBridge · Visão Executiva</div>
-        <h1 className="font-heading text-2xl text-atlas-ink">Onde está o dinheiro</h1>
+        <div className="text-[11px] uppercase tracking-[0.18em] text-atlas-muted mb-1">StockBridge</div>
+        <h1 className="font-heading text-2xl text-atlas-ink">Visão Executiva</h1>
         {data?.dataPosicao && (
           <p className="text-xs text-atlas-muted mt-1">
             Posição OMIE de {fmtDataBr(data.dataPosicao)} ·{' '}
@@ -338,7 +338,7 @@ function Familias({ familias, totalBrl }: { familias: ExecutivoFamilia[]; totalB
 
   return (
     <section className="mb-10">
-      <SecaoTitulo titulo="Em quê" sub="composição por família de produto — clique para abrir os produtos" />
+      <SecaoTitulo titulo="Composição por família" sub="onde o capital está aplicado — clique para abrir os produtos" />
       <div className="bg-atlas-card border border-atlas-border rounded-lg divide-y divide-atlas-border/60">
         {visiveis.map((f) => {
           const aberta = expandida === f.familia;
