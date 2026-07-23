@@ -21,6 +21,7 @@ import {
   enviarNotificacaoRecebimentoConcluido,
   enviarNotificacaoRecebimentoConcluidoLote,
   enviarAlertaNfIndeterminada,
+  fmtKg,
 } from './notificacao.service.js';
 import { incluirAjusteIdempotente } from './omie-idempotente.js';
 import { COD_INT_AJUSTE_SUFIXO, buildCodIntAjuste, CNPJ_ACXE, CNPJ_Q2P_MATRIZ } from '../types.js';
@@ -869,6 +870,7 @@ export async function processarRecebimento(
   if (divergentesOk.length === 1) {
     // Paridade com o single-item: 1 divergência = alerta individual com link.
     const { prep, aprovacaoId, loteCodigo } = divergentesOk[0]!;
+    const observacoes = prep.input.observacoes?.trim();
     void enviarAlertaAprovacaoPendente({
       aprovacaoId,
       tipoAprovacao: 'recebimento_divergencia',
@@ -876,7 +878,9 @@ export async function processarRecebimento(
       loteCodigo,
       produto: prep.correlacao.descricao,
       quantidadeKg: prep.qtdFisicaKg,
-      detalhes: `Divergência ${prep.input.tipoDivergencia} de ${Math.abs(prep.deltaKg).toFixed(3)} kg — ${prep.input.observacoes ?? ''}`,
+      // ACXEGDP-176: delta formatado em pt-BR via fmtKg — o toFixed(3) antigo
+      // gerava "25.000 kg" no e-mail, lido como vinte e cinco mil quilos.
+      detalhes: `Divergência ${prep.input.tipoDivergencia} de ${fmtKg(Math.abs(prep.deltaKg))}${observacoes ? ` — ${observacoes}` : ''}`,
     });
   } else if (divergentesOk.length > 1) {
     // Feature 013 (FR-015): digest — um e-mail por gestor com todos os itens da NF.

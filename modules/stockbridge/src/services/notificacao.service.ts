@@ -1,6 +1,7 @@
 import { sendEmail, createLogger, getConfig, getDb, buildEmailLayout, escapeHtml, emailDataList, emailActionBox } from '@atlas/core';
 import { users, userModules } from '@atlas/db';
 import { eq, inArray, and, isNull } from 'drizzle-orm';
+import { fmtQtdUnidade } from './motor.service.js';
 
 const logger = createLogger('stockbridge:notificacao');
 
@@ -35,9 +36,22 @@ function labelTipoAprovacao(tipo: string | null | undefined): string {
   return TIPO_APROVACAO_LABEL[tipo] ?? tipo.replace(/_/g, ' ');
 }
 
-/** Formata quantidade em kg no padrão pt-BR (sem casas decimais). */
-function fmtKg(kg: number): string {
-  return `${kg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg`;
+/**
+ * Formata quantidade em kg no padrão pt-BR (ACXEGDP-176): inteiro sem casas
+ * ("25 kg"), fração com vírgula ("25,5 kg"), milhar com ponto ("1.250 kg") —
+ * delega ao fmtQtdUnidade do motor, formatação canônica do módulo.
+ * Aceita também a string numérica que colunas NUMERIC do Postgres devolvem em
+ * runtime ("25.000", com ponto decimal en-US): uma string atravessa o
+ * toLocaleString sem conversão (String.prototype ignora o locale) e o e-mail
+ * exibia "25.000 kg" — lido como vinte e cinco mil. O arredondamento antigo
+ * (maximumFractionDigits: 0) também escondia frações reais (25,5 → "26 kg").
+ * Exportado para os textos de e-mail montados fora deste arquivo (ex.: campo
+ * "detalhes" do recebimento com divergência).
+ */
+export function fmtKg(kg: number | string): string {
+  const n = typeof kg === 'number' ? kg : Number(kg);
+  if (!Number.isFinite(n)) return '—';
+  return fmtQtdUnidade(n, 'kg');
 }
 
 /**
