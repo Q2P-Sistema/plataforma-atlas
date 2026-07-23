@@ -145,6 +145,29 @@ describe('getPendenciasFiscais — granularidade por produto (T014/T019)', () =>
     expect(filhote.fonteRecebimento).toBe('omie');
   });
 
+  it('ACXEGDP-183 — filhote recebida via legado (n_id_receb=0 no OMIE): recebida, fonte movimentacao_legado', async () => {
+    // Cenário do critério de aceite da issue: NF antiga cujo recebimento só
+    // existe em stockbridge.movimentacao_legado — o OMIE nunca teve n_id_receb.
+    mockPendenciasQueries([
+      filhoteRow({
+        receb_omie: false,
+        in_legado: true,
+        produtos_total: 1,
+        produtos_recebidos: 1, // produtoPendenteSql aceita o legado (por NF)
+        recebido_kg: 25_500,
+      }),
+    ]);
+
+    const data = await getPendenciasFiscais();
+
+    const pedido = data.pedidos[0]!;
+    const filhote = pedido.filhotes[0]!;
+    expect(filhote.recebida).toBe(true);
+    expect(filhote.fonteRecebimento).toBe('movimentacao_legado');
+    expect(pedido.recebidoKg).toBe(25_500);
+    expect(pedido.statusAgregado).not.toBe('pendente');
+  });
+
   it('cancelada nunca conta como recebida nem soma kg', async () => {
     mockPendenciasQueries([
       filhoteRow({
@@ -171,6 +194,17 @@ describe('getPendenciasFiscais — granularidade por produto (T014/T019)', () =>
       .find((s) => s.includes('em_metricas'));
     expect(sqlSemMapa).toBeDefined();
     expect(sqlSemMapa).toContain('m.produto_codigo_acxe = i.n_cod_prod');
+  });
+
+  it('ACXEGDP-183 — seção sem-mapa exclui NF reconciliada em movimentacao_legado', async () => {
+    mockPendenciasQueries([]);
+    await getPendenciasFiscais();
+
+    const sqlSemMapa = poolQuerySpy.mock.calls
+      .map((c) => c[0] as string)
+      .find((s) => s.includes('em_metricas'));
+    expect(sqlSemMapa).toBeDefined();
+    expect(sqlSemMapa).toContain('stockbridge.movimentacao_legado');
   });
 });
 
@@ -222,5 +256,21 @@ describe('upsertNfPedidoMapa — auto-desativação por produto (T015/T020)', ()
     expect(sqlPendencia).toContain('m.produto_codigo_acxe = i.n_cod_prod');
     // filhote não sincronizada continua pendente (comportamento preservado)
     expect(sqlPendencia).toContain('h.n_id_nf IS NULL');
+  });
+
+  it('ACXEGDP-183 — a auto-desativação aceita recebimento via OMIE, movimentacao E movimentacao_legado', async () => {
+    mockUpsertQueries({ pendente: true });
+
+    await upsertNfPedidoMapa([{ pedido: '111', nf_mae: '5336', nf_filhotes: ['5390'] }]);
+
+    const sqlPendencia = clientQuerySpy.mock.calls
+      .map((c) => c[0] as string)
+      .find((s) => typeof s === 'string' && s.includes('SELECT EXISTS'));
+    expect(sqlPendencia).toBeDefined();
+    // As 3 fontes do critério canônico (fiscal-recebida-sql.ts): filhote antiga
+    // recebida só no legado (n_id_receb=0 no OMIE) fecha o mapa como as demais.
+    expect(sqlPendencia).toContain('COALESCE(h.n_id_receb, 0) > 0');
+    expect(sqlPendencia).toContain('stockbridge.movimentacao m');
+    expect(sqlPendencia).toContain('stockbridge.movimentacao_legado');
   });
 });

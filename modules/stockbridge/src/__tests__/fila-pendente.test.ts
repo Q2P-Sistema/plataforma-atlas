@@ -151,4 +151,12 @@ describe('getFilaPendente — US3: exclusões e ordenação provadas pelo SQL (T
     expect(sql).toContain('m.produto_codigo_acxe = i.n_cod_prod');
     expect(sql).toMatch(/HAVING COUNT\(\*\) FILTER/);
   });
+
+  it('ACXEGDP-183 — NF recebida via movimentacao_legado não entra na fila', async () => {
+    const sql = await capturarSqlDaFila();
+    // produtoPendenteSql combina as 3 fontes; a do legado (por NF) precisa
+    // estar presente — sem ela, filhote antiga recebida no legado reapareceria.
+    expect(sql).toContain('stockbridge.movimentacao_legado');
+    expect(sql).toContain('COALESCE(h.n_id_receb, 0) > 0');
+  });
 });
