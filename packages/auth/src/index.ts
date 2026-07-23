@@ -8,6 +8,7 @@ export {
 export { csrfProtection } from './csrf.js';
 export {
   requireAuth,
+  requireAuthAllowPending2fa,
   requireRole,
   requireModule,
   isModuleEnabledGlobally,

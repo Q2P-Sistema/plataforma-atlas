@@ -8,7 +8,7 @@ import {
   hashPassword,
   createSession,
   destroySession,
-  requireAuth,
+  requireAuthAllowPending2fa,
   csrfProtection,
   checkLoginRateLimit,
   recordFailedLogin,
@@ -302,7 +302,7 @@ router.post('/api/v1/auth/verify-2fa', async (req: Request, res: Response) => {
 // POST /api/v1/auth/setup-2fa (requires auth)
 router.post(
   '/api/v1/auth/setup-2fa',
-  requireAuth,
+  requireAuthAllowPending2fa,
   csrfProtection,
   async (req: Request, res: Response) => {
     try {
@@ -353,7 +353,7 @@ router.post(
 // POST /api/v1/auth/confirm-2fa (requires auth)
 router.post(
   '/api/v1/auth/confirm-2fa',
-  requireAuth,
+  requireAuthAllowPending2fa,
   csrfProtection,
   async (req: Request, res: Response) => {
     try {
@@ -556,7 +556,7 @@ router.post('/api/v1/auth/reset-password', resetPasswordLimiter, async (req: Req
 // POST /api/v1/auth/logout
 router.post(
   '/api/v1/auth/logout',
-  requireAuth,
+  requireAuthAllowPending2fa,
   csrfProtection,
   async (req: Request, res: Response) => {
     try {
@@ -574,7 +574,7 @@ router.post(
 // GET /api/v1/auth/me
 router.get(
   '/api/v1/auth/me',
-  requireAuth,
+  requireAuthAllowPending2fa,
   (req: Request, res: Response) => {
     const user = req.user!;
     sendSuccess(res, {
@@ -595,7 +595,7 @@ router.get(
 // Modulos retornados ja estao enabled — modulos sem acesso nao aparecem.
 router.get(
   '/api/v1/auth/modules',
-  requireAuth,
+  requireAuthAllowPending2fa,
   async (req: Request, res: Response) => {
     try {
       const user = req.user!;

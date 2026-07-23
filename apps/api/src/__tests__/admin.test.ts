@@ -194,9 +194,15 @@ vi.mock('@atlas/core', () => ({
   }),
 }));
 
-vi.mock('@atlas/auth', () => ({
+vi.mock('@atlas/auth', () => {
+  // ACXEGDP-316: rotas de bootstrap do auth.routes usam a variante
+  // requireAuthAllowPending2fa — mesmo vi.fn() compartilhado para o
+  // mockImplementation abaixo valer para as duas.
+  const requireAuthMock = vi.fn();
+  return {
   csrfProtection: (_req: any, _res: any, next: any) => next(),
-  requireAuth: vi.fn(),
+  requireAuth: requireAuthMock,
+  requireAuthAllowPending2fa: requireAuthMock,
   requireRole: vi.fn(() => vi.fn()),
   listUsers: vi.fn(() =>
     Promise.resolve([
@@ -294,7 +300,8 @@ vi.mock('@atlas/auth', () => ({
   generateOtpauthUrl: vi.fn(() => 'otpauth://'),
   generateQRCodeDataUrl: vi.fn(() => Promise.resolve('data:image/png;base64,')),
   verifyCode: vi.fn(() => false),
-}));
+  };
+});
 
 import {
   requireAuth as _requireAuth,
