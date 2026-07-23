@@ -28,20 +28,25 @@
 | P3 | Confirmar no servidor que o cron destrutivo de sync está desativado (`sudo crontab -l`, `/etc/cron.d/`, `systemctl list-timers` — ver docs/uat-sync-autonomous-fix.md) | infra | ☐ |
 | P4 | Preencher env da stack `atlas` no Portainer (template `deploy/portainer/atlas.env.example`; `SESSION_SECRET` NOVO; OMIE/SendGrid/`ATLAS_INTEGRATION_KEY` copiados do UAT) | infra | ☐ |
 | P5 | Verificar env da instância n8n (`ATLAS_URL`, `ATLAS_INTEGRATION_KEY`) no Portainer | infra | ☐ |
-| P6 | Decidir ativação da **saída automática** (ver ⚠️ abaixo) | negócio | ☐ |
+| P6 | Ativação da **saída automática** (ver ⚠️ abaixo) | negócio | ☑ 23/07 — **ADIADA** (fora do escopo do go-live) |
 | P7 | Enviar comunicação à equipe (texto abaixo) | gestão | ☐ |
 | P8 | Anotar 2–3 NFs-testemunha já recebidas + 1 pendente (do UAT) p/ smoke test | exec | ☐ |
 | P9 | `scripts/apply-migrations-prod.sh --precheck-only` (espelho OMIE ok em PROD) | exec | ☑ 23/07 — 16/16 tabelas presentes (via MCP) |
 | P10 | Ferramentas: psql/pg_dump/pg_restore ≥ versão do servidor; ≥20 GB livres em `~/backups/atlas-golive/` | exec | ☐ |
 
-### ⚠️ Saída automática — decisão pendente (P6)
+### ⚠️ Saída automática — DECISÃO 23/07: fora do escopo do go-live
 
 Constatado em 23/07: o workflow `stockbridge-saida-automatica.json` **não existe na
 instância n8n** e **nunca rodou** — `stockbridge.movimentacao` no UAT só tem
-`entrada_nf` (81) e `entrada_manual` (49), nenhuma `saida_automatica`. Ativar na
-janela de sexta seria a **primeira execução real** da automação, sem ensaio.
-Recomendação: importar **despublicado** na sexta e ativar **segunda de manhã com
-acompanhamento** (fluxo de importação: docs/n8n-workflow-import.md).
+`entrada_nf` (81) e `entrada_manual` (49), nenhuma `saida_automatica`. Ela não
+escreve no ERP (só reflete NFs de saída no histórico do StockBridge + alerta de
+débito cruzado), mas nunca teve execução real.
+
+**Decisão do negócio (23/07): ADIAR.** O go-live sobe sem saída automática —
+mesmo comportamento que o UAT teve desde junho (histórico interno só com
+entradas). A ativação entra numa semana posterior, com teste dedicado
+(tarefa de follow-up no Jira; fluxo de importação: docs/n8n-workflow-import.md).
+**Na janela de sexta: NÃO importar nem ativar nada de saída automática.**
 
 ## Janela de sexta — sequência
 
@@ -86,7 +91,7 @@ cd <repo>
    a. Env da instância n8n: `ATLAS_URL=https://atlas.q2p.com.br` → redeploy;
    b. Nó `POST nf-pedido-mapa` (workflow FUP Rev 1.2): URL →
       `https://atlas.q2p.com.br/api/v1/stockbridge/admin/nf-pedido-mapa` → reativar → 200 ok;
-   c. Saída automática conforme decisão P6 (recomendado: importar despublicado);
+   c. Saída automática: **nada a fazer** (adiada — decisão P6);
    d. Garantir que NENHUM workflow aponta mais para `uat-atlas` (caminho único de
       duplicidade OMIE).
 10. **[~20:15] Teste controlado OMIE (opcional)** — negativo: re-receber NF-testemunha
@@ -107,8 +112,9 @@ cd <repo>
 - Frescor do espelho: `SELECT max(synced_at) FROM public."tbl_nf_header_ACXE";` acompanha o relógio.
 - Uso indevido do UAT: `SELECT max(created_at) FROM shared.audit_log;` **no UAT** não
   avança além de sexta 17h30 (exceto logins de consulta).
-- **Segunda**: cron comodato 08:00 (e-mails); primeira saída/recebimento real acompanhados;
-  setup 2FA dos gestores/diretores; fila sem NF ressuscitada.
+- **Segunda**: cron comodato 08:00 (e-mails); primeiro recebimento real acompanhado;
+  setup 2FA dos gestores/diretores; fila sem NF ressuscitada. (Saídas de NF não
+  aparecem no histórico do Atlas — esperado, saída automática adiada.)
 - **GO** = health contínuo + zero restarts + sem duplicata OMIE + logins/2FA ok +
   primeiro recebimento ok. **NO-GO** (decidir cedo): congelar PROD, repontar n8n ao UAT,
   religar operação no UAT, reconciliar o que foi criado em PROD.
