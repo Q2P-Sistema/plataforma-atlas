@@ -1,35 +1,81 @@
 version: "3.8"
 
+# =============================================================================
+# Stack de PRODUÇÃO do Atlas — atlas.q2p.com.br
+# A stack DEVE se chamar `atlas` no Portainer: no Swarm o DNS é
+# `<stack>_<serviço>` (redis => `atlas_redis`); nome curto não resolve
+# neste cluster. Env: use deploy/portainer/atlas.env.example como template.
+#
+# Imagem com TAG DE VERSÃO FIXA (não :latest): rollback = trocar a tag aqui;
+# um push futuro na main não altera produção por acidente.
+# =============================================================================
+
 # ── SERVIÇOS ────────────────────────────────────────────────
 services:
   # ── ATLAS API ─────────────────────────────────────────────
   atlas_api:
-    image: plasticosq2p/atlas-api:latest
+    image: plasticosq2p/atlas-api:${ATLAS_VERSION:?defina ATLAS_VERSION (ex. v1.1.8)}
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
     environment:
       NODE_ENV: production
       API_PORT: "3005"
 
+      # App é Brasil-only: roda o container em BRT para a lógica de datas locais
+      # (ex: "Data do Movimento" do ajuste OMIE, via getDate/getMonth). Sem isto o
+      # container fica em UTC e, após ~21h BRT, manda a data de amanhã -> OMIE rejeita.
+      TZ: America/Sao_Paulo
+
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
       SESSION_SECRET: ${SESSION_SECRET}
 
-      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL}
-      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD}
+      # SEED_ADMIN_* OMITIDOS de propósito: atlas.users chega populada da UAT
+      # (transplante do cutover). seedAdmin() não roda com a tabela populada, e
+      # a ausência aqui evita que uma cópia falha seja mascarada por um admin
+      # fantasma recém-semeado.
 
       N8N_HEALTH_URL: ${N8N_HEALTH_URL}
 
+      # URL base do frontend — allowlist de CORS + links dos e-mails (sem barra final)
+      APP_URL: ${APP_URL:-https://atlas.q2p.com.br}
+
+      # ── E-mail transacional (SendGrid) ───────
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      SENDGRID_FROM_EMAIL: ${SENDGRID_FROM_EMAIL}
+
+      # ── StockBridge — integração OMIE (dual-CNPJ) ───
+      # PRODUÇÃO: OMIE_MODE obrigatório e =real. O guard STK-15 derruba o boot
+      # com mock+NODE_ENV=production — não existe fase mock em produção.
+      OMIE_MODE: ${OMIE_MODE:?OMIE_MODE obrigatorio em producao (real)}
+      OMIE_API_URL: ${OMIE_API_URL:-https://app.omie.com.br/api/v1/}
+      OMIE_ACXE_KEY: ${OMIE_ACXE_KEY}
+      OMIE_ACXE_SECRET: ${OMIE_ACXE_SECRET}
+      OMIE_Q2P_KEY: ${OMIE_Q2P_KEY}
+      OMIE_Q2P_SECRET: ${OMIE_Q2P_SECRET}
+
+      # CC do admin em e-mails operacionais do StockBridge.
+      # ATENÇÃO: string vazia quebra o boot (Zod valida email) — preencher ou
+      # remover a variável do env da stack.
+      STOCKBRIDGE_ADMIN_CC_EMAIL: ${STOCKBRIDGE_ADMIN_CC_EMAIL}
+      # Data de corte (YYYY-MM-DD) p/ gap fiscal/físico no Cockpit. Sem set: 180d atrás.
+      STOCKBRIDGE_FISCAL_CUTOFF_DATE: ${STOCKBRIDGE_FISCAL_CUTOFF_DATE}
+
+      # Shared secret n8n ↔ Atlas (saídas automáticas + mapa NF↔pedido).
+      # Deve ser IDÊNTICO ao ATLAS_INTEGRATION_KEY da instância n8n.
+      ATLAS_INTEGRATION_KEY: ${ATLAS_INTEGRATION_KEY}
+
       # ── Feature Flags ────────────────────────
-      MODULE_HEDGE_ENABLED: ${MODULE_HEDGE_ENABLED:-false}
-      MODULE_STOCKBRIDGE_ENABLED: ${MODULE_STOCKBRIDGE_ENABLED:-false}
-      MODULE_BREAKINGPOINT_ENABLED: ${MODULE_BREAKINGPOINT_ENABLED:-false}
+      # Go-live 2026-07-24: os 4 módulos validados no ensaio UAT entram ligados.
+      MODULE_HEDGE_ENABLED: ${MODULE_HEDGE_ENABLED:-true}
+      MODULE_STOCKBRIDGE_ENABLED: ${MODULE_STOCKBRIDGE_ENABLED:-true}
+      MODULE_BREAKINGPOINT_ENABLED: ${MODULE_BREAKINGPOINT_ENABLED:-true}
+      MODULE_FORECAST_ENABLED: ${MODULE_FORECAST_ENABLED:-true}
       MODULE_CLEVEL_ENABLED: ${MODULE_CLEVEL_ENABLED:-false}
       MODULE_COMEXINSIGHT_ENABLED: ${MODULE_COMEXINSIGHT_ENABLED:-false}
       MODULE_COMEXFLOW_ENABLED: ${MODULE_COMEXFLOW_ENABLED:-false}
-      MODULE_FORECAST_ENABLED: ${MODULE_FORECAST_ENABLED:-false}
 
       # ── Autenticação ─────────────────────────
-      # Default true (seguro p/ produção); setar false na env da stack desliga o 2FA (UAT/teste)
+      # 2FA ligado em produção (default já é true; linha explícita p/ auditoria).
       AUTH_2FA_ENABLED: ${AUTH_2FA_ENABLED:-true}
 
     deploy:
@@ -66,11 +112,15 @@ services:
 
     networks:
       - network_swarm_public
-      - network_dev_swarm_public
+      - atlas_internal
+      # TODO(go-live): confirmar no Portainer a rede overlay que alcança o
+      # Postgres de PROD (:5432) — usar a MESMA rede que a stack do n8n usa
+      # para gravar no espelho. Ajustar o nome abaixo e em `networks:` no fim.
+      - network_prod_swarm_public
 
   # ── ATLAS WEB ─────────────────────────────────────────────
   atlas_web:
-    image: plasticosq2p/atlas-web:latest
+    image: plasticosq2p/atlas-web:${ATLAS_VERSION:?defina ATLAS_VERSION (ex. v1.1.8)}
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
 
     deploy:
@@ -109,9 +159,62 @@ services:
     networks:
       - network_swarm_public
 
+  # ── REDIS (produção, dedicado) ────────────────────────────
+  # Redis próprio da stack — NÃO compartilha com dev/UAT (sessão/cache/rate-limit).
+  # DNS no Swarm: `atlas_redis` (stack `atlas` + serviço `redis`) —
+  # REDIS_URL=redis://atlas_redis:6379. Config pós-incidente OOM 2026-05-18:
+  # maxmemory + allkeys-lru, healthcheck, update stop-first.
+  redis:
+    image: redis:8.6.2
+    hostname: "{{.Service.Name}}.{{.Task.Slot}}"
+    command: >
+      redis-server
+      --appendonly yes
+      --port 6379
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - atlas-redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - atlas_internal
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      update_config:
+        order: stop-first
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 768M
+      restart_policy:
+        condition: any
+        delay: 5s
+
 # ── REDES DOCKER ────────────────────────────────────────────
+# network_swarm_public = ingress público do Traefik (roteia atlas.q2p.com.br).
+# atlas_internal       = rede privada da stack (API <-> Redis).
+# network_prod_swarm_public = rede que alcança o Postgres de PROD — CONFIRMAR
+#   o nome real no Portainer antes do deploy (ver TODO acima).
 networks:
   network_swarm_public:
     external: true
-  network_dev_swarm_public:
+  atlas_internal:
+    driver: overlay
+  network_prod_swarm_public:
     external: true
+
+# ── VOLUMES ─────────────────────────────────────────────────
+volumes:
+  atlas-redisdata:
