@@ -162,7 +162,12 @@ vi.mock('@atlas/core', () => ({
   }),
 }));
 
-vi.mock('@atlas/auth', () => ({
+vi.mock('@atlas/auth', () => {
+  // ACXEGDP-316: rotas de bootstrap (me/logout/setup/confirm/modules) usam a
+  // variante requireAuthAllowPending2fa — mesmo vi.fn() compartilhado para o
+  // mockImplementation abaixo valer para as duas.
+  const requireAuthMock = vi.fn();
+  return {
   csrfProtection: (_req: any, _res: any, next: any) => next(),
   verifyPassword: vi.fn((_hash: string, password: string) =>
     Promise.resolve(password === 'correct-password'),
@@ -195,11 +200,13 @@ vi.mock('@atlas/auth', () => ({
     return Promise.resolve(null);
   }),
   destroySession: vi.fn(() => Promise.resolve()),
-  requireAuth: vi.fn(),
+  requireAuth: requireAuthMock,
+  requireAuthAllowPending2fa: requireAuthMock,
   checkLoginRateLimit: vi.fn(() => Promise.resolve({ locked: false })),
   recordFailedLogin: vi.fn(() => Promise.resolve()),
   resetFailedLogins: vi.fn(() => Promise.resolve()),
-}));
+  };
+});
 
 // Import requireAuth after mock so we can set it up properly
 import { requireAuth as _requireAuth, validateSession } from '@atlas/auth';

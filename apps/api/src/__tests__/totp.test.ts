@@ -153,7 +153,12 @@ vi.mock('@atlas/core', () => ({
   buildPasswordResetEmail: vi.fn(() => ({ subject: 's', html: 'h', text: 't' })),
 }));
 
-vi.mock('@atlas/auth', () => ({
+vi.mock('@atlas/auth', () => {
+  // ACXEGDP-316: rotas de bootstrap (me/logout/setup/confirm/modules) usam a
+  // variante requireAuthAllowPending2fa — mesmo vi.fn() compartilhado para o
+  // mockImplementation abaixo valer para as duas.
+  const requireAuthMock = vi.fn();
+  return {
   csrfProtection: (_req: any, _res: any, next: any) => next(),
   verifyPassword: vi.fn((_hash: string, password: string) =>
     Promise.resolve(password === 'correct-password'),
@@ -186,7 +191,8 @@ vi.mock('@atlas/auth', () => ({
     return Promise.resolve(null);
   }),
   destroySession: vi.fn(() => Promise.resolve()),
-  requireAuth: vi.fn(),
+  requireAuth: requireAuthMock,
+  requireAuthAllowPending2fa: requireAuthMock,
   checkLoginRateLimit: vi.fn(() => Promise.resolve({ locked: false })),
   recordFailedLogin: vi.fn(() => Promise.resolve()),
   resetFailedLogins: vi.fn(() => Promise.resolve()),
@@ -196,7 +202,8 @@ vi.mock('@atlas/auth', () => ({
   ),
   generateQRCodeDataUrl: vi.fn(() => Promise.resolve('data:image/png;base64,TESTQR')),
   verifyCode: vi.fn((_secret: string, code: string) => code === '123456'),
-}));
+  };
+});
 
 import { requireAuth as _requireAuth, validateSession } from '@atlas/auth';
 
