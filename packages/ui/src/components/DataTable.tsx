@@ -87,7 +87,7 @@ export function DataTable<T extends Record<string, any>>({
               ))}
               {actions && (
                 <th className="px-4 py-3 text-right text-xs font-medium text-atlas-muted uppercase tracking-wider">
-                  Acoes
+                  Ações
                 </th>
               )}
             </tr>
@@ -144,7 +144,7 @@ export function DataTable<T extends Record<string, any>>({
               disabled={page >= totalPages - 1}
               className="px-3 py-1 rounded border border-atlas-border hover:bg-atlas-border/50 focus:outline-none focus:ring-2 focus:ring-acxe disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
-              Proximo
+              Próximo
             </button>
           </div>
         </div>

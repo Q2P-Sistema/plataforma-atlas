@@ -14,6 +14,12 @@ build/
 .env
 .env.*
 !.env.example
+.envrc
+!.envrc.example
+# Env preenchido com segredos reais (deploy) — nunca versionar
+Atlas.env
+# Stack de UAT — gerenciada no Portainer, não versionar (referência local só)
+deploy/portainer/atlas-uat.stack.yml
 
 # Logs
 *.log
@@ -40,3 +46,6 @@ apps/web/dist/
 
 # Portainer deploy env (contains secrets)
 deploy/portainer/*.env
+
+# Documentos PDF não são versionados (fonte .md fica no repo; PDFs são gerados/recebidos)
+docs/**/*.pdf

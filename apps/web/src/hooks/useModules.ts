@@ -9,6 +9,7 @@ import {
   FileText,
   LineChart,
 } from 'lucide-react';
+import { MODULE_NAMES } from '../lib/modules.js';
 
 export interface ModuleInfo {
   id: string;
@@ -28,35 +29,26 @@ const MODULE_ICONS: Record<string, LucideIcon> = {
   forecast: LineChart,
 };
 
-export function useModules() {
+export function useModules(options: { enabled?: boolean } = {}) {
   return useQuery<ModuleInfo[]>({
     queryKey: ['modules'],
+    enabled: options.enabled ?? true,
     queryFn: async () => {
-      const res = await fetch('/api/v1/health', { credentials: 'include' });
-      const body = (await res.json()) as any;
+      const res = await fetch('/api/v1/auth/modules', { credentials: 'include' });
+      if (!res.ok) return [];
+      const body = (await res.json()) as {
+        data?: { modules?: { id: string; enabled: boolean }[] };
+      };
 
-      if (!body.data?.modules) return [];
-
-      return Object.entries(body.data.modules as Record<string, any>).map(
-        ([id, info]) => ({
-          id,
-          name: MODULE_DEFINITIONS[id] ?? id,
-          enabled: (info as any).enabled as boolean,
-          path: `/${id}`,
-          icon: MODULE_ICONS[id] ?? Package,
-        }),
-      );
+      const modules = body.data?.modules ?? [];
+      return modules.map((m) => ({
+        id: m.id,
+        name: MODULE_NAMES[m.id] ?? m.id,
+        enabled: m.enabled,
+        path: `/${m.id}`,
+        icon: MODULE_ICONS[m.id] ?? Package,
+      }));
     },
     staleTime: 5 * 60 * 1000,
   });
 }
-
-const MODULE_DEFINITIONS: Record<string, string> = {
-  hedge: 'Hedge Engine',
-  stockbridge: 'StockBridge',
-  breakingpoint: 'Breaking Point',
-  clevel: 'C-Level',
-  comexinsight: 'ComexInsight',
-  comexflow: 'ComexFlow',
-  forecast: 'Forecast',
-};

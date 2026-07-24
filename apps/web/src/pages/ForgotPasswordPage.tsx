@@ -1,6 +1,6 @@
 import { useState, type FormEvent, type ChangeEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { ThemeToggle } from '@atlas/ui';
+import { AuthPageShell } from '@atlas/ui';
 
 export function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
@@ -29,17 +29,14 @@ export function ForgotPasswordPage() {
 
       setSubmitted(true);
     } catch {
-      setError('Erro de conexao com o servidor');
+      setError('Erro de conexão com o servidor');
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-atlas-bg p-4">
-      <div className="absolute top-4 right-4">
-        <ThemeToggle />
-      </div>
+    <AuthPageShell>
 
       <div className="w-full max-w-sm bg-atlas-card rounded-xl shadow-lg p-8 border border-atlas-border">
         <div className="text-center mb-8">
@@ -49,14 +46,14 @@ export function ForgotPasswordPage() {
           <p className="text-atlas-muted text-sm mt-2">
             {submitted
               ? 'Verifique seu e-mail'
-              : 'Digite seu e-mail para receber o link de recuperacao'}
+              : 'Digite seu e-mail para receber o link de recuperação'}
           </p>
         </div>
 
         {submitted ? (
           <div className="space-y-4">
             <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg px-4 py-3 text-sm text-green-800 dark:text-green-300">
-              Se o e-mail existir, um link de recuperacao sera enviado.
+              Se o e-mail existir, um link de recuperação será enviado.
             </div>
             <Link
               to="/login"
@@ -100,7 +97,7 @@ export function ForgotPasswordPage() {
               disabled={loading}
               className="w-full py-2.5 rounded-lg bg-acxe text-white font-medium hover:bg-acxe/90 focus:outline-none focus:ring-2 focus:ring-acxe focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {loading ? 'Enviando...' : 'Enviar link de recuperacao'}
+              {loading ? 'Enviando...' : 'Enviar link de recuperação'}
             </button>
 
             <p className="text-center text-xs text-atlas-muted">
@@ -111,6 +108,6 @@ export function ForgotPasswordPage() {
           </form>
         )}
       </div>
-    </div>
+    </AuthPageShell>
   );
 }

@@ -1,8 +1,8 @@
 import { Router, type Request, type Response } from 'express';
-import { requireAuth } from '@atlas/auth';
-import { createLogger } from '@atlas/core';
-import { requireRole } from '@atlas/auth';
-import { calcularPosicao, recalcularBuckets, getHistorico } from '../services/posicao.service.js';
+import { z } from 'zod';
+import { requireAuth, requireRole, requireModule, csrfProtection } from '@atlas/auth';
+import { createLogger, cached, invalidate, sendSuccess, sendError } from '@atlas/core';
+import { calcularPosicao, recalcularBuckets } from '../services/posicao.service.js';
 import { calcularMotor } from '../services/motor.service.js';
 import { getVariacao30d } from '../services/ptax.service.js';
 import { criarNdf, ativarNdf, liquidarNdf, cancelarNdf, listarNdfs, NdfError } from '../services/ndf.service.js';
@@ -10,24 +10,33 @@ import { getHistoricoPtax } from '../services/ptax.service.js';
 import { simularMargem } from '../services/simulacao.service.js';
 import { getEstoque, getLocalidades, salvarLocalidadesAtivas } from '../services/estoque.service.js';
 import { listarAlertas, marcarLido, resolver, gerarAlertas } from '../services/alerta.service.js';
-import { getConfig, updateConfig, getTaxasNdf, inserirTaxaNdf } from '../services/config.service.js';
-import { cached, invalidate } from '../services/cache.service.js';
+import { getConfig, updateConfig, getTaxasNdf, inserirTaxaNdf, ConfigInvalidaError } from '../services/config.service.js';
+
 
 const logger = createLogger('hedge:routes');
 const router: Router = Router();
 
-function sendSuccess(res: Response, data: unknown, status = 200, meta?: Record<string, unknown>) {
-  const body: Record<string, unknown> = { data, error: null };
-  if (meta) body.meta = meta;
-  res.status(status).json(body);
+// All hedge routes require authentication + module access
+router.use('/api/v1/hedge', requireAuth, csrfProtection, requireModule('hedge'));
+
+// MOD-16 (ACXEGDP-280): validação Zod nas rotas de escrita/cálculo — antes o
+// body cru chegava aos services e input inválido virava 500 (deveria ser 400).
+// Mensagens já saem em pt-BR pelo errorMap global (PTB-1).
+function parseBody<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, req: Request, res: Response): T | null {
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(
+      res,
+      'VALIDATION_ERROR',
+      parsed.error.errors.map((e) => (e.path.length ? `${e.path.join('.')}: ${e.message}` : e.message)).join('; '),
+      400,
+    );
+    return null;
+  }
+  return parsed.data;
 }
 
-function sendError(res: Response, code: string, message: string, status = 400) {
-  res.status(status).json({ data: null, error: { code, message } });
-}
-
-// All hedge routes require authentication
-router.use('/api/v1/hedge', requireAuth);
+const DATA_CIVIL = /^\d{4}-\d{2}-\d{2}$/;
 
 // ── Dashboard & Position ───────────────────────────────────
 
@@ -80,37 +89,26 @@ router.get('/api/v1/hedge/posicao', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/v1/hedge/posicao/historico
-router.get('/api/v1/hedge/posicao/historico', async (req: Request, res: Response) => {
-  try {
-    const dias = parseInt(req.query.dias as string, 10) || 90;
-    const snapshots = await getHistorico(dias);
-
-    sendSuccess(
-      res,
-      snapshots.map((s) => ({
-        data_ref: s.dataRef,
-        exposure_usd: Number(s.exposureUsd),
-        ndf_ativo_usd: Number(s.ndfAtivoUsd),
-        gap_usd: Number(s.gapUsd),
-        cobertura_pct: Number(s.coberturaPct),
-        ptax_ref: Number(s.ptaxRef),
-      })),
-    );
-  } catch (err) {
-    logger.error({ err }, 'Erro ao buscar historico');
-    sendError(res, 'INTERNAL_ERROR', 'Erro ao buscar historico', 500);
-  }
-});
+// MOD-06 (ACXEGDP-277): GET /posicao/historico removido — o endpoint lia
+// hedge.posicao_snapshot, que nada popula (salvarSnapshot nao tinha chamador) e
+// nenhum frontend consome. Codigo morto ponta a ponta; a tabela permanece para
+// uma futura feature de historico de exposicao.
 
 // ── Motor de Minima Variancia ──────────────────────────────
+
+const MotorCalcularSchema = z.object({
+  lambda: z.number().min(0).max(1).default(0.5),
+  pct_estoque_nao_pago: z.number().min(0).max(1).default(0),
+});
 
 // POST /api/v1/hedge/motor/calcular
 router.post(
   '/api/v1/hedge/motor/calcular',
   async (req: Request, res: Response) => {
     try {
-      const { lambda = 0.5, pct_estoque_nao_pago = 0 } = req.body;
+      const body = parseBody(MotorCalcularSchema, req, res);
+      if (!body) return;
+      const { lambda, pct_estoque_nao_pago } = body;
       const result = await calcularMotor({ lambda, pct_estoque_nao_pago });
       sendSuccess(res, {
         camadas: result.camadas,
@@ -179,18 +177,32 @@ router.get('/api/v1/hedge/ndfs', async (req: Request, res: Response) => {
   }
 });
 
+const CriarNdfSchema = z.object({
+  tipo: z.enum(['ndf', 'trava', 'acc']),
+  notional_usd: z.number().positive(),
+  taxa_ndf: z.number().positive(),
+  prazo_dias: z.number().int().positive(),
+  data_vencimento: z.string().regex(DATA_CIVIL, 'Data no formato AAAA-MM-DD'),
+  empresa: z.enum(['acxe', 'q2p']),
+  banco: z.string().min(1).optional(),
+  observacao: z.string().optional(),
+});
+
 // POST /api/v1/hedge/ndfs
 router.post('/api/v1/hedge/ndfs', async (req: Request, res: Response) => {
   try {
-    const { tipo, notional_usd, taxa_ndf, prazo_dias, data_vencimento, empresa, banco, observacao } = req.body;
-
-    if (!tipo || !notional_usd || !taxa_ndf || !prazo_dias || !data_vencimento || !empresa) {
-      sendError(res, 'VALIDATION_ERROR', 'Campos obrigatorios faltando', 400);
-      return;
-    }
+    const body = parseBody(CriarNdfSchema, req, res);
+    if (!body) return;
 
     const ndf = await criarNdf({
-      tipo, notional_usd, taxa_ndf, prazo_dias, data_vencimento, empresa, banco, observacao,
+      tipo: body.tipo,
+      notional_usd: body.notional_usd,
+      taxa_ndf: body.taxa_ndf,
+      prazo_dias: body.prazo_dias,
+      data_vencimento: body.data_vencimento,
+      empresa: body.empresa,
+      banco: body.banco,
+      observacao: body.observacao,
     });
 
     invalidate('atlas:hedge:posicao:*').catch(() => {});
@@ -229,18 +241,23 @@ router.patch('/api/v1/hedge/ndfs/:id/ativar', async (req: Request, res: Response
   }
 });
 
+const LiquidarNdfSchema = z
+  .object({
+    ptax_liquidacao: z.number().positive().optional(),
+    resultado_brl: z.number().optional(),
+  })
+  .refine((d) => d.ptax_liquidacao != null || d.resultado_brl != null, {
+    message: 'ptax_liquidacao ou resultado_brl e obrigatorio',
+  });
+
 // PATCH /api/v1/hedge/ndfs/:id/liquidar
 router.patch('/api/v1/hedge/ndfs/:id/liquidar', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
-    const { ptax_liquidacao, resultado_brl } = req.body;
+    const body = parseBody(LiquidarNdfSchema, req, res);
+    if (!body) return;
 
-    if (!ptax_liquidacao && resultado_brl == null) {
-      sendError(res, 'VALIDATION_ERROR', 'ptax_liquidacao ou resultado_brl e obrigatorio', 400);
-      return;
-    }
-
-    const ndf = await liquidarNdf(id, { ptax_liquidacao, resultado_brl });
+    const ndf = await liquidarNdf(id, { ptax_liquidacao: body.ptax_liquidacao, resultado_brl: body.resultado_brl });
     invalidate('atlas:hedge:posicao:*').catch(() => {});
     sendSuccess(res, {
       status: 'liquidado',
@@ -276,12 +293,25 @@ router.patch('/api/v1/hedge/ndfs/:id/cancelar', async (req: Request, res: Respon
 
 // ── Simulacao de Margem ────────────────────────────────────
 
+const SimulacaoMargemSchema = z.object({
+  faturamento_brl: z.number().positive(),
+  outros_custos_brl: z.number().min(0),
+  volume_usd: z.number().min(0).optional(),
+  pct_custo_importado: z.number().min(0).max(100).optional(),
+  ndf_taxa_media: z.number().positive().default(5.5),
+  pct_cobertura: z.number().min(0).max(100).optional(),
+  l1: z.number().min(0).max(100).optional(),
+  l2: z.number().min(0).max(100).optional(),
+});
+
 // POST /api/v1/hedge/simulacao/margem
 router.post(
   '/api/v1/hedge/simulacao/margem',
   async (req: Request, res: Response) => {
     try {
-      const { faturamento_brl, outros_custos_brl, volume_usd, pct_custo_importado, ndf_taxa_media = 5.50, pct_cobertura, l1, l2 } = req.body;
+      const body = parseBody(SimulacaoMargemSchema, req, res);
+      if (!body) return;
+      const { faturamento_brl, outros_custos_brl, volume_usd, pct_custo_importado, ndf_taxa_media, pct_cobertura, l1, l2 } = body;
       const cenarios = simularMargem(
         { faturamento_brl, outros_custos_brl, volume_usd, pct_custo_importado },
         { ndf_taxa_media, pct_cobertura, l1, l2 },
@@ -308,17 +338,22 @@ router.get('/api/v1/hedge/estoque/localidades', async (_req: Request, res: Respo
   }
 });
 
+const LocalidadesSchema = z.object({
+  localidades_ativas: z.array(z.string()),
+});
+
 // PUT /api/v1/hedge/estoque/localidades
 router.put('/api/v1/hedge/estoque/localidades', async (req: Request, res: Response) => {
   try {
-    const { localidades_ativas } = req.body;
-    if (!Array.isArray(localidades_ativas)) {
-      sendError(res, 'VALIDATION_ERROR', 'localidades_ativas deve ser um array', 400);
-      return;
-    }
+    const body = parseBody(LocalidadesSchema, req, res);
+    if (!body) return;
+    const { localidades_ativas } = body;
     await salvarLocalidadesAtivas(localidades_ativas);
     invalidate('atlas:hedge:localidades').catch(() => {});
     invalidate('atlas:hedge:posicao:*').catch(() => {});
+    // MOD-14 (ACXEGDP-278): getEstoque filtra por localidades_ativas — sem esta
+    // invalidacao a tela de estoque mostrava o agregado antigo por ate 1h (TTL 3600).
+    invalidate('atlas:hedge:estoque:*').catch(() => {});
     sendSuccess(res, { localidades_ativas });
   } catch (err) {
     logger.error({ err }, 'Erro ao salvar localidades');
@@ -358,42 +393,63 @@ router.get('/api/v1/hedge/alertas', async (req: Request, res: Response) => {
 
 router.patch('/api/v1/hedge/alertas/:id/lido', async (req: Request, res: Response) => {
   try { await marcarLido(req.params.id as string); sendSuccess(res, { lido: true }); }
-  catch (err) { sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
+  catch (err) { logger.error({ err }, 'Erro ao marcar alerta como lido'); sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
 });
 
 router.patch('/api/v1/hedge/alertas/:id/resolver', async (req: Request, res: Response) => {
   try { await resolver(req.params.id as string); sendSuccess(res, { resolvido: true }); }
-  catch (err) { sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
+  catch (err) { logger.error({ err }, 'Erro ao resolver alerta'); sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
 });
 
 // ── Config ─────────────────────────────────────────────────
 
 router.get('/api/v1/hedge/config', async (_req: Request, res: Response) => {
   try { sendSuccess(res, await getConfig()); }
-  catch (err) { sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
+  catch (err) { logger.error({ err }, 'Erro ao buscar config do hedge'); sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
+});
+
+const ConfigSchema = z.object({
+  chave: z.string().min(1),
+  valor: z.unknown(),
 });
 
 router.patch('/api/v1/hedge/config', requireRole('diretor'), async (req: Request, res: Response) => {
   try {
-    const { chave, valor } = req.body;
+    const body = parseBody(ConfigSchema, req, res);
+    if (!body) return;
+    const { chave, valor } = body;
     await updateConfig(chave, valor);
     sendSuccess(res, { chave, valor });
-  } catch (err) { sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
+  } catch (err) {
+    if (err instanceof ConfigInvalidaError) {
+      sendError(res, 'VALIDATION_ERROR', err.message, 400);
+      return;
+    }
+    logger.error({ err }, 'Erro ao atualizar config do hedge');
+    sendError(res, 'INTERNAL_ERROR', 'Erro', 500);
+  }
 });
 
 router.get('/api/v1/hedge/taxas-ndf', async (req: Request, res: Response) => {
   try {
     const dataRef = req.query.data_ref as string | undefined;
     sendSuccess(res, await getTaxasNdf(dataRef));
-  } catch (err) { sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
+  } catch (err) { logger.error({ err }, 'Erro ao buscar taxas NDF'); sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
+});
+
+const TaxaNdfSchema = z.object({
+  data_ref: z.string().regex(DATA_CIVIL, 'Data no formato AAAA-MM-DD'),
+  prazo_dias: z.number().int().positive(),
+  taxa: z.number().positive(),
 });
 
 router.post('/api/v1/hedge/taxas-ndf', requireRole('gestor', 'diretor'), async (req: Request, res: Response) => {
   try {
-    const { data_ref, prazo_dias, taxa } = req.body;
-    await inserirTaxaNdf(data_ref, prazo_dias, taxa);
-    sendSuccess(res, { data_ref, prazo_dias, taxa }, 201);
-  } catch (err) { sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
+    const body = parseBody(TaxaNdfSchema, req, res);
+    if (!body) return;
+    await inserirTaxaNdf(body.data_ref, body.prazo_dias, body.taxa);
+    sendSuccess(res, { data_ref: body.data_ref, prazo_dias: body.prazo_dias, taxa: body.taxa }, 201);
+  } catch (err) { logger.error({ err }, 'Erro ao inserir taxa NDF'); sendError(res, 'INTERNAL_ERROR', 'Erro', 500); }
 });
 
 export default router;

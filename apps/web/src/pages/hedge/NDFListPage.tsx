@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { DataTable, Modal, type Column } from '@atlas/ui';
 import { Plus } from 'lucide-react';
 import { useAuthStore } from '../../stores/auth.store.js';
+import { fmtNum, fmtDataBr } from '../../lib/format.js';
+import { NDF_STATUS_LABEL, rotulo } from './labels.js';
 
 interface NdfRow {
   id: string;
@@ -91,19 +93,24 @@ export function NDFListPage() {
   const columns: Column<NdfRow>[] = [
     { key: 'tipo', header: 'Tipo', sortable: true, render: (r) => r.tipo.toUpperCase() },
     { key: 'notional_usd', header: 'Valor USD', sortable: true, render: (r) => formatUsd(r.notional_usd) },
-    { key: 'taxa_ndf', header: 'Taxa', sortable: true, render: (r) => r.taxa_ndf.toFixed(4) },
-    { key: 'data_vencimento', header: 'Vencimento', sortable: true, render: (r) => r.data_vencimento },
+    { key: 'taxa_ndf', header: 'Taxa', sortable: true, render: (r) => fmtNum(r.taxa_ndf, 4) },
+    { key: 'data_vencimento', header: 'Vencimento', sortable: true, render: (r) => fmtDataBr(r.data_vencimento) },
     { key: 'custo_brl', header: 'Custo BRL', render: (r) => formatBrl(r.custo_brl) },
     { key: 'resultado_brl', header: 'Resultado', render: (r) => r.resultado_brl != null ? formatBrl(r.resultado_brl) : '-' },
     {
       key: 'status', header: 'Status', sortable: true,
-      render: (r) => <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLORS[r.status] ?? ''}`}>{r.status}</span>,
+      render: (r) => <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLORS[r.status] ?? ''}`}>{rotulo(NDF_STATUS_LABEL, r.status)}</span>,
     },
-    { key: 'empresa', header: 'Empresa' },
+    { key: 'empresa', header: 'Empresa', render: (r) => r.empresa.toUpperCase() },
     { key: 'banco', header: 'Banco', render: (r) => r.banco || '—' },
   ];
 
-  if (isLoading) return <div className="flex items-center justify-center min-h-[40vh]"><p className="text-atlas-muted">Carregando...</p></div>;
+  if (isLoading) return (
+    <div className="space-y-5">
+      <div className="h-8 w-48 bg-atlas-border rounded animate-pulse" />
+      <div className="h-64 rounded-lg bg-atlas-border animate-pulse" />
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -178,7 +185,7 @@ export function NDFListPage() {
               <option value="">Selecionar...</option>
               <option value="Banco do Brasil">Banco do Brasil</option>
               <option value="Bradesco">Bradesco</option>
-              <option value="Itau Unibanco">Itau Unibanco</option>
+              <option value="Itaú Unibanco">Itaú Unibanco</option>
               <option value="Santander">Santander</option>
               <option value="Safra">Safra</option>
               <option value="Banco Daycoval">Banco Daycoval</option>
@@ -234,11 +241,11 @@ export function NDFListPage() {
         </>}>
         <div className="space-y-3">
           <div>
-            <label htmlFor="ptax-liq" className="block text-sm font-medium text-atlas-text mb-1">PTAX de Liquidacao</label>
+            <label htmlFor="ptax-liq" className="block text-sm font-medium text-atlas-text mb-1">PTAX de Liquidação</label>
             <input id="ptax-liq" type="number" step="0.0001" value={ptaxLiq} placeholder="5.4500"
               onChange={(e: ChangeEvent<HTMLInputElement>) => setPtaxLiq(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border border-atlas-border bg-atlas-bg text-atlas-text text-sm focus:outline-none focus:ring-2 focus:ring-acxe" />
-            <p className="text-xs text-atlas-muted mt-1">Preencha para calculo automatico: resultado = notional * (taxa - ptax)</p>
+            <p className="text-xs text-atlas-muted mt-1">Preencha para cálculo automático: resultado = notional * (taxa - ptax)</p>
           </div>
           <div className="relative">
             <div className="absolute inset-x-0 top-0 flex items-center justify-center -mt-1">
@@ -250,7 +257,7 @@ export function NDFListPage() {
             <input id="resultado-liq" type="number" step="0.01" value={resultadoManual} placeholder="-50000.00"
               onChange={(e: ChangeEvent<HTMLInputElement>) => setResultadoManual(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border border-atlas-border bg-atlas-bg text-atlas-text text-sm focus:outline-none focus:ring-2 focus:ring-acxe" />
-            <p className="text-xs text-atlas-muted mt-1">Valor informado pelo banco. Sobrescreve o calculo automatico.</p>
+            <p className="text-xs text-atlas-muted mt-1">Valor informado pelo banco. Sobrescreve o cálculo automático.</p>
           </div>
         </div>
       </Modal>

@@ -1,4 +1,5 @@
 import { LogOut } from 'lucide-react';
+import { Badge } from './Badge.js';
 import { ThemeToggle } from './ThemeToggle.js';
 
 interface TopBarProps {
@@ -14,11 +15,6 @@ const ROLE_LABELS: Record<string, string> = {
   diretor: 'Diretor',
 };
 
-const ROLE_COLORS: Record<string, string> = {
-  operador: 'bg-atlas-muted/20 text-atlas-muted',
-  gestor: 'bg-acxe/10 text-acxe',
-  diretor: 'bg-ndf/10 text-ndf',
-};
 
 export function TopBar({ userName, userRole, onLogout, centerSlot }: TopBarProps) {
   return (
@@ -31,11 +27,9 @@ export function TopBar({ userName, userRole, onLogout, centerSlot }: TopBarProps
         <div className="flex items-center gap-3">
           <div className="text-right">
             <p className="text-sm font-medium text-atlas-text">{userName}</p>
-            <span
-              className={`inline-block text-[10px] px-1.5 py-0.5 rounded-full font-medium uppercase tracking-wider ${ROLE_COLORS[userRole] ?? ROLE_COLORS.operador}`}
-            >
+            <Badge variant={(['operador', 'gestor', 'diretor'].includes(userRole) ? userRole : 'operador') as 'operador' | 'gestor' | 'diretor'}>
               {ROLE_LABELS[userRole] ?? userRole}
-            </span>
+            </Badge>
           </div>
 
           <button

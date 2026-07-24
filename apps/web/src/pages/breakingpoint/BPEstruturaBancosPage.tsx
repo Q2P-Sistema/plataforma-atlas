@@ -1,4 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
+import { bpChartColors, ErrorState } from '@atlas/ui';
+import { fmtMi } from './format.js';
 
 interface Banco {
   id: string;
@@ -19,14 +21,13 @@ interface Banco {
   ativo: boolean;
 }
 
-const fmtMi = (v: number) => {
-  if (v === 0) return 'R$ 0';
-  const mi = v / 1_000_000;
-  return `R$ ${mi.toFixed(2).replace('.', ',')}Mi`;
-};
+const fmtPct1 = (v: number) =>
+  `${v.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
 
 async function fetchBancos(): Promise<Banco[]> {
   const r = await fetch('/api/v1/bp/bancos?empresa=acxe', { credentials: 'include' });
+  // Sem o guard, erro estruturado do backend resolve como data=null (UI-E).
+  if (!r.ok) throw new Error('Falha ao carregar bancos');
   return (await r.json()).data;
 }
 
@@ -39,7 +40,7 @@ function Bar({ limite, usado, corHex }: { limite: number; usado: number; corHex:
         className="h-full rounded transition-all"
         style={{
           width: `${pct}%`,
-          backgroundColor: critical ? '#B83228' : corHex,
+          backgroundColor: critical ? bpChartColors.vermelho : corHex,
         }}
       />
     </div>
@@ -83,20 +84,34 @@ function LinhaLimite({
 }
 
 export function BPEstruturaBancosPage() {
-  const { data: bancos = [], isLoading } = useQuery({ queryKey: ['bp', 'bancos'], queryFn: fetchBancos });
+  const { data: bancos = [], isLoading, error, refetch } = useQuery({ queryKey: ['bp', 'bancos'], queryFn: fetchBancos });
 
-  if (isLoading) return <div className="p-6 text-atlas-muted">Carregando bancos…</div>;
+  // Falha na query mostrava página vazia sem feedback (UI-E, ACXEGDP-265).
+  if (error) return (
+    <div className="p-6 max-w-[1440px] mx-auto">
+      <ErrorState message={(error as Error).message} retry={() => refetch()} />
+    </div>
+  );
+
+  if (isLoading) return (
+    <div className="p-6 max-w-[1440px] mx-auto space-y-5">
+      <div className="h-8 w-64 bg-atlas-border rounded animate-pulse" />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {Array.from({ length: 4 }, (_, i) => <div key={i} className="h-48 rounded-xl bg-atlas-border animate-pulse" />)}
+      </div>
+    </div>
+  );
 
   return (
     <div className="p-6 max-w-[1440px] mx-auto">
       <div className="mb-5">
-        <h1 className="text-2xl font-bold">Breaking Point · Estrutura Bancária</h1>
+        <h1 className="text-2xl font-heading font-bold">Breaking Point · Estrutura Bancária</h1>
         <p className="text-xs text-atlas-muted mt-1">
           Limites de crédito por banco — antecipação de recebíveis, FINIMP e cheque especial.
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {bancos.map((b) => (
           <div
             key={b.id}
@@ -115,7 +130,7 @@ export function BPEstruturaBancosPage() {
                 limite={b.antecip_limite}
                 usado={b.antecip_usado}
                 disp={b.antecip_disp}
-                extra={`taxa ${(b.antecip_taxa * 100).toFixed(1)}%`}
+                extra={`taxa ${fmtPct1(b.antecip_taxa * 100)}`}
                 corHex={b.cor_hex}
               />
               <LinhaLimite
@@ -123,7 +138,7 @@ export function BPEstruturaBancosPage() {
                 limite={b.finimp_limite}
                 usado={b.finimp_usado}
                 disp={b.finimp_disp}
-                extra={`garantia ${(b.finimp_garantia_pct * 100).toFixed(1)}%`}
+                extra={`garantia ${fmtPct1(b.finimp_garantia_pct * 100)}`}
                 corHex={b.cor_hex}
               />
               <LinhaLimite

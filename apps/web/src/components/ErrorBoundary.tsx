@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from 'react';
+import { CloudAlert } from 'lucide-react';
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -34,12 +35,12 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       return (
         <div className="min-h-screen flex items-center justify-center bg-atlas-bg p-4">
           <div className="w-full max-w-md bg-atlas-card rounded-xl shadow-lg p-8 border border-atlas-border text-center">
-            <p className="text-4xl mb-4">:(</p>
+            <CloudAlert size={40} className="mx-auto mb-4 text-atlas-muted" aria-hidden />
             <h1 className="text-xl font-heading font-semibold text-atlas-text mb-2">
               Algo deu errado
             </h1>
             <p className="text-atlas-muted text-sm mb-4">
-              Ocorreu um erro inesperado. Tente recarregar a pagina.
+              Ocorreu um erro inesperado. Tente recarregar a página.
             </p>
             {this.state.traceId && (
               <p className="text-xs text-atlas-muted font-mono bg-atlas-bg rounded px-3 py-2 border border-atlas-border">

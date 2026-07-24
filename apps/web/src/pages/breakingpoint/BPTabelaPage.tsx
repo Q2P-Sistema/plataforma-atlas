@@ -1,5 +1,8 @@
 import { useState } from 'react';
+import { Ban, AlertTriangle, Check, CheckCircle2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
+import { ErrorState } from '@atlas/ui';
+import { fmtMi } from './format.js';
 
 interface SemanaProjetada {
   semana: number;
@@ -26,45 +29,41 @@ interface Projecao {
 
 async function fetchProjecao(): Promise<Projecao> {
   const r = await fetch('/api/v1/bp/projecao?empresa=acxe', { credentials: 'include' });
+  // O backend responde erro como JSON valido ({data:null,error}) — sem este
+  // guard, r.json() resolve e o React Query nunca popula `error` (UI-E).
+  if (!r.ok) throw new Error('Falha ao carregar projeção');
   const j = await r.json();
   return j.data;
 }
 
-const fmtMi = (v: number) => {
-  if (v === 0) return 'R$ 0';
-  const mi = v / 1_000_000;
-  const sign = v < 0 ? '− ' : '';
-  return `${sign}R$ ${Math.abs(mi).toFixed(2).replace('.', ',')}Mi`;
-};
-
 function StatusBadge({ status }: { status: 'critico' | 'alerta' | 'ok' }) {
   if (status === 'critico') {
     return (
-      <span className="text-[10px] px-2 py-0.5 rounded bg-red-500/15 text-red-700 border border-red-500/40 font-bold uppercase">
-        ⛔ CRISE
+      <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-red-500/15 text-red-700 dark:text-red-300 border border-red-500/40 font-bold uppercase">
+        <Ban size={10} aria-hidden /> CRISE
       </span>
     );
   }
   if (status === 'alerta') {
     return (
-      <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/15 text-amber-700 border border-amber-500/40 font-bold uppercase">
-        ⚠ ALERTA
+      <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40 font-bold uppercase">
+        <AlertTriangle size={10} aria-hidden /> ALERTA
       </span>
     );
   }
   return (
-    <span className="text-[10px] px-2 py-0.5 rounded bg-green-500/15 text-green-700 border border-green-500/40 font-semibold uppercase">
-      ✓ OK
+    <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-green-500/15 text-green-700 dark:text-green-300 border border-green-500/40 font-semibold uppercase">
+      <Check size={10} aria-hidden /> OK
     </span>
   );
 }
 
 function TipoBadge({ tipo, isFinimp }: { tipo: string; isFinimp: boolean }) {
   const color = isFinimp
-    ? 'bg-orange-500/15 text-orange-700'
+    ? 'bg-orange-500/15 text-orange-700 dark:text-orange-300'
     : tipo === 'Fornecedor'
-      ? 'bg-blue-500/15 text-blue-700'
-      : 'bg-gray-500/15 text-gray-700';
+      ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300'
+      : 'bg-gray-500/15 text-gray-700 dark:text-gray-300';
   return (
     <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${color}`}>
       {tipo || '—'}
@@ -74,13 +73,26 @@ function TipoBadge({ tipo, isFinimp }: { tipo: string; isFinimp: boolean }) {
 
 export function BPTabelaPage() {
   const [showAll, setShowAll] = useState(false);
-  const { data: proj, isLoading } = useQuery({
+  const { data: proj, isLoading, error, refetch } = useQuery({
     queryKey: ['bp', 'projecao', 'acxe'],
     queryFn: fetchProjecao,
     staleTime: 60_000,
   });
 
-  if (isLoading || !proj) return <div className="p-6 text-atlas-muted">Carregando projeção…</div>;
+  // Sem isso, uma falha na query deixava a página presa no skeleton para
+  // sempre (isLoading=false, proj=undefined) — UI-E, ACXEGDP-265.
+  if (error) return (
+    <div className="p-6 max-w-[1440px] mx-auto">
+      <ErrorState message={(error as Error).message} retry={() => refetch()} />
+    </div>
+  );
+
+  if (isLoading || !proj) return (
+    <div className="p-6 max-w-[1440px] mx-auto space-y-5">
+      <div className="h-8 w-64 bg-atlas-border rounded animate-pulse" />
+      <div className="h-64 rounded-xl bg-atlas-border animate-pulse" />
+    </div>
+  );
 
   const semanas = showAll ? proj.semanas : proj.semanas.filter((s) => s.status_gap !== 'ok');
 
@@ -88,7 +100,7 @@ export function BPTabelaPage() {
     <div className="p-6 max-w-[1440px] mx-auto">
       <div className="flex justify-between items-start mb-5">
         <div>
-          <h1 className="text-2xl font-bold">Breaking Point · Tabela Semanal</h1>
+          <h1 className="text-2xl font-heading font-bold">Breaking Point · Tabela Semanal</h1>
           <p className="text-xs text-atlas-muted mt-1">
             Visão detalhada das 26 semanas. Filtro padrão: apenas semanas em CRISE ou ALERTA.
           </p>
@@ -102,7 +114,7 @@ export function BPTabelaPage() {
       <div className="bg-atlas-card border border-atlas-border rounded-xl overflow-hidden">
         {semanas.length === 0 ? (
           <p className="p-6 text-center text-atlas-muted text-sm">
-            Nenhuma semana em CRISE ou ALERTA. ✅
+            Nenhuma semana em CRISE ou ALERTA. <CheckCircle2 size={14} className="inline -mt-0.5 text-green-600 dark:text-green-400" aria-hidden />
           </p>
         ) : (
           <table className="w-full text-xs">
@@ -117,22 +129,22 @@ export function BPTabelaPage() {
             </thead>
             <tbody>
               {semanas.map((s) => {
-                const gapColor = s.gap < 0 ? 'text-red-600' : s.gap < 300_000 ? 'text-amber-600' : 'text-green-600';
+                const gapColor = s.gap < 0 ? 'text-red-600 dark:text-red-400' : s.gap < 300_000 ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400';
                 return (
                   <tr key={s.semana} className="border-t border-atlas-border/50 tabular-nums hover:bg-atlas-bg/50">
                     <td className="px-3 py-2 font-bold">{s.label}</td>
                     <td className="px-3 py-2 text-atlas-muted whitespace-nowrap">{s.data_fmt}</td>
                     <td className="px-3 py-2"><TipoBadge tipo={s.tipo} isFinimp={s.is_finimp} /></td>
-                    <td className={`px-3 py-2 font-semibold ${s.is_finimp ? 'text-orange-600' : 'text-red-600'}`}>
+                    <td className={`px-3 py-2 font-semibold ${s.is_finimp ? 'text-orange-600 dark:text-orange-400' : 'text-red-600 dark:text-red-400'}`}>
                       {fmtMi(s.pagamento)}
                     </td>
-                    <td className={`px-3 py-2 font-semibold ${s.saldo_cc < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                    <td className={`px-3 py-2 font-semibold ${s.saldo_cc < 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
                       {fmtMi(s.saldo_cc)}
                     </td>
-                    <td className={`px-3 py-2 font-semibold ${s.antecip_disp < 200_000 ? 'text-red-600' : 'text-amber-600'}`}>
+                    <td className={`px-3 py-2 font-semibold ${s.antecip_disp < 200_000 ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'}`}>
                       {fmtMi(s.antecip_disp)}
                     </td>
-                    <td className="px-3 py-2 font-semibold text-pink-600">{fmtMi(s.cap_compra)}</td>
+                    <td className="px-3 py-2 font-semibold text-pink-600 dark:text-pink-400">{fmtMi(s.cap_compra)}</td>
                     <td className="px-3 py-2 font-semibold text-purple-600">{fmtMi(s.finimp_saldo)}</td>
                     <td className="px-3 py-2 text-atlas-muted">{fmtMi(s.dup_bloq)}</td>
                     <td className={`px-3 py-2 font-bold ${gapColor}`}>{fmtMi(s.gap)}</td>

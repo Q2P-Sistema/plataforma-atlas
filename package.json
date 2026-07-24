@@ -2,7 +2,7 @@
   "name": "atlas",
   "version": "0.0.0",
   "private": true,
-  "description": "Plataforma ACXE+Q2P — mon\u00f3lito modular consolidando 7 m\u00f3dulos internos sobre Postgres compartilhado",
+  "description": "Plataforma ACXE+Q2P — monólito modular consolidando 7 módulos internos sobre Postgres compartilhado",
   "type": "module",
   "packageManager": "pnpm@10.0.0",
   "engines": {
@@ -18,7 +18,17 @@
     "clean": "turbo run clean && rm -rf node_modules .turbo"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["argon2", "esbuild"]
+    "onlyBuiltDependencies": [
+      "argon2",
+      "esbuild"
+    ],
+    "overrides": {
+      "axios": "^1.18.1",
+      "form-data": "^4.0.6",
+      "qs": "^6.15.2",
+      "postcss": "^8.5.10",
+      "shell-quote": "^1.8.4"
+    }
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
@@ -27,6 +37,7 @@
     "eslint": "^9.0.0",
     "eslint-plugin-boundaries": "^5.0.0",
     "prettier": "^3.3.0",
+    "tsx": "^4.19.0",
     "turbo": "^2.0.0",
     "typescript": "^5.5.0"
   }

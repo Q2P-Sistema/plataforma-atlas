@@ -4,6 +4,8 @@ import { useAuthStore } from '../../stores/auth.store.js';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
+import { fmtNum, fmtPct, fmtBRL } from '../../lib/format.js';
+import { chartColors } from '@atlas/ui';
 
 interface Cenario {
   cambio: number;
@@ -44,7 +46,7 @@ export function MarginSimulationPage() {
 
   // Chart data
   const chartData = cenarios.map((c) => ({
-    cambio: `R$${c.cambio.toFixed(2)}`,
+    cambio: `R$ ${fmtNum(c.cambio, 2)}`,
     sem_hedge: +((parseFloat(faturamento) - parseFloat(volume) * c.cambio - parseFloat(custos)) / parseFloat(faturamento) * 100).toFixed(2),
     com_hedge: c.margem_pct,
     floor: 15,
@@ -52,14 +54,14 @@ export function MarginSimulationPage() {
 
   return (
     <div className="space-y-5">
-      <h1 className="text-2xl font-heading font-bold text-atlas-text">Simulacao de Margem</h1>
+      <h1 className="text-2xl font-heading font-bold text-atlas-text">Simulação de Margem</h1>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
           <label htmlFor="sim-fat" className="block text-xs text-atlas-muted uppercase tracking-wider mb-1">Faturamento BRL</label>
           <input id="sim-fat" type="number" value={faturamento} onChange={(e: ChangeEvent<HTMLInputElement>) => setFaturamento(e.target.value)}
             className="w-full px-3 py-2 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-sm font-mono focus:outline-none focus:ring-1 focus:ring-acxe" />
-          <p className="text-xs text-atlas-muted mt-1">R$ {(parseFloat(faturamento || '0') / 1e6).toFixed(1)}M</p>
+          <p className="text-xs text-atlas-muted mt-1">R$ {fmtNum(parseFloat(faturamento || '0') / 1e6, 1)}M</p>
         </div>
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
           <label htmlFor="sim-custos" className="block text-xs text-atlas-muted uppercase tracking-wider mb-1">Outros Custos BRL</label>
@@ -68,33 +70,33 @@ export function MarginSimulationPage() {
           <p className="text-xs text-atlas-muted mt-1">{((parseFloat(custos || '0') / parseFloat(faturamento || '1')) * 100).toFixed(0)}% do faturamento</p>
         </div>
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-          <label htmlFor="sim-vol" className="block text-xs text-atlas-muted uppercase tracking-wider mb-1">Volume USD (exposicao)</label>
+          <label htmlFor="sim-vol" className="block text-xs text-atlas-muted uppercase tracking-wider mb-1">Volume USD (exposição)</label>
           <input id="sim-vol" type="number" value={volume} onChange={(e: ChangeEvent<HTMLInputElement>) => setVolume(e.target.value)}
             className="w-full px-3 py-2 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-sm font-mono focus:outline-none focus:ring-1 focus:ring-acxe" />
-          <p className="text-xs text-atlas-muted mt-1">$ {(parseFloat(volume || '0') / 1e6).toFixed(2)}M</p>
+          <p className="text-xs text-atlas-muted mt-1">US$ {fmtNum(parseFloat(volume || '0') / 1e6, 2)}M</p>
         </div>
       </div>
 
       <button onClick={() => simMutation.mutate()} disabled={simMutation.isPending}
-        className="px-5 py-2 rounded bg-emerald-600 text-white text-xs font-mono tracking-wider hover:bg-emerald-700 disabled:opacity-50 transition-colors">
-        {simMutation.isPending ? 'Calculando...' : 'Simular 13 cenarios'}
+        className="px-5 py-2 rounded bg-atlas-btn-bg text-atlas-btn-text text-xs font-mono tracking-wider hover:bg-atlas-btn-bg-hover disabled:opacity-50 transition-colors">
+        {simMutation.isPending ? 'Calculando...' : 'Simular 13 cenários'}
       </button>
 
       {cenarios.length > 0 && (
         <>
           {/* Chart */}
           <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-            <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-3">Margem vs Variacao Cambial — Sem Hedge vs Com NDF</p>
+            <p className="text-xs text-atlas-muted uppercase tracking-[2px] mb-3">Margem vs Variação Cambial — Sem Hedge vs Com NDF</p>
             <ResponsiveContainer width="100%" height={260}>
               <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(221,225,232,0.5)" />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" />
                 <XAxis dataKey="cambio" tick={{ fontSize: 9 }} interval={1} />
                 <YAxis tick={{ fontSize: 9 }} tickFormatter={(v: number) => `${v}%`} />
-                <Tooltip formatter={(v) => `${Number(v).toFixed(2)}%`} />
+                <Tooltip formatter={(v) => fmtPct(Number(v), 2)} />
                 <Legend />
-                <Line type="monotone" dataKey="sem_hedge" name="Sem hedge" stroke="#dc2626" strokeWidth={1.5} strokeDasharray="3 2" dot={false} />
-                <Line type="monotone" dataKey="com_hedge" name="Com NDF" stroke="#059669" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="floor" name="Floor 15%" stroke="rgba(220,38,38,0.3)" strokeWidth={1} strokeDasharray="2 4" dot={false} />
+                <Line type="monotone" dataKey="sem_hedge" name="Sem hedge" stroke={chartColors.crit} strokeWidth={1.5} strokeDasharray="3 2" dot={false} />
+                <Line type="monotone" dataKey="com_hedge" name="Com NDF" stroke={chartColors.success} strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="floor" name="Piso 15%" stroke="rgba(220,38,38,0.3)" strokeWidth={1} strokeDasharray="2 4" dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -104,7 +106,7 @@ export function MarginSimulationPage() {
             <table className="w-full text-xs font-mono">
               <thead>
                 <tr className="bg-atlas-bg border-b border-atlas-border">
-                  <th className="px-3 py-2.5 text-left text-xs font-normal text-atlas-muted uppercase tracking-wider">Cambio</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-normal text-atlas-muted uppercase tracking-wider">Câmbio</th>
                   <th className="px-3 py-2.5 text-right text-xs font-normal text-atlas-muted uppercase tracking-wider">Custo c/ Hedge</th>
                   <th className="px-3 py-2.5 text-right text-xs font-normal text-atlas-muted uppercase tracking-wider">Custo s/ Hedge</th>
                   <th className="px-3 py-2.5 text-right text-xs font-normal text-atlas-muted uppercase tracking-wider">Margem %</th>
@@ -113,11 +115,11 @@ export function MarginSimulationPage() {
               <tbody className="bg-atlas-card divide-y divide-atlas-border/50">
                 {cenarios.map((c) => (
                   <tr key={c.cambio} className="hover:bg-atlas-bg/50">
-                    <td className="px-3 py-2">R$ {c.cambio.toFixed(2)}</td>
+                    <td className="px-3 py-2">{fmtBRL(c.cambio)}</td>
                     <td className="px-3 py-2 text-right">{formatBrl(c.custo_com_hedge)}</td>
                     <td className="px-3 py-2 text-right">{formatBrl(c.custo_sem_hedge)}</td>
-                    <td className={`px-3 py-2 text-right font-semibold ${c.margem_pct >= 20 ? 'text-emerald-600' : c.margem_pct >= 10 ? 'text-amber-600' : 'text-red-600'}`}>
-                      {c.margem_pct.toFixed(1)}%
+                    <td className={`px-3 py-2 text-right font-semibold ${c.margem_pct >= 20 ? 'text-emerald-600 dark:text-emerald-400' : c.margem_pct >= 10 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'}`}>
+                      {fmtPct(c.margem_pct)}
                     </td>
                   </tr>
                 ))}

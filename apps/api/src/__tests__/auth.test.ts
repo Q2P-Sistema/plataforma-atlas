@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
@@ -46,7 +46,24 @@ const mockUser = {
 // Session store reserved for future test expansions
 const _mockSessionStore: Record<string, any> = {}; void _mockSessionStore;
 
+// SEG-09: estado do stub de Redis (contador de falhas por IP+conta do login)
+const redisStore: Record<string, string> = {};
+
 vi.mock('@atlas/core', () => ({
+  // PR #72 moveu o envelope para @atlas/core — o mock precisa expor as funcoes
+  // (puras, copiadas de packages/core/src/envelope.ts) ou as rotas quebram com
+  // 'No "sendError" export is defined on the "@atlas/core" mock'.
+  sendSuccess: (res: any, data: any, status = 200, meta?: any) => {
+    const body: any = { data, error: null };
+    if (meta) body.meta = meta;
+    res.status(status).json(body);
+  },
+  sendError: (res: any, code: string, message: string, status = 400, fields?: any, traceId?: any) => {
+    const error: any = { code, message };
+    if (fields) error.fields = fields;
+    if (traceId) error.traceId = traceId;
+    res.status(status).json({ data: null, error });
+  },
   loadConfig: () => ({
     DATABASE_URL: 'postgresql://test:test@localhost:5432/test',
     REDIS_URL: 'redis://localhost:6379',
@@ -60,11 +77,13 @@ vi.mock('@atlas/core', () => ({
     MODULE_COMEXINSIGHT_ENABLED: false,
     MODULE_COMEXFLOW_ENABLED: false,
     MODULE_FORECAST_ENABLED: false,
+    AUTH_2FA_ENABLED: true,
   }),
   getConfig: () => ({
     DATABASE_URL: 'postgresql://test:test@localhost:5432/test',
     REDIS_URL: 'redis://localhost:6379',
     SESSION_SECRET: 'test-secret-1234567890',
+    APP_URL: 'http://localhost:5173',
     API_PORT: 3005,
     NODE_ENV: 'test',
     MODULE_HEDGE_ENABLED: false,
@@ -74,6 +93,7 @@ vi.mock('@atlas/core', () => ({
     MODULE_COMEXINSIGHT_ENABLED: false,
     MODULE_COMEXFLOW_ENABLED: false,
     MODULE_FORECAST_ENABLED: false,
+    AUTH_2FA_ENABLED: true,
   }),
   getDb: () => ({
     select: () => ({
@@ -112,8 +132,27 @@ vi.mock('@atlas/core', () => ({
   getPool: () => ({
     query: vi.fn().mockResolvedValue({ rows: [{ '?column?': 1 }] }),
   }),
+  // SEG-09: o login agora usa Redis pro contador por (IP, conta) — stub
+  // stateful compartilhado entre requests do mesmo teste (limpo em beforeEach).
   getRedis: () => ({
     ping: vi.fn().mockResolvedValue('PONG'),
+    get: vi.fn((key: string) => Promise.resolve(redisStore[key] ?? null)),
+    setex: vi.fn((key: string, _ttl: number, value: string) => {
+      redisStore[key] = value;
+      return Promise.resolve('OK');
+    }),
+    del: vi.fn((...keys: string[]) => {
+      let n = 0;
+      for (const k of keys) if (k in redisStore) { delete redisStore[k]; n++; }
+      return Promise.resolve(n);
+    }),
+    incr: vi.fn((key: string) => {
+      const n = Number(redisStore[key] ?? 0) + 1;
+      redisStore[key] = String(n);
+      return Promise.resolve(n);
+    }),
+    expire: vi.fn(() => Promise.resolve(1)),
+    ttl: vi.fn(() => Promise.resolve(1800)),
   }),
   createLogger: () => ({
     info: vi.fn(),
@@ -123,7 +162,13 @@ vi.mock('@atlas/core', () => ({
   }),
 }));
 
-vi.mock('@atlas/auth', () => ({
+vi.mock('@atlas/auth', () => {
+  // ACXEGDP-316: rotas de bootstrap (me/logout/setup/confirm/modules) usam a
+  // variante requireAuthAllowPending2fa — mesmo vi.fn() compartilhado para o
+  // mockImplementation abaixo valer para as duas.
+  const requireAuthMock = vi.fn();
+  return {
+  csrfProtection: (_req: any, _res: any, next: any) => next(),
   verifyPassword: vi.fn((_hash: string, password: string) =>
     Promise.resolve(password === 'correct-password'),
   ),
@@ -155,11 +200,13 @@ vi.mock('@atlas/auth', () => ({
     return Promise.resolve(null);
   }),
   destroySession: vi.fn(() => Promise.resolve()),
-  requireAuth: vi.fn(),
+  requireAuth: requireAuthMock,
+  requireAuthAllowPending2fa: requireAuthMock,
   checkLoginRateLimit: vi.fn(() => Promise.resolve({ locked: false })),
   recordFailedLogin: vi.fn(() => Promise.resolve()),
   resetFailedLogins: vi.fn(() => Promise.resolve()),
-}));
+  };
+});
 
 // Import requireAuth after mock so we can set it up properly
 import { requireAuth as _requireAuth, validateSession } from '@atlas/auth';
@@ -201,6 +248,11 @@ describe('Auth Routes', () => {
   });
 
   describe('POST /api/v1/auth/login', () => {
+    beforeEach(() => {
+      // SEG-09: zera o contador de falhas por (IP, conta) entre testes
+      for (const k of Object.keys(redisStore)) delete redisStore[k];
+    });
+
     it('returns 200 + cookie with correct credentials', async () => {
       const res = await request(app)
         .post('/api/v1/auth/login')
@@ -235,6 +287,49 @@ describe('Auth Routes', () => {
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe('VALIDATION_ERROR');
     });
+
+    describe('SEG-09 — lockout por (IP, conta), não por conta', () => {
+      it('6ª tentativa do mesmo IP+conta → 429, mas a vítima loga de outro IP', async () => {
+        for (let i = 0; i < 5; i++) {
+          const r = await request(app)
+            .post('/api/v1/auth/login')
+            .set('X-Forwarded-For', '10.0.0.66')
+            .send({ email: 'admin@test.com', password: 'wrong-password' });
+          expect(r.status).toBe(401);
+        }
+        // atacante bloqueado — mesmo com a senha CERTA (par IP+conta travado)
+        const bloqueado = await request(app)
+          .post('/api/v1/auth/login')
+          .set('X-Forwarded-For', '10.0.0.66')
+          .send({ email: 'admin@test.com', password: 'correct-password' });
+        expect(bloqueado.status).toBe(429);
+        expect(bloqueado.body.error.code).toBe('TOO_MANY_ATTEMPTS');
+
+        // a CONTA não foi trancada: a vítima loga normalmente de outro IP —
+        // este é exatamente o DoS direcionado que o lockout antigo permitia
+        const vitima = await request(app)
+          .post('/api/v1/auth/login')
+          .set('X-Forwarded-For', '187.55.1.2')
+          .send({ email: 'admin@test.com', password: 'correct-password' });
+        expect(vitima.status).toBe(200);
+      });
+
+      it('login com sucesso zera o contador do par IP+conta', async () => {
+        for (let i = 0; i < 4; i++) {
+          await request(app)
+            .post('/api/v1/auth/login')
+            .set('X-Forwarded-For', '10.0.0.77')
+            .send({ email: 'admin@test.com', password: 'wrong-password' });
+        }
+        expect(redisStore['atlas:auth:login-fail:10.0.0.77:admin@test.com']).toBe('4');
+        const ok = await request(app)
+          .post('/api/v1/auth/login')
+          .set('X-Forwarded-For', '10.0.0.77')
+          .send({ email: 'admin@test.com', password: 'correct-password' });
+        expect(ok.status).toBe(200);
+        expect(redisStore['atlas:auth:login-fail:10.0.0.77:admin@test.com']).toBeUndefined();
+      });
+    });
   });
 
   describe('GET /api/v1/auth/me', () => {
@@ -253,6 +348,8 @@ describe('Auth Routes', () => {
       expect(res.status).toBe(200);
       expect(res.body.data.email).toBe('admin@test.com');
       expect(res.body.data.role).toBe('diretor');
+      // SEG-07: /me devolve o csrfToken para restaurá-lo após F5.
+      expect(res.body.data.csrfToken).toBe('test-csrf-token');
     });
   });
 

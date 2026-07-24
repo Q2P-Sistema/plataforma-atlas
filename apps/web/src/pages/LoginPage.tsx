@@ -1,6 +1,6 @@
 import { useState, type FormEvent, type ChangeEvent } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
-import { ThemeToggle } from '@atlas/ui';
+import { AuthPageShell } from '@atlas/ui';
 import { useAuthStore } from '../stores/auth.store.js';
 
 export function LoginPage() {
@@ -29,17 +29,14 @@ export function LoginPage() {
 
       navigate(from, { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro de conexao com o servidor');
+      setError(err instanceof Error ? err.message : 'Erro de conexão com o servidor');
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-atlas-bg p-4">
-      <div className="absolute top-4 right-4">
-        <ThemeToggle />
-      </div>
+    <AuthPageShell>
 
       <div className="w-full max-w-sm bg-atlas-card rounded-xl shadow-lg p-8 border border-atlas-border">
         <div className="text-center mb-8">
@@ -102,7 +99,7 @@ export function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-2.5 rounded-lg bg-acxe text-white font-medium hover:bg-acxe/90 focus:outline-none focus:ring-2 focus:ring-acxe focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="w-full py-2.5 rounded-lg bg-atlas-btn-bg text-atlas-btn-text font-medium hover:bg-atlas-btn-bg-hover focus:outline-none focus:ring-2 focus:ring-atlas-btn-bg focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {loading ? 'Entrando...' : 'Entrar'}
           </button>
@@ -114,6 +111,6 @@ export function LoginPage() {
           </Link>
         </p>
       </div>
-    </div>
+    </AuthPageShell>
   );
 }

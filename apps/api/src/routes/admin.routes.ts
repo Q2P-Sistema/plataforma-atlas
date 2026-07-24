@@ -5,6 +5,7 @@ import { auditLog } from '@atlas/db';
 import {
   requireAuth,
   requireRole,
+  csrfProtection,
   listUsers,
   createUser,
   updateUser,
@@ -12,6 +13,8 @@ import {
   reactivateUser,
   adminResetPassword,
   adminReset2FA,
+  getUserModules,
+  setUserModules,
   UserError,
 } from '@atlas/auth';
 import { sendSuccess, sendError } from '../envelope.js';
@@ -20,7 +23,7 @@ const logger = createLogger('admin');
 const router: Router = Router();
 
 // All admin routes require auth + diretor role
-router.use('/api/v1/admin', requireAuth, requireRole('diretor'));
+router.use('/api/v1/admin', requireAuth, csrfProtection, requireRole('diretor'));
 
 // GET /api/v1/admin/users
 router.get('/api/v1/admin/users', async (_req: Request, res: Response) => {
@@ -231,6 +234,58 @@ router.post(
         return;
       }
       logger.error({ err }, 'Reset 2FA error');
+      sendError(res, 'INTERNAL_ERROR', 'Erro interno do servidor', 500);
+    }
+  },
+);
+
+// GET /api/v1/admin/users/:id/modules
+router.get(
+  '/api/v1/admin/users/:id/modules',
+  async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id as string;
+      const modules = await getUserModules(id);
+      sendSuccess(res, { modules });
+    } catch (err) {
+      logger.error({ err }, 'Get user modules error');
+      sendError(res, 'INTERNAL_ERROR', 'Erro interno do servidor', 500);
+    }
+  },
+);
+
+// PUT /api/v1/admin/users/:id/modules
+router.put(
+  '/api/v1/admin/users/:id/modules',
+  async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id as string;
+      const { modules } = req.body as { modules?: unknown };
+
+      if (!Array.isArray(modules) || modules.some((m) => typeof m !== 'string')) {
+        sendError(
+          res,
+          'VALIDATION_ERROR',
+          'O campo "modules" deve ser um array de strings',
+          400,
+        );
+        return;
+      }
+
+      const result = await setUserModules(id, modules as string[], req.user!.id);
+
+      logger.info(
+        { adminId: req.user!.id, targetId: id, modules: result },
+        'User modules updated by admin',
+      );
+
+      sendSuccess(res, { modules: result });
+    } catch (err) {
+      if (err instanceof UserError) {
+        sendError(res, err.code, err.message, 404);
+        return;
+      }
+      logger.error({ err }, 'Set user modules error');
       sendError(res, 'INTERNAL_ERROR', 'Erro interno do servidor', 500);
     }
   },

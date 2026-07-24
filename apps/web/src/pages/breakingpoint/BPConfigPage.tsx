@@ -1,5 +1,16 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useAuthStore } from '../../stores/auth.store.js';
+import { ErrorState } from '@atlas/ui';
+
+// SEG-07: estas mutações usavam fetch direto sem o x-csrf-token (as demais
+// páginas usam useApiFetch, que já injeta). Com o csrfProtection montado nos
+// routers, sem o header elas passariam a levar 403. zustand getState fora de
+// componente é suportado.
+function csrfHeaders(): Record<string, string> {
+  const t = useAuthStore.getState().csrfToken;
+  return { 'Content-Type': 'application/json', ...(t ? { 'x-csrf-token': t } : {}) };
+}
 
 interface Params {
   empresa: 'acxe' | 'q2p';
@@ -43,6 +54,9 @@ const EMPRESA = 'acxe' as const;
 
 async function fetchParams(): Promise<Params> {
   const r = await fetch(`/api/v1/bp/params?empresa=${EMPRESA}`, { credentials: 'include' });
+  // Sem o guard, erro estruturado do backend resolve como data=null e a secao
+  // fica em "Carregando parametros..." para sempre (UI-E).
+  if (!r.ok) throw new Error('Falha ao carregar parâmetros');
   const j = await r.json();
   return j.data;
 }
@@ -50,7 +64,7 @@ async function putParams(p: Omit<Params, 'updated_at'>): Promise<void> {
   const r = await fetch('/api/v1/bp/params', {
     method: 'PUT',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: csrfHeaders(),
     body: JSON.stringify(p),
   });
   const j = await r.json();
@@ -59,13 +73,14 @@ async function putParams(p: Omit<Params, 'updated_at'>): Promise<void> {
 
 async function fetchBancos(): Promise<Banco[]> {
   const r = await fetch(`/api/v1/bp/bancos?empresa=${EMPRESA}`, { credentials: 'include' });
+  if (!r.ok) throw new Error('Falha ao carregar bancos');
   return (await r.json()).data;
 }
 async function putBanco(b: Banco): Promise<void> {
   const r = await fetch(`/api/v1/bp/bancos/${b.id}`, {
     method: 'PUT',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: csrfHeaders(),
     body: JSON.stringify({
       banco_nome: b.banco_nome,
       cor_hex: b.cor_hex,
@@ -84,14 +99,14 @@ async function putBanco(b: Banco): Promise<void> {
   if (!r.ok) throw new Error(j.error?.message ?? 'Falha ao salvar banco');
 }
 async function deleteBancoCall(id: string): Promise<void> {
-  const r = await fetch(`/api/v1/bp/bancos/${id}`, { method: 'DELETE', credentials: 'include' });
+  const r = await fetch(`/api/v1/bp/bancos/${id}`, { method: 'DELETE', credentials: 'include', headers: csrfHeaders() });
   if (!r.ok) throw new Error('Falha ao remover');
 }
 async function postBanco(b: Omit<Banco, 'id' | 'antecip_disp' | 'finimp_disp' | 'cheque_disp' | 'updated_at'>): Promise<void> {
   const r = await fetch('/api/v1/bp/bancos', {
     method: 'POST',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: csrfHeaders(),
     body: JSON.stringify(b),
   });
   const j = await r.json();
@@ -100,16 +115,17 @@ async function postBanco(b: Omit<Banco, 'id' | 'antecip_disp' | 'finimp_disp' | 
 
 async function fetchContas(): Promise<Conta[]> {
   const r = await fetch(`/api/v1/bp/contas?empresa=${EMPRESA}`, { credentials: 'include' });
+  if (!r.ok) throw new Error('Falha ao carregar contas');
   return (await r.json()).data;
 }
 async function putConta(nCodCC: number, incluir: boolean): Promise<void> {
   const r = await fetch(`/api/v1/bp/contas/${nCodCC}`, {
     method: 'PUT',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: csrfHeaders(),
     body: JSON.stringify({ empresa: EMPRESA, incluir }),
   });
-  if (!r.ok) throw new Error('Falha ao salvar toggle');
+  if (!r.ok) throw new Error('Falha ao salvar a seleção da conta');
 }
 
 const fmtBRL = (v: number) =>
@@ -141,7 +157,7 @@ export function BPConfigPage() {
   return (
     <div className="p-6 max-w-[1440px] mx-auto space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Breaking Point · Configurar</h1>
+        <h1 className="text-2xl font-heading font-bold">Breaking Point · Configurar</h1>
         <p className="text-xs text-atlas-muted mt-1">
           Parâmetros manuais não sincronizados do OMIE. Alterações recalculam a projeção em até 2 segundos.
         </p>
@@ -157,7 +173,7 @@ export function BPConfigPage() {
 }
 
 function ParamsSection({ notify, invalidateProj }: { notify: (m: string, k?: 'ok' | 'err') => void; invalidateProj: () => void }) {
-  const { data: params } = useQuery({ queryKey: ['bp', 'params'], queryFn: fetchParams });
+  const { data: params, error: paramsError, refetch } = useQuery({ queryKey: ['bp', 'params'], queryFn: fetchParams });
   const [form, setForm] = useState<Params | null>(null);
 
   useEffect(() => {
@@ -173,12 +189,19 @@ function ParamsSection({ notify, invalidateProj }: { notify: (m: string, k?: 'ok
     onError: (e: Error) => notify(e.message, 'err'),
   });
 
-  if (!form) return <div className="text-atlas-muted text-sm">Carregando parâmetros…</div>;
+  if (paramsError) {
+    return (
+      <section className="bg-atlas-card border border-atlas-border rounded-xl p-5">
+        <ErrorState message={paramsError.message} retry={() => refetch()} />
+      </section>
+    );
+  }
+  if (!form) return <div className="text-atlas-muted text-sm">Carregando parâmetros...</div>;
 
   return (
     <section className="bg-atlas-card border border-atlas-border rounded-xl p-5">
       <h2 className="text-sm font-bold mb-4">Parâmetros Globais</h2>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Field label="Antecipação já usada (R$)" hint="Total de duplicatas já antecipadas no período">
           <input
             type="number"
@@ -244,7 +267,7 @@ function ParamsSection({ notify, invalidateProj }: { notify: (m: string, k?: 'ok
 
 function BancosSection({ notify, invalidateProj }: { notify: (m: string, k?: 'ok' | 'err') => void; invalidateProj: () => void }) {
   const qc = useQueryClient();
-  const { data: bancos = [] } = useQuery({ queryKey: ['bp', 'bancos'], queryFn: fetchBancos });
+  const { data: bancos = [], isLoading: bancosLoading } = useQuery({ queryKey: ['bp', 'bancos'], queryFn: fetchBancos });
 
   const saveMut = useMutation({
     mutationFn: putBanco,
@@ -290,6 +313,9 @@ function BancosSection({ notify, invalidateProj }: { notify: (m: string, k?: 'ok
 
       {newOpen && <NovoBancoForm onCreate={(b) => createMut.mutate(b)} pending={createMut.isPending} />}
 
+      {/* Antes o loading rendia lista vazia — indistinguível de sem bancos (UI-E). */}
+      {bancosLoading && <p className="text-xs text-atlas-muted">Carregando bancos...</p>}
+
       <div className="space-y-3">
         {bancos.map((b) => (
           <BancoRow key={b.id} banco={b} onSave={(updated) => saveMut.mutate(updated)} onDelete={() => delMut.mutate(b.id)} />
@@ -325,7 +351,7 @@ function BancoRow({ banco, onSave, onDelete }: { banco: Banco; onSave: (b: Banco
           Ativo
         </label>
       </div>
-      <div className="grid grid-cols-3 gap-3 text-xs">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
         <Group title="Antecipação">
           <NumRow label="Limite" value={form.antecip_limite} onChange={(v) => setForm({ ...form, antecip_limite: v })} />
           <NumRow label="Usado" value={form.antecip_usado} onChange={(v) => setForm({ ...form, antecip_usado: v })} />
@@ -359,8 +385,8 @@ function NovoBancoForm({ onCreate, pending }: { onCreate: (b: Omit<Banco, 'id' |
   const [cor, setCor] = useState('#666666');
   return (
     <div className="mb-4 p-3 border border-dashed border-atlas-border rounded-lg">
-      <div className="grid grid-cols-4 gap-2 items-end">
-        <Field label="Slug (único)"><input className="input w-full" value={id} onChange={(e) => setId(e.target.value)} placeholder="caixa" /></Field>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 items-end">
+        <Field label="Identificador (slug, único)"><input className="input w-full" value={id} onChange={(e) => setId(e.target.value)} placeholder="caixa" /></Field>
         <Field label="Nome"><input className="input w-full" value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Caixa Econômica" /></Field>
         <Field label="Cor"><input type="color" className="w-full h-9 rounded" value={cor} onChange={(e) => setCor(e.target.value)} /></Field>
         <button
@@ -394,11 +420,11 @@ function NovoBancoForm({ onCreate, pending }: { onCreate: (b: Omit<Banco, 'id' |
 
 function ContasSection({ notify, invalidateProj }: { notify: (m: string, k?: 'ok' | 'err') => void; invalidateProj: () => void }) {
   const qc = useQueryClient();
-  const { data: contas = [] } = useQuery({ queryKey: ['bp', 'contas'], queryFn: fetchContas });
+  const { data: contas = [], isLoading: contasLoading } = useQuery({ queryKey: ['bp', 'contas'], queryFn: fetchContas });
   const mut = useMutation({
     mutationFn: ({ n, incluir }: { n: number; incluir: boolean }) => putConta(n, incluir),
     onSuccess: () => {
-      notify('Toggle salvo');
+      notify('Seleção salva');
       invalidateProj();
       qc.invalidateQueries({ queryKey: ['bp', 'contas'] });
     },
@@ -408,7 +434,10 @@ function ContasSection({ notify, invalidateProj }: { notify: (m: string, k?: 'ok
   return (
     <section className="bg-atlas-card border border-atlas-border rounded-xl p-5">
       <h2 className="text-sm font-bold mb-4">Contas Correntes no Cálculo de Saldo CC</h2>
-      {contas.length === 0 ? (
+      {contasLoading ? (
+        // Antes o loading rendia "Nenhuma conta..." — indistinguível de sem dados (UI-E).
+        <p className="text-xs text-atlas-muted">Carregando contas...</p>
+      ) : contas.length === 0 ? (
         <p className="text-xs text-atlas-muted">Nenhuma conta corrente ativa encontrada no OMIE.</p>
       ) : (
         <div className="divide-y divide-atlas-border">

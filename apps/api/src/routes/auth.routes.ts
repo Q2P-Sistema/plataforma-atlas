@@ -1,14 +1,15 @@
 import crypto from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import { eq } from 'drizzle-orm';
-import { getDb, createLogger, getRedis, sendEmail, buildPasswordResetEmail } from '@atlas/core';
+import { getDb, createLogger, getRedis, sendEmail, buildPasswordResetEmail, getConfig } from '@atlas/core';
 import { users } from '@atlas/db';
 import {
   verifyPassword,
   hashPassword,
   createSession,
   destroySession,
-  requireAuth,
+  requireAuthAllowPending2fa,
+  csrfProtection,
   checkLoginRateLimit,
   recordFailedLogin,
   resetFailedLogins,
@@ -16,18 +17,50 @@ import {
   generateQRCodeDataUrl,
   generateOtpauthUrl,
   verifyCode,
+  getUserModules,
+  isModuleEnabledGlobally,
+  MODULE_KEYS,
 } from '@atlas/auth';
 import { sendSuccess, sendError } from '../envelope.js';
+import { createIpRateLimiter } from '../middleware/rate-limit.js';
 
 const logger = createLogger('auth');
 const SESSION_COOKIE = 'atlas_session';
 const TEMP_TOKEN_PREFIX = 'atlas:2fa:temp:';
 const TEMP_TOKEN_TTL = 300; // 5 minutes
+// SEG-04: contador de tentativas de 2FA por usuário — sem isso o tempToken
+// (5 min) aceitava tentativas ilimitadas de TOTP (brute-force viável).
+const TWOFA_ATTEMPTS_PREFIX = 'atlas:2fa:attempts:';
+const TWOFA_CONFIRM_ATTEMPTS_PREFIX = 'atlas:2fa:confirm-attempts:';
+const MAX_2FA_ATTEMPTS = 5;
+const TWOFA_ATTEMPTS_TTL = 900; // 15 min
 
 const router: Router = Router();
 
+// SEG-09 (ACXEGDP-247): o lockout antigo era por CONTA apenas — um atacante que
+// soubesse o e-mail da vítima errava a senha 5× de propósito e trancava a conta
+// por 30 min, repetível indefinidamente (DoS direcionado). Defesa em camadas:
+//  1. contador por (IP, conta) em Redis: 5 falhas → 30 min (este arquivo);
+//  2. throttle bruto por IP na rota de login (loginLimiter, abaixo);
+//  3. backstop por conta em packages/auth/rate-limit.ts (25 falhas → 30 min)
+//     contra ataque distribuído por muitos IPs.
+// A vítima logando do próprio IP não é afetada pelas camadas 1 e 2.
+const LOGIN_FAIL_PREFIX = 'atlas:auth:login-fail:';
+const LOGIN_FAIL_MAX = 5;
+const LOGIN_FAIL_TTL = 1800; // 30 min
+
+const loginLimiter = createIpRateLimiter({ prefix: 'login', windowMs: 15 * 60 * 1000, limit: 30 });
+
+function extrairIp(req: Request): string {
+  return (
+    (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ??
+    req.socket.remoteAddress ??
+    'unknown'
+  );
+}
+
 // POST /api/v1/auth/login
-router.post('/api/v1/auth/login', async (req: Request, res: Response) => {
+router.post('/api/v1/auth/login', loginLimiter, async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
 
@@ -36,7 +69,25 @@ router.post('/api/v1/auth/login', async (req: Request, res: Response) => {
       return;
     }
 
-    // Rate limit check
+    const ipAddress = extrairIp(req);
+    const failKey = `${LOGIN_FAIL_PREFIX}${ipAddress}:${String(email).toLowerCase()}`;
+    const redis = getRedis();
+
+    // SEG-09 camada 1: par (IP, conta) bloqueado por excesso de falhas
+    const falhasIpConta = Number((await redis.get(failKey)) ?? 0);
+    if (falhasIpConta >= LOGIN_FAIL_MAX) {
+      const ttl = await redis.ttl(failKey);
+      const minutos = Math.max(1, Math.ceil((ttl > 0 ? ttl : LOGIN_FAIL_TTL) / 60));
+      sendError(
+        res,
+        'TOO_MANY_ATTEMPTS',
+        `Muitas tentativas de login. Tente novamente em ${minutos} minutos`,
+        429,
+      );
+      return;
+    }
+
+    // SEG-09 camada 3: backstop por conta (ataque distribuído)
     const rateLimit = await checkLoginRateLimit(email);
     if (rateLimit.locked) {
       sendError(
@@ -70,15 +121,22 @@ router.post('/api/v1/auth/login', async (req: Request, res: Response) => {
     const valid = await verifyPassword(user.passwordHash, password);
     if (!valid) {
       await recordFailedLogin(email);
+      // SEG-09 camada 1: registra a falha do par (IP, conta)
+      const novasFalhas = await redis.incr(failKey);
+      if (novasFalhas === 1) {
+        await redis.expire(failKey, LOGIN_FAIL_TTL);
+      }
       sendError(res, 'INVALID_CREDENTIALS', 'E-mail ou senha incorretos', 401);
       return;
     }
 
-    // Reset failed logins on success
+    // Reset failed logins on success (conta + par IP/conta)
     await resetFailedLogins(user.id);
+    await redis.del(failKey);
 
-    // Check 2FA
-    if (user.totpEnabled && user.totpSecret) {
+    // Check 2FA (respeita a flag global AUTH_2FA_ENABLED; desligada, pula o desafio
+    // mesmo para quem ja tem totp_enabled — util em UAT/teste)
+    if (getConfig().AUTH_2FA_ENABLED && user.totpEnabled && user.totpSecret) {
       const tempToken = crypto.randomBytes(32).toString('hex');
       const redis = getRedis();
       await redis.setex(
@@ -90,10 +148,7 @@ router.post('/api/v1/auth/login', async (req: Request, res: Response) => {
       return;
     }
 
-    // Create session
-    const ipAddress =
-      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ??
-      req.socket.remoteAddress;
+    // Create session (ipAddress já extraído no topo do handler — SEG-09)
     const userAgent = req.headers['user-agent'];
 
     const session = await createSession(user.id, ipAddress, userAgent);
@@ -115,12 +170,20 @@ router.post('/api/v1/auth/login', async (req: Request, res: Response) => {
 
     logger.info({ userId: user.id, email: user.email }, 'User logged in');
 
+    // ACXEGDP-307: sem totp_enabled/last_login_at aqui, o front (setUser) gravava
+    // totp_enabled=undefined no store — o ProtectedShell tratava todo gestor/diretor
+    // como se nunca tivesse configurado 2FA e mandava de volta pro /2fa/setup a cada
+    // login, mesmo já configurado. /me sempre devolveu esses campos certos; login e
+    // verify-2fa não. Mantém o mesmo shape do /me.
     sendSuccess(res, {
       user: {
         id: user.id,
         name: user.name,
         email: user.email,
         role: user.role,
+        totp_enabled: user.totpEnabled,
+        last_login_at: user.lastLoginAt,
+        two_factor_enforced: getConfig().AUTH_2FA_ENABLED,
       },
       csrfToken: session.csrfToken,
       requires2FA: false,
@@ -151,6 +214,19 @@ router.post('/api/v1/auth/verify-2fa', async (req: Request, res: Response) => {
 
     const { userId } = JSON.parse(stored) as { userId: string; email: string };
 
+    // SEG-04: INCR atômico antes de verificar (à prova de corrida com requisições
+    // paralelas). Contador por usuário — por tempToken permitiria renovar o limite
+    // relogando com a senha correta. Ao exceder, invalida o tempToken.
+    const attemptsKey = `${TWOFA_ATTEMPTS_PREFIX}${userId}`;
+    const attempts = await redis.incr(attemptsKey);
+    if (attempts === 1) await redis.expire(attemptsKey, TWOFA_ATTEMPTS_TTL);
+    if (attempts > MAX_2FA_ATTEMPTS) {
+      await redis.del(`${TEMP_TOKEN_PREFIX}${tempToken}`);
+      logger.warn({ userId }, '2FA brute-force lockout');
+      sendError(res, 'TOO_MANY_ATTEMPTS', 'Muitas tentativas de código. Aguarde 15 minutos e faça login novamente.', 429);
+      return;
+    }
+
     // Find user
     const db = getDb();
     const [user] = await db
@@ -171,8 +247,8 @@ router.post('/api/v1/auth/verify-2fa', async (req: Request, res: Response) => {
       return;
     }
 
-    // Delete temp token
-    await redis.del(`${TEMP_TOKEN_PREFIX}${tempToken}`);
+    // Delete temp token + zera o contador de tentativas (SEG-04)
+    await redis.del(`${TEMP_TOKEN_PREFIX}${tempToken}`, attemptsKey);
 
     // Create session
     const ipAddress =
@@ -199,12 +275,20 @@ router.post('/api/v1/auth/verify-2fa', async (req: Request, res: Response) => {
 
     logger.info({ userId: user.id }, 'User logged in with 2FA');
 
+    // ACXEGDP-307: sem totp_enabled/last_login_at aqui, o front (setUser) gravava
+    // totp_enabled=undefined no store — o ProtectedShell tratava todo gestor/diretor
+    // como se nunca tivesse configurado 2FA e mandava de volta pro /2fa/setup a cada
+    // login, mesmo já configurado. /me sempre devolveu esses campos certos; login e
+    // verify-2fa não. Mantém o mesmo shape do /me.
     sendSuccess(res, {
       user: {
         id: user.id,
         name: user.name,
         email: user.email,
         role: user.role,
+        totp_enabled: user.totpEnabled,
+        last_login_at: user.lastLoginAt,
+        two_factor_enforced: getConfig().AUTH_2FA_ENABLED,
       },
       csrfToken: session.csrfToken,
       requires2FA: false,
@@ -218,10 +302,27 @@ router.post('/api/v1/auth/verify-2fa', async (req: Request, res: Response) => {
 // POST /api/v1/auth/setup-2fa (requires auth)
 router.post(
   '/api/v1/auth/setup-2fa',
-  requireAuth,
+  requireAuthAllowPending2fa,
+  csrfProtection,
   async (req: Request, res: Response) => {
     try {
       const user = req.user!;
+
+      // SEG-10: re-setup com 2FA já habilitado exige a senha atual (step-up).
+      // Primeiro setup (totpEnabled=false) segue sem atrito — o usuário acabou
+      // de digitar a senha no login. Sem isto, uma sessão sequestrada (ou CSRF)
+      // reconfiguraria o 2FA da vítima silenciosamente.
+      if (user.totpEnabled) {
+        const password: unknown = req.body?.password;
+        if (
+          typeof password !== 'string' ||
+          !(await verifyPassword(user.passwordHash, password))
+        ) {
+          sendError(res, 'REAUTH_REQUIRED', 'Senha atual obrigatória para reconfigurar o 2FA', 401);
+          return;
+        }
+      }
+
       const db = getDb();
 
       // Generate new secret
@@ -252,7 +353,8 @@ router.post(
 // POST /api/v1/auth/confirm-2fa (requires auth)
 router.post(
   '/api/v1/auth/confirm-2fa',
-  requireAuth,
+  requireAuthAllowPending2fa,
+  csrfProtection,
   async (req: Request, res: Response) => {
     try {
       const { code } = req.body;
@@ -260,6 +362,17 @@ router.post(
 
       if (!code) {
         sendError(res, 'VALIDATION_ERROR', 'Código é obrigatório', 400);
+        return;
+      }
+
+      // SEG-04: mesma proteção de brute-force do verify-2fa, contada por usuário.
+      const redis = getRedis();
+      const confirmAttemptsKey = `${TWOFA_CONFIRM_ATTEMPTS_PREFIX}${user.id}`;
+      const confirmAttempts = await redis.incr(confirmAttemptsKey);
+      if (confirmAttempts === 1) await redis.expire(confirmAttemptsKey, TWOFA_ATTEMPTS_TTL);
+      if (confirmAttempts > MAX_2FA_ATTEMPTS) {
+        logger.warn({ userId: user.id }, '2FA confirm brute-force lockout');
+        sendError(res, 'TOO_MANY_ATTEMPTS', 'Muitas tentativas de código. Aguarde 15 minutos.', 429);
         return;
       }
 
@@ -289,7 +402,8 @@ router.post(
         return;
       }
 
-      // Enable 2FA
+      // Enable 2FA + zera o contador (SEG-04)
+      await redis.del(confirmAttemptsKey);
       await db
         .update(users)
         .set({ totpEnabled: true })
@@ -308,7 +422,12 @@ router.post(
 // POST /api/v1/auth/forgot-password
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
 
-router.post('/api/v1/auth/forgot-password', async (req: Request, res: Response) => {
+// SEG-09: rate limit por IP em forgot/reset (antes: flood de e-mails e brute
+// force do token de reset sem qualquer throttle por IP).
+const forgotPasswordLimiter = createIpRateLimiter({ prefix: 'forgot', windowMs: 15 * 60 * 1000, limit: 5 });
+const resetPasswordLimiter = createIpRateLimiter({ prefix: 'reset', windowMs: 15 * 60 * 1000, limit: 10 });
+
+router.post('/api/v1/auth/forgot-password', forgotPasswordLimiter, async (req: Request, res: Response) => {
   try {
     const { email } = req.body;
 
@@ -349,9 +468,12 @@ router.post('/api/v1/auth/forgot-password', async (req: Request, res: Response) 
       })
       .where(eq(users.id, user.id));
 
-    // Build reset URL — use Origin header or fallback
-    const origin = req.headers.origin ?? req.headers.referer?.replace(/\/$/, '') ?? 'http://localhost:5173';
-    const resetUrl = `${origin}/reset-password/${resetToken}`;
+    // Build reset URL from the server-side APP_URL (allowlist). NUNCA derivar de
+    // headers Origin/Referer do request: sendo o endpoint publico e nao autenticado,
+    // um atacante pode forjar o Origin e fazer o link de reset (com token valido)
+    // apontar para o dominio dele, vazando o token da vitima (SEG-01, ACXEGDP-239).
+    const baseUrl = getConfig().APP_URL.replace(/\/$/, '');
+    const resetUrl = `${baseUrl}/reset-password/${resetToken}`;
 
     const emailContent = buildPasswordResetEmail(resetUrl);
     await sendEmail({
@@ -373,7 +495,7 @@ router.post('/api/v1/auth/forgot-password', async (req: Request, res: Response) 
 });
 
 // POST /api/v1/auth/reset-password
-router.post('/api/v1/auth/reset-password', async (req: Request, res: Response) => {
+router.post('/api/v1/auth/reset-password', resetPasswordLimiter, async (req: Request, res: Response) => {
   try {
     const { token, newPassword } = req.body;
 
@@ -434,7 +556,8 @@ router.post('/api/v1/auth/reset-password', async (req: Request, res: Response) =
 // POST /api/v1/auth/logout
 router.post(
   '/api/v1/auth/logout',
-  requireAuth,
+  requireAuthAllowPending2fa,
+  csrfProtection,
   async (req: Request, res: Response) => {
     try {
       await destroySession(req.session!.id);
@@ -451,7 +574,7 @@ router.post(
 // GET /api/v1/auth/me
 router.get(
   '/api/v1/auth/me',
-  requireAuth,
+  requireAuthAllowPending2fa,
   (req: Request, res: Response) => {
     const user = req.user!;
     sendSuccess(res, {
@@ -461,7 +584,35 @@ router.get(
       role: user.role,
       totp_enabled: user.totpEnabled,
       last_login_at: user.lastLoginAt,
+      two_factor_enforced: getConfig().AUTH_2FA_ENABLED,
+      csrfToken: req.session!.csrfToken,
     });
+  },
+);
+
+// GET /api/v1/auth/modules
+// Lista os modulos acessiveis ao user logado (intersecao: env global × grant; diretor bypass).
+// Modulos retornados ja estao enabled — modulos sem acesso nao aparecem.
+router.get(
+  '/api/v1/auth/modules',
+  requireAuthAllowPending2fa,
+  async (req: Request, res: Response) => {
+    try {
+      const user = req.user!;
+      const grantedSet =
+        user.role === 'diretor'
+          ? new Set<string>(MODULE_KEYS)
+          : new Set<string>(await getUserModules(user.id));
+
+      const modules = MODULE_KEYS
+        .filter((key) => isModuleEnabledGlobally(key) && grantedSet.has(key))
+        .map((id) => ({ id, enabled: true }));
+
+      sendSuccess(res, { modules });
+    } catch (err) {
+      logger.error({ err }, 'Get user modules error');
+      sendError(res, 'INTERNAL_ERROR', 'Erro interno do servidor', 500);
+    }
   },
 );
 

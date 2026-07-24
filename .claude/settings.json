@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm --filter @atlas/integrations-omie test)",
+      "Bash(pnpm --filter @atlas/core --filter @atlas/api --filter @atlas/web typecheck)",
+      "Bash(pnpm --filter @atlas/api exec tsc --noEmit)",
+      "Bash(pnpm --filter @atlas/web exec tsc -b --noEmit)",
+      "Bash(pnpm --filter @atlas/api test)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(pnpm --filter @atlas/api exec vitest run src/__tests__/totp.test.ts)",
+      "Bash(grep -v -E '^\\(main|uat\\)$')",
+      "Bash(.specify/scripts/bash/create-new-feature.sh \"Fila de recebimento de importacao em modo real + correcao de granularidade multi-produto\" --json --short-name \"fila-recebimento-real\")",
+      "Bash(python3 -c \"import yaml,sys; d=yaml.safe_load\\(open\\('deploy/portainer/atlas-uat.stack.yml'\\)\\); svc=d['services']['uat-atlas_api']['environment']; print\\('YAML OK — AUTH_2FA_ENABLED =', repr\\(svc.get\\('AUTH_2FA_ENABLED'\\)\\)\\); print\\('serviços:', list\\(d['services'].keys\\(\\)\\)\\)\")"
+    ]
+  },
+  "enabledPlugins": {
+    "typescript-lsp@claude-plugins-official": true,
+    "context7@claude-plugins-official": true
+  }
+}

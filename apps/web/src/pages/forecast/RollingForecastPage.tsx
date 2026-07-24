@@ -5,6 +5,8 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceLine, Legend,
 } from 'recharts';
+import { fmtToneladas as fmtT, fmtDataBrCurta } from '../../lib/format.js';
+import { chartColors } from '@atlas/ui';
 
 interface ForecastResult {
   familia_id: string; familia_nome: string; is_internacional: boolean; lt_efetivo: number;
@@ -18,7 +20,6 @@ interface ForecastResult {
   pedidos_em_rota: Array<{ codigo: string; qtd_pendente: number; data_chegada: string }>;
 }
 
-const fmtT = (kg: number) => kg >= 1000 ? `${(kg / 1000).toFixed(1)}t` : `${kg}kg`;
 const fmtBrl = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
 
@@ -63,7 +64,7 @@ export function RollingForecastPage() {
     : results[0];
 
   const chartData = selected?.serie.map((s) => ({
-    data: s.data.slice(5), // MM-DD
+    data: fmtDataBrCurta(s.data), // DD/MM
     estoque: s.estoque,
     chegada: s.chegada > 0 ? s.chegada : undefined,
   })) ?? [];
@@ -84,34 +85,34 @@ export function RollingForecastPage() {
           <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
             <MiniCard label="Estoque" value={fmtT(selected.pool_total)} />
             <MiniCard label="Venda/dia" value={fmtT(selected.venda_diaria_sazonalizada)} />
-            <MiniCard label="Cobertura" value={selected.cobertura_dias < 999 ? `${selected.cobertura_dias}d` : '—'} color={selected.cobertura_dias <= 30 ? '#dc2626' : selected.cobertura_dias <= 60 ? '#d97706' : '#059669'} />
-            <MiniCard label="Ruptura" value={selected.dia_ruptura >= 0 ? `Dia ${selected.dia_ruptura}` : 'Nenhuma'} color={selected.dia_ruptura >= 0 ? '#dc2626' : '#059669'} />
-            <MiniCard label="Pedir em" value={selected.dia_pedido_ideal >= 0 ? `Dia ${selected.dia_pedido_ideal}` : selected.prazo_perdido ? 'PERDIDO' : '—'} color={selected.prazo_perdido ? '#dc2626' : '#d97706'} />
-            <MiniCard label="Sugestao" value={fmtT(selected.qtd_sugerida)} sub={fmtBrl(selected.valor_brl)} />
+            <MiniCard label="Cobertura" value={selected.cobertura_dias < 999 ? `${selected.cobertura_dias}d` : '—'} color={selected.cobertura_dias <= 30 ? chartColors.crit : selected.cobertura_dias <= 60 ? chartColors.warn : chartColors.success} />
+            <MiniCard label="Ruptura" value={selected.dia_ruptura >= 0 ? `Dia ${selected.dia_ruptura}` : 'Nenhuma'} color={selected.dia_ruptura >= 0 ? chartColors.crit : chartColors.success} />
+            <MiniCard label="Pedir em" value={selected.dia_pedido_ideal >= 0 ? `Dia ${selected.dia_pedido_ideal}` : selected.prazo_perdido ? 'PERDIDO' : '—'} color={selected.prazo_perdido ? chartColors.crit : chartColors.warn} />
+            <MiniCard label="Sugestão" value={fmtT(selected.qtd_sugerida)} sub={fmtBrl(selected.valor_brl)} />
           </div>
 
           {/* Chart */}
           <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-            <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Projecao de Estoque — {selected.familia_nome}</p>
+            <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Projeção de Estoque — {selected.familia_nome}</p>
             <ResponsiveContainer width="100%" height={300}>
               <AreaChart data={chartData}>
                 <defs>
                   <linearGradient id="estGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#059669" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#059669" stopOpacity={0.05} />
+                    <stop offset="5%" stopColor={chartColors.success} stopOpacity={0.3} />
+                    <stop offset="95%" stopColor={chartColors.success} stopOpacity={0.05} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(221,225,232,0.5)" />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" />
                 <XAxis dataKey="data" tick={{ fontSize: 9 }} interval={9} />
                 <YAxis tick={{ fontSize: 9 }} tickFormatter={(v: number) => fmtT(v)} />
                 <Tooltip formatter={(v) => fmtT(Number(v))} />
                 <Legend />
-                <Area type="monotone" dataKey="estoque" name="Estoque (kg)" stroke="#059669" fill="url(#estGrad)" strokeWidth={2} />
+                <Area type="monotone" dataKey="estoque" name="Estoque (kg)" stroke={chartColors.success} fill="url(#estGrad)" strokeWidth={2} />
                 {selected.dia_ruptura >= 0 && (
-                  <ReferenceLine x={chartData[selected.dia_ruptura]?.data} stroke="#dc2626" strokeDasharray="3 3" label={{ value: 'Ruptura', fontSize: 9, fill: '#dc2626' }} />
+                  <ReferenceLine x={chartData[selected.dia_ruptura]?.data} stroke={chartColors.crit} strokeDasharray="3 3" label={{ value: 'Ruptura', fontSize: 9, fill: chartColors.crit }} />
                 )}
                 {selected.dia_pedido_ideal >= 0 && selected.dia_pedido_ideal < chartData.length && (
-                  <ReferenceLine x={chartData[selected.dia_pedido_ideal]?.data} stroke="#d97706" strokeDasharray="3 3" label={{ value: 'Pedir', fontSize: 9, fill: '#d97706' }} />
+                  <ReferenceLine x={chartData[selected.dia_pedido_ideal]?.data} stroke={chartColors.warn} strokeDasharray="3 3" label={{ value: 'Pedir', fontSize: 9, fill: chartColors.warn }} />
                 )}
               </AreaChart>
             </ResponsiveContainer>
@@ -125,7 +126,7 @@ export function RollingForecastPage() {
                 <div><span className="text-atlas-muted">Abrir pedido em</span><p className="font-bold text-red-600">Dia {selected.compra_local.dia_abrir}</p></div>
                 <div><span className="text-atlas-muted">Gap sem estoque</span><p className="font-bold">{selected.compra_local.gap_dias} dias</p></div>
                 <div><span className="text-atlas-muted">Qtd local (MOQ 12t)</span><p className="font-bold">{fmtT(selected.compra_local.qtd_local)}</p></div>
-                <div><span className="text-atlas-muted">Custo oportunidade</span><p className="font-bold text-red-600">{fmtBrl(selected.compra_local.custo_oportunidade)}</p></div>
+                <div><span className="text-atlas-muted">Custo de oportunidade</span><p className="font-bold text-red-600">{fmtBrl(selected.compra_local.custo_oportunidade)}</p></div>
               </div>
             </div>
           )}
@@ -144,10 +145,10 @@ export function RollingForecastPage() {
               <table className="w-full text-xs font-mono">
                 <thead>
                   <tr className="border-b border-atlas-border">
-                    <th className="px-2 py-1.5 text-left text-xs text-atlas-muted">Codigo</th>
-                    <th className="px-2 py-1.5 text-left text-xs text-atlas-muted">Descricao</th>
+                    <th className="px-2 py-1.5 text-left text-xs text-atlas-muted">Código</th>
+                    <th className="px-2 py-1.5 text-left text-xs text-atlas-muted">Descrição</th>
                     <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Disp.</th>
-                    <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Transit.</th>
+                    <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Trâns.</th>
                     <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Total</th>
                     <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Venda/dia</th>
                     <th className="px-2 py-1.5 text-right text-xs text-atlas-muted">Cobert.</th>

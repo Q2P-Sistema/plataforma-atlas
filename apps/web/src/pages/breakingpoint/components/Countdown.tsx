@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
+import { CheckCircle2 } from 'lucide-react';
 
 export interface CountdownProps {
   semana: number | null;
   label: string;
-  icon: string;
+  icon: React.ReactNode;
   sub?: string;
 }
 
@@ -25,8 +26,8 @@ export function Countdown({ semana, label, icon, sub }: CountdownProps) {
   if (!semana) {
     return (
       <div className="flex-1 bg-atlas-card border border-green-500/30 rounded-xl p-5 text-center">
-        <div className="text-2xl mb-1" aria-hidden>✅</div>
-        <div className="text-xs text-green-600 font-semibold uppercase tracking-wider">{label}</div>
+        <div className="mb-1 flex justify-center" aria-hidden><CheckCircle2 size={24} className="text-green-600 dark:text-green-400" /></div>
+        <div className="text-xs text-green-600 dark:text-green-400 font-semibold uppercase tracking-wider">{label}</div>
         <div className="text-xs text-atlas-muted mt-1">Sem risco nos 180 dias</div>
       </div>
     );
@@ -34,12 +35,12 @@ export function Countdown({ semana, label, icon, sub }: CountdownProps) {
 
   const urgency =
     dias! <= 30
-      ? 'border-red-500/40 text-red-600 bg-red-500/5 shadow-red-500/20'
+      ? 'border-red-500/40 text-red-600 dark:text-red-400 bg-red-500/5 shadow-red-500/20'
       : dias! <= 60
-        ? 'border-orange-500/40 text-orange-600 bg-orange-500/5'
+        ? 'border-orange-500/40 text-orange-600 dark:text-orange-400 bg-orange-500/5'
         : dias! <= 90
-          ? 'border-amber-500/40 text-amber-600 bg-amber-500/5'
-          : 'border-teal-500/40 text-teal-600 bg-teal-500/5';
+          ? 'border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/5'
+          : 'border-teal-500/40 text-teal-600 dark:text-teal-400 bg-teal-500/5';
 
   return (
     <div
@@ -47,7 +48,7 @@ export function Countdown({ semana, label, icon, sub }: CountdownProps) {
       role="status"
       aria-label={`${label}: ${dias} dias restantes`}
     >
-      <div className="text-2xl mb-1" aria-hidden>{icon}</div>
+      <div className="mb-1 flex justify-center" aria-hidden>{icon}</div>
       <div className="text-xs uppercase tracking-wider opacity-70">{label}</div>
       <div className="text-3xl font-bold tabular-nums my-1">{count}</div>
       <div className="text-xs font-semibold">dias restantes</div>

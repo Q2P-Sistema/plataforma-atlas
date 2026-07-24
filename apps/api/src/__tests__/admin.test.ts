@@ -105,6 +105,20 @@ const mockAuditRows = [
 ];
 
 vi.mock('@atlas/core', () => ({
+  // PR #72 moveu o envelope para @atlas/core — o mock precisa expor as funcoes
+  // (puras, copiadas de packages/core/src/envelope.ts) ou as rotas quebram com
+  // 'No "sendError" export is defined on the "@atlas/core" mock'.
+  sendSuccess: (res: any, data: any, status = 200, meta?: any) => {
+    const body: any = { data, error: null };
+    if (meta) body.meta = meta;
+    res.status(status).json(body);
+  },
+  sendError: (res: any, code: string, message: string, status = 400, fields?: any, traceId?: any) => {
+    const error: any = { code, message };
+    if (fields) error.fields = fields;
+    if (traceId) error.traceId = traceId;
+    res.status(status).json({ data: null, error });
+  },
   loadConfig: () => ({
     DATABASE_URL: 'postgresql://test:test@localhost:5432/test',
     REDIS_URL: 'redis://localhost:6379',
@@ -118,6 +132,7 @@ vi.mock('@atlas/core', () => ({
     SESSION_SECRET: 'test-secret-1234567890',
     API_PORT: 3005,
     NODE_ENV: 'test',
+    AUTH_2FA_ENABLED: true,
   }),
   getDb: () => {
     const makeWhere = () => ({
@@ -179,8 +194,15 @@ vi.mock('@atlas/core', () => ({
   }),
 }));
 
-vi.mock('@atlas/auth', () => ({
-  requireAuth: vi.fn(),
+vi.mock('@atlas/auth', () => {
+  // ACXEGDP-316: rotas de bootstrap do auth.routes usam a variante
+  // requireAuthAllowPending2fa — mesmo vi.fn() compartilhado para o
+  // mockImplementation abaixo valer para as duas.
+  const requireAuthMock = vi.fn();
+  return {
+  csrfProtection: (_req: any, _res: any, next: any) => next(),
+  requireAuth: requireAuthMock,
+  requireAuthAllowPending2fa: requireAuthMock,
   requireRole: vi.fn(() => vi.fn()),
   listUsers: vi.fn(() =>
     Promise.resolve([
@@ -278,7 +300,8 @@ vi.mock('@atlas/auth', () => ({
   generateOtpauthUrl: vi.fn(() => 'otpauth://'),
   generateQRCodeDataUrl: vi.fn(() => Promise.resolve('data:image/png;base64,')),
   verifyCode: vi.fn(() => false),
-}));
+  };
+});
 
 import {
   requireAuth as _requireAuth,

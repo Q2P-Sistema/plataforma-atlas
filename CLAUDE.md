@@ -1,6 +1,6 @@
 # plataforma-atlas Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-04-14
+Auto-generated from all feature plans. Last updated: 2026-06-24
 
 ## Active Technologies
 - TypeScript 5.5+ (strict mode) / Node.js 20 LTS + Express 4 (API), React 18 + Vite (frontend), Drizzle ORM (queries), decimal.js (aritmetica financeira), recharts (graficos), Zod (validacao) (002-hedge-engine)
@@ -12,6 +12,16 @@ Auto-generated from all feature plans. Last updated: 2026-04-14
 - PostgreSQL 16 — leitura de tabelas OMIE em public.* (tbl_movimentacaoEstoqueHistorico_Q2P, tbl_dadosPlanilhaFUPComex, tbl_cadastroFornecedoresClientes_ACXE) (005-forecast-advanced-features)
 - TypeScript 5.5+ strict, Node.js 20 LTS + Express 4 (API), React 18 + Vite (frontend), Drizzle ORM (schema + migrations), raw SQL via getPool() (queries OMIE), Recharts (gráficos), Zod (validação), shadcn/ui + Tailwind (UI) (006-breaking-point-module)
 - PostgreSQL 16 — leitura em `public.*` (tabelas OMIE), escrita em `breakingpoint.*` (config manual) (006-breaking-point-module)
+- TypeScript 5.5+ strict, Node.js 20 LTS + Express 4 (API), React 18 + Vite (frontend), Drizzle ORM (schema + migrations), raw SQL via getPool() (queries OMIE), mysql2 (migracao one-shot do legado), axios (cliente OMIE), decimal.js (aritmetica financeira), Recharts (graficos), Zod (validacao), shadcn/ui + Tailwind (UI) (007-stockbridge-module)
+- PostgreSQL 16 — leitura em `public.*` (tabelas OMIE sincronizadas), escrita em `stockbridge.*` (schema proprio do modulo); MySQL legado acessado apenas no script one-shot de migracao (007-stockbridge-module)
+- TypeScript 5.5+ strict, Node.js 20 LTS + Backend — Express 4, `@atlas/core` (`getPool`, `createLogger`), Zod. Frontend — React 18 + Vite, TanStack Query, **recharts ^3.8.1** (tendência), Tailwind (componentes hand-rolled — não há lib shadcn em `apps/web`), lucide-react (ícones), `@atlas/ui` (`ShellLayout`). (008-stockbridge-cmc-view)
+- PostgreSQL 16 — **leitura apenas** de `public."tbl_historico_cmc_estoque"` (banco `acxe_q2p`). Sem novas tabelas, sem migration, sem escrita. (008-stockbridge-cmc-view)
+- TypeScript 5.5+ strict, Node.js 20 LTS + Express 4, Drizzle ORM, Zod, `@atlas/core` (getPool, createLogger) (010-fiscal-nf-mapa)
+- PostgreSQL 16 — novas tabelas em `stockbridge.*`; leitura de `public."tbl_nf_header_ACXE"`, `public."tbl_pedidosCompras_ACXE"` (010-fiscal-nf-mapa)
+- TypeScript 5.5+ (strict), Node.js 20 LTS + Backend — Express 4, Drizzle ORM (tabela de config + migration), raw SQL via `getPool()` (@atlas/core) para a agregação, Zod (validação). Frontend — React 18 + Vite, TanStack Query, Tailwind (componentes hand-rolled), lucide-react, `@atlas/ui` (`ShellLayout`, `SidebarSubItem`) (011-conferencia-estoque)
+- PostgreSQL 16 — **leitura** de `public."tbl_posicaoEstoque_ACXE"`, `public."tbl_posicaoEstoque_Q2P"`, `public."tbl_locaisEstoques_ACXE"`, `public."tbl_locaisEstoques_Q2P"`; **escrita** apenas na nova tabela de config `stockbridge.conferencia_local_map` (seed + edição futura). Sem escrita em OMIE. (011-conferencia-estoque)
+- TypeScript 5.5+ strict, Node.js 20 LTS + Express 4 (rota de recebimento), `@atlas/integrations-omie` (cliente `consultarNF`), `@atlas/core` (`createLogger`, `sendEmail`, `getAdminEmail`), Zod (validação de entrada já existente), React 18 + TanStack Query (exibição da mensagem). Sem novas dependências. (012-validacao-busca-nf)
+- Nenhum novo. Leitura **ao vivo** da API OMIE via `produtos/nfconsultar/` (chamada já existente no fluxo); nenhuma escrita em banco além do recebimento normal já existente. Sem migration. (012-validacao-busca-nf)
 
 - TypeScript 5.5+ (strict mode, ES2022, bundler resolution) / Node.js 20 LTS + Express 4.x (backend), React 18 (frontend), Vite 5 (build), Drizzle ORM (query builder + migrations), shadcn/ui + Tailwind CSS (design system), Zustand (client state), TanStack Query (server state), Zod (validação runtime), Pino (logs estruturados), argon2 (hash senhas), otplib (TOTP 2FA) (001-atlas-infra-base)
 
@@ -32,10 +42,46 @@ npm test && npm run lint
 TypeScript 5.5+ (strict mode, ES2022, bundler resolution) / Node.js 20 LTS: Follow standard conventions
 
 ## Recent Changes
-- 006-breaking-point-module: Added TypeScript 5.5+ strict, Node.js 20 LTS + Express 4 (API), React 18 + Vite (frontend), Drizzle ORM (schema + migrations), raw SQL via getPool() (queries OMIE), Recharts (gráficos), Zod (validação), shadcn/ui + Tailwind (UI)
-- 005-forecast-advanced-features: Added TypeScript 5.5+ (strict mode) / Node.js 20 LTS + Express 4 (API), React 18 + Vite (frontend), Drizzle ORM + raw SQL via getPool(), recharts (graficos/sparklines), Zod (validacao)
-- 004-hedge-gaps-closure: Added TypeScript 5.5+ (strict mode) / Node.js 20 LTS + Express 4 (API), React 18 + Vite (frontend), Drizzle ORM (queries), decimal.js (aritmetica financeira), recharts (graficos), Zod (validacao)
+- 012-validacao-busca-nf: Added TypeScript 5.5+ strict, Node.js 20 LTS + Express 4 (rota de recebimento), `@atlas/integrations-omie` (cliente `consultarNF`), `@atlas/core` (`createLogger`, `sendEmail`, `getAdminEmail`), Zod (validação de entrada já existente), React 18 + TanStack Query (exibição da mensagem). Sem novas dependências.
+- 011-conferencia-estoque: Added TypeScript 5.5+ (strict), Node.js 20 LTS + Backend — Express 4, Drizzle ORM (tabela de config + migration), raw SQL via `getPool()` (@atlas/core) para a agregação, Zod (validação). Frontend — React 18 + Vite, TanStack Query, Tailwind (componentes hand-rolled), lucide-react, `@atlas/ui` (`ShellLayout`, `SidebarSubItem`)
+- 010-fiscal-nf-mapa: Added TypeScript 5.5+ strict, Node.js 20 LTS + Express 4, Drizzle ORM, Zod, `@atlas/core` (getPool, createLogger)
 
 
 <!-- MANUAL ADDITIONS START -->
+
+## StockBridge — status operacional (007)
+
+- **Modulo funcionalmente completo** (8/8 user stories + movimentacoes). Ainda nao esta em producao — aguarda **validacao paralela** de 2 semanas com o legado PHP (Principio V).
+- **Feature flag**: `MODULE_STOCKBRIDGE_ENABLED`. Em prod deve subir em `false` ate paridade confirmada.
+- **OMIE em modo real exige**: `OMIE_ACXE_KEY/SECRET`, `OMIE_Q2P_KEY/SECRET`. Em dev, `OMIE_MODE=mock` retorna fixtures sinteticas (nao bate na API).
+- **Saidas automaticas via n8n**: requer `ATLAS_INTEGRATION_KEY` (shared secret com o workflow) + workflow importado de `workflows/stockbridge-saida-automatica.json`. Ver [docs/n8n-workflow-import.md](docs/n8n-workflow-import.md) para passo a passo de importação e testes.
+- **Excecao documentada ao Principio II**: escrita na API OMIE (`estoque/ajuste/`, `produtos/pedidocompra/`) e leitura de NF individual (`produtos/nfconsultar/`). Justificativa em `specs/007-stockbridge-module/research.md` secao 2 — unica alternativa viavel porque OMIE nao tem webhook de saida.
+- **Correlacao ACXE↔Q2P por match textual de descricao**: mantido do legado (clarificacao Q6). Produto sem correlato Q2P bloqueia recebimento + dispara email admin.
+- **Migracao MySQL → PG**: script em `modules/stockbridge/src/scripts/migrate-from-mysql.ts` (Phase 12 — implementado 2026-06-09). Executa uma única vez no dia do cutover com idempotência, transação SERIALIZABLE e rollback automático; dep `mysql2` instala on-demand via `pnpm add -D mysql2 --filter @atlas/stockbridge`.
+- **Auditoria**: 8 triggers dedicados em `stockbridge.*` gravando em `shared.audit_log` (Principio IV). Soft delete em `movimentacao.ativo=false` preserva historico — nao ha hard delete.
+- **Idempotencia OMIE (migration 0016)**: toda chamada `IncluirAjusteEstoque` envia `cod_int_ajuste = ${op_id}:${sufixo}` (sufixos `acxe-trf`, `q2p-ent`, `acxe-faltando`). Se Q2P falhar apos ACXE ok, `movimentacao` e gravada com `status_omie='pendente_q2p'`. Painel admin em `GET /api/v1/stockbridge/operacoes-pendentes` (gestor+); retry idempotente em `POST /api/v1/stockbridge/operacoes-pendentes/:id/retentar` (operador limitado a 1x; gestor+ sem limite). Cobertura simetrica em `aprovacao.aprovar()`. Detalhes em `specs/007-stockbridge-module/tasks-idempotencia-omie.md`.
+- **Recebimento de importação MULTI-PRODUTO (feature 013, ACXEGDP-115, migration 0046)**: NF de importação com N produtos é recebida inteira — cada produto vira lote+movimentação+ajuste dual independentes; valor da NF (com tributos) **rateado** entre os itens pelo valor comercial de cada linha (`ratearValorNf`, reduz a `vNF` para N=1). Idempotência de `entrada_nf` é por **(nota_fiscal, empresa, produto_codigo_acxe)** — índice `movimentacao_nf_entrada_idempotencia_idx` (saída automática mantém por NF+empresa em índice próprio). Dois portões em `processarRecebimento`: validação tudo-ou-nada (produto sem correlato Q2P bloqueia a NF inteira, zero escrita) + escrita best-effort por item (`POST /recebimento` com `itens[]` devolve **201 sempre** após o portão 1; desfechos por item: `provisorio|aguardando_aprovacao|pendente_q2p|falha_acxe|ja_recebido`). Recebimento **resumível**: re-POST completa só itens `falha_acxe`/nunca submetidos; `pendente_q2p` conclui pelo painel de Movimentações. Divergência é por item (aprovação gestor reusada); e-mails consolidados por NF (digest) quando 2+ itens.
+- **Fila de recebimento em modo real + granularidade por produto (feature 014, ACXEGDP-299)**: `GET /fila` **sem** `nf` devolve a fila real (`getFilaPendente` — `FilaQueueItem[]`): NFs filhote mapeadas (`nf_pedido_mapa`/`nf_pedido_filhote`, feature 011) emitidas e com produto pendente, lidas 100% do espelho Postgres (zero OMIE ao vivo; o detalhe por produto vem ao clicar → busca por NF normal). Exclusões estruturais: NF mãe nunca aparece, cancelada/deletada fora (`nfValidaSql`), não-sincronizada fora (JOIN em `tbl_nf_header`). A peça central é `produtoPendenteSql`/`recebidaViaMovimentacaoSql(nf, produto)` em `fiscal-recebida-sql.ts`: checagem "recebida" por **PRODUTO** no caminho Atlas (único capaz de multi-produto, feature 013) — corrigiu 5 pontos que usavam EXISTS por NF inteira (cockpit ×3, cockpit-executivo, pendências fiscais ×2, auto-desativação do mapa) e subestimavam pendência quando uma NF ficava parcialmente recebida. `movimentacao_legado` (sem coluna de produto) e `n_id_receb` (campo de cabeçalho OMIE) permanecem por NF — limitação de dado documentada em `specs/014-fila-recebimento-real/research.md` D3.
+- **Conferência de Estoque ACXE×Q2P (feature 011, ACXEGDP-198)**: substitui a planilha de conferência. Tela gestor+ em `/stockbridge/conferencia` + badge de itens `Status Geral != OK` (estilo aprovações). Lê **direto** `public."tbl_posicaoEstoque_ACXE"/"_Q2P"` (NÃO a `vw_posicaoEstoqueUnificada`, que filtra `fisico>=0` e some com os negativos). Mapa De→Para `ESPELHADO`/`INDIVIDUAL` em `stockbridge.conferencia_local_map` (migration 0040, seed das 23 linhas — não existe no OMIE). Pivot/soma em SQL; engine `Status Geral` em TS (`conferencia.service.ts`, coberta por Vitest). Junção ACXE↔Q2P pelo `codigo` textual do local + descrição normalizada. **Atenção**: o banco DEV (`pg-atlas-dev`) é sanitizado e tem OMIE defasado — paridade com a planilha valida-se contra PROD.
+
+### Arquitetura: Atlas como camada sobre OMIE
+
+Visao de longo prazo definida em 2026-05-02: **Atlas e UX/lógica de negócio; OMIE e ERP de back-office; Postgres e o espelho de leitura + estado proprio do Atlas.** Operador so tem o Atlas como ponto de contato — nao loga no OMIE. Doc completo em [specs/007-stockbridge-module/arquitetura-atlas-camada-omie.md](specs/007-stockbridge-module/arquitetura-atlas-camada-omie.md).
+
+Fontes de verdade por dominio:
+
+| Dado | Fonte de verdade | Tabela/View |
+|---|---|---|
+| Saldo fisico nos galpoes | **OMIE** | `public.vw_posicaoEstoqueUnificadaFamilia` |
+| Movimento fiscal (NF, ajustes) | **OMIE** (Atlas escreve via API) | `public.tbl_NFsEmitidas_*`, `public.tbl_movimentacaoEstoqueHistorico_*` |
+| Pipeline de transito em 5 estagios (FUP de Comex) | **Atlas** (OMIE nao tem o rastreamento) | `stockbridge.lote` com `estagio_transito` em (aguardando_embarque, transito_intl, no_porto, transito_local) — derivado 100% do FUP via migration 0037 |
+| Aprovacao hierarquica | **Atlas** | `stockbridge.aprovacao` |
+| Recebimento provisorio | **Atlas** | `stockbridge.lote` status=provisorio (transitorio ate OMIE consolidar) |
+| Configuracao de negocio (lead time, consumo, vinculos user-galpao) | **Atlas** | `stockbridge.config_produto`, `stockbridge.user_galpao`, etc |
+| Auditoria detalhada | **Atlas** | `stockbridge.movimentacao` + `shared.audit_log` |
+
+**⚠️  Mudança migration 0037 (2026-06-09)**: Rastreamento de transito agora é **100% FUP-driven** (5 estágios derivados de `tbl_dadosPlanilhaFUPComex`). Rastreamento por NF foi **removido** — `tbl_nf_header_ACXE` misturava NF mãe + filhotes indistinguivelmente, duplicando volumes (6.617t NF vs 895t FUP real). FUP é a fonte de verdade operacional. **Nota**: `specs/007-stockbridge-module/arquitetura-atlas-camada-omie.md` ainda menciona "Movimento fiscal (NF)" alimentando transito — esse doc ficou desatualizado e precisa correção.
+
+**Cockpit/Metricas devem consumir UNIAO OMIE + Atlas** (saldo fisico OMIE + camadas Atlas: transito, pendencias). Risco a vigiar: dupla contagem entre `lote provisorio` (ja gravou em OMIE via API) e `vw_posicaoEstoqueUnificadaFamilia` que reflete OMIE — provisorio so deve aparecer como "pendente Atlas" enquanto `status_omie != 'concluida'`. Apos consolidacao, ele esta no OMIE e nao deve ser somado de novo.
+
 <!-- MANUAL ADDITIONS END -->

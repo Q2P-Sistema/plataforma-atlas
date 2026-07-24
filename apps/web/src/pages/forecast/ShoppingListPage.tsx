@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useAuthStore } from '../../stores/auth.store.js';
+import { fmtToneladas as fmtT } from '../../lib/format.js';
 
 interface AIRecomendacao { familia: string; acao: string; justificativa: string; prioridade: number; }
 interface AIResult { resumo_executivo: string; alertas: string[]; recomendacoes: AIRecomendacao[]; }
@@ -20,7 +21,6 @@ interface ShoppingItem {
   is_local: boolean;
 }
 
-const fmtT = (kg: number) => kg >= 1000 ? `${(kg / 1000).toFixed(1)}t` : `${kg}kg`;
 const fmtBrl = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
 export function ShoppingListPage() {
@@ -94,7 +94,7 @@ export function ShoppingListPage() {
         }),
       });
       const body = (await res.json()) as any;
-      if (!res.ok) throw new Error(body.error?.message ?? 'Erro na analise');
+      if (!res.ok) throw new Error(body.error?.message ?? 'Erro na análise');
       return body.data as AIResult;
     },
     onSuccess: (data) => { setAiResult(data); setAiError(null); },
@@ -118,7 +118,7 @@ export function ShoppingListPage() {
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-heading font-bold text-atlas-text">Shopping List</h1>
+        <h1 className="text-2xl font-heading font-bold text-atlas-text">Lista de Compras</h1>
         <div className="flex items-center gap-3">
           <span className="text-xs text-atlas-muted">{selectedItems.length} itens | {fmtBrl(totalValor)}</span>
           <button onClick={runAnalysis} disabled={selectedItems.length === 0 || aiMutation.isPending}
@@ -126,7 +126,7 @@ export function ShoppingListPage() {
             {aiMutation.isPending ? 'Analisando...' : 'Analisar com IA'}
           </button>
           <button onClick={copyToClipboard}
-            className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 transition-colors">
+            className="px-4 py-2 rounded-lg bg-atlas-btn-bg text-atlas-btn-text text-xs font-medium hover:bg-atlas-btn-bg-hover transition-colors">
             Copiar para Executor
           </button>
         </div>
@@ -134,7 +134,7 @@ export function ShoppingListPage() {
 
       {items.length === 0 ? (
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-8 text-center text-atlas-muted text-xs">
-          Nenhuma familia com necessidade de compra detectada.
+          Nenhuma família com necessidade de compra detectada.
         </div>
       ) : (
         <div className="bg-atlas-card border border-atlas-border rounded-lg overflow-hidden">
@@ -142,7 +142,7 @@ export function ShoppingListPage() {
             <thead>
               <tr className="bg-atlas-bg border-b border-atlas-border">
                 <th className="px-2 py-2.5 w-8"></th>
-                <th className="px-2 py-2.5 text-left text-xs text-atlas-muted uppercase">Familia</th>
+                <th className="px-2 py-2.5 text-left text-xs text-atlas-muted uppercase">Família</th>
                 <th className="px-2 py-2.5 text-right text-xs text-atlas-muted uppercase">Qtd</th>
                 <th className="px-2 py-2.5 text-center text-xs text-atlas-muted uppercase">Comprar em</th>
                 <th className="px-2 py-2.5 text-center text-xs text-atlas-muted uppercase">Chega em</th>
@@ -157,7 +157,7 @@ export function ShoppingListPage() {
               {items.map((it, idx) => (
                 <tr key={it.familia_id} className={`hover:bg-atlas-bg/50 ${!it.selected ? 'opacity-40' : ''}`}>
                   <td className="px-2 py-2">
-                    <input type="checkbox" checked={it.selected} onChange={() => toggleSelect(idx)} className="accent-emerald-600" />
+                    <input type="checkbox" checked={it.selected} onChange={() => toggleSelect(idx)} className="accent-q2p" />
                   </td>
                   <td className="px-2 py-2 font-medium text-atlas-text">
                     {it.familia_nome}
@@ -190,7 +190,7 @@ export function ShoppingListPage() {
       {/* AI Analysis Error */}
       {aiError && (
         <div className="bg-red-500/5 border border-red-500/20 rounded-lg p-4">
-          <p className="text-sm text-red-600 font-semibold">Analise indisponivel</p>
+          <p className="text-sm text-red-600 font-semibold">Análise indisponível</p>
           <p className="text-xs text-red-500 mt-1">{aiError}</p>
         </div>
       )}
@@ -199,7 +199,7 @@ export function ShoppingListPage() {
       {aiResult && (
         <div className="space-y-3">
           <div className="bg-purple-500/5 border border-purple-500/20 rounded-lg p-4">
-            <p className="text-xs text-purple-600 uppercase tracking-[3px] mb-2">Analise IA</p>
+            <p className="text-xs text-purple-600 uppercase tracking-[3px] mb-2">Análise IA</p>
             <p className="text-sm text-atlas-text">{aiResult.resumo_executivo}</p>
             {aiResult.alertas.length > 0 && (
               <div className="mt-3 space-y-1">
@@ -213,8 +213,8 @@ export function ShoppingListPage() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="bg-atlas-bg border-b border-atlas-border">
-                  <th className="px-3 py-2 text-left text-xs text-atlas-muted uppercase">Familia</th>
-                  <th className="px-3 py-2 text-center text-xs text-atlas-muted uppercase">Acao</th>
+                  <th className="px-3 py-2 text-left text-xs text-atlas-muted uppercase">Família</th>
+                  <th className="px-3 py-2 text-center text-xs text-atlas-muted uppercase">Ação</th>
                   <th className="px-3 py-2 text-left text-xs text-atlas-muted uppercase">Justificativa</th>
                 </tr>
               </thead>
@@ -238,9 +238,9 @@ export function ShoppingListPage() {
 }
 
 function AcaoBadge({ acao }: { acao: string }) {
-  const style = acao === 'COMPRAR AGORA' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
-    : acao === 'AGUARDAR' ? 'bg-amber-500/10 text-amber-600 border-amber-500/20'
-    : acao === 'REVISAR' ? 'bg-blue-500/10 text-blue-600 border-blue-500/20'
-    : 'bg-gray-500/10 text-gray-500 border-gray-500/20';
+  const style = acao === 'COMPRAR AGORA' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+    : acao === 'AGUARDAR' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+    : acao === 'REVISAR' ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20'
+    : 'bg-gray-500/10 text-gray-500 dark:text-gray-400 border-gray-500/20';
   return <span className={`inline-flex text-xs px-1.5 py-0.5 rounded border font-semibold ${style}`}>{acao}</span>;
 }

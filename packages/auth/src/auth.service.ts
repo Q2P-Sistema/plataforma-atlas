@@ -1,9 +1,10 @@
 import crypto from 'node:crypto';
-import { eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { getDb } from '@atlas/core';
-import { users, type User } from '@atlas/db';
+import { users, userModules, type User } from '@atlas/db';
 import { hashPassword } from './password.js';
 import { destroyUserSessions } from './session.js';
+import { isModuleKey, type ModuleKey } from './modules.js';
 
 function generateTemporaryPassword(): string {
   return crypto.randomBytes(12).toString('base64url');
@@ -153,6 +154,79 @@ export async function adminResetPassword(
   await destroyUserSessions(id);
 
   return { temporaryPassword };
+}
+
+export async function getUserModules(userId: string): Promise<ModuleKey[]> {
+  const db = getDb();
+  const rows = await db
+    .select({ moduleKey: userModules.moduleKey })
+    .from(userModules)
+    .where(eq(userModules.userId, userId));
+
+  return rows
+    .map((r) => r.moduleKey)
+    .filter((k): k is ModuleKey => isModuleKey(k));
+}
+
+export async function setUserModules(
+  userId: string,
+  keys: string[],
+  grantedBy: string,
+): Promise<ModuleKey[]> {
+  const validKeys = Array.from(new Set(keys.filter(isModuleKey)));
+  const db = getDb();
+
+  // Verifica que o user existe (e nao foi soft-deleted)
+  const [target] = await db
+    .select({ id: users.id, role: users.role })
+    .from(users)
+    .where(and(eq(users.id, userId), isNull(users.deletedAt)))
+    .limit(1);
+
+  if (!target) {
+    throw new UserError('USER_NOT_FOUND', 'Usuário não encontrado');
+  }
+
+  // Diretor tem bypass — nao mantemos rows pra ele.
+  if (target.role === 'diretor') {
+    await db.delete(userModules).where(eq(userModules.userId, userId));
+    return [];
+  }
+
+  // Diff: remove os que sairam, insere os que chegaram (ON CONFLICT preserva granted_at original)
+  const current = await db
+    .select({ moduleKey: userModules.moduleKey })
+    .from(userModules)
+    .where(eq(userModules.userId, userId));
+
+  const currentSet = new Set(current.map((r) => r.moduleKey));
+  const nextSet = new Set<string>(validKeys);
+
+  const toRemove = [...currentSet].filter((k) => !nextSet.has(k));
+  const toAdd = [...nextSet].filter((k) => !currentSet.has(k));
+
+  if (toRemove.length > 0) {
+    await db
+      .delete(userModules)
+      .where(
+        and(
+          eq(userModules.userId, userId),
+          inArray(userModules.moduleKey, toRemove),
+        ),
+      );
+  }
+
+  if (toAdd.length > 0) {
+    await db.insert(userModules).values(
+      toAdd.map((moduleKey) => ({
+        userId,
+        moduleKey,
+        grantedBy,
+      })),
+    );
+  }
+
+  return validKeys;
 }
 
 export async function adminReset2FA(id: string): Promise<void> {

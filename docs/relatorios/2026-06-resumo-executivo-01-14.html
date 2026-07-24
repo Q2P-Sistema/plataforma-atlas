@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Resumo Executivo — 01–14/06/2026</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f5f7;">
+<!-- ====== COPIE A PARTIR DAQUI (ou abra no navegador e copie o conteúdo renderizado) ====== -->
+<div style="max-width:720px;margin:0 auto;padding:24px;background:#ffffff;font-family:Arial,Helvetica,sans-serif;color:#172b4d;line-height:1.55;font-size:14px;">
+
+  <h1 style="font-size:22px;margin:0 0 4px;color:#172b4d;">Resumo Executivo — Atividades de 01–14/06/2026</h1>
+  <p style="margin:0 0 2px;"><strong>Responsável:</strong> Flavio Cicato Endo</p>
+  <p style="margin:0 0 2px;"><strong>Área:</strong> TI / Sistemas (Jira ACXEGDP)</p>
+  <p style="margin:0 0 2px;"><strong>Período:</strong> 01–14/06/2026</p>
+  <p style="margin:0 0 16px;color:#6b778c;font-size:12px;"><em>Fonte: Jira LiveMind — projeto ACXE - Gestão dos projetos e dos Sistemas.</em></p>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Números do período</h2>
+  <table style="border-collapse:collapse;width:100%;font-size:14px;">
+    <tr>
+      <th style="border:1px solid #dfe1e6;padding:8px 10px;text-align:left;background:#f4f5f7;">Indicador</th>
+      <th style="border:1px solid #dfe1e6;padding:8px 10px;text-align:right;background:#f4f5f7;">Valor</th>
+    </tr>
+    <tr>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;">Tarefas <strong>concluídas</strong></td>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;text-align:right;"><strong>22</strong></td>
+    </tr>
+    <tr>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;">Tarefas <strong>abertas</strong> no período</td>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;text-align:right;"><strong>25</strong> <span style="color:#6b778c;font-size:12px;">(19 concluídas · 3 em andamento · 3 backlog)</span></td>
+    </tr>
+    <tr>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;">Itens movimentados no total</td>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;text-align:right;">28</td>
+    </tr>
+  </table>
+
+  <div style="margin:16px 0;padding:12px 16px;background:#e3fcef;border-left:4px solid #00875a;border-radius:3px;">
+    <p style="margin:0;color:#006644;">Quinzena concentrada na <strong>evolução do Cockpit StockBridge</strong> e no <strong>ensaio de UAT</strong> do Atlas como ambiente de pré-produção — a maior parte das entregas de maio (CMC, trânsito, posição fiscal) amadureceu e foi validada nestes 14 dias.</p>
+  </div>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Principais entregas por frente</h2>
+  <p style="margin:0 0 12px;font-size:12px;color:#6b778c;">
+    Legenda:
+    <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span>
+    <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffae6;color:#974f00;">EM ANDAMENTO</span>
+    <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span>
+  </p>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">1. Cockpit StockBridge — visão executiva</h3>
+  <p style="margin:0 0 8px;color:#42526e;">Frente central da quinzena: transformar o cockpit em painel de decisão, com dados corretos e navegação por camadas de estoque.</p>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-145</strong> — Cockpit: <strong>filtros multi-select</strong> + esteira visual + layout executivo.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-146</strong> — Cockpit: <strong>whitelist de galpões físicos</strong> + Comodato + leitura direta de tbl_posicaoEstoque.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-155</strong> — Refinamento do Cockpit: validação da fonte dos dados (Trânsito, Nacionalização, Disponível).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-148</strong> — <strong>Trânsito por NF</strong>: migration 0036 + coluna única Nacionalização + sync do MySQL legado.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-159</strong> — <strong>Posição Fiscal</strong> via mapa NF mãe/filhote (stockbridge.nf_pedido_mapa).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-162</strong> — Exportar mapa <strong>NF mãe/filhote</strong> da FUP para o Atlas (extensão do workflow FUP→BD).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span> <strong>ACXEGDP-157</strong> — Validar posição fiscal no cockpit StockBridge.</li>
+  </ul>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">2. CMC por família e produto</h3>
+  <p style="margin:0 0 8px;color:#42526e;">Continuidade do relatório de CMC iniciado em maio, com correção de dados e de fuso horário.</p>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-149</strong> — StockBridge: visão de <strong>CMC por família e produto</strong>.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-141</strong> — Relatório <strong>CMC por família</strong>, separando nacional e importado (trabalho aberto em maio, fechado nesta janela).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-154</strong> — Fix de <strong>timezone da sessão Postgres</strong> (America/Sao_Paulo) — corrigia falso "dado defasado" no CMC.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-161</strong> — Fix: workflow de <strong>Histórico CMC Estoque</strong> falhava com NULL em codigo_produto.</li>
+  </ul>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">3. UAT — ensaio de produção do Atlas</h3>
+  <p style="margin:0 0 8px;color:#42526e;">Subida do Atlas em UAT como ensaio de produção, fechando lacunas antes do go-live.</p>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-153</strong> — <strong>UAT</strong> — subir Atlas (StockBridge + Forecast/Hedge/BreakingPoint) como ensaio de produção.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-147</strong> — <strong>Sync prod→dev</strong>: FUP Comex + pedidos de compra + locais de estoque + refresh automático.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-156</strong> — Teste de <strong>recebimento nacional e importado</strong> em UAT com dados reais no OMIE.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-158</strong> — Fechar <strong>3 gaps pré-produção</strong>: migração MySQL, documentação, n8n.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span> <strong>ACXEGDP-150</strong> — StockBridge: <strong>controle de inventário físico</strong> (físico × sistema × fiscal).</li>
+  </ul>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">4. CRM (OrbitIA) — testes ⚠️ maior consumo de horas da quinzena</h3>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span> <strong>ACXEGDP-163</strong> — Testes da plataforma <strong>CRM (OrbitIA)</strong> — aberta em 10/06, ainda em backlog no board.</li>
+  </ul>
+  <div style="margin:8px 0 16px;padding:12px 16px;background:#fffae6;border-left:4px solid #ff991f;border-radius:3px;">
+    <p style="margin:0;color:#974f00;">O board mostra o card como "backlog", mas ele já concentra o <strong>maior esforço em horas de todo o período</strong>: <strong>43 lançamentos de tempo</strong> e <strong>75 comentários</strong>, somando <strong>~51h de trabalho registradas</strong> entre 10/06 e a data deste relatório (15/07). Dentro da própria janela 01–14/06 o registro de horas ainda era pequeno (~52min, nos dias 10 e 11/06) — o grosso da dedicação veio depois —, mas o volume acumulado já torna os testes do CRM a frente que mais consumiu tempo do responsável, desproporcional ao status "backlog" que aparece no board.</p>
+  </div>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">5. Automações n8n / infraestrutura</h3>
+  <p style="margin:0 0 8px;color:#42526e;">Manutenção e organização do ambiente de workflows.</p>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-160</strong> — Debug: <strong>travamento do banco n8n</strong> por crescimento da tabela execution_data.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-166</strong> — <strong>Limpeza do n8n</strong>: exclusão de 17 workflows arquivados.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-164</strong> — Workflow <strong>Flow</strong>: chaveamento por Business Unit + desenvolvimento do fluxo para a segunda BU.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-165</strong> — Macro <strong>AlternarProtecao</strong>: adição da aba "NF ENTRADA" às exceções de proteção.</li>
+  </ul>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">6. Financeiro, seguro e suporte</h3>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-142</strong> — Correção de <strong>problema na planilha de Seguros</strong>.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-152</strong> — <strong>Planejador</strong> — revisão com Gabis.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-118</strong> — Baixa automática no módulo financeiro dos PV à vista (trabalho de maio, encerrado formalmente em 05/06).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-129</strong> — Resolução do problema do <strong>OneDrive</strong> da Milena e Rafaela (trabalho de maio, encerrado formalmente em 11/06).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffae6;color:#974f00;">EM ANDAMENTO</span> <strong>ACXEGDP-143</strong> — Criar <strong>check-list para o faturamento</strong> (aberta 02/06).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffae6;color:#974f00;">EM ANDAMENTO</span> <strong>ACXEGDP-151</strong> — Suporte à planilha de <strong>conferência de estoques</strong> — Gustavo (aberta 08/06).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffae6;color:#974f00;">EM ANDAMENTO</span> <strong>ACXEGDP-167</strong> — Suporte para o <strong>recebimento</strong> — Gustavo Dreer (aberta 13/06).</li>
+  </ul>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Em aberto para o restante de junho (destaques do backlog)</h2>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:4px;">Validar posição fiscal no cockpit StockBridge (-157)</li>
+    <li style="margin-bottom:4px;">Controle de inventário físico do StockBridge — físico × sistema × fiscal (-150)</li>
+    <li style="margin-bottom:4px;"><strong>Testes da plataforma CRM / OrbitIA (-163) — maior consumo de horas em aberto, ~51h já registradas</strong></li>
+    <li style="margin-bottom:4px;">Check-list de faturamento, conferência de estoques e suporte de recebimento em andamento (-143/151/167)</li>
+  </ul>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Anexo — 22 tarefas concluídas entre 01–14/06</h2>
+  <table style="border-collapse:collapse;width:100%;font-size:13px;">
+    <tr>
+      <th style="border:1px solid #dfe1e6;padding:6px 10px;text-align:left;background:#f4f5f7;width:70px;">Data</th>
+      <th style="border:1px solid #dfe1e6;padding:6px 10px;text-align:left;background:#f4f5f7;width:120px;">Chave</th>
+      <th style="border:1px solid #dfe1e6;padding:6px 10px;text-align:left;background:#f4f5f7;">Tarefa</th>
+    </tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">14/06</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-166</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Limpeza n8n: exclusão dos 17 workflows arquivados</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">12/06</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-164</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Workflow Flow: chaveamento por BU e fluxo para segunda BU</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">11/06</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-129</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Resolução do problema do OneDrive da Milena e Rafaela</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">11/06</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-162</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Exportar mapa NF mãe/filhote da FUP para o Atlas</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">11/06</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-165</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Macro AlternarProtecao: aba "NF ENTRADA" nas exceções de proteção</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">10/06</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-159</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Posição Fiscal via mapa NF mãe/filhote (stockbridge.nf_pedido_mapa)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">10/06</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-161</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Fix: Workflow Histórico CMC Estoque falha com NULL em codigo_produto</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">10/06</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-160</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Debug: travamento do banco n8n por crescimento da tabela execution_data</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">09/06</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-158</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Fechar 3 gaps pré-produção: migração MySQL, docs, n8n</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">09/06</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-153</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">UAT — subir Atlas como ensaio de produção</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">09/06</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-155</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Refinamento do Cockpit: validar fonte dos dados</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">09/06</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-156</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Teste de recebimento nacional e importado em UAT com dados reais no OMIE</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">09/06</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-141</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Relatório CMC por família — nacional vs. importado</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">08/06</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-154</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Fix timezone da sessão Postgres — falso "dado defasado" no CMC</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">08/06</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-149</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">StockBridge: visão de CMC por família e produto</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">08/06</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-152</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Planejador — revisão com Gabis</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">05/06</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-148</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Trânsito por NF: migration 0036 + Nacionalização + sync MySQL legado</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">05/06</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-147</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Sync prod→dev: FUP Comex + pedidos compra + locais de estoque</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">05/06</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-146</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Cockpit: whitelist de galpões físicos + Comodato</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">05/06</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-145</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Cockpit: filtros multi-select + esteira visual + layout executivo</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">05/06 *</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-118</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Baixa automática no módulo financeiro dos pedidos à vista</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">02/06</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-142</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Problema na planilha de Seguros</td></tr>
+  </table>
+
+  <p style="margin:14px 0 2px;font-size:12px;color:#6b778c;"><em>* ACXEGDP-118: trabalho concluído em maio; card formalmente encerrado no Jira em 05/06/2026.</em></p>
+  <p style="margin:0;font-size:12px;color:#6b778c;"><em>Gerado em 15/07/2026 a partir do Jira (livemind.atlassian.net).</em></p>
+
+</div>
+<!-- ====== FIM ====== -->
+</body>
+</html>

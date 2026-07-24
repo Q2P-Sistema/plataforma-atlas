@@ -2,7 +2,13 @@ import { eq } from 'drizzle-orm';
 import { getDb } from '@atlas/core';
 import { users } from '@atlas/db';
 
-const MAX_ATTEMPTS = 5;
+// SEG-09 (ACXEGDP-247): este lockout por CONTA é o BACKSTOP contra ataque
+// distribuído (muitos IPs). A primeira linha de defesa é o contador por
+// (IP, conta) na rota de login (5 falhas → 30 min) + throttle por IP — por isso
+// o threshold daqui subiu de 5 para 25: um atacante de IP único não consegue
+// mais trancar a conta da vítima (DoS direcionado), mas um ataque distribuído
+// ainda congela a conta antes de ganhar espaço de brute force relevante.
+const MAX_ATTEMPTS = 25;
 const LOCK_DURATION_MS = 30 * 60 * 1000;
 
 export async function checkLoginRateLimit(

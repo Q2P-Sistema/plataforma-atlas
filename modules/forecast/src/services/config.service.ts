@@ -45,11 +45,32 @@ export async function getAllConfig() {
   return db.select().from(configForecast);
 }
 
+export class ConfigInvalidaError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConfigInvalidaError';
+  }
+}
+
+/**
+ * MOD-15 (ACXEGDP-278), mesmo padrao do hedge: sem JSON.stringify em coluna
+ * JSONB (dupla serializacao) e erro explicito para chave inexistente (antes o
+ * update de 0 linhas retornava sucesso sem gravar). Todas as chaves do
+ * config_forecast sao numericas (ver DEFAULTS).
+ */
 export async function updateConfig(chave: string, valor: unknown): Promise<void> {
   const db = getDb();
-  await db
+  const num = typeof valor === 'number' ? valor : Number(valor);
+  if (typeof valor === 'boolean' || valor == null || valor === '' || !Number.isFinite(num)) {
+    throw new ConfigInvalidaError(`Valor inválido para a configuração "${chave}" — esperado um número.`);
+  }
+  const atualizadas = await db
     .update(configForecast)
-    .set({ valor: JSON.stringify(valor) })
-    .where(eq(configForecast.chave, chave));
-  logger.info({ chave }, 'Config atualizada');
+    .set({ valor: num, updatedAt: new Date() })
+    .where(eq(configForecast.chave, chave))
+    .returning({ chave: configForecast.chave });
+  if (atualizadas.length === 0) {
+    throw new ConfigInvalidaError(`Configuração "${chave}" não existe.`);
+  }
+  logger.info({ chave, valor: num }, 'Config atualizada');
 }

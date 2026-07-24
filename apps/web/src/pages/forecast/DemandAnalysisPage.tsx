@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import {
   AreaChart, Area, ResponsiveContainer, Tooltip,
 } from 'recharts';
+import { fmtToneladas as fmtT, fmtPct } from '../../lib/format.js';
+import { chartColors } from '@atlas/ui';
 
 interface VendaMensal { mes: string; volume_kg: number; valor_brl: number; }
 interface SkuContrib { codigo: string; descricao: string; volume_24m: number; contribuicao_pct: number; cobertura_dias: number; }
@@ -11,8 +13,6 @@ interface FamiliaDemanda {
   familia: string; meses: VendaMensal[]; ultimos_3m: VendaMensal[];
   yoy: YoY; sparkline: number[]; skus: SkuContrib[];
 }
-
-const fmtT = (kg: number) => kg >= 1000 ? `${(kg / 1000).toFixed(1)}t` : `${kg}kg`;
 
 export function DemandAnalysisPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -26,24 +26,29 @@ export function DemandAnalysisPage() {
     },
   });
 
-  if (isLoading) return <div className="flex items-center justify-center min-h-[40vh]"><p className="text-atlas-muted">Carregando...</p></div>;
+  if (isLoading) return (
+    <div className="space-y-5">
+      <div className="h-8 w-48 bg-atlas-border rounded animate-pulse" />
+      <div className="h-64 rounded-lg bg-atlas-border animate-pulse" />
+    </div>
+  );
 
   return (
     <div className="space-y-5">
-      <h1 className="text-2xl font-heading font-bold text-atlas-text">Analise de Demanda</h1>
+      <h1 className="text-2xl font-heading font-bold text-atlas-text">Análise de Demanda</h1>
 
       <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-        <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Vendas por Familia — Ultimos 24 Meses</p>
+        <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Vendas por Família — Últimos 24 Meses</p>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-atlas-bg border-b border-atlas-border">
-                <th className="px-3 py-2.5 text-left text-xs text-atlas-muted uppercase">Familia</th>
+                <th className="px-3 py-2.5 text-left text-xs text-atlas-muted uppercase">Família</th>
                 {familias[0]?.ultimos_3m.map((m) => (
                   <th key={m.mes} className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">{formatMesLabel(m.mes)}</th>
                 ))}
-                <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">YoY %</th>
-                <th className="px-3 py-2.5 text-center text-xs text-atlas-muted uppercase w-28">Tendencia 24m</th>
+                <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Var. anual %</th>
+                <th className="px-3 py-2.5 text-center text-xs text-atlas-muted uppercase w-28">Tendência 24m</th>
               </tr>
             </thead>
             <tbody>
@@ -86,7 +91,7 @@ export function DemandAnalysisPage() {
                         </td>
                         <td className="px-3 py-2 text-right text-xs">
                           <span className={sk.contribuicao_pct >= 30 ? 'font-semibold text-blue-600' : 'text-atlas-muted'}>
-                            {sk.contribuicao_pct}%
+                            {fmtPct(sk.contribuicao_pct)}
                           </span>
                         </td>
                         <td className="px-3 py-2 text-center text-xs text-atlas-muted">
@@ -108,12 +113,12 @@ export function DemandAnalysisPage() {
 function YoYBadge({ yoy }: { yoy: YoY }) {
   if (yoy.trimestre_anterior === 0) return <span className="text-xs text-atlas-muted">—</span>;
 
-  const color = yoy.tendencia === 'subindo' ? '#059669' : yoy.tendencia === 'descendo' ? '#dc2626' : '#d97706';
+  const color = yoy.tendencia === 'subindo' ? chartColors.success : yoy.tendencia === 'descendo' ? chartColors.crit : chartColors.warn;
   const arrow = yoy.tendencia === 'subindo' ? '\u2191' : yoy.tendencia === 'descendo' ? '\u2193' : '\u2192';
 
   return (
     <span className="inline-flex items-center gap-1 text-sm font-semibold" style={{ color }}>
-      {arrow} {yoy.variacao_pct > 0 ? '+' : ''}{yoy.variacao_pct}%
+      {arrow} {yoy.variacao_pct > 0 ? '+' : ''}{fmtPct(yoy.variacao_pct)}
     </span>
   );
 }
@@ -126,12 +131,12 @@ function MiniSparkline({ data }: { data: number[] }) {
       <AreaChart data={chartData}>
         <defs>
           <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.05} />
+            <stop offset="5%" stopColor={chartColors.info} stopOpacity={0.3} />
+            <stop offset="95%" stopColor={chartColors.info} stopOpacity={0.05} />
           </linearGradient>
         </defs>
         <Tooltip formatter={(v) => fmtT(Number(v))} labelFormatter={() => ''} />
-        <Area type="monotone" dataKey="v" stroke="#3b82f6" fill="url(#sparkGrad)" strokeWidth={1.5} dot={false} />
+        <Area type="monotone" dataKey="v" stroke={chartColors.info} fill="url(#sparkGrad)" strokeWidth={1.5} dot={false} />
       </AreaChart>
     </ResponsiveContainer>
   );

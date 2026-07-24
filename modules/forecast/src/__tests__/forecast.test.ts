@@ -8,14 +8,14 @@ vi.mock('@atlas/core', () => ({
 }));
 
 // Mock sazonalidade — return factor 1.0 for all months by default
+// (MOD-10: buildForecastFamilia agora usa o mapa pré-carregado via fatoresEfetivos)
 vi.mock('../services/sazonalidade.service.js', () => ({
-  getSazFactors: vi.fn().mockResolvedValue(
-    new Map(Array.from({ length: 12 }, (_, i) => [i + 1, 1.0])),
-  ),
+  getSazFactorsTodas: vi.fn().mockResolvedValue(new Map()),
+  fatoresEfetivos: vi.fn(() => new Map(Array.from({ length: 12 }, (_, i) => [i + 1, 1.0]))),
 }));
 
 import { buildForecastFamilia } from '../services/forecast.service.js';
-import { getSazFactors } from '../services/sazonalidade.service.js';
+import { fatoresEfetivos } from '../services/sazonalidade.service.js';
 import type { FamiliaEstoque } from '../services/familia.service.js';
 import type { ForecastConfig } from '../services/config.service.js';
 
@@ -213,7 +213,7 @@ describe('buildForecastFamilia — sazonalidade', () => {
     const currentMonth = new Date().getMonth() + 1;
     const sazMap = new Map(Array.from({ length: 12 }, (_, i) => [i + 1, 1.0] as [number, number]));
     sazMap.set(currentMonth, 1.5);
-    (getSazFactors as ReturnType<typeof vi.fn>).mockResolvedValueOnce(sazMap);
+    (fatoresEfetivos as ReturnType<typeof vi.fn>).mockReturnValueOnce(sazMap);
 
     const vendasMap = new Map([['SKU-A', 100 * 365]]);
     const chegadasMap = new Map<string, Array<{ data: string; qtd: number; valor_brl: number }>>();
@@ -284,5 +284,53 @@ describe('buildForecastFamilia — status classification', () => {
     const result = await buildForecastFamilia(makeFamilia(), vendasMap, chegadasMap, baseConfig);
 
     expect(result.status).toBe('ok');
+  });
+});
+
+describe('buildForecastFamilia — MOD-02: dedup de SKU multi-local', () => {
+  // familia.skus tem uma entrada por LOCAL de estoque. Um mesmo codigo em N galpoes
+  // NAO pode contar vendas nem chegadas N vezes (vendasMap/chegadasMap sao por codigo).
+  function makeFamiliaMultiLocal(): FamiliaEstoque {
+    return makeFamilia({
+      pool_total: 20000,
+      pool_disponivel: 20000,
+      skus: [
+        { codigo: 'SKU-A', descricao: 'Teste A', local: 'CD01', disponivel: 10000, bloqueado: 0, transito: 0, total: 10000, cmc: 15.0, lead_time: 60, marca: 'IMPACXE' },
+        { codigo: 'SKU-A', descricao: 'Teste A', local: 'CD02', disponivel: 10000, bloqueado: 0, transito: 0, total: 10000, cmc: 15.0, lead_time: 60, marca: 'IMPACXE' },
+      ],
+    });
+  }
+
+  it('vendas12m conta o codigo UMA vez mesmo em 2 locais (nao 2x)', async () => {
+    // 200/dia * 365 = 73000/ano. Se contasse por linha (2 locais) daria 400/dia.
+    const vendasMap = new Map([['SKU-A', 200 * 365]]);
+    const chegadasMap = new Map<string, Array<{ data: string; qtd: number; valor_brl: number }>>();
+
+    const result = await buildForecastFamilia(makeFamiliaMultiLocal(), vendasMap, chegadasMap, baseConfig);
+
+    expect(result.venda_diaria_media).toBeCloseTo(200, 5);
+  });
+
+  it('qtd_em_rota e pedidos_em_rota nao duplicam por local', async () => {
+    const vendasMap = new Map([['SKU-A', 200 * 365]]);
+    const hoje = new Date();
+    const day20 = new Date(hoje);
+    day20.setDate(day20.getDate() + 20);
+    const chegadasMap = new Map([['SKU-A', [{ data: day20.toISOString().split('T')[0]!, qtd: 3000, valor_brl: 45000 }]]]);
+
+    const result = await buildForecastFamilia(makeFamiliaMultiLocal(), vendasMap, chegadasMap, baseConfig);
+
+    expect(result.qtd_em_rota).toBe(3000);
+    expect(result.pedidos_em_rota).toHaveLength(1);
+  });
+
+  it('ajuste de demanda por codigo aplica uma vez (nao por local)', async () => {
+    const vendasMap = new Map([['SKU-A', 100 * 365]]);
+    const chegadasMap = new Map<string, Array<{ data: string; qtd: number; valor_brl: number }>>();
+
+    // +20% em SKU-A: base 100/dia → 120/dia (uma vez), nao 240/dia (2 locais * 120)
+    const result = await buildForecastFamilia(makeFamiliaMultiLocal(), vendasMap, chegadasMap, baseConfig, { 'SKU-A': 20 });
+
+    expect(result.venda_diaria_media).toBeCloseTo(120, 5);
   });
 });

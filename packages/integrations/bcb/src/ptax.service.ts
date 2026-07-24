@@ -7,7 +7,7 @@ const BCB_BOLETIM_URL = 'https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1
 // SGS-1 — fallback histórico diário
 const BCB_SGS_URL = 'https://api.bcb.gov.br/dados/serie/bcdata.sgs.1/dados';
 const CACHE_KEY = 'atlas:bcb:ptax:latest';
-const CACHE_TTL = 3600; // 1 hora — boletins saem ~3x/dia
+const CACHE_TTL = 900; // 15 min — garante dado fresco a cada navegação
 const SANITY_MIN = 3.0;
 const SANITY_MAX = 10.0;
 
@@ -35,6 +35,7 @@ export async function fetchPtaxAtual(): Promise<PtaxQuote> {
 
     if (quote) {
       await redis.setex(CACHE_KEY, CACHE_TTL, JSON.stringify(quote)).catch(() => {});
+      await redis.set(`${CACHE_KEY}:last_good`, JSON.stringify(quote)).catch(() => {});
       logger.info({ dataRef: quote.dataRef, venda: quote.venda, fetchedAt: quote.fetchedAt }, 'PTAX atualizada do BCB (boletim)');
       return quote;
     }
@@ -96,10 +97,15 @@ export async function fetchPtaxHistorico(dias: number): Promise<PtaxQuote[]> {
     const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
     if (!res.ok) return [];
 
-    const data = await res.json() as Array<{ data: string; valor: number }>;
+    // MOD-20: o SGS devolve `valor` como STRING ("5.5023"), não number — o cast
+    // anterior mentia para o TS e propagava a string para PtaxQuote.venda, onde
+    // o consumidor no hedge faz `q.venda.toFixed(4)` e estoura. Coerção + guarda
+    // de NaN na fonte.
+    const data = await res.json() as Array<{ data: string; valor: string | number }>;
 
     return data
-      .filter((d) => d.valor >= SANITY_MIN && d.valor <= SANITY_MAX)
+      .map((d) => ({ data: d.data, valor: Number(d.valor) }))
+      .filter((d) => Number.isFinite(d.valor) && d.valor >= SANITY_MIN && d.valor <= SANITY_MAX)
       .map((d) => {
         const [day, month, year] = d.data.split('/');
         return { dataRef: `${year}-${month}-${day}`, venda: d.valor, compra: d.valor, atualizada: true };

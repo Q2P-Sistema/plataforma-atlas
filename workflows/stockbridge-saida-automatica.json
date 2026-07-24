@@ -1,0 +1,107 @@
+{
+  "name": "StockBridge — Saidas Automaticas OMIE",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Cron 5min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Janela: desde a ultima execucao (use workflow static data)\nconst last = $getWorkflowStaticData('global').lastSync ?? new Date(Date.now() - 15 * 60 * 1000).toISOString();\nconst now = new Date().toISOString();\n$getWorkflowStaticData('global').lastSync = now;\nreturn [{ json: { dDtAltInicial: last.slice(0, 10), dDtAltFinal: now.slice(0, 10) } }];"
+      },
+      "id": "janela",
+      "name": "Calcular janela",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://app.omie.com.br/api/v1/produtos/notafiscal/",
+        "method": "POST",
+        "body": {
+          "mode": "json",
+          "value": "={\n  \"call\": \"ListarNF\",\n  \"app_key\": \"{{$env.OMIE_ACXE_KEY}}\",\n  \"app_secret\": \"{{$env.OMIE_ACXE_SECRET}}\",\n  \"param\": [{\n    \"pagina\": 1,\n    \"registros_por_pagina\": 100,\n    \"apenas_importado_api\": \"N\",\n    \"filtrar_por_data_emissao_de\": \"{{$json['dDtAltInicial']}}\",\n    \"filtrar_por_data_emissao_ate\": \"{{$json['dDtAltFinal']}}\",\n    \"tipo\": \"S\"\n  }]\n}"
+        },
+        "options": { "timeout": 30000 }
+      },
+      "id": "omie-acxe",
+      "name": "OMIE ACXE - Listar NFs Saida",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 200]
+    },
+    {
+      "parameters": {
+        "url": "https://app.omie.com.br/api/v1/produtos/notafiscal/",
+        "method": "POST",
+        "body": {
+          "mode": "json",
+          "value": "={\n  \"call\": \"ListarNF\",\n  \"app_key\": \"{{$env.OMIE_Q2P_KEY}}\",\n  \"app_secret\": \"{{$env.OMIE_Q2P_SECRET}}\",\n  \"param\": [{\n    \"pagina\": 1,\n    \"registros_por_pagina\": 100,\n    \"apenas_importado_api\": \"N\",\n    \"filtrar_por_data_emissao_de\": \"{{$json['dDtAltInicial']}}\",\n    \"filtrar_por_data_emissao_ate\": \"{{$json['dDtAltFinal']}}\",\n    \"tipo\": \"S\"\n  }]\n}"
+        },
+        "options": { "timeout": 30000 }
+      },
+      "id": "omie-q2p",
+      "name": "OMIE Q2P - Listar NFs Saida",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normaliza payloads ACXE + Q2P em lista unica\nconst out = [];\nfor (const item of $input.all()) {\n  const cnpj = item.json.app_key === $env.OMIE_ACXE_KEY ? 'acxe' : 'q2p';\n  const nfs = item.json.nfs_encontradas ?? [];\n  for (const nf of nfs) {\n    const det = nf.det?.[0];\n    if (!det) continue;\n    const tipoCfop = nf.ide?.CFOP ?? '';\n    let tipoOmie = 'venda';\n    if (tipoCfop.startsWith('5.91') || tipoCfop.startsWith('6.91')) tipoOmie = 'remessa_beneficiamento';\n    else if (tipoCfop.startsWith('5.15') || tipoCfop.startsWith('6.15')) tipoOmie = 'transf_cnpj';\n    else if (tipoCfop.startsWith('5.41') || tipoCfop.startsWith('6.41')) tipoOmie = 'devolucao_fornecedor';\n\n    out.push({ json: {\n      nf: String(nf.ide?.nNF ?? ''),\n      tipo_omie: tipoOmie,\n      cnpj_emissor: cnpj,\n      produto_codigo: det.nfProdInt?.nCodProd,\n      quantidade_original: det.prod?.qCom ?? 0,\n      unidade: det.prod?.uCom ?? 'kg',\n      localidade_origem_codigo: det.prod?.codigo_local_estoque,\n      dt_emissao: nf.ide?.dEmi,\n      id_movest_omie: String(nf.compl?.cChaveNFe ?? nf.ide?.nNF ?? ''),\n    }});\n  }\n}\nreturn out;"
+      },
+      "id": "normalizar",
+      "name": "Normalizar NFs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.ATLAS_URL}}/api/v1/stockbridge/saida-automatica/processar",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Atlas-Integration-Key", "value": "={{$env.ATLAS_INTEGRATION_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "body": { "mode": "raw", "rawContentType": "json", "raw": "={{ JSON.stringify($json) }}" },
+        "options": { "timeout": 30000, "response": { "response": { "neverError": true } } }
+      },
+      "id": "post-atlas",
+      "name": "POST Atlas StockBridge",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1120, 300]
+    }
+  ],
+  "connections": {
+    "Cron 5min": { "main": [[{ "node": "Calcular janela", "type": "main", "index": 0 }]] },
+    "Calcular janela": {
+      "main": [[
+        { "node": "OMIE ACXE - Listar NFs Saida", "type": "main", "index": 0 },
+        { "node": "OMIE Q2P - Listar NFs Saida", "type": "main", "index": 0 }
+      ]]
+    },
+    "OMIE ACXE - Listar NFs Saida": { "main": [[{ "node": "Normalizar NFs", "type": "main", "index": 0 }]] },
+    "OMIE Q2P - Listar NFs Saida": { "main": [[{ "node": "Normalizar NFs", "type": "main", "index": 0 }]] },
+    "Normalizar NFs": { "main": [[{ "node": "POST Atlas StockBridge", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

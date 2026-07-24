@@ -56,21 +56,23 @@ export async function getAtual(): Promise<PtaxAtualComVariacao> {
 }
 
 export async function getVariacao30d(): Promise<number> {
-  const db = getDb();
-  const desde = new Date();
-  desde.setDate(desde.getDate() - 35); // buffer for weekends
-  const desdeStr = desde.toISOString().split('T')[0]!;
-
-  const rows = await db
-    .select()
-    .from(ptaxHistorico)
-    .where(sql`${ptaxHistorico.dataRef} >= ${desdeStr}`)
-    .orderBy(ptaxHistorico.dataRef);
+  // Fonte: public.tbl_cotacaoDolar (populada por n8n, colunas numéricas, ~diária)
+  // em vez de hedge.ptaxHistorico, que só era populada de carona por getAtual —
+  // esparsa, então a variação 30d saía 0/errada. Alinha com getHistoricoPtax, que
+  // já lê essa tabela. CURRENT_DATE roda no fuso da sessão (DB_TIMEZONE), sem o
+  // off-by-one de toISOString em UTC. Janela de 35 dias = buffer p/ fins de semana.
+  const pool = getPool();
+  const { rows } = await pool.query<{ venda: string }>(`
+    SELECT "cotacaoVenda"::text AS venda
+    FROM "tbl_cotacaoDolar"
+    WHERE "dataCotacao" >= CURRENT_DATE - INTERVAL '35 days'
+    ORDER BY "dataCotacao" ASC
+  `);
 
   if (rows.length < 2) return 0;
   const ini = Number(rows[0]!.venda);
   const fim = Number(rows[rows.length - 1]!.venda);
-  return parseFloat(((fim - ini) / ini * 100).toFixed(2));
+  return ini > 0 ? parseFloat(((fim - ini) / ini * 100).toFixed(2)) : 0;
 }
 
 export async function getHistoricoPtax(dias: number = 30) {

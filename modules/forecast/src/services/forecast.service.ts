@@ -3,7 +3,8 @@ import { getConfig, type ForecastConfig } from './config.service.js';
 import { getFamilias, type FamiliaEstoque } from './familia.service.js';
 import { getVendas12mByCodigo } from './vendas.service.js';
 import { getChegadasPorProduto } from './pedidos.service.js';
-import { getSazFactors } from './sazonalidade.service.js';
+import { getSazFactorsTodas, fatoresEfetivos } from './sazonalidade.service.js';
+import { dataLocalISO, mesLocalBR } from './datas.js';
 
 const logger = createLogger('forecast:engine');
 
@@ -85,7 +86,8 @@ function addDays(date: Date, days: number): Date {
 }
 
 function fmtDate(d: Date): string {
-  return d.toISOString().split('T')[0]!;
+  // MOD-21: formata no fuso BR (não UTC), alinhado ao CURRENT_DATE do Postgres.
+  return dataLocalISO(d);
 }
 
 /**
@@ -97,22 +99,31 @@ export async function buildForecastFamilia(
   chegadasMap: Map<string, Array<{ data: string; qtd: number; valor_brl: number }>>,
   config: ForecastConfig,
   ajustesDemanda: Record<string, number> = {},
+  // MOD-10: sazonalidade pré-carregada pelo chamador (1 query para todas as
+  // famílias) — antes eram 2 SELECTs POR família dentro do loop.
+  sazPorFamilia?: Map<string, Map<number, number>>,
 ): Promise<FamiliaForecast> {
   const hoje = new Date();
   const horizonte = config.horizonte_dias;
 
-  // vendas12m for this family = sum across SKUs, with per-SKU demand adjustments
+  // familia.skus tem uma entrada por LOCAL de estoque — um mesmo codigo aparece
+  // varias vezes (produto em N galpoes). vendasMap/chegadasMap sao indexados por
+  // codigo, entao iterar por linha contaria vendas e chegadas 2x-4x para SKU
+  // multi-local (MOD-02). Deduplicamos os codigos antes de somar.
+  const codigosUnicos = [...new Set(familia.skus.map((sk) => sk.codigo))];
+
+  // vendas12m for this family = sum across DISTINCT SKU codes, with per-SKU demand adjustments
   let vendas12m = 0;
-  for (const sku of familia.skus) {
-    const base = vendasMap.get(sku.codigo) ?? 0;
-    const ajuste = ajustesDemanda[sku.codigo] ?? 0;
+  for (const codigo of codigosUnicos) {
+    const base = vendasMap.get(codigo) ?? 0;
+    const ajuste = ajustesDemanda[codigo] ?? 0;
     vendas12m += base * (1 + ajuste / 100);
   }
   const vendaDiariaMedia = vendas12m > 0 ? vendas12m / 365 : 0;
 
-  // Sazonalidade — load all 12 months for this family
-  const sazFactors = await getSazFactors(familia.familia_id);
-  const mesAtual = hoje.getMonth() + 1;
+  // Sazonalidade — 12 meses efetivos desta família (mapa pré-carregado ou fetch avulso)
+  const sazFactors = fatoresEfetivos(familia.familia_id, sazPorFamilia ?? (await getSazFactorsTodas()));
+  const mesAtual = mesLocalBR(hoje);
   const sazAtual = sazFactors.get(mesAtual) ?? 1.0;
   const vendaDiariaSaz = vendaDiariaMedia * (1 + config.variacao_anual_pct / 100) * sazAtual;
 
@@ -121,8 +132,8 @@ export async function buildForecastFamilia(
   let qtdEmRota = 0;
   const pedidosEmRota: PedidoRota[] = [];
 
-  for (const sku of familia.skus) {
-    const chegadas = chegadasMap.get(sku.codigo) ?? [];
+  for (const codigo of codigosUnicos) {
+    const chegadas = chegadasMap.get(codigo) ?? [];
     for (const c of chegadas) {
       const chegadaDate = new Date(c.data);
       const diaOffset = Math.max(0, Math.ceil((chegadaDate.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24)));
@@ -131,7 +142,7 @@ export async function buildForecastFamilia(
       }
       qtdEmRota += c.qtd;
       pedidosEmRota.push({
-        codigo: sku.codigo,
+        codigo,
         qtd_pendente: c.qtd,
         data_chegada: c.data,
         valor_brl: c.valor_brl,
@@ -146,7 +157,7 @@ export async function buildForecastFamilia(
 
   for (let d = 0; d < horizonte; d++) {
     const dataD = addDays(hoje, d);
-    const mesD = dataD.getMonth() + 1;
+    const mesD = mesLocalBR(dataD);
     const sazD = sazFactors.get(mesD) ?? 1.0;
     const vendaDia = Math.round(vendaDiariaMedia * (1 + config.variacao_anual_pct / 100) * sazD);
 
@@ -196,7 +207,7 @@ export async function buildForecastFamilia(
   let soma30d = 0;
   for (let d = 0; d < 30; d++) {
     const dataD = addDays(hoje, d);
-    const mesD = dataD.getMonth() + 1;
+    const mesD = mesLocalBR(dataD);
     const sazD = sazFactors.get(mesD) ?? 1.0;
     soma30d += vendaDiariaMedia * (1 + config.variacao_anual_pct / 100) * sazD;
   }
@@ -208,7 +219,7 @@ export async function buildForecastFamilia(
   if (diaRuptura >= 0) {
     for (let d = 0; d < familia.lt_efetivo + config.horizonte_cobertura; d++) {
       const dataD = addDays(hoje, d);
-      const mesD = dataD.getMonth() + 1;
+      const mesD = mesLocalBR(dataD);
       const sazD = sazFactors.get(mesD) ?? 1.0;
       qtdBruta += Math.round(vendaDiariaMedia * (1 + config.variacao_anual_pct / 100) * sazD);
     }
@@ -296,11 +307,12 @@ export async function buildForecastFamilia(
  * Runs forecast for all families or a specific one.
  */
 export async function calcularForecast(familiaId?: string, ajustesDemanda: Record<string, number> = {}): Promise<FamiliaForecast[]> {
-  const [config, familias, vendasMap, chegadasMap] = await Promise.all([
+  const [config, familias, vendasMap, chegadasMap, sazPorFamilia] = await Promise.all([
     getConfig(),
     getFamilias(),
     getVendas12mByCodigo(),
     getChegadasPorProduto(),
+    getSazFactorsTodas(),
   ]);
 
   const alvo = familiaId
@@ -309,7 +321,7 @@ export async function calcularForecast(familiaId?: string, ajustesDemanda: Recor
 
   const results: FamiliaForecast[] = [];
   for (const fam of alvo) {
-    const forecast = await buildForecastFamilia(fam, vendasMap, chegadasMap, config, ajustesDemanda);
+    const forecast = await buildForecastFamilia(fam, vendasMap, chegadasMap, config, ajustesDemanda, sazPorFamilia);
     results.push(forecast);
   }
 

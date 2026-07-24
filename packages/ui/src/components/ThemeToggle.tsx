@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Moon, Monitor, Sun, type LucideIcon } from 'lucide-react';
 
 type Theme = 'light' | 'dark' | 'system';
 
@@ -13,6 +14,15 @@ function applyTheme(theme: Theme): void {
   const resolved = theme === 'system' ? getSystemTheme() : theme;
   document.documentElement.classList.toggle('dark', resolved === 'dark');
 }
+
+// Ícone lucide + label pt-BR visível (UI-F, ACXEGDP-266) — antes eram emojis
+// ☀️/🌙/💻 e o estado só aparecia no title/aria-label (baixa affordance:
+// usuário não percebia "escuro fixo" vs "seguindo o sistema").
+const THEME_META: Record<Theme, { icon: LucideIcon; label: string }> = {
+  light: { icon: Sun, label: 'Claro' },
+  dark: { icon: Moon, label: 'Escuro' },
+  system: { icon: Monitor, label: 'Sistema' },
+};
 
 export function ThemeToggle() {
   const [theme, setTheme] = useState<Theme>(() => {
@@ -33,26 +43,23 @@ export function ThemeToggle() {
     return () => mq.removeEventListener('change', handler);
   }, [theme]);
 
-  const icons: Record<Theme, string> = {
-    light: '☀️',
-    dark: '🌙',
-    system: '💻',
-  };
-
   const next: Record<Theme, Theme> = {
     light: 'dark',
     dark: 'system',
     system: 'light',
   };
 
+  const { icon: Icon, label } = THEME_META[theme];
+
   return (
     <button
       onClick={() => setTheme(next[theme])}
-      className="p-2 rounded-md hover:bg-atlas-border transition-colors text-sm"
-      title={`Tema: ${theme}`}
-      aria-label={`Mudar tema (atual: ${theme})`}
+      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-atlas-border text-atlas-muted hover:text-atlas-text hover:bg-atlas-border/50 transition-colors text-xs font-medium focus:outline-none focus:ring-2 focus:ring-acxe"
+      title={`Tema: ${label} — clique para alternar`}
+      aria-label={`Mudar tema (atual: ${label})`}
     >
-      {icons[theme]}
+      <Icon size={16} aria-hidden />
+      <span>{label}</span>
     </button>
   );
 }

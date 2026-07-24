@@ -1,4 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
+import { CreditCard, FileText, Landmark } from 'lucide-react';
+import { bpChartColors, ErrorState } from '@atlas/ui';
+import { fmtMi } from './format.js';
 
 interface Banco {
   id: string;
@@ -18,15 +21,16 @@ interface Banco {
 
 async function fetchBancos(): Promise<Banco[]> {
   const r = await fetch('/api/v1/bp/bancos?empresa=acxe', { credentials: 'include' });
+  // Sem o guard, erro estruturado do backend resolve como data=null (UI-E).
+  if (!r.ok) throw new Error('Falha ao carregar bancos');
   return (await r.json()).data;
 }
 
-const fmtMi = (v: number) => {
-  const mi = v / 1_000_000;
-  return `R$ ${mi.toFixed(2).replace('.', ',')}Mi`;
-};
 const fmtBRL = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(v);
+
+const fmtPct1 = (v: number) =>
+  `${v.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
 
 function TotalCard({
   titulo,
@@ -37,7 +41,7 @@ function TotalCard({
   cor,
 }: {
   titulo: string;
-  icone: string;
+  icone: React.ReactNode;
   limite: number;
   usado: number;
   disp: number;
@@ -47,7 +51,7 @@ function TotalCard({
   return (
     <div className="bg-atlas-card border border-atlas-border rounded-xl p-5" style={{ borderTopColor: cor, borderTopWidth: 3 }}>
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-xl" aria-hidden>{icone}</span>
+        <span className="flex items-center" aria-hidden>{icone}</span>
         <h2 className="text-sm font-bold uppercase tracking-wider">{titulo}</h2>
       </div>
       <div className="text-3xl font-bold tabular-nums" style={{ color: cor }}>{fmtMi(limite)}</div>
@@ -63,7 +67,7 @@ function TotalCard({
         </div>
         <div className="flex justify-between text-xs">
           <span className="text-atlas-muted">Utilização</span>
-          <span className="font-semibold tabular-nums">{pct.toFixed(1)}%</span>
+          <span className="font-semibold tabular-nums">{fmtPct1(pct)}</span>
         </div>
       </div>
     </div>
@@ -71,9 +75,23 @@ function TotalCard({
 }
 
 export function BPLimitesPage() {
-  const { data: bancos = [], isLoading } = useQuery({ queryKey: ['bp', 'bancos'], queryFn: fetchBancos });
+  const { data: bancos = [], isLoading, error, refetch } = useQuery({ queryKey: ['bp', 'bancos'], queryFn: fetchBancos });
 
-  if (isLoading) return <div className="p-6 text-atlas-muted">Carregando limites…</div>;
+  // Falha na query mostrava página vazia sem feedback (UI-E, ACXEGDP-265).
+  if (error) return (
+    <div className="p-6 max-w-[1440px] mx-auto">
+      <ErrorState message={(error as Error).message} retry={() => refetch()} />
+    </div>
+  );
+
+  if (isLoading) return (
+    <div className="p-6 max-w-[1440px] mx-auto space-y-5">
+      <div className="h-8 w-64 bg-atlas-border rounded animate-pulse" />
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {Array.from({ length: 3 }, (_, i) => <div key={i} className="h-48 rounded-xl bg-atlas-border animate-pulse" />)}
+      </div>
+    </div>
+  );
 
   const ativos = bancos.filter((b) => b.ativo);
   const totalAntecip = {
@@ -95,14 +113,14 @@ export function BPLimitesPage() {
   return (
     <div className="p-6 max-w-[1440px] mx-auto">
       <div className="mb-5">
-        <h1 className="text-2xl font-bold">Breaking Point · Limites Consolidados</h1>
+        <h1 className="text-2xl font-heading font-bold">Breaking Point · Limites Consolidados</h1>
         <p className="text-xs text-atlas-muted mt-1">Totais agregados de crédito bancário ativo — visão de tesouraria.</p>
       </div>
 
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        <TotalCard titulo="Antecipação" icone="📄" {...totalAntecip} cor="#CF6437" />
-        <TotalCard titulo="FINIMP" icone="🏛" {...totalFinimp} cor="#A85A08" />
-        <TotalCard titulo="Cheque Especial" icone="💳" {...totalCheque} cor="#0C6E8A" />
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <TotalCard titulo="Antecipação" icone={<FileText size={20} />} {...totalAntecip} cor={bpChartColors.laranja} />
+        <TotalCard titulo="FINIMP" icone={<Landmark size={20} />} {...totalFinimp} cor={bpChartColors.ocre} />
+        <TotalCard titulo="Cheque Especial" icone={<CreditCard size={20} />} {...totalCheque} cor={bpChartColors.azul} />
       </div>
 
       <div className="bg-atlas-card border border-atlas-border rounded-xl p-5">

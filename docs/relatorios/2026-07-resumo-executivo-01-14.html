@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Resumo Executivo — 01–14/07/2026</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f5f7;">
+<!-- ====== COPIE A PARTIR DAQUI (ou abra no navegador e copie o conteúdo renderizado) ====== -->
+<div style="max-width:760px;margin:0 auto;padding:24px;background:#ffffff;font-family:Arial,Helvetica,sans-serif;color:#172b4d;line-height:1.55;font-size:14px;">
+
+  <h1 style="font-size:22px;margin:0 0 4px;color:#172b4d;">Resumo Executivo — Atividades de 01–14/07/2026</h1>
+  <p style="margin:0 0 2px;"><strong>Responsável:</strong> Flavio Cicato Endo</p>
+  <p style="margin:0 0 2px;"><strong>Área:</strong> TI / Sistemas (Jira ACXEGDP)</p>
+  <p style="margin:0 0 2px;"><strong>Período:</strong> 01–14/07/2026</p>
+  <p style="margin:0 0 16px;color:#6b778c;font-size:12px;"><em>Fonte: Jira LiveMind — projeto ACXE - Gestão dos projetos e dos Sistemas.</em></p>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Números do período</h2>
+  <table style="border-collapse:collapse;width:100%;font-size:14px;">
+    <tr>
+      <th style="border:1px solid #dfe1e6;padding:8px 10px;text-align:left;background:#f4f5f7;">Indicador</th>
+      <th style="border:1px solid #dfe1e6;padding:8px 10px;text-align:right;background:#f4f5f7;">Valor</th>
+    </tr>
+    <tr>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;">Tarefas <strong>concluídas</strong></td>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;text-align:right;"><strong>71</strong></td>
+    </tr>
+    <tr>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;">Tarefas <strong>abertas</strong> no período</td>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;text-align:right;"><strong>89</strong> <span style="color:#6b778c;font-size:12px;">(64 concluídas na janela · 12 concluídas em 15/07 · 13 em andamento/backlog)</span></td>
+    </tr>
+    <tr>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;">Itens movimentados no total</td>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;text-align:right;">96</td>
+    </tr>
+  </table>
+
+  <div style="margin:16px 0;padding:12px 16px;background:#e3fcef;border-left:4px solid #00875a;border-radius:3px;">
+    <p style="margin:0;color:#006644;">Quinzena dominada por duas frentes de grande porte que convergiram no mesmo período: o fechamento de <strong>+40 achados da Auditoria Completa da Plataforma Atlas</strong> (segurança, módulos financeiros, StockBridge, pt-BR, e-mails, UI) e a virada de chave nas <strong>correções do CRM (OrbitIA)</strong>, resultado direto das ~51h de testes concluídas em junho. Some-se a isso uma sequência de incidentes operacionais pontuais, com destaque para um bug de 2FA que travava o login de qualquer gestor/diretor.</p>
+  </div>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Principais entregas por frente</h2>
+  <p style="margin:0 0 12px;font-size:12px;color:#6b778c;">
+    Legenda:
+    <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span>
+    <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffae6;color:#974f00;">EM ANDAMENTO</span>
+    <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span>
+    <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ffebe6;color:#bf2600;">INCIDENTE</span>
+  </p>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">1. Auditoria completa da Plataforma Atlas (ACXEGDP-238)</h3>
+  <p style="margin:0 0 8px;color:#42526e;">Epic segue "em andamento" no board, mas nesta janela a grande maioria dos ~52 achados foi corrigida e verificada adversarialmente (multi-agente, jul/2026).</p>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>Segurança (SEG-01 a SEG-10 — 10 achados)</strong>: reset de senha via header Origin (account takeover), CORS aberto com credentials, CSRF não validado, headers ausentes, IDOR de galpão, sem rate limit em 2FA/reset, lockout de login. <strong>10/10 fechados</strong> (8 nesta janela, 2 no dia seguinte 15/07).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>Módulos financeiros — Hedge/Forecast/Breaking Point/API (MOD-01 a MOD-25)</strong>: motor de Hedge usava as taxas NDF mais antigas, vendas de 12 meses contadas em dobro/quádruplo, títulos vencidos excluídos da projeção de caixa. <strong>Todos os grupos fechados</strong> (7 nesta janela, 6 no dia seguinte).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>StockBridge (STK-01 a STK-23)</strong>: ajuste OMIE duplicado por corrida de opId, NF com divergência recebida 2x, retorno de comodato marcado concluído com Q2P pendente. <strong>12 de 13 grupos fechados</strong> nesta janela (+1 follow-up no dia seguinte); resta em backlog <strong>STK-19a/19c</strong> (modo real do OMIE).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>pt-BR (PTB-1 a PTB-5)</strong>: acentuação e formatação de número/data corrigidas no Hedge, Forecast e StockBridge. <strong>5/5 fechados</strong>.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>E-mails (EML-01 a EML-22, 7 grupos)</strong>: acentuação ausente em quase todos os e-mails, template inconsistente, texto livre sem escape no HTML. <strong>7/7 grupos fechados</strong> (4 nesta janela, 3 no dia seguinte).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>UI/UX (UI-A a UI-F)</strong>: tema dark sem variante, paleta de cores duplicada, StockBridge com 17 subitens sem agrupamento, modais sem acessibilidade. <strong>6/6 fechados</strong>.</li>
+  </ul>
+  <div style="margin:8px 0 16px;padding:10px 14px;background:#f4f5f7;border-left:4px solid #6b778c;border-radius:3px;">
+    <p style="margin:0;color:#42526e;font-size:12.5px;">12 dos achados acima (2 de Segurança, 6 de Módulos, 3 de E-mails, 1 de StockBridge) foram encerrados formalmente em <strong>15/07</strong> — um dia após o corte deste relatório —, mas fazem parte da mesma leva de verificação desta janela.</p>
+  </div>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">2. Correções do CRM (OrbitIA)</h3>
+  <p style="margin:0 0 8px;color:#42526e;">Continuação direta das ~51h de testes concluídas em junho (ACXEGDP-163).</p>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>Batch 1 completo (5/5)</strong>: Metas, Carteira, Agenda, Cadastro de Cliente, Pedidos/Novo Pedido (Findings 1–12).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffae6;color:#974f00;">EM ANDAMENTO</span> <strong>Batch 2 (5/14 fechados)</strong>: Autenticação (F13), Pedidos (F20), Agenda (F32/F36), Configurações de Usuários (F16), UX Global (F14/F34/F37).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span> <strong>9 achados de Batch 2 pendentes — incluindo 2 CRÍTICOS e 1 BLOQUEANTE</strong>: Cadastro de Cliente (F30/F49, CRÍTICO), Configurações de Comissão (F39/F45/F31, CRÍTICO), Novo Pedido (F12/17-18/22-25/33/35/38/46, <strong>BLOQUEANTE</strong>), Metas (F15), Carteira (F19/21/26), Painel Diretor (F29/40-44/48), Estoque (F27), melhoria Config. Metas (F47).</li>
+  </ul>
+  <div style="margin:8px 0 16px;padding:12px 16px;background:#fffae6;border-left:4px solid #ff991f;border-radius:3px;">
+    <p style="margin:0;color:#974f00;">O CRM não deve avançar para produção enquanto os achados críticos e o bloqueante de Novo Pedido não forem fechados.</p>
+  </div>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">3. Incidentes e operação</h3>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ffebe6;color:#bf2600;">INCIDENTE</span> <strong>ACXEGDP-307</strong> — 2FA travava o login de <strong>qualquer gestor/diretor</strong> já configurado em "Carregando..." (/login e /verify-2fa não devolviam totp_enabled) — corrigido em 13/07.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ffebe6;color:#bf2600;">INCIDENTE</span> <strong>ACXEGDP-305/306</strong> — banco do n8n inchou de 237MB para 4GB por pg_dump zumbi do pgbackweb (falha no upload ao Backblaze B2); VACUUM FULL + prevenções (role dedicada, timeouts, webhook de falha, watchdog).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-222</strong> — análise dos limites Modde zerados em massa (98,6% dos clientes).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-291/292/293/310</strong> — fluxo HITL de aprovação de PV à vista: pedido já faturado antes da decisão, URL de decisão errada no lembrete, retry-chain reenviando objeto de erro, wait de retry aumentado de 90s para 180s.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffae6;color:#974f00;">EM ANDAMENTO</span> <strong>ACXEGDP-312</strong> — erro na emissão de NF e na liquidação automática — aberto em 14/07, ainda em investigação.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-303</strong> — investigação de NFs não sincronizadas (validação indeterminada em recebimentos).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-297/300/302</strong> — revisão da planilha de Seguro, suporte de importação (Gustavo), atualização da planilha de vendas de junho.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-294/295/296/308/309</strong> — padronização de e-mails dos 26 workflows ativos do n8n, FUP semanal FIDC, monitor de execution_data e de tendência de memória dos containers.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-143</strong> — check-list de faturamento (aberta em junho, fechada em 06/07).</li>
+  </ul>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Em aberto para o restante de julho</h2>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:4px;"><strong>CRM Batch 2 — 9 achados pendentes, incluindo 2 críticos e 1 bloqueante</strong> (-224/225/226/227/228/230/233/235/236)</li>
+    <li style="margin-bottom:4px;">StockBridge: wire do modo real do OMIE para alterarPedidoCompra (-299)</li>
+    <li style="margin-bottom:4px;">Erro ativo na emissão de NF / liquidação automática (-312)</li>
+    <li style="margin-bottom:4px;">Backup de workflows no GitHub: falha 422 no GitHub_Cria_Arquivo (-304)</li>
+    <li style="margin-bottom:4px;">Auditoria completa (-238): epic-mãe ainda formalmente "em andamento" apesar dos achados fechados</li>
+  </ul>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Anexo A — 28 tarefas de operação/CRM concluídas entre 01–14/07</h2>
+  <table style="border-collapse:collapse;width:100%;font-size:13px;">
+    <tr>
+      <th style="border:1px solid #dfe1e6;padding:6px 10px;text-align:left;background:#f4f5f7;width:60px;">Data</th>
+      <th style="border:1px solid #dfe1e6;padding:6px 10px;text-align:left;background:#f4f5f7;width:110px;">Chave</th>
+      <th style="border:1px solid #dfe1e6;padding:6px 10px;text-align:left;background:#f4f5f7;">Tarefa</th>
+    </tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">14/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-310</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Liquidação Automática PV à Vista: wait de retry de 90s para 180s</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">14/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-308</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">manager-01: memória em tendência de esgotamento (88%)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">14/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-309</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">n8n: monitor de tendência de memória dos containers</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">13/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-307</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">2FA: login de gestor/diretor travava em "Carregando..."</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">11/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-306</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Prevenções anti-zumbi de backup (role, timeouts, webhook, watchdog)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">11/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-305</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">execution_data: bloat 237MB→4GB por pg_dump zumbi do pgbackweb</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">07/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-232</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[CRM] Correções Batch 2 — UX Global (F14, F34, F37)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">07/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-234</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[CRM] Correções Batch 2 — Configurações Usuários (F16)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">07/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-189</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[CRM] Correções Batch 1 — Pedidos e Novo Pedido (Findings 10-12)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">07/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-229</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[CRM] Correções Batch 2 — Agenda (F32, F36)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">07/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-231</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[CRM] Correções Batch 2 — Pedidos (F20)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">07/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-186</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[CRM] Correções Batch 1 — Cadastro de Cliente (Findings 5-7)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">07/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-223</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[CRM] Correções Batch 2 — Autenticação (F13)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">06/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-303</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Investigar NFs não sincronizadas</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">06/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-302</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Atualizar planilha com dados de vendas de junho</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">06/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-300</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Suporte Gustavo — Importação</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">06/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-143</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Check-list para o faturamento</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">06/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-297</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Revisão Planilha Seguro</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">05/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-296</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Monitor execution_data: idade por retenção real + execuções em espera</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">03/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-295</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">FUP semanal FIDC (Flow/Modde)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">02/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-294</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Padronização de e-mails dos 26 workflows ativos do n8n</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">02/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-293</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Retry-chain OMIE reenvia objeto de erro em vez do payload</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">02/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-292</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Lembrete HITL PV à Vista com URL de decisão errada</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">02/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-291</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">HITL Aprovação PV à Vista: pedido já faturado antes da decisão</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">02/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-222</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Análise: limites Modde zerados em massa (98,6% dos clientes)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">01/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-188</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[CRM] Correções Batch 1 — Agenda (Finding 9)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">01/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-187</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[CRM] Correções Batch 1 — Carteira (Finding 8)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">01/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-185</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[CRM] Correções Batch 1 — Metas (Findings 1-4)</td></tr>
+  </table>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Anexo B — 43 achados da Auditoria Completa (ACXEGDP-238) concluídos nesta janela</h2>
+  <table style="border-collapse:collapse;width:100%;font-size:13px;">
+    <tr>
+      <th style="border:1px solid #dfe1e6;padding:6px 10px;text-align:left;background:#f4f5f7;">Frente</th>
+      <th style="border:1px solid #dfe1e6;padding:6px 10px;text-align:right;background:#f4f5f7;width:70px;">Achados</th>
+      <th style="border:1px solid #dfe1e6;padding:6px 10px;text-align:left;background:#f4f5f7;">Chaves</th>
+      <th style="border:1px solid #dfe1e6;padding:6px 10px;text-align:left;background:#f4f5f7;width:60px;">Data</th>
+    </tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">Segurança</td><td style="border:1px solid #dfe1e6;padding:6px 10px;text-align:right;">8</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-239, 240, 241, 242, 243, 244, 245, 248</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">14/07</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">Módulos financeiros (Hedge/Forecast/BP/API)</td><td style="border:1px solid #dfe1e6;padding:6px 10px;text-align:right;">7</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-269, 270, 271, 272, 273, 274, 298</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">14/07</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">StockBridge</td><td style="border:1px solid #dfe1e6;padding:6px 10px;text-align:right;">12</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-267, 268, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">14/07</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">pt-BR</td><td style="border:1px solid #dfe1e6;padding:6px 10px;text-align:right;">5</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-256, 257, 258, 259, 260</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">14/07</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">E-mails</td><td style="border:1px solid #dfe1e6;padding:6px 10px;text-align:right;">4</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-249, 250, 251, 253</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">14/07</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">UI/UX</td><td style="border:1px solid #dfe1e6;padding:6px 10px;text-align:right;">6</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-261, 262, 263, 264, 265, 266</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">14/07</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">Diversos (teste OMIE mock)</td><td style="border:1px solid #dfe1e6;padding:6px 10px;text-align:right;">1</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-301</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">14/07</td></tr>
+  </table>
+  <p style="margin:8px 0 0;font-size:12px;color:#6b778c;"><em>Mais 12 achados (SEG-08/09, MOD-04 a MOD-16, EML-03/04/05/12/19/11/15-21/22, STK-01b) foram formalmente fechados em 15/07 — um dia após o corte — e não contam no total de 71 concluídas desta janela.</em></p>
+
+  <p style="margin:14px 0 0;font-size:12px;color:#6b778c;"><em>Gerado em 15/07/2026 a partir do Jira (livemind.atlassian.net).</em></p>
+
+</div>
+<!-- ====== FIM ====== -->
+</body>
+</html>

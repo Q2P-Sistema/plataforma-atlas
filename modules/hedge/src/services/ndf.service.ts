@@ -3,6 +3,7 @@ import { eq, and, type SQL } from 'drizzle-orm';
 import { getDb, createLogger } from '@atlas/core';
 import { ndfRegistro, bucketMensal, type NdfRegistro } from '@atlas/db';
 import { fetchPtaxAtual } from '@atlas/integration-bcb';
+import { parseDataCivilLocal, hojeLocalISO } from './datas.js';
 
 const logger = createLogger('hedge:ndf');
 
@@ -41,7 +42,9 @@ export async function criarNdf(params: CriarNdfParams): Promise<NdfRegistro> {
   // Validation
   if (params.notional_usd <= 0) throw new NdfError('VALIDATION_ERROR', 'notional_usd deve ser positivo');
   if (params.taxa_ndf <= 0) throw new NdfError('VALIDATION_ERROR', 'taxa_ndf deve ser positiva');
-  const vencDate = new Date(params.data_vencimento);
+  // MOD-08: parse LOCAL — new Date(string) e UTC-midnight e rejeitava NDF
+  // vencendo hoje ("data futura") e jogava vencimento dia-1o no mes anterior.
+  const vencDate = parseDataCivilLocal(params.data_vencimento);
   const today = new Date(); today.setHours(0, 0, 0, 0);
   if (isNaN(vencDate.getTime()) || vencDate < today) {
     throw new NdfError('VALIDATION_ERROR', 'data_vencimento deve ser uma data futura');
@@ -86,7 +89,7 @@ export async function criarNdf(params: CriarNdfParams): Promise<NdfRegistro> {
     )
     .limit(1);
 
-  const hoje = new Date().toISOString().split('T')[0]!;
+  const hoje = hojeLocalISO();
 
   const [created] = await db
     .insert(ndfRegistro)

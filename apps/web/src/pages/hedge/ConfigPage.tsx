@@ -1,27 +1,29 @@
 import { useState, type ChangeEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../../stores/auth.store.js';
+import { fmtBRL } from '../../lib/format.js';
+import { chartColors } from '@atlas/ui';
 
 interface ConfigRow { chave: string; valor: any; descricao: string | null; }
 
 const PARAM_GROUPS: { title: string; src: string; srcColor: string; params: { key: string; label: string; desc: string; unit: string; step: number; min?: number; max?: number }[] }[] = [
   {
-    title: 'Operacional', src: 'OMIE Q2P + Manual', srcColor: '#1a9944',
+    title: 'Operacional', src: 'OMIE Q2P + Manual', srcColor: chartColors.q2p,
     params: [
-      { key: 'faturamento_mensal', label: 'Faturamento mensal', desc: 'Base de calculo do ciclo', unit: 'R$M', step: 0.5 },
-      { key: 'pct_custo_importado', label: '% Custo importado', desc: 'Proporcao do custo em USD', unit: '%', step: 1, min: 0, max: 100 },
-      { key: 'transit_medio_dias', label: 'Transito medio', desc: 'D0 ao desembarque', unit: 'dias', step: 5, min: 30, max: 180 },
-      { key: 'giro_estoque_dias', label: 'Giro de estoque', desc: 'Dias medios no chao', unit: 'dias', step: 5, min: 15, max: 90 },
-      { key: 'prazo_recebimento', label: 'Prazo medio recebimento', desc: 'NF saida ao pagamento cliente', unit: 'dias', step: 1, min: 0, max: 90 },
+      { key: 'faturamento_mensal', label: 'Faturamento mensal', desc: 'Base de cálculo do ciclo', unit: 'R$M', step: 0.5 },
+      { key: 'pct_custo_importado', label: '% Custo importado', desc: 'Proporção do custo em USD', unit: '%', step: 1, min: 0, max: 100 },
+      { key: 'transit_medio_dias', label: 'Trânsito médio', desc: 'D0 ao desembarque', unit: 'dias', step: 5, min: 30, max: 180 },
+      { key: 'giro_estoque_dias', label: 'Giro de estoque', desc: 'Dias médios no chão', unit: 'dias', step: 5, min: 15, max: 90 },
+      { key: 'prazo_recebimento', label: 'Prazo médio recebimento', desc: 'Da NF de saída ao pagamento do cliente', unit: 'dias', step: 1, min: 0, max: 90 },
     ],
   },
   {
-    title: 'Motor de Hedge', src: 'MOTOR MV', srcColor: '#059669',
+    title: 'Motor de Hedge', src: 'MOTOR MV', srcColor: chartColors.success,
     params: [
-      { key: 'lambda_default', label: 'Lambda — Aversao ao risco', desc: '0 = minimiza custo - 1 = max. protecao', unit: '', step: 0.05, min: 0, max: 1 },
-      { key: 'camada1_minima', label: 'Camada 1 minima', desc: 'Hedge automatico minimo por bucket', unit: '%', step: 5, min: 30, max: 90 },
+      { key: 'lambda_default', label: 'Lambda — Aversão ao risco', desc: '0 = minimiza custo - 1 = max. proteção', unit: '', step: 0.05, min: 0, max: 1 },
+      { key: 'camada1_minima', label: 'Camada 1 mínima', desc: 'Hedge automático mínimo por bucket', unit: '%', step: 5, min: 30, max: 90 },
       { key: 'margem_floor', label: 'Margem floor', desc: 'Alerta se margem cair abaixo', unit: '%', step: 1, min: 5, max: 40 },
-      { key: 'estoque_bump_threshold', label: 'Threshold est. nao pago', desc: 'Eleva L1 se acima', unit: '', step: 0.05, min: 0, max: 1 },
+      { key: 'estoque_bump_threshold', label: 'Limite est. não pago', desc: 'Eleva L1 se acima', unit: '', step: 0.05, min: 0, max: 1 },
       { key: 'cobertura_bump_pct', label: 'Ajuste L1 se est. alto', desc: 'Eleva Camada 1 automaticamente', unit: '%', step: 1, min: 60, max: 90 },
     ],
   },
@@ -83,8 +85,8 @@ export function ConfigPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-heading font-bold text-atlas-text">Configuracao</h1>
-        {saveMsg && <span className="text-xs text-emerald-600 animate-pulse">Parametros salvos e aplicados ao motor.</span>}
+        <h1 className="text-2xl font-heading font-bold text-atlas-text">Configuração</h1>
+        {saveMsg && <span className="text-xs text-q2p animate-pulse">Parâmetros salvos e aplicados ao motor.</span>}
       </div>
 
       {/* Param groups */}
@@ -116,12 +118,12 @@ export function ConfigPage() {
                             className="w-20 px-2 py-1 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-xs text-right font-mono focus:outline-none focus:ring-1 focus:ring-emerald-600" />
                           <span className="text-xs text-atlas-muted min-w-[28px]">{p.unit}</span>
                           <button onClick={() => updateMut.mutate({ chave: p.key, valor: editVal })}
-                            className="text-xs px-2 py-1 rounded bg-emerald-600 text-white">OK</button>
+                            className="text-xs px-2 py-1 rounded bg-atlas-btn-bg text-atlas-btn-text">OK</button>
                           <button onClick={() => setEditKey(null)} className="text-xs px-2 py-1 rounded bg-atlas-border text-atlas-text">X</button>
                         </>
                       ) : (
                         <>
-                          <span className="text-xs font-mono text-atlas-text cursor-pointer hover:text-emerald-600"
+                          <span className="text-xs font-mono text-atlas-text cursor-pointer hover:text-q2p"
                             onClick={() => { setEditKey(p.key); setEditVal(val != null ? String(val) : ''); }}>
                             {val != null ? String(val) : '—'}
                           </span>
@@ -166,7 +168,7 @@ export function ConfigPage() {
                     <>
                       <span className="text-xs font-mono text-atlas-text cursor-pointer hover:text-purple-600"
                         onClick={() => { setEditKey(key); setEditVal(val != null ? String(val) : ''); }}>
-                        {val != null ? `R$ ${Number(val).toFixed(2)}` : '—'}
+                        {val != null ? fmtBRL(Number(val)) : '—'}
                       </span>
                       <span className="text-xs text-atlas-muted">R$/USD</span>
                     </>
@@ -180,11 +182,11 @@ export function ConfigPage() {
         {/* Insert new NDF rate */}
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-5">
           <div className="flex justify-between items-center mb-4 pb-3 border-b border-atlas-border">
-            <span className="text-xs tracking-[2px] text-atlas-muted uppercase">Inserir Nova Cotacao NDF</span>
+            <span className="text-xs tracking-[2px] text-atlas-muted uppercase">Inserir Nova Cotação NDF</span>
           </div>
           <div className="space-y-3">
             <div>
-              <label htmlFor="taxa-data" className="block text-xs text-atlas-muted mb-1">Data referencia</label>
+              <label htmlFor="taxa-data" className="block text-xs text-atlas-muted mb-1">Data referência</label>
               <input id="taxa-data" type="date" value={taxaForm.data_ref}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setTaxaForm({ ...taxaForm, data_ref: e.target.value })}
                 className="w-full px-3 py-2 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-xs focus:outline-none focus:ring-1 focus:ring-acxe" />
@@ -204,7 +206,7 @@ export function ConfigPage() {
                 className="w-full px-3 py-2 rounded border border-atlas-border bg-atlas-bg text-atlas-text text-xs focus:outline-none focus:ring-1 focus:ring-acxe" />
             </div>
             <button onClick={() => taxaMut.mutate()} disabled={!taxaForm.data_ref || !taxaForm.taxa || taxaMut.isPending}
-              className="w-full px-4 py-2 rounded bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 disabled:opacity-50 transition-colors">
+              className="w-full px-4 py-2 rounded bg-atlas-btn-bg text-atlas-btn-text text-xs font-medium hover:bg-atlas-btn-bg-hover disabled:opacity-50 transition-colors">
               {taxaMut.isPending ? 'Salvando...' : 'Inserir Taxa'}
             </button>
           </div>
@@ -213,11 +215,11 @@ export function ConfigPage() {
 
       {/* Info insights */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="rounded-r p-3 text-xs leading-relaxed text-atlas-muted" style={{ borderLeft: '2px solid #0077cc', backgroundColor: 'rgba(0,119,204,0.07)' }}>
-          <strong className="text-atlas-text">Sincronizacao automatica:</strong> BD VPS Acxe e Q2P sincronizam diariamente via n8n. PTAX BCB disponivel via API publica — pull a cada 15 min em dias uteis.
+        <div className="rounded-r p-3 text-xs leading-relaxed text-atlas-muted" style={{ borderLeft: `2px solid ${chartColors.acxe}`, backgroundColor: 'rgba(0,119,204,0.07)' }}>
+          <strong className="text-atlas-text">Sincronização automática:</strong> BD VPS Acxe e Q2P sincronizam diariamente via n8n. PTAX BCB disponível via API pública — atualização a cada 15 min em dias úteis.
         </div>
-        <div className="rounded-r p-3 text-xs leading-relaxed text-atlas-muted" style={{ borderLeft: '2px solid #059669', backgroundColor: 'rgba(5,150,105,0.07)' }}>
-          <strong className="text-atlas-text">Taxa NDF:</strong> Inserida manualmente — frequencia recomendada: toda segunda-feira. Cotacoes obtidas com o banco parceiro.
+        <div className="rounded-r p-3 text-xs leading-relaxed text-atlas-muted" style={{ borderLeft: `2px solid ${chartColors.success}`, backgroundColor: 'rgba(5,150,105,0.07)' }}>
+          <strong className="text-atlas-text">Taxa NDF:</strong> Inserida manualmente — frequência recomendada: toda segunda-feira. Cotações obtidas com o banco parceiro.
         </div>
       </div>
     </div>

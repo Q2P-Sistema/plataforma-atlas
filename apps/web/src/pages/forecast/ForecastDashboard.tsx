@@ -1,5 +1,7 @@
 import { useState, useMemo, type ChangeEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { fmtToneladas as fmtT } from '../../lib/format.js';
+import { chartColors } from '@atlas/ui';
 
 interface Sku {
   codigo: string; descricao: string; disponivel: number; bloqueado: number;
@@ -22,7 +24,6 @@ interface UrgenteForecast {
   compra_local: { dia_abrir: number; gap_dias: number; custo_oportunidade: number; qtd_local: number; valor_local: number } | null;
 }
 
-const fmtT = (kg: number) => kg >= 1000 ? `${(kg / 1000).toFixed(1)}t` : `${kg}kg`;
 const fmtBrl = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
 const STATUS_STYLE: Record<string, string> = {
@@ -30,6 +31,8 @@ const STATUS_STYLE: Record<string, string> = {
   atencao: 'bg-amber-500/10 text-amber-600 border-amber-500/20',
   ok: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20',
 };
+
+const STATUS_LABEL: Record<string, string> = { critico: 'Crítico', atencao: 'Atenção', ok: 'OK' };
 
 export function ForecastDashboard() {
   const [tab, setTab] = useState<'familias' | 'urgentes'>('familias');
@@ -73,7 +76,15 @@ export function ForecastDashboard() {
   const proxRuptura = familias.filter((f) => f.cobertura_dias < 999).sort((a, b) => a.cobertura_dias - b.cobertura_dias)[0];
   const valorTotal = urgentes.reduce((s, u) => s + u.valor_brl, 0);
 
-  if (isLoading) return <div className="flex items-center justify-center min-h-[40vh]"><p className="text-atlas-muted">Carregando...</p></div>;
+  if (isLoading) return (
+    <div className="space-y-5">
+      <div className="h-8 w-56 bg-atlas-border rounded animate-pulse" />
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+        {Array.from({ length: 5 }, (_, i) => <div key={i} className="h-20 rounded-lg bg-atlas-border animate-pulse" />)}
+      </div>
+      <div className="h-64 rounded-lg bg-atlas-border animate-pulse" />
+    </div>
+  );
 
   return (
     <div className="space-y-5">
@@ -83,7 +94,7 @@ export function ForecastDashboard() {
           <div className="flex rounded-lg border border-atlas-border overflow-hidden">
             <button onClick={() => setTab('familias')}
               className={`px-4 py-1.5 text-sm font-medium transition-colors ${tab === 'familias' ? 'bg-acxe text-white' : 'bg-atlas-bg text-atlas-muted hover:text-atlas-text'}`}>
-              Familias
+              Famílias
             </button>
             <button onClick={() => setTab('urgentes')}
               className={`px-4 py-1.5 text-sm font-medium transition-colors ${tab === 'urgentes' ? 'bg-red-600 text-white' : 'bg-atlas-bg text-atlas-muted hover:text-atlas-text'}`}>
@@ -94,8 +105,8 @@ export function ForecastDashboard() {
             <select value={statusFilter} onChange={(e: ChangeEvent<HTMLSelectElement>) => setStatusFilter(e.target.value)}
               className="px-3 py-1.5 rounded-lg border border-atlas-border bg-atlas-bg text-atlas-text text-sm">
               <option value="">Todos</option>
-              <option value="critico">Critico</option>
-              <option value="atencao">Atencao</option>
+              <option value="critico">Crítico</option>
+              <option value="atencao">Atenção</option>
               <option value="ok">OK</option>
             </select>
           )}
@@ -104,26 +115,26 @@ export function ForecastDashboard() {
 
       {/* KPI Strip */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-        <KpiCard label="Estoque Total" value={fmtT(totalEstoque)} color="#059669" sub={`${familias.length} familias`} />
-        <KpiCard label="Proxima Ruptura" value={proxRuptura ? `${proxRuptura.cobertura_dias}d` : '—'} color="#d97706"
+        <KpiCard label="Estoque Total" value={fmtT(totalEstoque)} color={chartColors.success} sub={`${familias.length} famílias`} />
+        <KpiCard label="Próxima Ruptura" value={proxRuptura ? `${proxRuptura.cobertura_dias}d` : '—'} color={chartColors.warn}
           sub={proxRuptura ? proxRuptura.familia_nome : 'Nenhuma ruptura'} />
-        <KpiCard label="Compra Intl." value={String(intl.length)} color="#dc2626" sub="urgentes 15 dias" />
-        <KpiCard label="Compra Local" value={String(local.length)} color="#7c3aed" sub="prazo perdido" />
-        <KpiCard label="Valor a Comprar" value={fmtBrl(valorTotal)} color="#0077cc" sub={`${urgentes.length} familias`} />
+        <KpiCard label="Compra Internac." value={String(intl.length)} color={chartColors.crit} sub="urgentes 15 dias" />
+        <KpiCard label="Compra Local" value={String(local.length)} color={chartColors.ndf} sub="prazo perdido" />
+        <KpiCard label="Valor a Comprar" value={fmtBrl(valorTotal)} color={chartColors.acxe} sub={`${urgentes.length} famílias`} />
       </div>
 
       {/* TAB: Familias */}
       {tab === 'familias' && (
         <div className="bg-atlas-card border border-atlas-border rounded-lg p-4">
-          <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Familias de Produto — Estoque e Cobertura</p>
+          <p className="text-xs text-atlas-muted uppercase tracking-[3px] mb-3">Famílias de Produto — Estoque e Cobertura</p>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-atlas-bg border-b border-atlas-border">
-                  <th className="px-3 py-2.5 text-left text-xs text-atlas-muted uppercase">Familia</th>
-                  <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Disponivel</th>
+                  <th className="px-3 py-2.5 text-left text-xs text-atlas-muted uppercase">Família</th>
+                  <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Disponível</th>
                   <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Reservado</th>
-                  <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Transito</th>
+                  <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Trânsito</th>
                   <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Total</th>
                   <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">CMC R$/kg</th>
                   <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Venda/dia</th>
@@ -153,15 +164,15 @@ export function ForecastDashboard() {
                         <td className="px-3 py-3 text-right">{r.pool_bloqueado > 0 ? <span className="text-amber-600">{fmtT(r.pool_bloqueado)}</span> : '—'}</td>
                         <td className="px-3 py-3 text-right">{r.pool_transito > 0 ? <span className="text-blue-600">{fmtT(r.pool_transito)}</span> : '—'}</td>
                         <td className="px-3 py-3 text-right font-semibold">{fmtT(r.pool_total)}</td>
-                        <td className="px-3 py-3 text-right">R$ {r.cmc_medio.toFixed(2)}</td>
+                        <td className="px-3 py-3 text-right">{fmtBrl(r.cmc_medio)}</td>
                         <td className="px-3 py-3 text-right">{r.venda_diaria_media > 0 ? fmtT(r.venda_diaria_media) : <span className="text-atlas-muted">—</span>}</td>
                         <td className="px-3 py-3 text-right">
                           {r.cobertura_dias >= 999 ? <span className="text-atlas-muted">sem hist.</span> : (
-                            <span style={{ color: r.cobertura_dias <= 30 ? '#dc2626' : r.cobertura_dias <= 60 ? '#d97706' : '#059669' }} className="font-semibold">{r.cobertura_dias}d</span>
+                            <span style={{ color: r.cobertura_dias <= 30 ? chartColors.crit : r.cobertura_dias <= 60 ? chartColors.warn : chartColors.success }} className="font-semibold">{r.cobertura_dias}d</span>
                           )}
                         </td>
                         <td className="px-3 py-3 text-center">
-                          <span className={`inline-flex text-xs px-1.5 py-0.5 rounded border font-semibold ${STATUS_STYLE[r.status] ?? ''}`}>{r.status}</span>
+                          <span className={`inline-flex text-xs px-1.5 py-0.5 rounded border font-semibold ${STATUS_STYLE[r.status] ?? ''}`}>{STATUS_LABEL[r.status] ?? r.status}</span>
                         </td>
                       </tr>
                       {isOpen && r.skus.map((sk) => (
@@ -174,7 +185,7 @@ export function ForecastDashboard() {
                           <td className="px-3 py-2 text-right text-xs text-amber-600">{sk.bloqueado > 0 ? fmtT(sk.bloqueado) : '—'}</td>
                           <td className="px-3 py-2 text-right text-xs text-blue-600">{sk.transito > 0 ? fmtT(sk.transito) : '—'}</td>
                           <td className="px-3 py-2 text-right text-xs font-semibold">{fmtT(sk.total)}</td>
-                          <td className="px-3 py-2 text-right text-xs">R$ {sk.cmc.toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right text-xs">{fmtBrl(sk.cmc)}</td>
                           <td className="px-3 py-2 text-right text-xs">{sk.venda_dia > 0 ? fmtT(sk.venda_dia) : '—'}</td>
                           <td className="px-3 py-2 text-right text-xs">{sk.cobertura < 999 ? `${sk.cobertura}d` : '—'}</td>
                           <td className="px-3 py-2 text-center text-xs text-atlas-muted">{sk.lt}d LT</td>
@@ -195,8 +206,8 @@ export function ForecastDashboard() {
           {/* Internacional */}
           <UrgentSection
             title="Compras Internacionais"
-            subtitle="Pedido necessario nos proximos 15 dias"
-            color="#dc2626"
+            subtitle="Pedido necessário nos próximos 15 dias"
+            color={chartColors.crit}
             items={intl}
             type="intl"
           />
@@ -204,8 +215,8 @@ export function ForecastDashboard() {
           {/* Local emergencial */}
           <UrgentSection
             title="Compras Locais Emergenciais"
-            subtitle="Prazo internacional perdido — negociacao spot"
-            color="#7c3aed"
+            subtitle="Prazo internacional perdido — negociação spot"
+            color={chartColors.ndf}
             items={local}
             type="local"
           />
@@ -221,7 +232,7 @@ export function ForecastDashboard() {
 
           {intl.length === 0 && local.length === 0 && nacional.length === 0 && (
             <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-8 text-center">
-              <p className="text-emerald-600 font-semibold">Nenhuma compra urgente nos proximos 15 dias.</p>
+              <p className="text-emerald-600 font-semibold">Nenhuma compra urgente nos próximos 15 dias.</p>
             </div>
           )}
         </div>
@@ -238,34 +249,34 @@ function DefinitionsPanel() {
     <div className="border border-atlas-border rounded-lg overflow-hidden">
       <button onClick={() => setOpen(!open)}
         className="w-full flex items-center justify-between px-4 py-2.5 bg-atlas-bg text-xs text-atlas-muted hover:text-atlas-text transition-colors">
-        <span className="uppercase tracking-[2px] font-medium">Definicoes e Metodologia</span>
+        <span className="uppercase tracking-[2px] font-medium">Definições e Metodologia</span>
         <span className="text-sm">{open ? '\u25B2' : '\u25BC'}</span>
       </button>
       {open && (
         <div className="px-4 py-3 bg-atlas-card text-xs text-atlas-muted space-y-3 leading-relaxed">
           <div>
             <p className="font-semibold text-atlas-text mb-0.5">Pool de Estoque (3 camadas)</p>
-            <p><strong>Disponivel</strong> = saldo - reservado. <strong>Bloqueado</strong> = reservado para pedidos em carteira. <strong>Transito</strong> = pedidos de compra pendentes de recebimento. <strong>Total</strong> = disponivel + bloqueado + transito.</p>
+            <p><strong>Disponível</strong> = saldo - reservado. <strong>Bloqueado</strong> = reservado para pedidos em carteira. <strong>Trânsito</strong> = pedidos de compra pendentes de recebimento. <strong>Total</strong> = disponível + bloqueado + trânsito.</p>
           </div>
           <div>
             <p className="font-semibold text-atlas-text mb-0.5">Cobertura (dias)</p>
-            <p>Estoque total dividido pela demanda diaria sazonalizada. Indica quantos dias o estoque atual cobre sem novas chegadas.</p>
+            <p>Estoque total dividido pela demanda diária sazonalizada. Indica quantos dias o estoque atual cobre sem novas chegadas.</p>
           </div>
           <div>
             <p className="font-semibold text-atlas-text mb-0.5">Sazonalidade</p>
-            <p>Fator multiplicador mensal aplicado a demanda diaria media. Valores &gt;1.0 indicam mes de alta demanda, &lt;1.0 indica baixa. Editavel em Config &gt; Sazonalidade.</p>
+            <p>Fator multiplicador mensal aplicado à demanda diária média. Valores &gt;1,0 indicam mês de alta demanda, &lt;1,0 indicam baixa. Editável em Config &gt; Sazonalidade.</p>
           </div>
           <div>
             <p className="font-semibold text-atlas-text mb-0.5">Qtd Sugerida (net-of-pipeline)</p>
-            <p>Demanda total para LT + 60 dias de cobertura, descontando pedidos em rota. Arredondada para cima ao MOQ (Internacional: 25t, Nacional: 12t). So calculada se ruptura detectada.</p>
+            <p>Demanda total para LT + 60 dias de cobertura, descontando pedidos em rota. Arredondada para cima ao MOQ (Internacional: 25t, Nacional: 12t). Só calculada se ruptura detectada.</p>
           </div>
           <div>
             <p className="font-semibold text-atlas-text mb-0.5">Compra Local Emergencial</p>
-            <p>Quando o prazo de pedido internacional esta perdido (dia ideal &lt; 0), sugere compra local com LT curto (7d) para cobrir o gap ate a chegada do pedido internacional.</p>
+            <p>Quando o prazo de pedido internacional está perdido (dia ideal &lt; 0), sugere compra local com LT curto (7d) para cobrir o gap até a chegada do pedido internacional.</p>
           </div>
           <div>
             <p className="font-semibold text-atlas-text mb-0.5">Status</p>
-            <p><strong>Critico</strong> = ruptura em ate 30 dias. <strong>Atencao</strong> = ruptura entre 31-60 dias. <strong>OK</strong> = sem ruptura nos proximos 60 dias.</p>
+            <p><strong>Crítico</strong> = ruptura em até 30 dias. <strong>Atenção</strong> = ruptura entre 31-60 dias. <strong>OK</strong> = sem ruptura nos próximos 60 dias.</p>
           </div>
         </div>
       )}
@@ -292,8 +303,8 @@ function UrgentSection({ title, subtitle, color, items, type }: {
         <table className="w-full text-sm">
           <thead>
             <tr style={{ backgroundColor: color + '08' }} className="border-b" >
-              <th className="px-3 py-2.5 text-center text-xs text-atlas-muted uppercase w-20">Urgencia</th>
-              <th className="px-3 py-2.5 text-left text-xs text-atlas-muted uppercase">Familia</th>
+              <th className="px-3 py-2.5 text-center text-xs text-atlas-muted uppercase w-20">Urgência</th>
+              <th className="px-3 py-2.5 text-left text-xs text-atlas-muted uppercase">Família</th>
               <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">Estoque</th>
               <th className="px-3 py-2.5 text-right text-xs text-atlas-muted uppercase">{type === 'local' ? 'Ruptura' : 'Cobertura'}</th>
               <th className="px-3 py-2.5 text-center text-xs text-atlas-muted uppercase">LT</th>
@@ -306,7 +317,7 @@ function UrgentSection({ title, subtitle, color, items, type }: {
               const dias = type === 'local'
                 ? u.compra_local?.dia_abrir ?? 0
                 : u.dia_pedido_ideal;
-              const urgColor = dias === 0 ? '#dc2626' : dias <= 5 ? '#ea580c' : color;
+              const urgColor = dias === 0 ? chartColors.crit : dias <= 5 ? '#ea580c' : color;
               return (
                 <tr key={u.familia_id} className="border-b border-atlas-border/30 hover:bg-atlas-bg/30">
                   <td className="px-3 py-3 text-center">
@@ -324,7 +335,7 @@ function UrgentSection({ title, subtitle, color, items, type }: {
                   <td className="px-3 py-3 text-right">
                     {type === 'local'
                       ? <span className="text-red-600 font-semibold">{u.dia_ruptura >= 0 ? `${u.dia_ruptura}d` : '—'}</span>
-                      : <span className="font-semibold" style={{ color: u.dia_ruptura <= 30 ? '#dc2626' : '#d97706' }}>{u.dia_ruptura >= 0 ? `${u.dia_ruptura}d` : '>120d'}</span>
+                      : <span className="font-semibold" style={{ color: u.dia_ruptura <= 30 ? chartColors.crit : chartColors.warn }}>{u.dia_ruptura >= 0 ? `${u.dia_ruptura}d` : '>120d'}</span>
                     }
                   </td>
                   <td className="px-3 py-3 text-center text-atlas-muted">{u.lt_efetivo}d</td>
@@ -332,7 +343,7 @@ function UrgentSection({ title, subtitle, color, items, type }: {
                     {type === 'local'
                       ? <span className="text-red-600 font-semibold">{u.compra_local ? `${u.compra_local.gap_dias}d` : '—'}</span>
                       : <><span className="font-semibold" style={{ color }}>{fmtT(u.qtd_sugerida)}</span>
-                          <span className="text-xs text-atlas-muted ml-1">MOQ {u.moq_ativo / 1000}t</span></>
+                          <span className="text-xs text-atlas-muted ml-1">MOQ {fmtT(u.moq_ativo)}</span></>
                     }
                   </td>
                   <td className="px-3 py-3 text-right">

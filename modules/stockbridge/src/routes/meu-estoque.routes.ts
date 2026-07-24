@@ -1,0 +1,88 @@
+import { Router, type Request, type Response } from 'express';
+import { z } from 'zod';
+import { createLogger } from '@atlas/core';
+import { requireOperador } from '../middleware/role.js';
+import {
+  listarMeuEstoque,
+  getGalpoesDoUsuario,
+  listarGalpoesFisicos,
+  type EmpresaFiltro,
+} from '../services/meu-estoque.service.js';
+
+const logger = createLogger('stockbridge:meu-estoque');
+const router: Router = Router();
+
+const QuerySchema = z.object({
+  empresa: z.enum(['ACXE', 'Q2P', 'Ambos']).optional(),
+  galpao: z.string().optional(), // override pra gestor/diretor escolher um galpao
+});
+
+/**
+ * GET /api/v1/stockbridge/meu-estoque
+ *  - operador: filtra automaticamente pelos galpoes vinculados (user_galpao)
+ *  - gestor/diretor: ve todos por padrao; aceita ?galpao=11 pra restringir
+ *  - ?empresa=ACXE|Q2P|Ambos (default Q2P pra evitar duplicatas em espelhados)
+ */
+router.get('/api/v1/stockbridge/meu-estoque', requireOperador, async (req: Request, res: Response) => {
+  const parsed = QuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({
+      data: null,
+      error: { code: 'INVALID_INPUT', message: parsed.error.issues.map((i) => i.message).join('; ') },
+    });
+    return;
+  }
+
+  const empresa: EmpresaFiltro = parsed.data.empresa ?? 'Q2P';
+  const userId = req.user?.id;
+  const role = req.user?.role ?? 'operador';
+  const galpaoOverride = parsed.data.galpao;
+
+  let galpoes: string[];
+
+  if (role === 'operador') {
+    // SEG-03 (ACXEGDP-241): a checagem de vinculo vem ANTES do override. Antes, um
+    // ?galpao=XX era aceito para qualquer operador, permitindo ler o estoque de
+    // galpoes nao vinculados (IDOR). Agora o operador so enxerga os galpoes
+    // vinculados; se passar ?galpao=, ele precisa estar entre os vinculados.
+    const vinculados = userId ? await getGalpoesDoUsuario(userId) : [];
+    if (vinculados.length === 0) {
+      res.status(403).json({
+        data: null,
+        error: {
+          code: 'SEM_GALPAO_VINCULADO',
+          message: 'Operador sem galpão vinculado. Solicite atribuição ao gestor.',
+        },
+      });
+      return;
+    }
+    if (galpaoOverride && !vinculados.includes(galpaoOverride)) {
+      res.status(403).json({
+        data: null,
+        error: {
+          code: 'GALPAO_NAO_VINCULADO',
+          message: 'Galpao nao vinculado ao seu usuario.',
+        },
+      });
+      return;
+    }
+    galpoes = galpaoOverride ? [galpaoOverride] : vinculados;
+  } else {
+    // gestor/diretor: override livre; sem ?galpao= ve todos os galpoes fisicos
+    // cadastrados (sem isso a UI fica com seletor vazio — issue 2026-05-07).
+    galpoes = galpaoOverride ? [galpaoOverride] : await listarGalpoesFisicos();
+  }
+
+  try {
+    const data = await listarMeuEstoque(galpoes, empresa);
+    res.json({ data, error: null });
+  } catch (err) {
+    logger.error({ err }, 'Erro ao listar meu-estoque');
+    res.status(500).json({
+      data: null,
+      error: { code: 'MEU_ESTOQUE_FAIL', message: (err as Error).message },
+    });
+  }
+});
+
+export default router;

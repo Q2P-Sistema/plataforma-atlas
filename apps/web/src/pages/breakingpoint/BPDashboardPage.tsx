@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { AlertTriangle, Ban, FileText, Landmark, Lock, Package, ShoppingCart, Wallet } from 'lucide-react';
 import {
   ComposedChart,
   Area,
@@ -12,6 +13,8 @@ import {
   LineChart,
 } from 'recharts';
 import { Countdown } from './components/Countdown.js';
+import { bpChartColors } from '@atlas/ui';
+import { fmtMi } from './format.js';
 
 interface BreakingPoint { semana: number; data: string; val: number }
 interface TravaEvent { semana: number; data: string }
@@ -62,13 +65,7 @@ interface Projecao {
   sync_at: string;
 }
 
-const fmtMi = (v: number) => {
-  if (v === null || v === undefined) return '—';
-  const mi = v / 1_000_000;
-  const sign = v < 0 ? '− ' : '';
-  return `${sign}R$ ${Math.abs(mi).toFixed(2).replace('.', ',')}Mi`;
-};
-const fmtAxis = (v: number) => `${(v / 1_000_000).toFixed(1)}M`;
+const fmtAxis = (v: number) => `${(v / 1_000_000).toFixed(1).replace('.', ',')}M`;
 
 async function fetchProjecao(): Promise<Projecao> {
   const res = await fetch('/api/v1/bp/projecao?empresa=acxe', { credentials: 'include' });
@@ -84,7 +81,7 @@ function CustomTooltip(props: { active?: boolean; payload?: unknown[]; label?: s
   if (!d) return null;
 
   const gc =
-    d.gap < 0 ? 'text-red-600' : d.gap < 300_000 ? 'text-amber-600' : 'text-green-600';
+    d.gap < 0 ? 'text-red-600 dark:text-red-400' : d.gap < 300_000 ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400';
 
   return (
     <div className="bg-atlas-card border border-atlas-border rounded-lg p-3 text-xs min-w-56 shadow-lg">
@@ -92,30 +89,30 @@ function CustomTooltip(props: { active?: boolean; payload?: unknown[]; label?: s
         <span className="font-bold">{label}</span>
         <span className="text-atlas-muted">{d.data_fmt}</span>
       </div>
-      <Row label="Pagamentos" value={d.pagamento} color={d.is_finimp ? 'text-orange-600' : 'text-red-600'} extra={d.is_finimp ? ' ⚠ FINIMP' : ''} />
-      <Row label="Rec. Duplicatas" value={d.rec_dup} color="text-blue-600" />
-      <Row label="Rec. Estoque D+15" value={d.rec_estoque} color="text-teal-600" />
-      <Row label="Saldo CC" value={d.saldo_cc} color={d.saldo_cc < 0 ? 'text-red-600' : 'text-green-600'} />
-      <Row label="Cap. Antecip." value={d.antecip_disp} color={d.antecip_disp < 200_000 ? 'text-red-600' : 'text-amber-600'} />
-      <Row label="🛒 Cap. Compras" value={d.cap_compra} color="text-pink-600" />
+      <Row label="Pagamentos" value={d.pagamento} color={d.is_finimp ? 'text-orange-600 dark:text-orange-400' : 'text-red-600 dark:text-red-400'} extra={d.is_finimp ? <><AlertTriangle size={9} className="inline -mt-0.5" aria-hidden /> FINIMP</> : undefined} />
+      <Row label="Rec. Duplicatas" value={d.rec_dup} color="text-blue-600 dark:text-blue-400" />
+      <Row label="Rec. Estoque D+15" value={d.rec_estoque} color="text-teal-600 dark:text-teal-400" />
+      <Row label="Saldo CC" value={d.saldo_cc} color={d.saldo_cc < 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'} />
+      <Row label="Cap. Antecip." value={d.antecip_disp} color={d.antecip_disp < 200_000 ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'} />
+      <Row label="Cap. Compras" value={d.cap_compra} color="text-pink-600 dark:text-pink-400" />
       <Row label="Gap Liquidez" value={d.gap} color={gc} />
     </div>
   );
 }
 
-function Row({ label, value, color, extra }: { label: string; value: number; color: string; extra?: string }) {
+function Row({ label, value, color, extra }: { label: string; value: number; color: string; extra?: React.ReactNode }) {
   return (
     <div className="flex justify-between gap-4 mb-1">
       <span className="text-atlas-muted">
         {label}
-        {extra && <span className="text-orange-600 text-[10px] ml-1">{extra}</span>}
+        {extra && <span className="text-orange-600 dark:text-orange-400 text-[10px] ml-1">{extra}</span>}
       </span>
       <span className={`font-semibold ${color}`}>{fmtMi(value)}</span>
     </div>
   );
 }
 
-function KpiCard({ label, value, color, icon }: { label: string; value: string; color: string; icon: string }) {
+function KpiCard({ label, value, color, icon }: { label: string; value: string; color: string; icon: React.ReactNode }) {
   return (
     <div className="bg-atlas-card border border-atlas-border rounded-lg p-3 relative overflow-hidden">
       <div className="absolute top-0 left-0 right-0 h-0.5" style={{ backgroundColor: color }} />
@@ -134,12 +131,20 @@ export function BPDashboardPage() {
   });
 
   if (isLoading) {
-    return <div className="p-6 text-atlas-muted">Carregando projeção…</div>;
+    return (
+      <div className="p-6 space-y-5">
+        <div className="h-8 w-64 bg-atlas-border rounded animate-pulse" />
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {Array.from({ length: 4 }, (_, i) => <div key={i} className="h-20 rounded-lg bg-atlas-border animate-pulse" />)}
+        </div>
+        <div className="h-80 rounded-xl bg-atlas-border animate-pulse" />
+      </div>
+    );
   }
   if (error || !proj) {
     return (
       <div className="p-6">
-        <p className="text-red-600 font-semibold">Erro ao carregar projeção</p>
+        <p className="text-red-600 dark:text-red-400 font-semibold">Erro ao carregar projeção</p>
         <p className="text-atlas-muted text-sm mt-2">{(error as Error)?.message}</p>
       </div>
     );
@@ -150,11 +155,11 @@ export function BPDashboardPage() {
   const alarmColor =
     bp.break_total
       ? bp.break_total.semana <= 4
-        ? '#B83228'
+        ? bpChartColors.vermelho
         : bp.break_total.semana <= 8
-          ? '#CF6437'
-          : '#A85A08'
-      : '#2A7A4A';
+          ? bpChartColors.laranja
+          : bpChartColors.ocre
+      : bpChartColors.verde;
 
   return (
     <div className="p-6 max-w-[1440px] mx-auto">
@@ -167,12 +172,12 @@ export function BPDashboardPage() {
           <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: alarmColor }} />
           <span className="text-sm font-semibold" style={{ color: alarmColor }}>
             {bp.break_total
-              ? `⚠ BREAKING POINT · Semana ${bp.break_total.semana} · ${bp.break_total.data} · Gap de ${fmtMi(Math.abs(bp.break_total.val))}`
-              : '✓ NENHUM BREAKING POINT NOS 180 DIAS'}
+              ? `BREAKING POINT · Semana ${bp.break_total.semana} · ${bp.break_total.data} · Gap de ${fmtMi(Math.abs(bp.break_total.val))}`
+              : 'NENHUM BREAKING POINT NOS 180 DIAS'}
           </span>
         </div>
         <span className="text-xs text-atlas-muted">
-          Sync: {new Date(proj.sync_at).toLocaleString('pt-BR')}
+          Sincronizado: {new Date(proj.sync_at).toLocaleString('pt-BR')}
         </span>
       </div>
 
@@ -181,7 +186,7 @@ export function BPDashboardPage() {
         <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: alarmColor }}>
           Atlas · Tesouraria · Breaking Point
         </div>
-        <h1 className="text-2xl font-bold mt-1">Quando Fico Sem Caixa?</h1>
+        <h1 className="text-2xl font-heading font-bold mt-1">Quando Fico Sem Caixa?</h1>
         <p className="text-xs text-atlas-muted mt-1">
           180 dias · Caixa + Antecipação + Estoque D+15 · FINIMP = Financiamento OMIE
         </p>
@@ -191,29 +196,29 @@ export function BPDashboardPage() {
       {kpis.config_incompleta && (
         <div
           role="alert"
-          className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-xs text-amber-700"
+          className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-xs text-amber-700 dark:text-amber-300"
         >
-          ⚠ Configuração incompleta — limites bancários zerados ou categoria FINIMP não configurada.
+          <AlertTriangle size={12} className="inline -mt-0.5 mr-1" aria-hidden />Configuração incompleta — limites bancários zerados ou categoria FINIMP não configurada.
           Acesse a aba <strong>Configurar</strong> para completar os parâmetros e obter projeção precisa.
         </div>
       )}
 
       {/* Countdowns */}
-      <div className="grid grid-cols-4 gap-3 mb-5">
-        <Countdown semana={bp.break_total?.semana ?? null} label="Colapso de Liquidez" icon="⛔" sub={bp.break_total?.data} />
-        <Countdown semana={bp.break_caixa?.semana ?? null} label="Saldo CC Negativo" icon="🏦" sub={bp.break_caixa?.data} />
-        <Countdown semana={bp.break_antecip?.semana ?? null} label="Antecipação Esgotada" icon="📄" sub={bp.break_antecip?.data} />
-        <Countdown semana={bp.trava_finimp?.semana ?? null} label="Trava FINIMP↔Antecip." icon="🔒" sub={bp.trava_finimp?.data} />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        <Countdown semana={bp.break_total?.semana ?? null} label="Colapso de Liquidez" icon={<Ban size={24} aria-hidden />} sub={bp.break_total?.data} />
+        <Countdown semana={bp.break_caixa?.semana ?? null} label="Saldo CC Negativo" icon={<Landmark size={24} aria-hidden />} sub={bp.break_caixa?.data} />
+        <Countdown semana={bp.break_antecip?.semana ?? null} label="Antecipação Esgotada" icon={<FileText size={24} aria-hidden />} sub={bp.break_antecip?.data} />
+        <Countdown semana={bp.trava_finimp?.semana ?? null} label="Trava FINIMP↔Antecip." icon={<Lock size={24} aria-hidden />} sub={bp.trava_finimp?.data} />
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-6 gap-2 mb-5">
-        <KpiCard label="Saldo CC" value={fmtMi(kpis.saldo_cc)} color="#2A7A4A" icon="💰" />
-        <KpiCard label="Estoque → D+15" value={fmtMi(kpis.estoque_valor_venda)} color="#0C6E8A" icon="📦" />
-        <KpiCard label="Cap. Antecip." value={fmtMi(kpis.antecip_disp)} color="#CF6437" icon="📄" />
-        <KpiCard label="FINIMP Devedor" value={fmtMi(kpis.finimp_usado)} color="#A85A08" icon="🏛" />
-        <KpiCard label="Dup. Bloqueadas" value={fmtMi(kpis.dup_bloq)} color="#7236CC" icon="🔒" />
-        <KpiCard label="🛒 Cap. Compras" value={fmtMi(kpis.cap_compra_atual)} color="#B05A8A" icon="🛒" />
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 mb-5">
+        <KpiCard label="Saldo CC" value={fmtMi(kpis.saldo_cc)} color={bpChartColors.verde} icon={<Wallet size={14} aria-hidden />} />
+        <KpiCard label="Estoque → D+15" value={fmtMi(kpis.estoque_valor_venda)} color={bpChartColors.azul} icon={<Package size={14} aria-hidden />} />
+        <KpiCard label="Cap. Antecip." value={fmtMi(kpis.antecip_disp)} color={bpChartColors.laranja} icon={<FileText size={24} aria-hidden />} />
+        <KpiCard label="FINIMP Devedor" value={fmtMi(kpis.finimp_usado)} color={bpChartColors.ocre} icon={<Landmark size={14} aria-hidden />} />
+        <KpiCard label="Dup. Bloqueadas" value={fmtMi(kpis.dup_bloq)} color={bpChartColors.violeta} icon={<Lock size={24} aria-hidden />} />
+        <KpiCard label="Cap. Compras" value={fmtMi(kpis.cap_compra_atual)} color={bpChartColors.magenta} icon={<ShoppingCart size={14} aria-hidden />} />
       </div>
 
       {/* Gráfico principal */}
@@ -222,12 +227,12 @@ export function BPDashboardPage() {
           <div>
             <h2 className="text-sm font-bold">Liquidez · Pagamentos · Capacidade de Compras — 26 Semanas</h2>
             <p className="text-xs text-atlas-muted mt-1">
-              Cap. Compras = Caixa + Antecip. + FINIMP disp. − obrigações (buffer 20%) · valores em Mi
+              Cap. Compras = Caixa + Antecip. + FINIMP disp. − obrigações (reserva de 20%) · valores em Mi
             </p>
           </div>
           <div className="bg-pink-500/10 border border-pink-500/30 rounded-lg px-4 py-2 text-center min-w-[170px]">
-            <div className="text-[10px] text-atlas-muted uppercase tracking-wider">🛒 Cap. Compras Agora</div>
-            <div className="text-xl font-bold text-pink-600 leading-tight">{fmtMi(kpis.cap_compra_atual)}</div>
+            <div className="text-[10px] text-atlas-muted uppercase tracking-wider"><ShoppingCart size={10} className="inline -mt-0.5 mr-1" aria-hidden />Cap. Compras Agora</div>
+            <div className="text-xl font-bold text-pink-600 dark:text-pink-400 leading-tight">{fmtMi(kpis.cap_compra_atual)}</div>
             <div className="text-[10px] text-atlas-muted mt-1">Média 8 sem: {fmtMi(kpis.cap_compra_med8)}</div>
           </div>
         </div>
@@ -236,23 +241,23 @@ export function BPDashboardPage() {
           <ComposedChart data={semanas} margin={{ top: 10, right: 10, left: 5, bottom: 0 }}>
             <defs>
               <linearGradient id="gLiq" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#2A7A4A" stopOpacity={0.22} />
-                <stop offset="95%" stopColor="#2A7A4A" stopOpacity={0} />
+                <stop offset="5%" stopColor={bpChartColors.verde} stopOpacity={0.22} />
+                <stop offset="95%" stopColor={bpChartColors.verde} stopOpacity={0} />
               </linearGradient>
               <linearGradient id="gCC" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#0C6E8A" stopOpacity={0.18} />
-                <stop offset="95%" stopColor="#0C6E8A" stopOpacity={0} />
+                <stop offset="5%" stopColor={bpChartColors.azul} stopOpacity={0.18} />
+                <stop offset="95%" stopColor={bpChartColors.azul} stopOpacity={0} />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#D4CCC2" vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" vertical={false} />
             <XAxis dataKey="label" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} interval={1} />
             <YAxis tick={{ fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={fmtAxis} width={60} />
             <Tooltip content={<CustomTooltip semanas={semanas} />} />
-            <Area type="monotone" dataKey="liquidez_total" stroke="#2A7A4A" strokeWidth={2} fill="url(#gLiq)" />
-            <Area type="monotone" dataKey="saldo_cc" stroke="#0C6E8A" strokeWidth={2} fill="url(#gCC)" />
-            <Line type="monotone" dataKey="antecip_disp" stroke="#CF6437" strokeWidth={2} strokeDasharray="5 3" dot={false} />
-            <Line type="monotone" dataKey="cap_compra" stroke="#B05A8A" strokeWidth={2} strokeDasharray="5 3" dot={false} />
-            <Bar dataKey="pagamento" fill="#B83228" opacity={0.7} />
+            <Area type="monotone" dataKey="liquidez_total" stroke={bpChartColors.verde} strokeWidth={2} fill="url(#gLiq)" />
+            <Area type="monotone" dataKey="saldo_cc" stroke={bpChartColors.azul} strokeWidth={2} fill="url(#gCC)" />
+            <Line type="monotone" dataKey="antecip_disp" stroke={bpChartColors.laranja} strokeWidth={2} strokeDasharray="5 3" dot={false} />
+            <Line type="monotone" dataKey="cap_compra" stroke={bpChartColors.magenta} strokeWidth={2} strokeDasharray="5 3" dot={false} />
+            <Bar dataKey="pagamento" fill={bpChartColors.vermelho} opacity={0.7} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -262,12 +267,12 @@ export function BPDashboardPage() {
         <h2 className="text-sm font-bold mb-2">FINIMP ↔ Duplicatas Bloqueadas — 26 Semanas</h2>
         <ResponsiveContainer width="100%" height={220}>
           <LineChart data={semanas} margin={{ top: 10, right: 10, left: 5, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#D4CCC2" vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--atlas-border)" vertical={false} />
             <XAxis dataKey="label" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} interval={1} />
             <YAxis tick={{ fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={fmtAxis} width={60} />
             <Tooltip formatter={(v: unknown) => fmtMi(Number(v))} />
-            <Line type="monotone" name="Saldo FINIMP" dataKey="finimp_saldo" stroke="#A85A08" strokeWidth={2} dot={false} />
-            <Line type="monotone" name="Dup. Bloqueadas" dataKey="dup_bloq" stroke="#7236CC" strokeWidth={2} dot={false} />
+            <Line type="monotone" name="Saldo FINIMP" dataKey="finimp_saldo" stroke={bpChartColors.ocre} strokeWidth={2} dot={false} />
+            <Line type="monotone" name="Dup. Bloqueadas" dataKey="dup_bloq" stroke={bpChartColors.violeta} strokeWidth={2} dot={false} />
           </LineChart>
         </ResponsiveContainer>
       </div>

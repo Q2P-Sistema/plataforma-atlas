@@ -1,6 +1,6 @@
-import { useState, type FormEvent, type ChangeEvent } from 'react';
+import { useEffect, useState, type FormEvent, type ChangeEvent } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { ThemeToggle } from '@atlas/ui';
+import { AuthPageShell } from '@atlas/ui';
 
 export function ResetPasswordPage() {
   const { token } = useParams<{ token: string }>();
@@ -11,8 +11,12 @@ export function ResetPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
 
+  // navigate() durante o render é anti-pattern React (UI-E, ACXEGDP-265).
+  useEffect(() => {
+    if (!token) navigate('/login', { replace: true });
+  }, [token, navigate]);
+
   if (!token) {
-    navigate('/login', { replace: true });
     return null;
   }
 
@@ -26,7 +30,7 @@ export function ResetPasswordPage() {
     }
 
     if (password !== confirmPassword) {
-      setError('As senhas nao coincidem');
+      setError('As senhas não coincidem');
       return;
     }
 
@@ -48,17 +52,14 @@ export function ResetPasswordPage() {
 
       setSuccess(true);
     } catch {
-      setError('Erro de conexao com o servidor');
+      setError('Erro de conexão com o servidor');
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-atlas-bg p-4">
-      <div className="absolute top-4 right-4">
-        <ThemeToggle />
-      </div>
+    <AuthPageShell>
 
       <div className="w-full max-w-sm bg-atlas-card rounded-xl shadow-lg p-8 border border-atlas-border">
         <div className="text-center mb-8">
@@ -97,7 +98,7 @@ export function ResetPasswordPage() {
                 value={password}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
                 className="w-full px-3 py-2 rounded-lg border border-atlas-border bg-atlas-bg text-atlas-text placeholder:text-atlas-muted focus:outline-none focus:ring-2 focus:ring-acxe"
-                placeholder="Minimo 8 caracteres"
+                placeholder="Mínimo 8 caracteres"
               />
             </div>
 
@@ -148,6 +149,6 @@ export function ResetPasswordPage() {
           </form>
         )}
       </div>
-    </div>
+    </AuthPageShell>
   );
 }

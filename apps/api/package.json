@@ -16,13 +16,16 @@
     "@atlas/db": "workspace:*",
     "@atlas/forecast": "workspace:*",
     "@atlas/hedge": "workspace:*",
+    "@atlas/stockbridge": "workspace:*",
     "@sendgrid/mail": "^8.1.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
-    "drizzle-orm": "^0.38.0",
+    "drizzle-orm": "^0.45.2",
     "express": "^4.21.0",
     "express-rate-limit": "^7.4.0",
-    "rate-limit-redis": "^4.2.0"
+    "helmet": "^8.2.0",
+    "rate-limit-redis": "^4.2.0",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.0",

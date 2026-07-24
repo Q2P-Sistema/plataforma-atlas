@@ -1,0 +1,202 @@
+# ── SERVIÇOS ────────────────────────────────────────────────
+services:
+  # ── ATLAS API ─────────────────────────────────────────────
+  uat-atlas_api:
+    image: plasticosq2p/atlas-api:uat
+    hostname: "{{.Service.Name}}.{{.Task.Slot}}"
+    environment:
+      NODE_ENV: production
+      API_PORT: "3005"
+
+      # App é Brasil-only: roda o container em BRT para a lógica de datas locais
+      # (ex: "Data do Movimento" do ajuste OMIE, via getDate/getMonth). Sem isto o
+      # container fica em UTC e, após ~21h BRT, manda a data de amanhã -> OMIE rejeita.
+      # Node no alpine respeita TZ via ICU embutido (não precisa de tzdata).
+      TZ: America/Sao_Paulo
+
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      SESSION_SECRET: ${SESSION_SECRET}
+
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD}
+
+      N8N_HEALTH_URL: ${N8N_HEALTH_URL}
+
+      # URL base do frontend UAT — usada nos links dos e-mails (sem barra final)
+      APP_URL: ${APP_URL:-https://uat-atlas.q2p.com.br}
+
+      # ── E-mail transacional (SendGrid) ───────
+      # Sem chave, e-mails caem em log (console) em vez de enviar de verdade.
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      SENDGRID_FROM_EMAIL: ${SENDGRID_FROM_EMAIL}
+
+      # ── StockBridge — integração OMIE (dual-CNPJ) ───
+      # ATENÇÃO: OMIE_MODE=real GRAVA de verdade no ERP OMIE (ACXE e Q2P).
+      # Recomendado subir como 'mock' para o smoke test e só então flipar
+      # para 'real' no Portainer quando estiver pronto para o ensaio fiel.
+      OMIE_MODE: ${OMIE_MODE:-mock}
+      OMIE_API_URL: ${OMIE_API_URL:-https://app.omie.com.br/api/v1/}
+      OMIE_ACXE_KEY: ${OMIE_ACXE_KEY}
+      OMIE_ACXE_SECRET: ${OMIE_ACXE_SECRET}
+      OMIE_Q2P_KEY: ${OMIE_Q2P_KEY}
+      OMIE_Q2P_SECRET: ${OMIE_Q2P_SECRET}
+
+      # CC do admin em e-mails operacionais do StockBridge (monitorar por cópia).
+      STOCKBRIDGE_ADMIN_CC_EMAIL: ${STOCKBRIDGE_ADMIN_CC_EMAIL}
+      # Data de corte (YYYY-MM-DD) p/ gap fiscal/físico no Cockpit. Preencher no .env
+      # com valor real (vazio só é tolerado depois do rebuild com o config.ts novo).
+      STOCKBRIDGE_FISCAL_CUTOFF_DATE: ${STOCKBRIDGE_FISCAL_CUTOFF_DATE}
+
+      # Shared secret n8n ↔ Atlas (endpoint de saídas automáticas).
+      # Sem isto, as saídas automáticas via n8n NÃO autenticam.
+      ATLAS_INTEGRATION_KEY: ${ATLAS_INTEGRATION_KEY}
+
+      # ── Feature Flags ────────────────────────
+      # Defaults do UAT já ligam os 4 módulos do escopo deste ensaio;
+      # podem ser sobrescritos pelo env do Portainer.
+      MODULE_HEDGE_ENABLED: ${MODULE_HEDGE_ENABLED:-true}
+      MODULE_STOCKBRIDGE_ENABLED: ${MODULE_STOCKBRIDGE_ENABLED:-true}
+      MODULE_BREAKINGPOINT_ENABLED: ${MODULE_BREAKINGPOINT_ENABLED:-true}
+      MODULE_CLEVEL_ENABLED: ${MODULE_CLEVEL_ENABLED:-false}
+      MODULE_COMEXINSIGHT_ENABLED: ${MODULE_COMEXINSIGHT_ENABLED:-false}
+      MODULE_COMEXFLOW_ENABLED: ${MODULE_COMEXFLOW_ENABLED:-false}
+      MODULE_FORECAST_ENABLED: ${MODULE_FORECAST_ENABLED:-true}
+
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 5
+        window: 120s
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.uat-atlas-api.rule=Host(`uat-atlas.q2p.com.br`) && PathPrefix(`/api`)
+        - traefik.http.routers.uat-atlas-api.entrypoints=websecure
+        - traefik.http.routers.uat-atlas-api.tls=true
+        - traefik.http.routers.uat-atlas-api.tls.certresolver=letsencryptresolver
+        - traefik.http.routers.uat-atlas-api.service=uat-atlas-api
+        - traefik.http.services.uat-atlas-api.loadbalancer.server.port=3005
+        - traefik.http.services.uat-atlas-api.loadbalancer.server.scheme=http
+
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3005/api/v1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+    networks:
+      - network_swarm_public
+      - network_uat_swarm_public
+
+  # ── ATLAS WEB ─────────────────────────────────────────────
+  uat-atlas_web:
+    image: plasticosq2p/atlas-web:uat
+    hostname: "{{.Service.Name}}.{{.Task.Slot}}"
+
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 5
+        window: 120s
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.uat-atlas-web.rule=Host(`uat-atlas.q2p.com.br`)
+        - traefik.http.routers.uat-atlas-web.entrypoints=websecure
+        - traefik.http.routers.uat-atlas-web.tls=true
+        - traefik.http.routers.uat-atlas-web.tls.certresolver=letsencryptresolver
+        - traefik.http.routers.uat-atlas-web.service=uat-atlas-web
+        - traefik.http.services.uat-atlas-web.loadbalancer.server.port=80
+        - traefik.http.services.uat-atlas-web.loadbalancer.server.scheme=http
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+    networks:
+      - network_swarm_public
+
+  # ── REDIS (UAT dedicado) ──────────────────────────────────
+  # Redis próprio do UAT — NÃO compartilha com dev/prod (evita colisão de
+  # sessão/cache). Vive na network_uat_swarm_public, junto do Postgres UAT.
+  # Serviço nomeado `redis`: no Swarm o DNS é `<stack>_<serviço>` =
+  # `uat-atlas_redis` (por isso REDIS_URL=redis://uat-atlas_redis:6379).
+  # Nome curto NÃO resolve neste cluster — tem que ser o completo.
+  # Config espelhada do Redis de dev (pós-incidente OOM 2026-05-18):
+  # maxmemory + allkeys-lru, healthcheck e update stop-first.
+  redis:
+    image: redis:8.6.2
+    hostname: "{{.Service.Name}}.{{.Task.Slot}}"
+    command: >
+      redis-server
+      --appendonly yes
+      --port 6379
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - uat-atlas-redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - network_uat_swarm_public
+    deploy:
+      mode: replicated
+      replicas: 1
+      # Co-locado com a API (manager). Se o tier de dados do UAT for outro nó,
+      # troque para `- node.hostname == <nó>` (o dev usa database-01).
+      placement:
+        constraints:
+          - node.role == manager
+      update_config:
+        order: stop-first
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 768M
+      restart_policy:
+        condition: any
+        delay: 5s
+
+# ── REDES DOCKER ────────────────────────────────────────────
+# network_swarm_public = ingress público do Traefik (roteia uat-atlas.q2p.com.br).
+# network_uat_swarm_public = Postgres + Redis do UAT. Sem rede de dev: a integração
+# n8n é inbound via URL pública (ATLAS_URL) e o health usa o n8n público.
+networks:
+  network_swarm_public:
+    external: true
+  network_uat_swarm_public:
+    external: true
+
+# ── VOLUMES ─────────────────────────────────────────────────
+volumes:
+  uat-atlas-redisdata:

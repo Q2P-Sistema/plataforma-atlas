@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
@@ -59,6 +59,20 @@ const mockUserNoSetup = {
 const redisStore: Record<string, string> = {};
 
 vi.mock('@atlas/core', () => ({
+  // PR #72 moveu o envelope para @atlas/core — o mock precisa expor as funcoes
+  // (puras, copiadas de packages/core/src/envelope.ts) ou as rotas quebram com
+  // 'No "sendError" export is defined on the "@atlas/core" mock'.
+  sendSuccess: (res: any, data: any, status = 200, meta?: any) => {
+    const body: any = { data, error: null };
+    if (meta) body.meta = meta;
+    res.status(status).json(body);
+  },
+  sendError: (res: any, code: string, message: string, status = 400, fields?: any, traceId?: any) => {
+    const error: any = { code, message };
+    if (fields) error.fields = fields;
+    if (traceId) error.traceId = traceId;
+    res.status(status).json({ data: null, error });
+  },
   loadConfig: () => ({
     DATABASE_URL: 'postgresql://test:test@localhost:5432/test',
     REDIS_URL: 'redis://localhost:6379',
@@ -72,6 +86,7 @@ vi.mock('@atlas/core', () => ({
     SESSION_SECRET: 'test-secret-1234567890',
     API_PORT: 3005,
     NODE_ENV: 'test',
+    AUTH_2FA_ENABLED: true,
   }),
   getDb: () => ({
     select: vi.fn(() => ({
@@ -114,10 +129,18 @@ vi.mock('@atlas/core', () => ({
       return Promise.resolve('OK');
     }),
     get: vi.fn((key: string) => Promise.resolve(redisStore[key] ?? null)),
-    del: vi.fn((key: string) => {
-      delete redisStore[key];
-      return Promise.resolve(1);
+    del: vi.fn((...keys: string[]) => {
+      let n = 0;
+      for (const k of keys) if (k in redisStore) { delete redisStore[k]; n++; }
+      return Promise.resolve(n);
     }),
+    incr: vi.fn((key: string) => {
+      const n = Number(redisStore[key] ?? 0) + 1;
+      redisStore[key] = String(n);
+      return Promise.resolve(n);
+    }),
+    expire: vi.fn(() => Promise.resolve(1)),
+    ttl: vi.fn(() => Promise.resolve(1800)),
     ping: vi.fn().mockResolvedValue('PONG'),
   }),
   createLogger: () => ({
@@ -126,9 +149,17 @@ vi.mock('@atlas/core', () => ({
     debug: vi.fn(),
     warn: vi.fn(),
   }),
+  sendEmail: vi.fn(() => Promise.resolve()),
+  buildPasswordResetEmail: vi.fn(() => ({ subject: 's', html: 'h', text: 't' })),
 }));
 
-vi.mock('@atlas/auth', () => ({
+vi.mock('@atlas/auth', () => {
+  // ACXEGDP-316: rotas de bootstrap (me/logout/setup/confirm/modules) usam a
+  // variante requireAuthAllowPending2fa — mesmo vi.fn() compartilhado para o
+  // mockImplementation abaixo valer para as duas.
+  const requireAuthMock = vi.fn();
+  return {
+  csrfProtection: (_req: any, _res: any, next: any) => next(),
   verifyPassword: vi.fn((_hash: string, password: string) =>
     Promise.resolve(password === 'correct-password'),
   ),
@@ -160,7 +191,8 @@ vi.mock('@atlas/auth', () => ({
     return Promise.resolve(null);
   }),
   destroySession: vi.fn(() => Promise.resolve()),
-  requireAuth: vi.fn(),
+  requireAuth: requireAuthMock,
+  requireAuthAllowPending2fa: requireAuthMock,
   checkLoginRateLimit: vi.fn(() => Promise.resolve({ locked: false })),
   recordFailedLogin: vi.fn(() => Promise.resolve()),
   resetFailedLogins: vi.fn(() => Promise.resolve()),
@@ -170,9 +202,15 @@ vi.mock('@atlas/auth', () => ({
   ),
   generateQRCodeDataUrl: vi.fn(() => Promise.resolve('data:image/png;base64,TESTQR')),
   verifyCode: vi.fn((_secret: string, code: string) => code === '123456'),
-}));
+  };
+});
 
 import { requireAuth as _requireAuth, validateSession } from '@atlas/auth';
+
+// Por padrão as rotas autenticadas veem um usuário SEM 2FA (fluxo de primeiro
+// setup). Testes de step-up (SEG-10) setam este override para um usuário com
+// totpEnabled=true e restauram no afterEach.
+let setupUserOverride: typeof mockUser2FA | null = null;
 
 vi.mocked(_requireAuth).mockImplementation(((req: any, res: any, next: any) => {
   const sessionId = req.cookies?.atlas_session;
@@ -191,7 +229,7 @@ vi.mocked(_requireAuth).mockImplementation(((req: any, res: any, next: any) => {
       });
       return;
     }
-    req.user = mockUserNoSetup; // User without 2FA for setup tests
+    req.user = setupUserOverride ?? mockUserNoSetup;
     req.session = session;
     next();
   });
@@ -278,6 +316,71 @@ describe('2FA Routes', () => {
       expect(res.status).toBe(401);
       expect(res.body.error.code).toBe('INVALID_TOKEN');
     });
+
+    // SEG-04: brute-force de TOTP
+    it('bloqueia após 5 tentativas de código inválido (429) e invalida o tempToken', async () => {
+      const loginRes = await request(app)
+        .post('/api/v1/auth/login')
+        .send({ email: 'gestor@test.com', password: 'correct-password' });
+      const { tempToken } = loginRes.body.data;
+
+      // 5 tentativas erradas → 401
+      for (let i = 0; i < 5; i++) {
+        const r = await request(app).post('/api/v1/auth/verify-2fa').send({ tempToken, code: '000000' });
+        expect(r.status).toBe(401);
+        expect(r.body.error.code).toBe('INVALID_2FA_CODE');
+      }
+      // 6ª → 429 (lockout)
+      const r6 = await request(app).post('/api/v1/auth/verify-2fa').send({ tempToken, code: '000000' });
+      expect(r6.status).toBe(429);
+      expect(r6.body.error.code).toBe('TOO_MANY_ATTEMPTS');
+
+      // Código correto após o lockout não loga — tempToken foi invalidado
+      const r7 = await request(app).post('/api/v1/auth/verify-2fa').send({ tempToken, code: '123456' });
+      expect(r7.status).toBe(401);
+      expect(r7.body.error.code).toBe('INVALID_TOKEN');
+    });
+  });
+
+  // SEG-09: rate limit por IP em forgot/reset. Cada teste usa um IP distinto
+  // (o limiter é por IP e o MemoryStore persiste no processo do router).
+  describe('SEG-09 rate limit forgot/reset', () => {
+    it('forgot-password bloqueia no 6º request do mesmo IP (429)', async () => {
+      const ip = '10.9.9.1';
+      for (let i = 0; i < 5; i++) {
+        const r = await request(app).post('/api/v1/auth/forgot-password')
+          .set('X-Forwarded-For', ip).send({ email: 'gestor@test.com' });
+        expect(r.status).not.toBe(429);
+      }
+      const r6 = await request(app).post('/api/v1/auth/forgot-password')
+        .set('X-Forwarded-For', ip).send({ email: 'gestor@test.com' });
+      expect(r6.status).toBe(429);
+      expect(r6.body.error.code).toBe('TOO_MANY_ATTEMPTS');
+    });
+
+    it('IPs distintos não compartilham o orçamento', async () => {
+      // Esgota 10.9.9.2
+      for (let i = 0; i < 6; i++) {
+        await request(app).post('/api/v1/auth/forgot-password')
+          .set('X-Forwarded-For', '10.9.9.2').send({ email: 'gestor@test.com' });
+      }
+      // Outro IP ainda passa
+      const r = await request(app).post('/api/v1/auth/forgot-password')
+        .set('X-Forwarded-For', '10.9.9.3').send({ email: 'gestor@test.com' });
+      expect(r.status).not.toBe(429);
+    });
+
+    it('reset-password bloqueia no 11º request do mesmo IP (429)', async () => {
+      const ip = '10.9.9.4';
+      for (let i = 0; i < 10; i++) {
+        const r = await request(app).post('/api/v1/auth/reset-password')
+          .set('X-Forwarded-For', ip).send({ token: 'bad', newPassword: 'x' });
+        expect(r.status).not.toBe(429);
+      }
+      const r11 = await request(app).post('/api/v1/auth/reset-password')
+        .set('X-Forwarded-For', ip).send({ token: 'bad', newPassword: 'x' });
+      expect(r11.status).toBe(429);
+    });
   });
 
   describe('POST /api/v1/auth/setup-2fa', () => {
@@ -296,6 +399,48 @@ describe('2FA Routes', () => {
       const res = await request(app).post('/api/v1/auth/setup-2fa');
 
       expect(res.status).toBe(401);
+    });
+
+    // SEG-10: re-setup com 2FA já habilitado exige a senha atual (step-up)
+    describe('step-up quando 2FA já está habilitado', () => {
+      afterEach(() => { setupUserOverride = null; });
+
+      it('rejeita re-setup sem senha (401 REAUTH_REQUIRED)', async () => {
+        setupUserOverride = mockUser2FA; // totpEnabled: true
+        const res = await request(app)
+          .post('/api/v1/auth/setup-2fa')
+          .set('Cookie', 'atlas_session=00000000-0000-0000-0000-session000002');
+        expect(res.status).toBe(401);
+        expect(res.body.error.code).toBe('REAUTH_REQUIRED');
+      });
+
+      it('rejeita re-setup com senha errada (401)', async () => {
+        setupUserOverride = mockUser2FA;
+        const res = await request(app)
+          .post('/api/v1/auth/setup-2fa')
+          .set('Cookie', 'atlas_session=00000000-0000-0000-0000-session000002')
+          .send({ password: 'senha-errada' });
+        expect(res.status).toBe(401);
+        expect(res.body.error.code).toBe('REAUTH_REQUIRED');
+      });
+
+      it('permite re-setup com a senha correta (200)', async () => {
+        setupUserOverride = mockUser2FA;
+        const res = await request(app)
+          .post('/api/v1/auth/setup-2fa')
+          .set('Cookie', 'atlas_session=00000000-0000-0000-0000-session000002')
+          .send({ password: 'correct-password' });
+        expect(res.status).toBe(200);
+        expect(res.body.data.secret).toBe('TESTSECRETBASE32');
+      });
+
+      it('primeiro setup (totpEnabled=false) NÃO exige senha', async () => {
+        // setupUserOverride null → mockUserNoSetup (totpEnabled: false)
+        const res = await request(app)
+          .post('/api/v1/auth/setup-2fa')
+          .set('Cookie', 'atlas_session=00000000-0000-0000-0000-session000002');
+        expect(res.status).toBe(200);
+      });
     });
   });
 

@@ -13,9 +13,16 @@ export function csrfProtection(
     return;
   }
 
+  // SEG-07: fail-CLOSED. Antes, ausência de csrfToken na sessão chamava next()
+  // sem validar (fail-open) — dava falsa sensação de proteção. Como este
+  // middleware só é montado após requireAuth, toda sessão válida tem csrfToken;
+  // ausência aqui é anomalia e deve negar.
   const sessionCsrf = (req as any).session?.csrfToken;
   if (!sessionCsrf) {
-    next();
+    res.status(403).json({
+      data: null,
+      error: { code: 'CSRF_INVALID', message: 'Token CSRF inválido' },
+    });
     return;
   }
 

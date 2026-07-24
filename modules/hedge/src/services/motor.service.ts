@@ -1,7 +1,9 @@
 import Decimal from 'decimal.js';
-import { eq, inArray } from 'drizzle-orm';
+import { desc, eq, inArray } from 'drizzle-orm';
 import { getDb, getPool, createLogger } from '@atlas/core';
 import { bucketMensal, configMotor, ndfTaxas } from '@atlas/db';
+import { fetchPtaxAtual } from '@atlas/integration-bcb';
+import { parseDataCivilLocal } from './datas.js';
 
 const logger = createLogger('hedge:motor');
 
@@ -56,7 +58,7 @@ interface MotorConfig {
 /**
  * Carrega parametros configurados do banco (config_motor + taxas NDF).
  */
-async function loadMotorConfig(): Promise<MotorConfig> {
+export async function loadMotorConfig(): Promise<MotorConfig> {
   const db = getDb();
 
   const keys = ['cobertura_base_pct', 'cobertura_bump_pct', 'estoque_bump_threshold'];
@@ -72,19 +74,20 @@ async function loadMotorConfig(): Promise<MotorConfig> {
   // camada1_ajuste_ep = bump - base (legacy: 68 - 60 = 8)
   const camada1_ajuste_ep = cobertura_bump - camada1_minima;
 
-  // Load latest NDF rates
+  // Load latest NDF rates. ORDER BY data_ref DESC → a cotacao mais recente vem
+  // primeiro; o first-wins abaixo fixa a taxa mais nova por prazo. (Antes: ASC +
+  // limit(10) truncava nas datas MAIS ANTIGAS e congelava as taxas — MOD-01.)
   const taxaRows = await db
     .select()
     .from(ndfTaxas)
-    .orderBy(ndfTaxas.dataRef, ndfTaxas.prazoDias)
-    .limit(10);
+    .orderBy(desc(ndfTaxas.dataRef), ndfTaxas.prazoDias)
+    .limit(30);
 
-  // Use most recent rate per prazo
+  // Use most recent rate per prazo — first wins (rows em data_ref desc)
   const ndf_rates: Record<string, number> = {};
   for (const row of taxaRows) {
     const key = `ndf_${row.prazoDias}d`;
-    // Last wins (rows ordered by dataRef asc, so latest overwrites)
-    ndf_rates[key] = Number(row.taxa);
+    if (!(key in ndf_rates)) ndf_rates[key] = Number(row.taxa);
   }
 
   return { camada1_minima, camada1_ajuste_ep, estoque_bump_threshold, ndf_rates };
@@ -177,6 +180,17 @@ export async function calcularMotor(params: MotorParams): Promise<MotorResult> {
   const hoje = new Date();
   const recomendacoes: Recomendacao[] = [];
 
+  // MOD-09 (ACXEGDP-278): custo NDF com PTAX spot real (mesma formula do
+  // criarNdf: gap × (taxa − spot)), nao o proxy de spread fixo 2% que o
+  // comentario antigo prometia mas nao entregava. PTAX indisponivel → mantem o
+  // proxy antigo com warn (o motor e advisory; nao pode cair por causa do BCB).
+  let ptaxSpot: Decimal | null = null;
+  try {
+    ptaxSpot = new Decimal((await fetchPtaxAtual()).venda);
+  } catch (err) {
+    logger.warn({ err }, 'PTAX indisponivel — custo NDF usa proxy de spread 2%');
+  }
+
   for (const bucket of buckets) {
     const pagarUsdRaw = new Decimal(bucket.pagarUsd ?? '0');
     const parcelaEstNaoPago = totalPagarAll.isZero()
@@ -187,8 +201,9 @@ export async function calcularMotor(params: MotorParams): Promise<MotorResult> {
 
     if (pagarUsd.isZero()) continue;
 
-    // Calculate days to maturity
-    const vencimento = new Date(bucket.mesRef);
+    // Calculate days to maturity — parse LOCAL (MOD-08): new Date('YYYY-MM-01')
+    // e UTC-midnight e os getters locais devolviam o mes anterior.
+    const vencimento = parseDataCivilLocal(bucket.mesRef);
     vencimento.setMonth(vencimento.getMonth() + 1);
     vencimento.setDate(0);
     const diasAteVencimento = Math.max(
@@ -205,9 +220,10 @@ export async function calcularMotor(params: MotorParams): Promise<MotorResult> {
     const l1Target = pagarUsd.times(camadas.l1_pct).div(100);
     const gapL1 = Decimal.max(new Decimal(0), l1Target.minus(ndfUsd));
 
-    // NDF cost: gap * (taxa_ndf - ptax_spot) — we approximate with taxa as cost indicator
+    // Custo NDF: gap × (taxa_ndf − ptax_spot), em Decimal ponta a ponta (MOD-09).
+    // Sem PTAX (fallback raro), proxy antigo: taxa × 2% de spread.
     const custoNdfBrl = gapL1.gt(0) && taxaNdf > 0
-      ? gapL1.times(new Decimal(taxaNdf).minus(taxaNdf * 0.98)).round()
+      ? gapL1.times(new Decimal(taxaNdf).minus(ptaxSpot ?? new Decimal(taxaNdf).times('0.98'))).round()
       : new Decimal(0);
 
     const status: 'ok' | 'sub_hedged' = coberturaAtual.gte(camadas.l1_pct) ? 'ok' : 'sub_hedged';

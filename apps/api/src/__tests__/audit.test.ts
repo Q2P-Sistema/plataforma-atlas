@@ -69,6 +69,20 @@ const mockDiretor = {
 };
 
 vi.mock('@atlas/core', () => ({
+  // PR #72 moveu o envelope para @atlas/core — o mock precisa expor as funcoes
+  // (puras, copiadas de packages/core/src/envelope.ts) ou as rotas quebram com
+  // 'No "sendError" export is defined on the "@atlas/core" mock'.
+  sendSuccess: (res: any, data: any, status = 200, meta?: any) => {
+    const body: any = { data, error: null };
+    if (meta) body.meta = meta;
+    res.status(status).json(body);
+  },
+  sendError: (res: any, code: string, message: string, status = 400, fields?: any, traceId?: any) => {
+    const error: any = { code, message };
+    if (fields) error.fields = fields;
+    if (traceId) error.traceId = traceId;
+    res.status(status).json({ data: null, error });
+  },
   loadConfig: () => ({ NODE_ENV: 'test' }),
   getConfig: () => ({ NODE_ENV: 'test' }),
   getDb: () => ({
@@ -104,6 +118,7 @@ vi.mock('@atlas/core', () => ({
 }));
 
 vi.mock('@atlas/auth', () => ({
+  csrfProtection: (_req: any, _res: any, next: any) => next(),
   requireAuth: vi.fn(),
   requireRole: vi.fn(() => vi.fn()),
   listUsers: vi.fn(() => Promise.resolve([])),
