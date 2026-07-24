@@ -134,3 +134,38 @@ describe('cockpit-executivo.service — trânsito valorizado por PRODUTO (T013/T
     expect(sqlTransito).toContain('m.produto_codigo_acxe = i.n_cod_prod');
   });
 });
+
+// ── ACXEGDP-183 (Parte A): o critério estendido de "recebida" aceita
+// movimentacao E movimentacao_legado — filhote antiga recebida no legado
+// (n_id_receb nunca preenchido no OMIE) não pode voltar a contar como
+// pendente. Estes testes travam a PRESENÇA do predicado do legado nos SQLs:
+// sem eles, remover o `OR recebidaViaLegadoSql(...)` de um consumidor não
+// quebraria teste nenhum (o unit do helper continuaria verde). ─────────────
+
+describe('posição fiscal — critério estendido aceita movimentacao_legado (ACXEGDP-183 Parte A)', () => {
+  beforeEach(() => {
+    sqlsExecutados.length = 0;
+  });
+
+  it('getCockpit: os 3 blocos de importação consultam movimentacao_legado além do n_id_receb', async () => {
+    const { getCockpit } = await import('../services/cockpit.service.js');
+    await getCockpit({});
+
+    const sqlCockpit = sqlsExecutados.find((s) => s.includes('transito_recebido_filhotes'));
+    expect(sqlCockpit).toBeDefined();
+    // transito_recebido_filhotes + Parte A (rec) + Parte B (fallback):
+    const ocorrenciasLegado = (sqlCockpit!.match(/stockbridge\.movimentacao_legado/g) ?? []).length;
+    expect(ocorrenciasLegado).toBeGreaterThanOrEqual(3);
+    // OMIE segue sendo uma das fontes (OR entre as 3, não substituição).
+    expect(sqlCockpit).toContain('n_id_receb > 0');
+  });
+
+  it('getCockpitExecutivo: o desconto de filhotes recebidas também aceita o legado', async () => {
+    const { getCockpitExecutivo } = await import('../services/cockpit-executivo.service.js');
+    await getCockpitExecutivo();
+
+    const sqlTransito = sqlsExecutados.find((s) => s.includes('transito_recebido_filhotes'));
+    expect(sqlTransito).toBeDefined();
+    expect(sqlTransito).toContain('stockbridge.movimentacao_legado');
+  });
+});
