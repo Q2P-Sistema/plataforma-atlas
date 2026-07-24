@@ -205,10 +205,19 @@ describe('aprovacao.service#aprovar', () => {
       quantidadeFiscalKg: '25000', custoBrlKg: '1.20',
       valorTotalNfBrl: '31250.00', codigoLocalEstoqueOrigemAcxe: '999',
     };
-    vi.mocked(getDb).mockReturnValue(criarDbComTabelas(await tabelas(aprRow, loteRow)) as never);
+    const db = criarDbComTabelas(await tabelas(aprRow, loteRow));
+    vi.mocked(getDb).mockReturnValue(db as never);
 
     const res = await aprovar({ id: 'apr-1', usuarioId: 'u1', perfilUsuario: 'gestor' });
     expect(res).toEqual({ id: 'apr-1', loteStatus: 'provisorio' });
+
+    // NF 5376: movimentacao criada via aprovacao deve carregar o produto do lote —
+    // sem ele a checagem "recebida por produto" (feature 014) nunca casa e a NF
+    // fica presa como "Aguardando recebimento".
+    const movValues = db.values.mock.calls
+      .map((c) => c[0] as Record<string, unknown>)
+      .find((v) => v.tipoMovimento === 'entrada_nf');
+    expect(movValues).toMatchObject({ produtoCodigoAcxe: 1001, produtoCodigoQ2p: 2001 });
     expect(omieMod.consultarNF).not.toHaveBeenCalled(); // usa lote persistido
     // 3 chamadas: ACXE primaria (recebido), Q2P (recebido), ACXE diferenca (faltando)
     expect(omieMod.incluirAjusteEstoque).toHaveBeenCalledTimes(3);
