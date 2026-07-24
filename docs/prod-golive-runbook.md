@@ -23,7 +23,7 @@
 
 | # | Tarefa | Quem | Status |
 |---|---|---|---|
-| P1 | DNS `atlas.q2p.com.br` → mesmo destino de `uat-atlas.q2p.com.br` | infra | ☐ |
+| P1 | DNS `atlas.q2p.com.br` → mesmo destino de `uat-atlas.q2p.com.br` | infra | ☑ 23/07 — já resolve p/ o ingress, TLS ok (Traefik responde 404 = sem router ativo) |
 | P2 | Confirmar no Portainer a rede overlay que alcança o Postgres :5432 (a mesma da stack n8n) e ajustar `network_prod_swarm_public` + host do `DATABASE_URL` no stack/env | infra | ☐ |
 | P3 | Confirmar no servidor que o cron destrutivo de sync está desativado (`sudo crontab -l`, `/etc/cron.d/`, `systemctl list-timers` — ver docs/uat-sync-autonomous-fix.md) | infra | ☐ |
 | P4 | Preencher env da stack `atlas` no Portainer (template `deploy/portainer/atlas.env.example`; `SESSION_SECRET` NOVO; OMIE/SendGrid/`ATLAS_INTEGRATION_KEY` copiados do UAT) | infra | ☐ |
@@ -80,6 +80,12 @@ cd <repo>
    ```
 7. **[~19:15] Deploy da stack `atlas`** no Portainer (`deploy/portainer/atlas.stack.yml`
    + env preenchido; `ATLAS_VERSION` = tag da release). Healthchecks verdes.
+   **Atenção — stack legada**: já existiu uma stack `atlas` de produção (versão
+   antiga da main: imagens `:latest`, rede `network_dev_swarm_public`, env de DEV
+   com `SEED_ADMIN_*`). Em 23/07 ela não estava em execução (Traefik 404 no host).
+   Se ela ainda existir no Portainer, **substituir o compose inteiro e LIMPAR o
+   env antigo** — não herdar `SEED_ADMIN_*` nem `DATABASE_URL` de DEV, e remover
+   a rede de DEV.
 8. **[~19:30] Smoke test SÓ-LEITURA** (ninguém recebe/aprova/dá saída):
    - `curl -s https://atlas.q2p.com.br/api/v1/health` → healthy, 4 módulos enabled;
    - TLS Let's Encrypt emitido; login de usuário real do UAT funciona (senha atual);
