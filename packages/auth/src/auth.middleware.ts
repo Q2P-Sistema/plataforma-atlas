@@ -26,10 +26,12 @@ const SESSION_COOKIE = 'atlas_session';
 // usuário (recarregado a cada request) — confirm-2fa grava totp_enabled=true e a
 // MESMA sessão volta a passar, sem novo login.
 function isPending2faSetup(user: User): boolean {
+  // totpSecret ausente com totp_enabled=true é anomalia (só por edição manual no
+  // banco) — sem o secret não há desafio possível, então trata como setup pendente.
   return (
     Boolean(getConfig().AUTH_2FA_ENABLED) &&
     (user.role === 'gestor' || user.role === 'diretor') &&
-    !user.totpEnabled
+    (!user.totpEnabled || !user.totpSecret)
   );
 }
 
