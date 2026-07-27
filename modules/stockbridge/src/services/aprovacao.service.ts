@@ -550,6 +550,11 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
           // STK-09: empresa participa da chave de idempotencia (migration 0044);
           // derivada do cnpj do lote (mesma origem do recebimento).
           empresa: loteRow!.cnpj.toLowerCase().includes('acxe') ? 'acxe' : 'q2p',
+          // Feature 013/014: produto participa da idempotencia (migration 0046) e
+          // da checagem "recebida" por produto — sem ele a NF segue como pendente
+          // na fila/cockpit mesmo apos aprovada (ex.: NF 5376).
+          produtoCodigoAcxe: loteRow!.produtoCodigoAcxe,
+          produtoCodigoQ2p: loteRow!.produtoCodigoQ2p,
           quantidadeKg: String(Number(ap.quantidadeRecebidaKg ?? loteRow!.quantidadeFisicaKg)),
           mvAcxe: 1,
           dtAcxe: new Date(),
