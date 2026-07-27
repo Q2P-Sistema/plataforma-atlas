@@ -1,6 +1,9 @@
 # Runbook — Go-live do Atlas em PRODUÇÃO (atlas.q2p.com.br)
 
-> Janela: **sexta-feira 2026-07-24, a partir das 17h30** (empresa parada no fim de semana).
+> Janela: **sexta-feira 2026-07-31, a partir das 17h30** (empresa parada no fim de semana).
+> A janela original de 24/07 **não foi executada** (hotfix ACXEGDP na tarde de sexta;
+> operação seguiu no UAT) — replanejada para 31/07 com release **v1.1.9**, que inclui
+> o hotfix `0bfc3da` (grava produto na movimentação criada via aprovação de divergência).
 > Origem do estado: banco UAT (`db.manager01.q2p.com.br:5437/acxe_q2p`) — o UAT rodou
 > **como produção** desde junho (OMIE real). Destino: banco PROD (`:5432/acxe_q2p`,
 > espelho OMIE vivo, sem schemas Atlas até este go-live).
