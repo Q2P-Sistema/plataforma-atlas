@@ -24,6 +24,7 @@ import cmcRouter from './cmc.routes.js';
 import conferenciaRouter from './conferencia.routes.js';
 import nfPedidoMapaRouter from './nf-pedido-mapa.routes.js';
 import pendenciasFiscaisRouter from './pendencias-fiscais.routes.js';
+import baixaPedidoRouter from './baixa-pedido.routes.js';
 
 const logger = createLogger('stockbridge:routes');
 const router: Router = Router();
@@ -73,6 +74,8 @@ router.use(meuEstoqueRouter);
 router.use(adminUserGalpaoRouter);
 // Idempotencia OMIE — retry de operacoes pendentes (US2/US3/US4)
 router.use(operacoesPendentesRouter);
+// Baixa do pedido de compra Q2P apos recebimento (ACXEGDP-344) — painel + retry, gestor+
+router.use(baixaPedidoRouter);
 // Admin (gestor+) — disparo manual de crons (alerta comodato vencido, etc.)
 router.use(adminCronRouter);
 // Custos de Estoque (CMC por família/produto) — gestor+ (feature 008)

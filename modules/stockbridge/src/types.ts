@@ -82,6 +82,27 @@ export function isStatusOmiePendente(status: StatusOmie): boolean {
 }
 
 /**
+ * Estado da baixa do pedido de compra Q2P de uma entrada de importacao
+ * (ACXEGDP-344, migration 0047). NULL na movimentacao = nao se aplica.
+ * - pendente: aguardando a baixa (recem-recebida, ou backfill).
+ * - aguardando_vinculo: NF sem vinculo com pedido ACXE no mapa (FUP) — sem
+ *   FIFO (decisao 28/08/2026, migration 0051); cron horario re-tenta.
+ * - concluida: toda a quantidade recebida foi descontada de pedidos Q2P.
+ * - sem_saldo: descontou o que havia mas sobrou quantidade sem pedido aberto —
+ *   revisao manual (mesmo alerta que o legado enviava por e-mail).
+ * - falha: OMIE falhou em alguma chamada — retentavel pelo painel.
+ */
+export type StatusBaixaPedidoQ2p = 'pendente' | 'aguardando_vinculo' | 'concluida' | 'sem_saldo' | 'falha';
+
+/**
+ * O OMIE rejeita nQtde=0 no AlteraPedCompra. O legado PHP zerava pedidos
+ * gravando 0,1 kg (`'nQtde' => $novoEstoque ?: 0.1`) — 62 pedidos em PROD
+ * carregam essa marca. Mantido por paridade: um pedido com saldo <= sentinela
+ * e considerado ZERADO (nao entra na FIFO).
+ */
+export const QTD_SENTINELA_PEDIDO_ZERADO_KG = 0.1;
+
+/**
  * Sufixos do cod_int_ajuste enviado ao OMIE. Combinados com o op_id da
  * movimentacao para identificar de forma unica cada chamada IncluirAjusteEstoque.
  *
