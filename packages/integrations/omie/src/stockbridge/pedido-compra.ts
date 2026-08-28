@@ -242,8 +242,11 @@ export function parsePedidoCompraConsultado(
       "nCodPed" in ref
         ? `nCodPed=${ref.nCodPed}`
         : `cCodIntPed=${ref.cCodIntPed}`;
+    // Chaves de 1º nível na mensagem: se o OMIE devolver outro envelope, o erro
+    // já diz qual — evita uma rodada só para capturar a resposta crua.
+    const chaves = Object.keys(raw ?? {}).slice(0, 12).join(', ') || '(vazio)';
     throw new Error(
-      `ConsultarPedCompra (${refTxt}): resposta sem cabecalho_consulta`,
+      `ConsultarPedCompra (${refTxt}): resposta sem cabecalho_consulta — chaves recebidas: ${chaves}`,
     );
   }
   const produtos = (candidato.produtos_consulta ?? []).map((p) => ({
