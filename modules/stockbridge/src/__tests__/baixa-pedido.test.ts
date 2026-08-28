@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ACXEGDP-344: baixa do pedido de compra Q2P após recebimento de importação.
 //  - alocador FIFO puro (preferido primeiro, sentinela 0,1 kg, resto)
@@ -13,7 +13,7 @@ const consultarSpy = vi.fn();
 const alterarSpy = vi.fn();
 const alertaSpy = vi.fn();
 
-vi.mock("@atlas/core", () => ({
+vi.mock('@atlas/core', () => ({
   createLogger: () => ({
     info: vi.fn(),
     warn: vi.fn(),
@@ -30,39 +30,39 @@ vi.mock("@atlas/core", () => ({
       }),
   }),
   getConfig: () => ({
-    SEED_ADMIN_EMAIL: "admin@atlas.local",
-    APP_URL: "https://atlas.test",
+    SEED_ADMIN_EMAIL: 'admin@atlas.local',
+    APP_URL: 'https://atlas.test',
   }),
   sendEmail: vi.fn().mockResolvedValue(undefined),
   buildEmailLayout: (o: { titulo?: string }) => ({
-    html: String(o?.titulo ?? ""),
-    text: String(o?.titulo ?? ""),
+    html: String(o?.titulo ?? ''),
+    text: String(o?.titulo ?? ''),
   }),
-  escapeHtml: (v: unknown) => (v == null ? "" : String(v)),
-  emailDataList: () => "",
+  escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
+  emailDataList: () => '',
   emailActionBox: (html: string) => html,
 }));
 
-vi.mock("@atlas/db", () => ({
-  movimentacao: { __id: "movimentacao", id: {}, ativo: {} },
-  lote: { __id: "lote", id: {} },
+vi.mock('@atlas/db', () => ({
+  movimentacao: { __id: 'movimentacao', id: {}, ativo: {} },
+  lote: { __id: 'lote', id: {} },
   baixaPedidoQ2p: {
-    __id: "baixaPedidoQ2p",
+    __id: 'baixaPedidoQ2p',
     id: {},
     movimentacaoId: {},
     ativo: {},
   },
-  users: { __id: "users" },
-  userModules: { __id: "userModules" },
+  users: { __id: 'users' },
+  userModules: { __id: 'userModules' },
 }));
 
-vi.mock("@atlas/integration-omie", () => ({
+vi.mock('@atlas/integration-omie', () => ({
   consultarPedidoCompra: (...args: unknown[]) => consultarSpy(...args),
   alterarPedidoCompra: (...args: unknown[]) => alterarSpy(...args),
   isMockMode: () => false,
 }));
 
-vi.mock("../services/notificacao.service.js", () => ({
+vi.mock('../services/notificacao.service.js', () => ({
   enviarAlertaBaixaPedidoQ2p: (...args: unknown[]) => alertaSpy(...args),
 }));
 
@@ -74,12 +74,12 @@ import {
   listarPedidosAbertosQ2p,
   BaixaPedidoNaoAplicavelError,
   ETAPA_PEDIDO_Q2P_ABERTO,
-} from "../services/baixa-pedido.service.js";
-import { QTD_SENTINELA_PEDIDO_ZERADO_KG } from "../types.js";
+} from '../services/baixa-pedido.service.js';
+import { QTD_SENTINELA_PEDIDO_ZERADO_KG } from '../types.js';
 
 // ── Alocador puro ──────────────────────────────────────────────────────────────
 
-describe("planejarAlocacao (FIFO, paridade com o legado)", () => {
+describe('planejarAlocacao (FIFO, paridade com o legado)', () => {
   const cand = (ncodped: number, saldoKg: number, preferido = false) => ({
     ncodped,
     cnumero: String(ncodped),
@@ -88,7 +88,7 @@ describe("planejarAlocacao (FIFO, paridade com o legado)", () => {
     preferido,
   });
 
-  it("desconta do primeiro pedido quando o saldo cobre tudo", () => {
+  it('desconta do primeiro pedido quando o saldo cobre tudo', () => {
     const plano = planejarAlocacao(25_000, [cand(1, 100_000), cand(2, 50_000)]);
     expect(plano.alocacoes).toHaveLength(1);
     expect(plano.alocacoes[0]).toMatchObject({
@@ -101,48 +101,34 @@ describe("planejarAlocacao (FIFO, paridade com o legado)", () => {
     expect(plano.restanteKg).toBe(0);
   });
 
-  it("zera o primeiro (sentinela 0,1) e segue para o próximo em FIFO", () => {
+  it('zera o primeiro (sentinela 0,1) e segue para o próximo em FIFO', () => {
     const plano = planejarAlocacao(60_000, [cand(1, 50_000), cand(2, 50_000)]);
-    expect(
-      plano.alocacoes.map((a) => [
-        a.ncodped,
-        a.kgAlocado,
-        a.saldoNovoKg,
-        a.zerado,
-      ]),
-    ).toEqual([
+    expect(plano.alocacoes.map((a) => [a.ncodped, a.kgAlocado, a.saldoNovoKg, a.zerado])).toEqual([
       [1, 50_000, QTD_SENTINELA_PEDIDO_ZERADO_KG, true],
       [2, 10_000, 40_000, false],
     ]);
     expect(plano.restanteKg).toBe(0);
   });
 
-  it("saldo exatamente igual ao recebido → pedido zerado com sentinela (nunca nQtde=0)", () => {
+  it('saldo exatamente igual ao recebido → pedido zerado com sentinela (nunca nQtde=0)', () => {
     const plano = planejarAlocacao(27_000, [cand(1, 27_000)]);
     expect(plano.alocacoes[0]!.saldoNovoKg).toBe(0.1);
     expect(plano.alocacoes[0]!.zerado).toBe(true);
   });
 
-  it("pedido preferido (casado com o pedido ACXE da NF) vem antes mesmo estando depois na FIFO", () => {
-    const plano = planejarAlocacao(10_000, [
-      cand(1, 100_000),
-      cand(2, 100_000, true),
-    ]);
+  it('pedido preferido (casado com o pedido ACXE da NF) vem antes mesmo estando depois na FIFO', () => {
+    const plano = planejarAlocacao(10_000, [cand(1, 100_000), cand(2, 100_000, true)]);
     expect(plano.alocacoes[0]!.ncodped).toBe(2);
     expect(plano.alocacoes[0]!.preferido).toBe(true);
   });
 
-  it("pula pedidos já zerados (saldo <= sentinela) e devolve o resto sem pedido", () => {
-    const plano = planejarAlocacao(1_000, [
-      cand(1, 0.1),
-      cand(2, 0),
-      cand(3, 400),
-    ]);
+  it('pula pedidos já zerados (saldo <= sentinela) e devolve o resto sem pedido', () => {
+    const plano = planejarAlocacao(1_000, [cand(1, 0.1), cand(2, 0), cand(3, 400)]);
     expect(plano.alocacoes.map((a) => a.ncodped)).toEqual([3]);
     expect(plano.restanteKg).toBe(600);
   });
 
-  it("mantém 3 casas decimais sem erro de ponto flutuante", () => {
+  it('mantém 3 casas decimais sem erro de ponto flutuante', () => {
     const plano = planejarAlocacao(0.3, [cand(1, 0.7)]);
     expect(plano.alocacoes[0]!.saldoNovoKg).toBe(0.4);
   });
@@ -156,35 +142,35 @@ function pedidoFixture(overrides: Partial<ReturnType<typeof basePedido>> = {}) {
 function basePedido() {
   return {
     nCodPed: 8444305527,
-    cCodIntPed: "ITG536553742263605",
-    cNumero: "193",
-    cEtapa: "15",
-    dDtPrevisao: "04/02/2026",
-    dIncData: "14/03/2026",
+    cCodIntPed: 'ITG536553742263605',
+    cNumero: '193',
+    cEtapa: '15',
+    dDtPrevisao: '04/02/2026',
+    dIncData: '14/03/2026',
     nCodFor: 3070534015,
     cCodIntFor: null,
-    cCodParc: "000",
+    cCodParc: '000',
     nQtdeParc: 1,
-    cCodCateg: "2.01.01",
+    cCodCateg: '2.01.01',
     nCodCompr: 0,
     cContato: null,
     cContrato: null,
     nCodCC: 3010012043,
     nCodIntCC: null,
     nCodProj: 0,
-    cObs: "Pedido original ACXE: 423",
+    cObs: 'Pedido original ACXE: 423',
     cObsInt: null,
-    frete: { cTpFrete: "9" },
+    frete: { cTpFrete: '9' },
     produtos: [
       {
         nCodItem: 8444305528,
         cCodIntItem: null,
         nCodProd: 7853452187,
         cCodIntProd: null,
-        cProduto: "PELBD-030",
-        cDescricao: "PELBD LB1810E2",
-        cNCM: "3901.10.30",
-        cUnidade: "KG",
+        cProduto: 'PELBD-030',
+        cDescricao: 'PELBD LB1810E2',
+        cNCM: '3901.10.30',
+        cUnidade: 'KG',
         cEAN: null,
         nPesoLiq: 1,
         nPesoBruto: 1,
@@ -192,43 +178,41 @@ function basePedido() {
         nQtdeRec: 0,
         nValUnit: 0,
         nDesconto: 0,
-        codigoLocalEstoque: "8429029971",
+        codigoLocalEstoque: '8429029971',
       },
     ],
   };
 }
 
-describe("montarInputAlteracao / anexarObsBaixa", () => {
-  it("envia quantidade ABSOLUTA, identifica o item por nCodItem e omite nulls", () => {
+describe('montarInputAlteracao / anexarObsBaixa', () => {
+  it('envia quantidade ABSOLUTA, identifica o item por nCodItem e omite nulls', () => {
     const pedido = pedidoFixture();
     const input = montarInputAlteracao({
       pedido,
       item: pedido.produtos[0]!,
       saldoAnteriorKg: 24125,
       saldoNovoKg: 4125,
-      notaFiscal: "00005161",
+      notaFiscal: '00005161',
     });
     expect(input.nCodPed).toBe(8444305527);
-    expect(input.cCodIntPed).toBe("ITG536553742263605");
+    expect(input.cCodIntPed).toBe('ITG536553742263605');
     expect(input.produto.nQtde).toBe(4125);
     expect(input.produto.nCodItem).toBe(8444305528);
     expect(input.produto.cCodIntItem).toBeUndefined(); // espelho vem sem cCodIntItem
     expect(input.cContato).toBeUndefined();
-    expect(input.frete).toEqual({ cTpFrete: "9" });
-    expect(input.cObs).toContain("Pedido original ACXE: 423");
-    expect(input.cObs).toContain("NF 00005161");
-    expect(input.cObs).toContain("24125 kg -> 4125 kg");
-    expect(input.cObsInt).toContain("NF 00005161");
+    expect(input.frete).toEqual({ cTpFrete: '9' });
+    expect(input.cObs).toContain('Pedido original ACXE: 423');
+    expect(input.cObs).toContain('NF 00005161');
+    expect(input.cObs).toContain('24125 kg -> 4125 kg');
+    expect(input.cObsInt).toContain('NF 00005161');
   });
 
-  it("anexarObsBaixa preserva o texto anterior e limita o tamanho", () => {
-    expect(anexarObsBaixa(null, "5161", 10, 5, "24/08/2026")).toMatch(
-      /^Atlas — NF 5161/,
-    );
-    const longa = "x".repeat(5000);
-    const out = anexarObsBaixa(longa, "5161", 10, 5, "24/08/2026");
+  it('anexarObsBaixa preserva o texto anterior e limita o tamanho', () => {
+    expect(anexarObsBaixa(null, '5161', 10, 5, '24/08/2026')).toMatch(/^Atlas — NF 5161/);
+    const longa = 'x'.repeat(5000);
+    const out = anexarObsBaixa(longa, '5161', 10, 5, '24/08/2026');
     expect(out.length).toBeLessThanOrEqual(3000);
-    expect(out.endsWith("10 kg -> 5 kg")).toBe(true);
+    expect(out.endsWith('10 kg -> 5 kg')).toBe(true);
   });
 });
 
@@ -244,7 +228,7 @@ const inserts: Array<Record<string, unknown>> = [];
 const updates: Array<{ table: string; set: Record<string, unknown> }> = [];
 
 function montarDb(c: Cenario) {
-  let tabela = "";
+  let tabela = '';
   const chain: Record<string, unknown> = {};
   chain.select = vi.fn(() => chain);
   chain.from = vi.fn((t: { __id: string }) => {
@@ -253,13 +237,13 @@ function montarDb(c: Cenario) {
   });
   chain.where = vi.fn(() => chain);
   chain.limit = vi.fn(() => {
-    if (tabela === "movimentacao") return Promise.resolve(c.mov ? [c.mov] : []);
-    if (tabela === "lote") return Promise.resolve(c.lote ? [c.lote] : []);
+    if (tabela === 'movimentacao') return Promise.resolve(c.mov ? [c.mov] : []);
+    if (tabela === 'lote') return Promise.resolve(c.lote ? [c.lote] : []);
     return Promise.resolve([]);
   });
   // await db.select().from(baixaPedidoQ2p).where(...) sem limit → ledger
   chain.then = (resolve: (rows: unknown[]) => void) =>
-    resolve(tabela === "baixaPedidoQ2p" ? (c.ledger ?? []) : []);
+    resolve(tabela === 'baixaPedidoQ2p' ? (c.ledger ?? []) : []);
   chain.update = vi.fn((t: { __id: string }) => ({
     set: (valores: Record<string, unknown>) => {
       updates.push({ table: t.__id, set: valores });
@@ -279,38 +263,37 @@ function montarDb(c: Cenario) {
 }
 
 const MOV_OK = {
-  id: "mov-1",
+  id: 'mov-1',
   ativo: true,
-  tipoMovimento: "entrada_nf",
-  subtipo: "importacao",
-  statusOmie: "concluida",
-  baixaPedidoQ2p: "pendente",
-  notaFiscal: "00005161",
-  quantidadeKg: "27000.000",
+  tipoMovimento: 'entrada_nf',
+  subtipo: 'importacao',
+  statusOmie: 'concluida',
+  baixaPedidoQ2p: 'pendente',
+  notaFiscal: '00005161',
+  quantidadeKg: '27000.000',
   produtoCodigoQ2p: 7853452187,
-  loteId: "lote-1",
+  loteId: 'lote-1',
 };
 
 function respostaPool(sql: string): { rows: unknown[] } {
-  if (sql.includes("tbl_produtos_Q2P"))
-    return { rows: [{ descricao: "PELBD LB1810E2" }] };
-  if (sql.includes("nf_pedido_filhote")) return { rows: [] };
-  if (sql.includes("tbl_pedidosCompras_Q2P")) {
+  if (sql.includes('tbl_produtos_Q2P')) return { rows: [{ descricao: 'PELBD LB1810E2' }] };
+  if (sql.includes('nf_pedido_filhote')) return { rows: [] };
+  if (sql.includes('tbl_pedidosCompras_Q2P')) {
     return {
       rows: [
         {
-          ncodped: "100",
-          cnumero: "193",
-          ncoditem: "101",
-          nqtde: "24125.00",
-          pedido_acxe: "423",
+          ncodped: '100',
+          cnumero: '193',
+          ncoditem: '101',
+          nqtde: '24125.00',
+          pedido_acxe: '423',
         },
         {
-          ncodped: "200",
-          cnumero: "194",
-          ncoditem: "201",
-          nqtde: "50000.00",
-          pedido_acxe: "424",
+          ncodped: '200',
+          cnumero: '194',
+          ncoditem: '201',
+          nqtde: '50000.00',
+          pedido_acxe: '424',
         },
       ],
     };
@@ -321,7 +304,7 @@ function respostaPool(sql: string): { rows: unknown[] } {
 function pedidoLive(nCodPed: number, nQtde: number) {
   const p = pedidoFixture({
     nCodPed,
-    cNumero: nCodPed === 100 ? "193" : "194",
+    cNumero: nCodPed === 100 ? '193' : '194',
   });
   p.produtos[0] = { ...p.produtos[0]!, nCodItem: nCodPed + 1, nQtde };
   return p;
@@ -331,27 +314,23 @@ beforeEach(async () => {
   vi.clearAllMocks();
   inserts.length = 0;
   updates.length = 0;
-  poolQuerySpy.mockImplementation((sql: string) =>
-    Promise.resolve(respostaPool(sql)),
-  );
+  poolQuerySpy.mockImplementation((sql: string) => Promise.resolve(respostaPool(sql)));
   lockQuerySpy.mockResolvedValue({ rows: [] });
   consultarSpy.mockImplementation((_cnpj: string, ref: { nCodPed: number }) =>
-    Promise.resolve(
-      pedidoLive(ref.nCodPed, ref.nCodPed === 100 ? 24125 : 50000),
-    ),
+    Promise.resolve(pedidoLive(ref.nCodPed, ref.nCodPed === 100 ? 24125 : 50000)),
   );
   alterarSpy.mockResolvedValue({
-    status: "ok",
-    descricao: "ok",
+    status: 'ok',
+    descricao: 'ok',
     codigoPedido: 1,
   });
-  const { getDb } = await import("@atlas/core");
+  const { getDb } = await import('@atlas/core');
   vi.mocked(getDb).mockReturnValue(
     montarDb({
       mov: MOV_OK,
       lote: {
-        id: "lote-1",
-        codigo: "L001",
+        id: 'lote-1',
+        codigo: 'L001',
         produtoCodigoQ2p: 7853452187,
         pedidoCompraAcxe: null,
       },
@@ -359,24 +338,22 @@ beforeEach(async () => {
   );
 });
 
-describe("processarBaixaPedidoQ2p — fluxo", () => {
-  it("FIFO: zera o pedido 193 (sentinela) e desconta o resto do 194; ledger pendente→concluída; movimentação concluída", async () => {
+describe('processarBaixaPedidoQ2p — fluxo', () => {
+  it('FIFO: zera o pedido 193 (sentinela) e desconta o resto do 194; ledger pendente→concluída; movimentação concluída', async () => {
     const res = await processarBaixaPedidoQ2p({
-      movimentacaoId: "mov-1",
-      origem: "fluxo",
+      movimentacaoId: 'mov-1',
+      origem: 'fluxo',
     });
 
-    expect(res.status).toBe("concluida");
+    expect(res.status).toBe('concluida');
     expect(res.restanteKg).toBe(0);
-    expect(
-      res.alocacoes.map((a) => [a.ncodped, a.kgAlocado, a.saldoNovoKg]),
-    ).toEqual([
+    expect(res.alocacoes.map((a) => [a.ncodped, a.kgAlocado, a.saldoNovoKg])).toEqual([
       [100, 24125, 0.1],
       [200, 2875, 47125],
     ]);
     // Consulta AO VIVO de cada pedido antes de alterar
     expect(consultarSpy).toHaveBeenCalledTimes(2);
-    expect(consultarSpy).toHaveBeenNthCalledWith(1, "q2p", { nCodPed: 100 });
+    expect(consultarSpy).toHaveBeenNthCalledWith(1, 'q2p', { nCodPed: 100 });
     // AlteraPedCompra com quantidade absoluta
     expect(alterarSpy).toHaveBeenCalledTimes(2);
     expect(alterarSpy.mock.calls[0]![1]).toMatchObject({
@@ -388,37 +365,31 @@ describe("processarBaixaPedidoQ2p — fluxo", () => {
       produto: { nCodItem: 201, nQtde: 47125 },
     });
     // Ledger: insert 'pendente' antes, update 'concluida' depois, para cada pedido
-    expect(
-      inserts.map((i) => [i.ncodped, i.status, i.quantidadeKg, i.saldoNovoKg]),
-    ).toEqual([
-      [100, "pendente", "24125", "0.1"],
-      [200, "pendente", "2875", "47125"],
+    expect(inserts.map((i) => [i.ncodped, i.status, i.quantidadeKg, i.saldoNovoKg])).toEqual([
+      [100, 'pendente', '24125', '0.1'],
+      [200, 'pendente', '2875', '47125'],
     ]);
-    const ledgerUpdates = updates
-      .filter((u) => u.table === "baixaPedidoQ2p")
-      .map((u) => u.set.status);
-    expect(ledgerUpdates).toEqual(["concluida", "concluida"]);
-    const movUpdate = updates.find((u) => u.table === "movimentacao");
-    expect(movUpdate?.set).toMatchObject({ baixaPedidoQ2p: "concluida" });
+    const ledgerUpdates = updates.filter((u) => u.table === 'baixaPedidoQ2p').map((u) => u.set.status);
+    expect(ledgerUpdates).toEqual(['concluida', 'concluida']);
+    const movUpdate = updates.find((u) => u.table === 'movimentacao');
+    expect(movUpdate?.set).toMatchObject({ baixaPedidoQ2p: 'concluida' });
     // Lock consultivo por produto adquirido e liberado
-    expect(lockQuerySpy.mock.calls[0]![0]).toContain("pg_advisory_lock");
-    expect(lockQuerySpy.mock.calls.at(-1)![0]).toContain("pg_advisory_unlock");
+    expect(lockQuerySpy.mock.calls[0]![0]).toContain('pg_advisory_lock');
+    expect(lockQuerySpy.mock.calls.at(-1)![0]).toContain('pg_advisory_unlock');
     expect(alertaSpy).not.toHaveBeenCalled();
   });
 
-  it("pedido casado com o pedido ACXE da NF (mapa) é descontado primeiro", async () => {
+  it('pedido casado com o pedido ACXE da NF (mapa) é descontado primeiro', async () => {
     poolQuerySpy.mockImplementation((sql: string) =>
       Promise.resolve(
-        sql.includes("nf_pedido_filhote")
-          ? { rows: [{ pedido_acxe_omie: "424" }] }
-          : respostaPool(sql),
+        sql.includes('nf_pedido_filhote') ? { rows: [{ pedido_acxe_omie: '424' }] } : respostaPool(sql),
       ),
     );
     const res = await processarBaixaPedidoQ2p({
-      movimentacaoId: "mov-1",
-      origem: "fluxo",
+      movimentacaoId: 'mov-1',
+      origem: 'fluxo',
     });
-    expect(res.pedidosAcxePreferidos).toEqual(["424"]);
+    expect(res.pedidosAcxePreferidos).toEqual(['424']);
     expect(res.alocacoes.map((a) => a.ncodped)).toEqual([200]);
     expect(res.alocacoes[0]).toMatchObject({
       preferido: true,
@@ -426,165 +397,153 @@ describe("processarBaixaPedidoQ2p — fluxo", () => {
     });
   });
 
-  it("sem pedido aberto suficiente → sem_saldo, linha sem_pedido no ledger e alerta ops", async () => {
+  it('sem pedido aberto suficiente → sem_saldo, linha sem_pedido no ledger e alerta ops', async () => {
     consultarSpy.mockImplementation((_c: string, ref: { nCodPed: number }) =>
       Promise.resolve(pedidoLive(ref.nCodPed, 10_000)),
     );
     const res = await processarBaixaPedidoQ2p({
-      movimentacaoId: "mov-1",
-      origem: "fluxo",
+      movimentacaoId: 'mov-1',
+      origem: 'fluxo',
     });
-    expect(res.status).toBe("sem_saldo");
+    expect(res.status).toBe('sem_saldo');
     expect(res.restanteKg).toBe(7000);
     expect(inserts.at(-1)).toMatchObject({
       ncodped: null,
-      status: "sem_pedido",
-      quantidadeKg: "7000",
+      status: 'sem_pedido',
+      quantidadeKg: '7000',
     });
-    expect(updates.find((u) => u.table === "movimentacao")?.set).toMatchObject({
-      baixaPedidoQ2p: "sem_saldo",
+    expect(updates.find((u) => u.table === 'movimentacao')?.set).toMatchObject({
+      baixaPedidoQ2p: 'sem_saldo',
     });
     expect(alertaSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        motivo: "sem_saldo",
+        motivo: 'sem_saldo',
         restanteKg: 7000,
-        notaFiscal: "00005161",
+        notaFiscal: '00005161',
       }),
     );
   });
 
-  it("OMIE falha no AlteraPedCompra → ledger falha, movimentação falha, alerta; pedidos anteriores ficam concluídos", async () => {
+  it('OMIE falha no AlteraPedCompra → ledger falha, movimentação falha, alerta; pedidos anteriores ficam concluídos', async () => {
     alterarSpy
-      .mockResolvedValueOnce({ status: "ok", descricao: "ok" })
-      .mockRejectedValueOnce(new Error("OMIE q2p 500: SOAP-ENV:Client"));
+      .mockResolvedValueOnce({ status: 'ok', descricao: 'ok' })
+      .mockRejectedValueOnce(new Error('OMIE q2p 500: SOAP-ENV:Client'));
     const res = await processarBaixaPedidoQ2p({
-      movimentacaoId: "mov-1",
-      origem: "fluxo",
+      movimentacaoId: 'mov-1',
+      origem: 'fluxo',
     });
-    expect(res.status).toBe("falha");
-    expect(res.erro).toContain("194");
+    expect(res.status).toBe('falha');
+    expect(res.erro).toContain('194');
     expect(res.alocacoes).toHaveLength(1); // só o primeiro concluiu
-    const statusLedger = updates
-      .filter((u) => u.table === "baixaPedidoQ2p")
-      .map((u) => u.set.status);
-    expect(statusLedger).toEqual(["concluida", "falha"]);
-    expect(updates.find((u) => u.table === "movimentacao")?.set).toMatchObject({
-      baixaPedidoQ2p: "falha",
+    const statusLedger = updates.filter((u) => u.table === 'baixaPedidoQ2p').map((u) => u.set.status);
+    expect(statusLedger).toEqual(['concluida', 'falha']);
+    expect(updates.find((u) => u.table === 'movimentacao')?.set).toMatchObject({
+      baixaPedidoQ2p: 'falha',
     });
-    expect(alertaSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ motivo: "falha" }),
-    );
+    expect(alertaSpy).toHaveBeenCalledWith(expect.objectContaining({ motivo: 'falha' }));
   });
 
-  it("retry: linha pendente cujo alvo já está no OMIE vira concluída SEM nova chamada (quantidade absoluta não é descontada 2x)", async () => {
-    const { getDb } = await import("@atlas/core");
+  it('retry: linha pendente cujo alvo já está no OMIE vira concluída SEM nova chamada (quantidade absoluta não é descontada 2x)', async () => {
+    const { getDb } = await import('@atlas/core');
     vi.mocked(getDb).mockReturnValue(
       montarDb({
-        mov: { ...MOV_OK, baixaPedidoQ2p: "falha" },
-        lote: { id: "lote-1", codigo: "L001", produtoCodigoQ2p: 7853452187 },
+        mov: { ...MOV_OK, baixaPedidoQ2p: 'falha' },
+        lote: { id: 'lote-1', codigo: 'L001', produtoCodigoQ2p: 7853452187 },
         ledger: [
           {
-            id: "l-1",
+            id: 'l-1',
             ncodped: 100,
-            status: "concluida",
-            quantidadeKg: "24125",
-            saldoAnteriorKg: "24125",
-            saldoNovoKg: "0.1",
+            status: 'concluida',
+            quantidadeKg: '24125',
+            saldoAnteriorKg: '24125',
+            saldoNovoKg: '0.1',
             tentativas: 1,
           },
           // a chamada do 194 "falhou" na resposta mas persistiu: saldo ao vivo == alvo
           {
-            id: "l-2",
+            id: 'l-2',
             ncodped: 200,
-            status: "falha",
-            quantidadeKg: "2875",
-            saldoAnteriorKg: "50000",
-            saldoNovoKg: "47125",
+            status: 'falha',
+            quantidadeKg: '2875',
+            saldoAnteriorKg: '50000',
+            saldoNovoKg: '47125',
             tentativas: 1,
           },
         ],
       }) as never,
     );
     consultarSpy.mockImplementation((_c: string, ref: { nCodPed: number }) =>
-      Promise.resolve(
-        pedidoLive(ref.nCodPed, ref.nCodPed === 200 ? 47125 : 0.1),
-      ),
+      Promise.resolve(pedidoLive(ref.nCodPed, ref.nCodPed === 200 ? 47125 : 0.1)),
     );
 
     const res = await processarBaixaPedidoQ2p({
-      movimentacaoId: "mov-1",
-      origem: "retry",
-      ator: { userId: "u1", role: "gestor" },
+      movimentacaoId: 'mov-1',
+      origem: 'retry',
+      ator: { userId: 'u1', role: 'gestor' },
     });
-    expect(res.status).toBe("concluida");
+    expect(res.status).toBe('concluida');
     expect(res.kgJaDescontadoAntes).toBe(27000);
     expect(alterarSpy).not.toHaveBeenCalled();
     expect(inserts).toHaveLength(0);
-    expect(
-      updates
-        .filter((u) => u.table === "baixaPedidoQ2p")
-        .map((u) => u.set.status),
-    ).toEqual(["concluida"]);
+    expect(updates.filter((u) => u.table === 'baixaPedidoQ2p').map((u) => u.set.status)).toEqual([
+      'concluida',
+    ]);
   });
 
-  it("retry: linha falha cujo alvo NÃO está no OMIE reaproveita a linha (tentativas+1) e chama de novo", async () => {
-    const { getDb } = await import("@atlas/core");
+  it('retry: linha falha cujo alvo NÃO está no OMIE reaproveita a linha (tentativas+1) e chama de novo', async () => {
+    const { getDb } = await import('@atlas/core');
     vi.mocked(getDb).mockReturnValue(
       montarDb({
-        mov: { ...MOV_OK, baixaPedidoQ2p: "falha" },
-        lote: { id: "lote-1", codigo: "L001", produtoCodigoQ2p: 7853452187 },
+        mov: { ...MOV_OK, baixaPedidoQ2p: 'falha' },
+        lote: { id: 'lote-1', codigo: 'L001', produtoCodigoQ2p: 7853452187 },
         ledger: [
           {
-            id: "l-1",
+            id: 'l-1',
             ncodped: 100,
-            status: "concluida",
-            quantidadeKg: "24125",
-            saldoAnteriorKg: "24125",
-            saldoNovoKg: "0.1",
+            status: 'concluida',
+            quantidadeKg: '24125',
+            saldoAnteriorKg: '24125',
+            saldoNovoKg: '0.1',
             tentativas: 1,
           },
           {
-            id: "l-2",
+            id: 'l-2',
             ncodped: 200,
-            status: "falha",
-            quantidadeKg: "2875",
-            saldoAnteriorKg: "50000",
-            saldoNovoKg: "47125",
+            status: 'falha',
+            quantidadeKg: '2875',
+            saldoAnteriorKg: '50000',
+            saldoNovoKg: '47125',
             tentativas: 1,
           },
         ],
       }) as never,
     );
     const res = await processarBaixaPedidoQ2p({
-      movimentacaoId: "mov-1",
-      origem: "retry",
+      movimentacaoId: 'mov-1',
+      origem: 'retry',
     });
-    expect(res.status).toBe("concluida");
+    expect(res.status).toBe('concluida');
     expect(alterarSpy).toHaveBeenCalledTimes(1);
     expect(alterarSpy.mock.calls[0]![1]).toMatchObject({
       nCodPed: 200,
       produto: { nQtde: 47125 },
     });
     expect(inserts).toHaveLength(0);
-    const reuso = updates.find(
-      (u) => u.table === "baixaPedidoQ2p" && u.set.status === "pendente",
-    );
-    expect(reuso?.set).toMatchObject({ tentativas: 2, origem: "retry" });
+    const reuso = updates.find((u) => u.table === 'baixaPedidoQ2p' && u.set.status === 'pendente');
+    expect(reuso?.set).toMatchObject({ tentativas: 2, origem: 'retry' });
   });
 
-  it("dry-run: consulta ao vivo, simula com saldos encadeados e não escreve nada", async () => {
+  it('dry-run: consulta ao vivo, simula com saldos encadeados e não escreve nada', async () => {
     const simulacao = new Map<number, number>([[100, 5000]]); // NF anterior já "gastou" o 193
     const res = await processarBaixaPedidoQ2p({
-      movimentacaoId: "mov-1",
-      origem: "backfill",
+      movimentacaoId: 'mov-1',
+      origem: 'backfill',
       dryRun: true,
       simulacaoSaldos: simulacao,
     });
-    expect(res.status).toBe("simulado");
-    expect(res.statusPrevisto).toBe("concluida");
-    expect(
-      res.alocacoes.map((a) => [a.ncodped, a.saldoAnteriorKg, a.saldoNovoKg]),
-    ).toEqual([
+    expect(res.status).toBe('simulado');
+    expect(res.statusPrevisto).toBe('concluida');
+    expect(res.alocacoes.map((a) => [a.ncodped, a.saldoAnteriorKg, a.saldoNovoKg])).toEqual([
       [100, 5000, 0.1],
       [200, 50000, 28000],
     ]);
@@ -595,79 +554,109 @@ describe("processarBaixaPedidoQ2p — fluxo", () => {
     expect(lockQuerySpy).not.toHaveBeenCalled();
   });
 
-  it("ajuste dual ainda pendente → aguardando_omie (nada consultado)", async () => {
-    const { getDb } = await import("@atlas/core");
-    vi.mocked(getDb).mockReturnValue(
-      montarDb({ mov: { ...MOV_OK, statusOmie: "pendente_q2p" } }) as never,
-    );
-    const res = await processarBaixaPedidoQ2p({
-      movimentacaoId: "mov-1",
-      origem: "fluxo",
+  // ACXEGDP-344: a OMIE trava consultas repetidas do mesmo pedido em sequência
+  // curta ("Consumo redundante — aguarde 59s"). No backfill, dezenas de NFs caem
+  // no mesmo pedido: o cache por execução evita a reconsulta, e como é o próprio
+  // Atlas quem altera, o saldo em cache é atualizado após cada AlteraPedCompra.
+  it('cachePedidos: reaproveita o pedido já consultado e reflete o saldo alterado (sem re-consultar a OMIE)', async () => {
+    const cache = new Map();
+    const primeira = await processarBaixaPedidoQ2p({
+      movimentacaoId: 'mov-1',
+      origem: 'backfill',
+      cachePedidos: cache,
     });
-    expect(res.status).toBe("aguardando_omie");
+    expect(primeira.status).toBe('concluida');
+    expect(consultarSpy).toHaveBeenCalledTimes(2); // 193 e 194, 1x cada
+    // O cache guarda o saldo PÓS-alteração de cada pedido.
+    expect(cache.get(100).produtos[0].nQtde).toBe(0.1);
+    expect(cache.get(200).produtos[0].nQtde).toBe(47125);
+
+    // Segunda movimentação do mesmo produto, mesma execução: zero consulta nova,
+    // e o saldo usado é o que sobrou (47.125 do pedido 194), não o original.
+    consultarSpy.mockClear();
+    const segunda = await processarBaixaPedidoQ2p({
+      movimentacaoId: 'mov-1',
+      origem: 'backfill',
+      cachePedidos: cache,
+    });
+    expect(consultarSpy).not.toHaveBeenCalled();
+    expect(segunda.alocacoes.map((a) => [a.ncodped, a.saldoAnteriorKg, a.saldoNovoKg])).toEqual([
+      [200, 47125, 20125],
+    ]);
+  });
+
+  it('sem cachePedidos (fluxo/retry) cada execução consulta o saldo ao vivo', async () => {
+    await processarBaixaPedidoQ2p({ movimentacaoId: 'mov-1', origem: 'fluxo' });
+    consultarSpy.mockClear();
+    await processarBaixaPedidoQ2p({ movimentacaoId: 'mov-1', origem: 'fluxo' });
+    expect(consultarSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('ajuste dual ainda pendente → aguardando_omie (nada consultado)', async () => {
+    const { getDb } = await import('@atlas/core');
+    vi.mocked(getDb).mockReturnValue(montarDb({ mov: { ...MOV_OK, statusOmie: 'pendente_q2p' } }) as never);
+    const res = await processarBaixaPedidoQ2p({
+      movimentacaoId: 'mov-1',
+      origem: 'fluxo',
+    });
+    expect(res.status).toBe('aguardando_omie');
     expect(consultarSpy).not.toHaveBeenCalled();
   });
 
-  it("já concluída → idempotente, sem chamadas", async () => {
-    const { getDb } = await import("@atlas/core");
-    vi.mocked(getDb).mockReturnValue(
-      montarDb({ mov: { ...MOV_OK, baixaPedidoQ2p: "concluida" } }) as never,
-    );
+  it('já concluída → idempotente, sem chamadas', async () => {
+    const { getDb } = await import('@atlas/core');
+    vi.mocked(getDb).mockReturnValue(montarDb({ mov: { ...MOV_OK, baixaPedidoQ2p: 'concluida' } }) as never);
     const res = await processarBaixaPedidoQ2p({
-      movimentacaoId: "mov-1",
-      origem: "retry",
+      movimentacaoId: 'mov-1',
+      origem: 'retry',
     });
-    expect(res.status).toBe("concluida");
+    expect(res.status).toBe('concluida');
     expect(consultarSpy).not.toHaveBeenCalled();
   });
 
-  it("saída/nacional → BaixaPedidoNaoAplicavelError", async () => {
-    const { getDb } = await import("@atlas/core");
+  it('saída/nacional → BaixaPedidoNaoAplicavelError', async () => {
+    const { getDb } = await import('@atlas/core');
     vi.mocked(getDb).mockReturnValue(
       montarDb({
-        mov: { ...MOV_OK, tipoMovimento: "saida_manual", subtipo: "amostra" },
+        mov: { ...MOV_OK, tipoMovimento: 'saida_manual', subtipo: 'amostra' },
       }) as never,
     );
     await expect(
-      processarBaixaPedidoQ2p({ movimentacaoId: "mov-1", origem: "fluxo" }),
+      processarBaixaPedidoQ2p({ movimentacaoId: 'mov-1', origem: 'fluxo' }),
     ).rejects.toBeInstanceOf(BaixaPedidoNaoAplicavelError);
   });
 
-  it("produto sem correlato Q2P (nem na movimentação nem no lote) → falha registrada", async () => {
-    const { getDb } = await import("@atlas/core");
+  it('produto sem correlato Q2P (nem na movimentação nem no lote) → falha registrada', async () => {
+    const { getDb } = await import('@atlas/core');
     vi.mocked(getDb).mockReturnValue(
       montarDb({
         mov: { ...MOV_OK, produtoCodigoQ2p: null },
-        lote: { id: "lote-1", codigo: "L001", produtoCodigoQ2p: null },
+        lote: { id: 'lote-1', codigo: 'L001', produtoCodigoQ2p: null },
       }) as never,
     );
     const res = await processarBaixaPedidoQ2p({
-      movimentacaoId: "mov-1",
-      origem: "fluxo",
+      movimentacaoId: 'mov-1',
+      origem: 'fluxo',
     });
-    expect(res.status).toBe("falha");
-    expect(res.erro).toContain("correlato");
-    expect(updates.find((u) => u.table === "movimentacao")?.set).toMatchObject({
-      baixaPedidoQ2p: "falha",
+    expect(res.status).toBe('falha');
+    expect(res.erro).toContain('correlato');
+    expect(updates.find((u) => u.table === 'movimentacao')?.set).toMatchObject({
+      baixaPedidoQ2p: 'falha',
     });
   });
 });
 
-describe("listarPedidosAbertosQ2p — SQL do espelho", () => {
-  it("filtra etapa aberta, saldo acima da sentinela, ordena por previsão e marca o preferido pelo cobs", async () => {
-    const out = await listarPedidosAbertosQ2p(7853452187, new Set(["424"]));
+describe('listarPedidosAbertosQ2p — SQL do espelho', () => {
+  it('filtra etapa aberta, saldo acima da sentinela, ordena por previsão e marca o preferido pelo cobs', async () => {
+    const out = await listarPedidosAbertosQ2p(7853452187, new Set(['424']));
     const [sql, params] = poolQuerySpy.mock.calls.find((c) =>
-      String(c[0]).includes("tbl_pedidosCompras_Q2P"),
+      String(c[0]).includes('tbl_pedidosCompras_Q2P'),
     )!;
-    expect(sql).toContain("cetapa = $2");
-    expect(sql).toContain("nqtde > $3");
-    expect(sql).toContain("ORDER BY p.ddtprevisao");
-    expect(sql).toContain("Pedido original ACXE");
-    expect(params).toEqual([
-      7853452187,
-      ETAPA_PEDIDO_Q2P_ABERTO,
-      QTD_SENTINELA_PEDIDO_ZERADO_KG,
-    ]);
+    expect(sql).toContain('cetapa = $2');
+    expect(sql).toContain('nqtde > $3');
+    expect(sql).toContain('ORDER BY p.ddtprevisao');
+    expect(sql).toContain('Pedido original ACXE');
+    expect(params).toEqual([7853452187, ETAPA_PEDIDO_Q2P_ABERTO, QTD_SENTINELA_PEDIDO_ZERADO_KG]);
     expect(out.map((c) => [c.ncodped, c.saldoKg, c.preferido])).toEqual([
       [100, 24125, false],
       [200, 50000, true],

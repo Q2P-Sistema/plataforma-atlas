@@ -1,5 +1,5 @@
-import { callOmie, isMockMode, type OmieCnpj } from "../client.js";
-import { mockAlterarPedidoCompra, mockConsultarPedidoCompra } from "./mock.js";
+import { callOmie, isMockMode, type OmieCnpj } from '../client.js';
+import { mockAlterarPedidoCompra, mockConsultarPedidoCompra } from './mock.js';
 
 export interface AlterarPedidoCompraInput {
   /** Identificação do pedido: cCodIntPed (código de integração) e/ou nCodPed (id OMIE). */
@@ -67,7 +67,7 @@ export async function alterarPedidoCompra(
     return mockAlterarPedidoCompra(cnpj, input);
   }
   if (!input.cCodIntPed && input.nCodPed == null) {
-    throw new Error("alterarPedidoCompra exige cCodIntPed ou nCodPed");
+    throw new Error('alterarPedidoCompra exige cCodIntPed ou nCodPed');
   }
 
   const params: Record<string, unknown> = {
@@ -119,14 +119,14 @@ export async function alterarPedidoCompra(
     cDescStatus?: string;
     nCodPed?: number;
   }>(cnpj, {
-    endpoint: "produtos/pedidocompra/",
-    method: "AlteraPedCompra",
+    endpoint: 'produtos/pedidocompra/',
+    method: 'AlteraPedCompra',
     params,
   });
 
   return {
-    status: raw.cCodStatus ?? raw.codigo_status ?? "ok",
-    descricao: raw.cDescStatus ?? raw.descricao_status ?? "",
+    status: raw.cCodStatus ?? raw.codigo_status ?? 'ok',
+    descricao: raw.cDescStatus ?? raw.descricao_status ?? '',
     codigoPedido: raw.nCodPed ?? raw.codigo_pedido,
   };
 }
@@ -211,12 +211,9 @@ export async function consultarPedidoCompra(
   const raw = await callOmie<Record<string, unknown>>(
     cnpj,
     {
-      endpoint: "produtos/pedidocompra/",
-      method: "ConsultarPedCompra",
-      params:
-        "nCodPed" in ref
-          ? { nCodPed: ref.nCodPed }
-          : { cCodIntPed: ref.cCodIntPed },
+      endpoint: 'produtos/pedidocompra/',
+      method: 'ConsultarPedCompra',
+      params: 'nCodPed' in ref ? { nCodPed: ref.nCodPed } : { cCodIntPed: ref.cCodIntPed },
     },
     { retries: 2 },
   );
@@ -231,20 +228,19 @@ export function parsePedidoCompraConsultado(
   const candidato: RawPedido | undefined =
     Array.isArray(pesquisa) && pesquisa.length > 0
       ? (pesquisa[0] as RawPedido)
-      : raw.pedido_compra_produto &&
-          typeof raw.pedido_compra_produto === "object"
+      : raw.pedido_compra_produto && typeof raw.pedido_compra_produto === 'object'
         ? (raw.pedido_compra_produto as RawPedido)
         : (raw as RawPedido);
 
   const cab = candidato?.cabecalho_consulta;
-  if (!cab || typeof cab !== "object") {
-    const refTxt =
-      "nCodPed" in ref
-        ? `nCodPed=${ref.nCodPed}`
-        : `cCodIntPed=${ref.cCodIntPed}`;
+  if (!cab || typeof cab !== 'object') {
+    const refTxt = 'nCodPed' in ref ? `nCodPed=${ref.nCodPed}` : `cCodIntPed=${ref.cCodIntPed}`;
     // Chaves de 1º nível na mensagem: se o OMIE devolver outro envelope, o erro
     // já diz qual — evita uma rodada só para capturar a resposta crua.
-    const chaves = Object.keys(raw ?? {}).slice(0, 12).join(', ') || '(vazio)';
+    const chaves =
+      Object.keys(raw ?? {})
+        .slice(0, 12)
+        .join(', ') || '(vazio)';
     throw new Error(
       `ConsultarPedCompra (${refTxt}): resposta sem cabecalho_consulta — chaves recebidas: ${chaves}`,
     );
@@ -254,7 +250,7 @@ export function parsePedidoCompraConsultado(
     cCodIntItem: str(p.cCodIntItem),
     nCodProd: num(p.nCodProd) ?? 0,
     cCodIntProd: str(p.cCodIntProd),
-    cProduto: str(p.cProduto) ?? "",
+    cProduto: str(p.cProduto) ?? '',
     cDescricao: str(p.cDescricao),
     cNCM: str(p.cNCM),
     cUnidade: str(p.cUnidade),
@@ -269,7 +265,7 @@ export function parsePedidoCompraConsultado(
   }));
 
   return {
-    nCodPed: num(cab.nCodPed) ?? ("nCodPed" in ref ? ref.nCodPed : 0),
+    nCodPed: num(cab.nCodPed) ?? ('nCodPed' in ref ? ref.nCodPed : 0),
     cCodIntPed: str(cab.cCodIntPed),
     cNumero: str(cab.cNumero),
     cEtapa: str(cab.cEtapa),
@@ -296,12 +292,12 @@ export function parsePedidoCompraConsultado(
 function str(v: unknown): string | null {
   if (v == null) return null;
   const s = String(v);
-  return s === "" ? null : s;
+  return s === '' ? null : s;
 }
 
 function num(v: unknown): number | null {
-  if (v == null || v === "") return null;
-  const n = typeof v === "number" ? v : Number(v);
+  if (v == null || v === '') return null;
+  const n = typeof v === 'number' ? v : Number(v);
   return Number.isFinite(n) ? n : null;
 }
 

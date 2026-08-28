@@ -1,20 +1,17 @@
-import { eq, and } from "drizzle-orm";
-import Decimal from "decimal.js";
-import { getDb, getPool, getConfig, createLogger } from "@atlas/core";
-import { movimentacao, lote, baixaPedidoQ2p } from "@atlas/db";
+import { eq, and } from 'drizzle-orm';
+import Decimal from 'decimal.js';
+import { getDb, getPool, getConfig, createLogger } from '@atlas/core';
+import { movimentacao, lote, baixaPedidoQ2p } from '@atlas/db';
 import {
   consultarPedidoCompra,
   alterarPedidoCompra,
   type PedidoCompraConsultado,
   type ItemPedidoCompra,
   type AlterarPedidoCompraInput,
-} from "@atlas/integration-omie";
-import {
-  QTD_SENTINELA_PEDIDO_ZERADO_KG,
-  type StatusBaixaPedidoQ2p,
-} from "../types.js";
-import { enviarAlertaBaixaPedidoQ2p } from "./notificacao.service.js";
-import { formatarDataOmie } from "./omie-shared.js";
+} from '@atlas/integration-omie';
+import { QTD_SENTINELA_PEDIDO_ZERADO_KG, type StatusBaixaPedidoQ2p } from '../types.js';
+import { enviarAlertaBaixaPedidoQ2p } from './notificacao.service.js';
+import { formatarDataOmie } from './omie-shared.js';
 
 /**
  * Baixa do pedido de compra Q2P após recebimento de importação (ACXEGDP-344).
@@ -46,20 +43,33 @@ import { formatarDataOmie } from "./omie-shared.js";
  *  falha (OMIE falhou — alerta + retry pelo painel).
  */
 
-const logger = createLogger("stockbridge:baixa-pedido");
+const logger = createLogger('stockbridge:baixa-pedido');
 
 /** Etapa do pedido de compra Q2P que representa "em aberto" (ver research da 344). */
-export const ETAPA_PEDIDO_Q2P_ABERTO = "15";
+export const ETAPA_PEDIDO_Q2P_ABERTO = '15';
 const TOLERANCIA_KG = 0.0005;
 
-export type OrigemBaixa = "fluxo" | "retry" | "backfill";
+export type OrigemBaixa = 'fluxo' | 'retry' | 'backfill';
+
+/**
+ * Cache de pedidos consultados AO VIVO, com escopo de UMA execução (o backfill
+ * passa o mesmo mapa para todas as movimentações). Motivo: a OMIE rejeita
+ * consultar o mesmo pedido em sequência curta com "Consumo redundante — aguarde
+ * N segundos"; o client trata como transiente e espera, mas 60s × dezenas de
+ * NFs do mesmo pedido tornaria o backfill inviável. Como é o próprio Atlas quem
+ * altera o pedido, a entrada é ATUALIZADA após cada AlteraPedCompra — o saldo
+ * em cache segue sendo o valor real, sem re-consultar.
+ * Fora do backfill (fluxo/retry) o mapa não é passado, então o saldo é sempre
+ * lido ao vivo — a garantia de saldo fresco não muda.
+ */
+export type CachePedidos = Map<number, PedidoCompraConsultado>;
 
 // ── Erros tipados ──────────────────────────────────────────────────────────────
 
 export class BaixaPedidoMovimentacaoNaoEncontradaError extends Error {
   constructor(public readonly movimentacaoId: string) {
     super(`Movimentação ${movimentacaoId} não encontrada`);
-    this.name = "BaixaPedidoMovimentacaoNaoEncontradaError";
+    this.name = 'BaixaPedidoMovimentacaoNaoEncontradaError';
   }
 }
 
@@ -68,10 +78,8 @@ export class BaixaPedidoNaoAplicavelError extends Error {
     public readonly movimentacaoId: string,
     public readonly motivo: string,
   ) {
-    super(
-      `Baixa de pedido Q2P não se aplica à movimentação ${movimentacaoId}: ${motivo}`,
-    );
-    this.name = "BaixaPedidoNaoAplicavelError";
+    super(`Baixa de pedido Q2P não se aplica à movimentação ${movimentacaoId}: ${motivo}`);
+    this.name = 'BaixaPedidoNaoAplicavelError';
   }
 }
 
@@ -116,14 +124,8 @@ function d3(n: Decimal | number): number {
  * do legado: se o saldo cobre o restante, novo = saldo − restante; senão o
  * pedido zera (sentinela) e o restante segue para o próximo.
  */
-export function planejarAlocacao(
-  kgADescontar: number,
-  candidatos: PedidoCandidato[],
-): PlanoAlocacao {
-  const ordenados = [
-    ...candidatos.filter((c) => c.preferido),
-    ...candidatos.filter((c) => !c.preferido),
-  ];
+export function planejarAlocacao(kgADescontar: number, candidatos: PedidoCandidato[]): PlanoAlocacao {
+  const ordenados = [...candidatos.filter((c) => c.preferido), ...candidatos.filter((c) => !c.preferido)];
   const alocacoes: AlocacaoPedido[] = [];
   let restante = new Decimal(kgADescontar);
   for (const cand of ordenados) {
@@ -186,8 +188,7 @@ export async function listarPedidosAbertosQ2p(
     cnumero: r.cnumero ?? null,
     ncoditem: r.ncoditem != null ? Number(r.ncoditem) : null,
     saldoKg: Number(r.nqtde),
-    preferido:
-      r.pedido_acxe != null && pedidosAcxePreferidos.has(r.pedido_acxe),
+    preferido: r.pedido_acxe != null && pedidosAcxePreferidos.has(r.pedido_acxe),
   }));
 }
 
@@ -201,8 +202,7 @@ export async function resolverPedidosAcxeDaNf(
   pedidoCompraAcxeDoLote: string | null | undefined,
 ): Promise<Set<string>> {
   const out = new Set<string>();
-  if (pedidoCompraAcxeDoLote)
-    out.add(String(pedidoCompraAcxeDoLote).replace(/^0+/, ""));
+  if (pedidoCompraAcxeDoLote) out.add(String(pedidoCompraAcxeDoLote).replace(/^0+/, ''));
   try {
     const pool = getPool();
     const res = await pool.query<{ pedido_acxe_omie: string }>(
@@ -213,21 +213,14 @@ export async function resolverPedidosAcxeDaNf(
           AND ltrim(f.nf_filhote, '0') = ltrim($1, '0')`,
       [notaFiscal],
     );
-    for (const r of res.rows)
-      out.add(String(r.pedido_acxe_omie).replace(/^0+/, ""));
+    for (const r of res.rows) out.add(String(r.pedido_acxe_omie).replace(/^0+/, ''));
   } catch (err) {
-    logger.warn(
-      { err, notaFiscal },
-      "Falha ao resolver pedido ACXE da NF (mapa) — seguindo só com FIFO",
-    );
+    logger.warn({ err, notaFiscal }, 'Falha ao resolver pedido ACXE da NF (mapa) — seguindo só com FIFO');
   }
   return out;
 }
 
-async function resolverDescricaoProdutoQ2p(
-  ncodprod: number,
-  fallback: string,
-): Promise<string> {
+async function resolverDescricaoProdutoQ2p(ncodprod: number, fallback: string): Promise<string> {
   try {
     const res = await getPool().query<{ descricao: string | null }>(
       `SELECT descricao FROM public."tbl_produtos_Q2P" WHERE codigo_produto = $1::bigint LIMIT 1`,
@@ -241,27 +234,21 @@ async function resolverDescricaoProdutoQ2p(
 
 // ── Lock consultivo por produto ────────────────────────────────────────────────
 
-const LOCK_PREFIXO = "stockbridge:baixa_pedido_q2p:";
+const LOCK_PREFIXO = 'stockbridge:baixa_pedido_q2p:';
 
-async function adquirirLockProduto(
-  ncodprod: number,
-): Promise<() => Promise<void>> {
+async function adquirirLockProduto(ncodprod: number): Promise<() => Promise<void>> {
   const pool = getPool();
   const client = await pool.connect();
   const chave = `${LOCK_PREFIXO}${ncodprod}`;
   try {
-    await client.query("SELECT pg_advisory_lock(hashtextextended($1, 0))", [
-      chave,
-    ]);
+    await client.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', [chave]);
   } catch (err) {
     client.release();
     throw err;
   }
   return async () => {
     try {
-      await client.query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [
-        chave,
-      ]);
+      await client.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [chave]);
     } finally {
       client.release();
     }
@@ -270,10 +257,7 @@ async function adquirirLockProduto(
 
 // ── Montagem da chamada AlteraPedCompra ────────────────────────────────────────
 
-function acharItemDoProduto(
-  pedido: PedidoCompraConsultado,
-  ncodprod: number,
-): ItemPedidoCompra | null {
+function acharItemDoProduto(pedido: PedidoCompraConsultado, ncodprod: number): ItemPedidoCompra | null {
   return (
     pedido.produtos.find((p) => p.nCodProd === ncodprod) ??
     (pedido.produtos.length === 1 ? pedido.produtos[0]! : null)
@@ -295,11 +279,9 @@ export function anexarObsBaixa(
   data: string,
 ): string {
   const linha = `Atlas — NF ${notaFiscal} recebida em ${data}: saldo ${fmtKgObs(anterior)} kg -> ${fmtKgObs(novo)} kg`;
-  const base = (obsAtual ?? "").trim();
+  const base = (obsAtual ?? '').trim();
   const junto = base ? `${base}\n${linha}` : linha;
-  return junto.length > LIMITE_OBS
-    ? junto.slice(junto.length - LIMITE_OBS)
-    : junto;
+  return junto.length > LIMITE_OBS ? junto.slice(junto.length - LIMITE_OBS) : junto;
 }
 
 export function montarInputAlteracao(args: {
@@ -327,20 +309,8 @@ export function montarInputAlteracao(args: {
     nCodCC: nn(pedido.nCodCC),
     nCodIntCC: nn(pedido.nCodIntCC),
     nCodProj: nn(pedido.nCodProj),
-    cObs: anexarObsBaixa(
-      pedido.cObs,
-      args.notaFiscal,
-      args.saldoAnteriorKg,
-      args.saldoNovoKg,
-      hoje,
-    ),
-    cObsInt: anexarObsBaixa(
-      pedido.cObsInt,
-      args.notaFiscal,
-      args.saldoAnteriorKg,
-      args.saldoNovoKg,
-      hoje,
-    ),
+    cObs: anexarObsBaixa(pedido.cObs, args.notaFiscal, args.saldoAnteriorKg, args.saldoNovoKg, hoje),
+    cObsInt: anexarObsBaixa(pedido.cObsInt, args.notaFiscal, args.saldoAnteriorKg, args.saldoNovoKg, hoje),
     frete: pedido.frete,
     produto: {
       nCodItem: item.nCodItem,
@@ -376,12 +346,14 @@ export interface ProcessarBaixaInput {
    * fora do dry-run.
    */
   simulacaoSaldos?: Map<number, number>;
+  /**
+   * Cache de pedidos ao vivo compartilhado entre movimentações da MESMA
+   * execução (backfill). Ver CachePedidos.
+   */
+  cachePedidos?: CachePedidos;
 }
 
-export type DesfechoBaixa =
-  | StatusBaixaPedidoQ2p
-  | "aguardando_omie"
-  | "simulado";
+export type DesfechoBaixa = StatusBaixaPedidoQ2p | 'aguardando_omie' | 'simulado';
 
 export interface ResultadoBaixa {
   movimentacaoId: string;
@@ -408,9 +380,7 @@ function aprox(a: number, b: number): boolean {
   return Math.abs(a - b) <= TOLERANCIA_KG;
 }
 
-export async function processarBaixaPedidoQ2p(
-  input: ProcessarBaixaInput,
-): Promise<ResultadoBaixa> {
+export async function processarBaixaPedidoQ2p(input: ProcessarBaixaInput): Promise<ResultadoBaixa> {
   const db = getDb();
   const dryRun = input.dryRun === true;
 
@@ -419,14 +389,12 @@ export async function processarBaixaPedidoQ2p(
     .from(movimentacao)
     .where(eq(movimentacao.id, input.movimentacaoId))
     .limit(1);
-  if (!mov)
-    throw new BaixaPedidoMovimentacaoNaoEncontradaError(input.movimentacaoId);
-  if (!mov.ativo)
-    throw new BaixaPedidoNaoAplicavelError(mov.id, "movimentação inativa");
-  if (mov.tipoMovimento !== "entrada_nf" || mov.subtipo !== "importacao") {
+  if (!mov) throw new BaixaPedidoMovimentacaoNaoEncontradaError(input.movimentacaoId);
+  if (!mov.ativo) throw new BaixaPedidoNaoAplicavelError(mov.id, 'movimentação inativa');
+  if (mov.tipoMovimento !== 'entrada_nf' || mov.subtipo !== 'importacao') {
     throw new BaixaPedidoNaoAplicavelError(
       mov.id,
-      `tipo ${mov.tipoMovimento}/${mov.subtipo ?? "—"} não é entrada de importação`,
+      `tipo ${mov.tipoMovimento}/${mov.subtipo ?? '—'} não é entrada de importação`,
     );
   }
 
@@ -435,17 +403,12 @@ export async function processarBaixaPedidoQ2p(
     : undefined;
   const ncodprod = mov.produtoCodigoQ2p ?? loteRow?.produtoCodigoQ2p ?? null;
   const quantidadeKg = Number(mov.quantidadeKg);
-  const produtoFallback = loteRow
-    ? `lote ${loteRow.codigo}`
-    : "produto não identificado";
+  const produtoFallback = loteRow ? `lote ${loteRow.codigo}` : 'produto não identificado';
   const produtoDescricao = ncodprod
     ? await resolverDescricaoProdutoQ2p(ncodprod, produtoFallback)
     : produtoFallback;
 
-  const base: Omit<
-    ResultadoBaixa,
-    "status" | "alocacoes" | "restanteKg" | "kgJaDescontadoAntes"
-  > = {
+  const base: Omit<ResultadoBaixa, 'status' | 'alocacoes' | 'restanteKg' | 'kgJaDescontadoAntes'> = {
     movimentacaoId: mov.id,
     notaFiscal: mov.notaFiscal,
     ncodprod,
@@ -455,33 +418,32 @@ export async function processarBaixaPedidoQ2p(
     dryRun,
   };
 
-  if (mov.baixaPedidoQ2p === "concluida") {
+  if (mov.baixaPedidoQ2p === 'concluida') {
     return {
       ...base,
-      status: "concluida",
+      status: 'concluida',
       alocacoes: [],
       restanteKg: 0,
       kgJaDescontadoAntes: quantidadeKg,
     };
   }
-  if (mov.statusOmie !== "concluida") {
+  if (mov.statusOmie !== 'concluida') {
     // O ajuste dual ainda não fechou (pendente_q2p etc.) — a baixa espera o retry
     // do ajuste concluir; quem conclui dispara de novo.
     return {
       ...base,
-      status: "aguardando_omie",
+      status: 'aguardando_omie',
       alocacoes: [],
       restanteKg: quantidadeKg,
       kgJaDescontadoAntes: 0,
     };
   }
   if (!ncodprod) {
-    const erro =
-      "Produto sem correlato Q2P — não há como localizar o pedido de compra";
+    const erro = 'Produto sem correlato Q2P — não há como localizar o pedido de compra';
     if (!dryRun) await registrarFalhaMovimentacao(mov.id, erro);
     return {
       ...base,
-      status: "falha",
+      status: 'falha',
       alocacoes: [],
       restanteKg: quantidadeKg,
       kgJaDescontadoAntes: 0,
@@ -489,10 +451,7 @@ export async function processarBaixaPedidoQ2p(
     };
   }
 
-  const preferidos = await resolverPedidosAcxeDaNf(
-    mov.notaFiscal,
-    loteRow?.pedidoCompraAcxe,
-  );
+  const preferidos = await resolverPedidosAcxeDaNf(mov.notaFiscal, loteRow?.pedidoCompraAcxe);
   base.pedidosAcxePreferidos = [...preferidos];
 
   const soltar = dryRun ? null : await adquirirLockProduto(ncodprod);
@@ -502,12 +461,7 @@ export async function processarBaixaPedidoQ2p(
     const ledger = await db
       .select()
       .from(baixaPedidoQ2p)
-      .where(
-        and(
-          eq(baixaPedidoQ2p.movimentacaoId, mov.id),
-          eq(baixaPedidoQ2p.ativo, true),
-        ),
-      );
+      .where(and(eq(baixaPedidoQ2p.movimentacaoId, mov.id), eq(baixaPedidoQ2p.ativo, true)));
     let jaDescontado = new Decimal(0);
     const pedidosFechados = new Set<number>();
     const reutilizaveis = new Map<number, LedgerRow>();
@@ -515,10 +469,10 @@ export async function processarBaixaPedidoQ2p(
 
     for (const row of ledger) {
       if (row.ncodped == null) {
-        if (row.status === "sem_pedido") linhaSemPedido = row;
+        if (row.status === 'sem_pedido') linhaSemPedido = row;
         continue;
       }
-      if (row.status === "concluida") {
+      if (row.status === 'concluida') {
         jaDescontado = jaDescontado.plus(row.quantidadeKg);
         pedidosFechados.add(row.ncodped);
         continue;
@@ -532,13 +486,13 @@ export async function processarBaixaPedidoQ2p(
             ncodped: row.ncodped,
             saldoNovoKg: row.saldoNovoKg,
           },
-          "Baixa anterior já refletida no OMIE — marcando concluída sem nova chamada",
+          'Baixa anterior já refletida no OMIE — marcando concluída sem nova chamada',
         );
         if (!dryRun) {
           await db
             .update(baixaPedidoQ2p)
             .set({
-              status: "concluida",
+              status: 'concluida',
               ultimoErro: null,
               updatedAt: new Date(),
             })
@@ -558,9 +512,9 @@ export async function processarBaixaPedidoQ2p(
     if (restante.gt(TOLERANCIA_KG)) {
       let candidatos: PedidoCandidato[];
       try {
-        candidatos = (
-          await listarPedidosAbertosQ2p(ncodprod, preferidos)
-        ).filter((c) => !pedidosFechados.has(c.ncodped));
+        candidatos = (await listarPedidosAbertosQ2p(ncodprod, preferidos)).filter(
+          (c) => !pedidosFechados.has(c.ncodped),
+        );
       } catch (err) {
         // Espelho indisponível (ex.: banco sem tbl_pedidosCompras_Q2P) — falha
         // retentável, nunca exceção solta no fire-and-forget.
@@ -579,19 +533,22 @@ export async function processarBaixaPedidoQ2p(
           cand: null,
         });
       }
-      const ordenados = [
-        ...candidatos.filter((c) => c.preferido),
-        ...candidatos.filter((c) => !c.preferido),
-      ];
+      const ordenados = [...candidatos.filter((c) => c.preferido), ...candidatos.filter((c) => !c.preferido)];
 
       for (const cand of ordenados) {
         if (restante.lte(TOLERANCIA_KG)) break;
 
         let pedidoLive: PedidoCompraConsultado;
         try {
-          pedidoLive = await consultarPedidoCompra("q2p", {
-            nCodPed: cand.ncodped,
-          });
+          const emCache = input.cachePedidos?.get(cand.ncodped);
+          if (emCache) {
+            pedidoLive = emCache;
+          } else {
+            pedidoLive = await consultarPedidoCompra('q2p', {
+              nCodPed: cand.ncodped,
+            });
+            input.cachePedidos?.set(cand.ncodped, pedidoLive);
+          }
         } catch (err) {
           const erro = `Consulta do pedido ${cand.cnumero ?? cand.ncodped} falhou: ${(err as Error).message}`;
           return finalizarComFalha({
@@ -610,25 +567,17 @@ export async function processarBaixaPedidoQ2p(
         }
         const item = acharItemDoProduto(pedidoLive, ncodprod);
         if (!item) {
-          logger.warn(
-            { ncodped: cand.ncodped, ncodprod },
-            "Pedido Q2P sem item do produto — ignorado",
-          );
+          logger.warn({ ncodped: cand.ncodped, ncodprod }, 'Pedido Q2P sem item do produto — ignorado');
           continue;
         }
-        if (
-          pedidoLive.cEtapa &&
-          pedidoLive.cEtapa !== ETAPA_PEDIDO_Q2P_ABERTO
-        ) {
+        if (pedidoLive.cEtapa && pedidoLive.cEtapa !== ETAPA_PEDIDO_Q2P_ABERTO) {
           logger.warn(
             { ncodped: cand.ncodped, etapa: pedidoLive.cEtapa },
-            "Pedido Q2P não está mais em aberto (etapa mudou) — ignorado",
+            'Pedido Q2P não está mais em aberto (etapa mudou) — ignorado',
           );
           continue;
         }
-        const saldoAtual = dryRun
-          ? (input.simulacaoSaldos?.get(cand.ncodped) ?? item.nQtde)
-          : item.nQtde;
+        const saldoAtual = dryRun ? (input.simulacaoSaldos?.get(cand.ncodped) ?? item.nQtde) : item.nQtde;
         const plano = planejarAlocacao(restante.toNumber(), [
           {
             ...cand,
@@ -658,7 +607,7 @@ export async function processarBaixaPedidoQ2p(
         });
         try {
           await alterarPedidoCompra(
-            "q2p",
+            'q2p',
             montarInputAlteracao({
               pedido: pedidoLive,
               item,
@@ -668,11 +617,11 @@ export async function processarBaixaPedidoQ2p(
             }),
           );
         } catch (err) {
-          const mensagem = (err as Error)?.message ?? "erro desconhecido";
+          const mensagem = (err as Error)?.message ?? 'erro desconhecido';
           await db
             .update(baixaPedidoQ2p)
             .set({
-              status: "falha",
+              status: 'falha',
               ultimoErro: { mensagem, timestamp: new Date().toISOString() },
               updatedAt: new Date(),
             })
@@ -694,8 +643,15 @@ export async function processarBaixaPedidoQ2p(
         }
         await db
           .update(baixaPedidoQ2p)
-          .set({ status: "concluida", ultimoErro: null, updatedAt: new Date() })
+          .set({ status: 'concluida', ultimoErro: null, updatedAt: new Date() })
           .where(eq(baixaPedidoQ2p.id, ledgerId));
+        // Alteração aplicada: o cache passa a refletir o novo saldo, para a
+        // próxima movimentação deste pedido não re-consultar a OMIE.
+        const cached = input.cachePedidos?.get(cand.ncodped);
+        if (cached) {
+          const itemCache = acharItemDoProduto(cached, ncodprod);
+          if (itemCache) itemCache.nQtde = aloc.saldoNovoKg;
+        }
         logger.info(
           {
             movimentacaoId: mov.id,
@@ -706,7 +662,7 @@ export async function processarBaixaPedidoQ2p(
             de: aloc.saldoAnteriorKg,
             para: aloc.saldoNovoKg,
           },
-          "Pedido de compra Q2P baixado",
+          'Pedido de compra Q2P baixado',
         );
         alocacoes.push(aloc);
         restante = restante.minus(aloc.kgAlocado);
@@ -715,10 +671,9 @@ export async function processarBaixaPedidoQ2p(
 
     // 3. Desfecho.
     const restanteKg = restante.lte(TOLERANCIA_KG) ? 0 : d3(restante);
-    const statusFinal: StatusBaixaPedidoQ2p =
-      restanteKg > 0 ? "sem_saldo" : "concluida";
+    const statusFinal: StatusBaixaPedidoQ2p = restanteKg > 0 ? 'sem_saldo' : 'concluida';
     if (!dryRun) {
-      if (statusFinal === "sem_saldo") {
+      if (statusFinal === 'sem_saldo') {
         await gravarLinhaSemPedido(db, {
           existente: linhaSemPedido,
           movimentacaoId: mov.id,
@@ -737,13 +692,13 @@ export async function processarBaixaPedidoQ2p(
         .update(movimentacao)
         .set({ baixaPedidoQ2p: statusFinal, updatedAt: new Date() })
         .where(eq(movimentacao.id, mov.id));
-      if (statusFinal === "sem_saldo") {
+      if (statusFinal === 'sem_saldo') {
         void enviarAlertaBaixaPedidoQ2p({
           movimentacaoId: mov.id,
           notaFiscal: mov.notaFiscal,
           produtoDescricao,
           quantidadeKg,
-          motivo: "sem_saldo",
+          motivo: 'sem_saldo',
           restanteKg,
           pedidos: alocacoes.map((a) => ({
             numero: a.cnumero ?? String(a.ncodped),
@@ -755,7 +710,7 @@ export async function processarBaixaPedidoQ2p(
     }
     return {
       ...base,
-      status: dryRun ? "simulado" : statusFinal,
+      status: dryRun ? 'simulado' : statusFinal,
       statusPrevisto: statusFinal,
       alocacoes,
       restanteKg,
@@ -771,27 +726,19 @@ export async function processarBaixaPedidoQ2p(
  * resposta. Confere ao vivo: se o saldo atual do item == alvo gravado (e o alvo
  * difere do saldo anterior), a alteração chegou — não repetir.
  */
-async function alteracaoAnteriorPersistiu(
-  row: LedgerRow,
-  ncodprod: number,
-): Promise<boolean> {
-  if (
-    row.ncodped == null ||
-    row.saldoNovoKg == null ||
-    row.saldoAnteriorKg == null
-  )
-    return false;
+async function alteracaoAnteriorPersistiu(row: LedgerRow, ncodprod: number): Promise<boolean> {
+  if (row.ncodped == null || row.saldoNovoKg == null || row.saldoAnteriorKg == null) return false;
   const anterior = Number(row.saldoAnteriorKg);
   const alvo = Number(row.saldoNovoKg);
   if (aprox(anterior, alvo)) return false;
   try {
-    const pedido = await consultarPedidoCompra("q2p", { nCodPed: row.ncodped });
+    const pedido = await consultarPedidoCompra('q2p', { nCodPed: row.ncodped });
     const item = acharItemDoProduto(pedido, ncodprod);
     return item != null && aprox(item.nQtde, alvo);
   } catch (err) {
     logger.warn(
       { err, ncodped: row.ncodped },
-      "Não foi possível conferir baixa anterior ao vivo — tratando como não aplicada",
+      'Não foi possível conferir baixa anterior ao vivo — tratando como não aplicada',
     );
     return false;
   }
@@ -813,7 +760,7 @@ async function gravarLedgerPendente(
     await db
       .update(baixaPedidoQ2p)
       .set({
-        status: "pendente",
+        status: 'pendente',
         cnumero: aloc.cnumero,
         ncoditem: aloc.ncoditem,
         quantidadeKg: String(aloc.kgAlocado),
@@ -837,7 +784,7 @@ async function gravarLedgerPendente(
       quantidadeKg: String(aloc.kgAlocado),
       saldoAnteriorKg: String(aloc.saldoAnteriorKg),
       saldoNovoKg: String(aloc.saldoNovoKg),
-      status: "pendente",
+      status: 'pendente',
       origem: args.origem,
       tentativas: 1,
       criadoPor: args.criadoPor,
@@ -874,33 +821,27 @@ async function gravarLinhaSemPedido(
     ncodped: null,
     ncodprod: args.ncodprod,
     quantidadeKg: String(args.restanteKg),
-    status: "sem_pedido",
+    status: 'sem_pedido',
     origem: args.origem,
     tentativas: 1,
     criadoPor: args.criadoPor,
   });
 }
 
-async function registrarFalhaMovimentacao(
-  movimentacaoId: string,
-  erro: string,
-): Promise<void> {
+async function registrarFalhaMovimentacao(movimentacaoId: string, erro: string): Promise<void> {
   const db = getDb();
   await db
     .update(movimentacao)
-    .set({ baixaPedidoQ2p: "falha", updatedAt: new Date() })
+    .set({ baixaPedidoQ2p: 'falha', updatedAt: new Date() })
     .where(eq(movimentacao.id, movimentacaoId));
-  logger.error({ movimentacaoId, erro }, "Baixa de pedido Q2P falhou");
+  logger.error({ movimentacaoId, erro }, 'Baixa de pedido Q2P falhou');
 }
 
 async function finalizarComFalha(args: {
   mov: typeof movimentacao.$inferSelect;
   ncodprod: number;
   produtoDescricao: string;
-  base: Omit<
-    ResultadoBaixa,
-    "status" | "alocacoes" | "restanteKg" | "kgJaDescontadoAntes"
-  >;
+  base: Omit<ResultadoBaixa, 'status' | 'alocacoes' | 'restanteKg' | 'kgJaDescontadoAntes'>;
   alocacoes: AlocacaoPedido[];
   restante: Decimal;
   jaDescontado: Decimal;
@@ -916,7 +857,7 @@ async function finalizarComFalha(args: {
       notaFiscal: args.mov.notaFiscal,
       produtoDescricao: args.produtoDescricao,
       quantidadeKg: Number(args.mov.quantidadeKg),
-      motivo: "falha",
+      motivo: 'falha',
       mensagemErro: args.erro,
       restanteKg: d3(args.restante),
       pedidos: args.alocacoes.map((a) => ({
@@ -928,8 +869,8 @@ async function finalizarComFalha(args: {
   }
   return {
     ...args.base,
-    status: "falha",
-    statusPrevisto: "falha",
+    status: 'falha',
+    statusPrevisto: 'falha',
     alocacoes: args.alocacoes,
     restanteKg: d3(args.restante),
     kgJaDescontadoAntes: d3(args.jaDescontado),
@@ -945,10 +886,7 @@ async function finalizarComFalha(args: {
  * nunca erro para o operador. Respeita STOCKBRIDGE_BAIXA_PEDIDO_Q2P_ENABLED
  * (default ligado) — desligada, a movimentação fica 'pendente' para o painel.
  */
-export function dispararBaixaPedidoQ2p(args: {
-  movimentacaoId: string;
-  origem?: OrigemBaixa;
-}): void {
+export function dispararBaixaPedidoQ2p(args: { movimentacaoId: string; origem?: OrigemBaixa }): void {
   let habilitada = true;
   try {
     habilitada =
@@ -960,7 +898,7 @@ export function dispararBaixaPedidoQ2p(args: {
   if (!habilitada) {
     logger.info(
       { movimentacaoId: args.movimentacaoId },
-      "Baixa de pedido Q2P desligada por configuração — fica pendente",
+      'Baixa de pedido Q2P desligada por configuração — fica pendente',
     );
     return;
   }
@@ -968,7 +906,7 @@ export function dispararBaixaPedidoQ2p(args: {
     try {
       const res = await processarBaixaPedidoQ2p({
         movimentacaoId: args.movimentacaoId,
-        origem: args.origem ?? "fluxo",
+        origem: args.origem ?? 'fluxo',
       });
       logger.info(
         {
@@ -977,25 +915,19 @@ export function dispararBaixaPedidoQ2p(args: {
           pedidos: res.alocacoes.length,
           restanteKg: res.restanteKg,
         },
-        "Baixa de pedido Q2P processada",
+        'Baixa de pedido Q2P processada',
       );
     } catch (err) {
       if (err instanceof BaixaPedidoNaoAplicavelError) {
         logger.warn(
           { movimentacaoId: args.movimentacaoId, motivo: err.motivo },
-          "Baixa de pedido Q2P ignorada (não se aplica)",
+          'Baixa de pedido Q2P ignorada (não se aplica)',
         );
         return;
       }
-      logger.error(
-        { err, movimentacaoId: args.movimentacaoId },
-        "Baixa de pedido Q2P: erro inesperado",
-      );
+      logger.error({ err, movimentacaoId: args.movimentacaoId }, 'Baixa de pedido Q2P: erro inesperado');
       try {
-        await registrarFalhaMovimentacao(
-          args.movimentacaoId,
-          (err as Error)?.message ?? "erro inesperado",
-        );
+        await registrarFalhaMovimentacao(args.movimentacaoId, (err as Error)?.message ?? 'erro inesperado');
       } catch {
         /* best-effort */
       }
@@ -1066,8 +998,8 @@ export async function listarBaixasPendentes(): Promise<BaixaPendenteItem[]> {
     status: r.baixa_pedido_q2p,
     ultimoErro: r.ultimo_erro
       ? {
-          mensagem: r.ultimo_erro.mensagem ?? "",
-          timestamp: r.ultimo_erro.timestamp ?? "",
+          mensagem: r.ultimo_erro.mensagem ?? '',
+          timestamp: r.ultimo_erro.timestamp ?? '',
         }
       : null,
     createdAt: new Date(r.created_at).toISOString(),
@@ -1081,33 +1013,25 @@ export interface LedgerItem {
   quantidadeKg: number;
   saldoAnteriorKg: number | null;
   saldoNovoKg: number | null;
-  status: "pendente" | "concluida" | "falha" | "sem_pedido";
+  status: 'pendente' | 'concluida' | 'falha' | 'sem_pedido';
   origem: OrigemBaixa;
   tentativas: number;
   ultimoErro: unknown;
   updatedAt: string;
 }
 
-export async function listarLedgerDaMovimentacao(
-  movimentacaoId: string,
-): Promise<LedgerItem[]> {
+export async function listarLedgerDaMovimentacao(movimentacaoId: string): Promise<LedgerItem[]> {
   const db = getDb();
   const rows = await db
     .select()
     .from(baixaPedidoQ2p)
-    .where(
-      and(
-        eq(baixaPedidoQ2p.movimentacaoId, movimentacaoId),
-        eq(baixaPedidoQ2p.ativo, true),
-      ),
-    );
+    .where(and(eq(baixaPedidoQ2p.movimentacaoId, movimentacaoId), eq(baixaPedidoQ2p.ativo, true)));
   return rows.map((r) => ({
     id: r.id,
     ncodped: r.ncodped,
     cnumero: r.cnumero,
     quantidadeKg: Number(r.quantidadeKg),
-    saldoAnteriorKg:
-      r.saldoAnteriorKg != null ? Number(r.saldoAnteriorKg) : null,
+    saldoAnteriorKg: r.saldoAnteriorKg != null ? Number(r.saldoAnteriorKg) : null,
     saldoNovoKg: r.saldoNovoKg != null ? Number(r.saldoNovoKg) : null,
     status: r.status,
     origem: r.origem,
@@ -1125,7 +1049,7 @@ export async function retentarBaixaPedidoQ2p(args: {
 }): Promise<ResultadoBaixa> {
   return processarBaixaPedidoQ2p({
     movimentacaoId: args.movimentacaoId,
-    origem: "retry",
+    origem: 'retry',
     ator: args.ator,
     dryRun: args.dryRun,
   });
