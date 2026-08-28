@@ -22,6 +22,9 @@
  *                      aos pedidos, desativa o ledger, reabre como pendente).
  *                      Com --execute aplica; sem, só mostra o que faria.
  *   --nf <numero>      Restringe a uma NF.  --limit <n>  Limita a n movimentações.
+ *   --apenas-vinculo   Processa só NFs com vínculo NF→pedido ACXE no mapa
+ *                      (nf_pedido_mapa); as sem vínculo ficam pendentes para
+ *                      quando o mapa as alcançar (evita FIFO em pedido errado).
  *   --json <arquivo>   Grava o relatório completo em JSON.
  *
  * Execução (na raiz do repo, com DATABASE_URL + OMIE_Q2P_KEY/SECRET do ambiente):
@@ -36,6 +39,7 @@ import {
   listarBaixasPendentes,
   processarBaixaPedidoQ2p,
   desfazerBaixaPedidoQ2p,
+  resolverPedidosAcxeDaNf,
   type CachePedidos,
   type ResultadoBaixa,
 } from '../services/baixa-pedido.service.js';
@@ -52,6 +56,7 @@ const CONSULTAR = flag('--consultar');
 const DESFAZER = flag('--desfazer');
 const MOTIVO = flag('--motivo');
 const NF = flag('--nf');
+const APENAS_VINCULO = args.includes('--apenas-vinculo');
 const LIMIT = flag('--limit') ? Number(flag('--limit')) : undefined;
 const JSON_OUT = flag('--json');
 
@@ -110,6 +115,16 @@ async function main(): Promise<void> {
   if (NF) {
     const alvo = NF.replace(/^0+/, '');
     fila = fila.filter((f) => f.notaFiscal.replace(/^0+/, '') === alvo);
+  }
+  if (APENAS_VINCULO) {
+    const comVinculo = [];
+    for (const item of fila) {
+      const v = await resolverPedidosAcxeDaNf(item.notaFiscal, null);
+      if (v.size > 0) comVinculo.push(item);
+      else
+        console.log(`NF ${item.notaFiscal.padEnd(9)} ADIADA — sem vínculo NF→pedido no mapa (fica pendente)`);
+    }
+    fila = comVinculo;
   }
   if (LIMIT) fila = fila.slice(0, LIMIT);
 
