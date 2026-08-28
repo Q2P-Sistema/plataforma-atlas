@@ -64,6 +64,7 @@ vi.mock('@atlas/integration-omie', () => ({
 
 vi.mock('../services/notificacao.service.js', () => ({
   enviarAlertaBaixaPedidoQ2p: (...args: unknown[]) => alertaSpy(...args),
+  enviarDigestBaixasAguardandoVinculo: vi.fn().mockResolvedValue(undefined),
 }));
 
 import {
@@ -299,7 +300,9 @@ const MOV_OK = {
 
 function respostaPool(sql: string): { rows: unknown[] } {
   if (sql.includes('tbl_produtos_Q2P')) return { rows: [{ descricao: 'PELBD LB1810E2' }] };
-  if (sql.includes('nf_pedido_filhote')) return { rows: [] };
+  // Default: NF vinculada aos pedidos ACXE 423 (-> Q2P #100) e 424 (-> #200).
+  if (sql.includes('nf_pedido_filhote'))
+    return { rows: [{ pedido_acxe_omie: '423' }, { pedido_acxe_omie: '424' }] };
   if (sql.includes('tbl_pedidosCompras_Q2P')) {
     return {
       rows: [
@@ -361,7 +364,7 @@ beforeEach(async () => {
 });
 
 describe('processarBaixaPedidoQ2p — fluxo', () => {
-  it('FIFO: zera o pedido 193 (sentinela) e desconta o resto do 194; ledger pendente→concluída; movimentação concluída', async () => {
+  it('dois pedidos vinculados: zera o 193 (sentinela) e desconta o resto do 194 em ordem de previsão; ledger pendente→concluída', async () => {
     const res = await processarBaixaPedidoQ2p({
       movimentacaoId: 'mov-1',
       origem: 'fluxo',
@@ -408,22 +411,26 @@ describe('processarBaixaPedidoQ2p — fluxo', () => {
     expect(sql).toContain('DISTINCT');
   });
 
-  it('grava no ledger o critério da escolha: vinculo_nf para o casado, fifo para o resto', async () => {
+  it('sem transbordo: só o pedido vinculado é descontado; o excedente vira sem_saldo (nunca outro pedido do produto)', async () => {
     poolQuerySpy.mockImplementation((sql: string) =>
       Promise.resolve(
         sql.includes('nf_pedido_filhote') ? { rows: [{ pedido_acxe_omie: '423' }] } : respostaPool(sql),
       ),
     );
-    // 193 (casado, 24.125) zera e o resto (2.875) vai por FIFO ao 194.
+    // 193 (vinculado, 24.125) zera; o resto (2.875) NAO transborda para o 194
+    // (sem FIFO, migration 0051) — vira sem_saldo com alerta.
     const res = await processarBaixaPedidoQ2p({ movimentacaoId: 'mov-1', origem: 'fluxo' });
-    expect(res.alocacoes.map((a) => [a.ncodped, a.preferido])).toEqual([
-      [100, true],
-      [200, false],
+    expect(res.status).toBe('sem_saldo');
+    expect(res.restanteKg).toBe(2875);
+    expect(res.alocacoes.map((a) => [a.ncodped, a.preferido])).toEqual([[100, true]]);
+    expect(alterarSpy).toHaveBeenCalledTimes(1);
+    expect(inserts.map((i) => [i.ncodped, i.criterio ?? null, i.status])).toEqual([
+      [100, 'vinculo_nf', 'pendente'],
+      [null, null, 'sem_pedido'],
     ]);
-    expect(inserts.map((i) => [i.ncodped, i.criterio])).toEqual([
-      [100, 'vinculo_nf'],
-      [200, 'fifo'],
-    ]);
+    expect(alertaSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ motivo: 'sem_saldo', restanteKg: 2875 }),
+    );
   });
 
   it('pedido casado com o pedido ACXE da NF (mapa) é descontado primeiro', async () => {
@@ -690,6 +697,77 @@ describe('processarBaixaPedidoQ2p — fluxo', () => {
     expect(updates.find((u) => u.table === 'movimentacao')?.set).toMatchObject({
       baixaPedidoQ2p: 'falha',
     });
+  });
+});
+
+describe('política sem FIFO — aguardando vínculo (migration 0051)', () => {
+  it('NF sem vínculo no mapa → aguardando_vinculo: nada consultado, nada escrito no OMIE, movimentação marcada', async () => {
+    poolQuerySpy.mockImplementation((sql: string) =>
+      Promise.resolve(sql.includes('nf_pedido_filhote') ? { rows: [] } : respostaPool(sql)),
+    );
+    const res = await processarBaixaPedidoQ2p({ movimentacaoId: 'mov-1', origem: 'fluxo' });
+    expect(res.status).toBe('aguardando_vinculo');
+    expect(res.alocacoes).toEqual([]);
+    expect(consultarSpy).not.toHaveBeenCalled();
+    expect(alterarSpy).not.toHaveBeenCalled();
+    expect(inserts).toHaveLength(0);
+    expect(updates.find((u) => u.table === 'movimentacao')?.set).toMatchObject({
+      baixaPedidoQ2p: 'aguardando_vinculo',
+    });
+    expect(alertaSpy).not.toHaveBeenCalled();
+  });
+
+  it('dry-run sem vínculo só reporta (statusPrevisto=aguardando_vinculo), sem escrita', async () => {
+    poolQuerySpy.mockImplementation((sql: string) =>
+      Promise.resolve(sql.includes('nf_pedido_filhote') ? { rows: [] } : respostaPool(sql)),
+    );
+    const res = await processarBaixaPedidoQ2p({ movimentacaoId: 'mov-1', origem: 'backfill', dryRun: true });
+    expect(res.status).toBe('simulado');
+    expect(res.statusPrevisto).toBe('aguardando_vinculo');
+    expect(updates).toHaveLength(0);
+  });
+
+  it('vínculo existe mas o pedido Q2P casado não está aberto → sem_saldo com alerta (não pega outro pedido)', async () => {
+    // Vínculo só com 999, que não casa com nenhum pedido aberto do espelho.
+    poolQuerySpy.mockImplementation((sql: string) =>
+      Promise.resolve(
+        sql.includes('nf_pedido_filhote') ? { rows: [{ pedido_acxe_omie: '999' }] } : respostaPool(sql),
+      ),
+    );
+    const res = await processarBaixaPedidoQ2p({ movimentacaoId: 'mov-1', origem: 'fluxo' });
+    expect(res.status).toBe('sem_saldo');
+    expect(res.restanteKg).toBe(27000);
+    expect(alterarSpy).not.toHaveBeenCalled();
+    expect(alertaSpy).toHaveBeenCalledWith(expect.objectContaining({ motivo: 'sem_saldo' }));
+  });
+
+  it('reprocessarBaixasAguardandoVinculo: baixa quem ganhou vínculo, mantém quem não ganhou e manda digest das atrasadas', async () => {
+    const { reprocessarBaixasAguardandoVinculo } = await import('../services/baixa-pedido.service.js');
+    const { enviarDigestBaixasAguardandoVinculo } = await import('../services/notificacao.service.js');
+    const antiga = new Date(Date.now() - 5 * 86_400_000).toISOString();
+    poolQuerySpy.mockImplementation((sql: string, params?: unknown[]) => {
+      if (sql.includes("IN ('pendente', 'aguardando_vinculo')")) {
+        return Promise.resolve({
+          rows: [
+            { id: 'mov-1', nota_fiscal: '00005161', created_at: new Date().toISOString() },
+            { id: 'mov-1', nota_fiscal: '00005999', created_at: antiga },
+          ],
+        });
+      }
+      if (sql.includes('nf_pedido_filhote')) {
+        // 1ª NF ganhou vínculo; 2ª (5999) continua sem.
+        return Promise.resolve(
+          String(params?.[0]) === '00005161' ? { rows: [{ pedido_acxe_omie: '423' }] } : { rows: [] },
+        );
+      }
+      return Promise.resolve(respostaPool(sql));
+    });
+    const out = await reprocessarBaixasAguardandoVinculo({ enviarDigest: true });
+    expect(out).toMatchObject({ avaliadas: 2, aindaAguardando: 1, alertadas: 1, falhas: 0 });
+    expect(out.concluidas + out.semSaldo).toBe(1);
+    expect(vi.mocked(enviarDigestBaixasAguardandoVinculo)).toHaveBeenCalledWith(
+      expect.objectContaining({ itens: [{ notaFiscal: '00005999', dias: 5 }] }),
+    );
   });
 });
 
