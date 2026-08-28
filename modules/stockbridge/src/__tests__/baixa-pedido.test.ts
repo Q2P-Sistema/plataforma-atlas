@@ -745,7 +745,11 @@ describe('política sem FIFO — aguardando vínculo (migration 0051)', () => {
     const { reprocessarBaixasAguardandoVinculo } = await import('../services/baixa-pedido.service.js');
     const { enviarDigestBaixasAguardandoVinculo } = await import('../services/notificacao.service.js');
     const antiga = new Date(Date.now() - 5 * 86_400_000).toISOString();
-    poolQuerySpy.mockImplementation((sql: string, params?: unknown[]) => {
+    // O mock de getDb devolve a MESMA movimentação (MOV_OK, NF 5161) para os
+    // dois ids, então o vínculo é distinguido pela ORDEM das consultas ao mapa:
+    // a 1ª NF ganhou vínculo, a 2ª (5999, antiga) continua sem.
+    let consultasMapa = 0;
+    poolQuerySpy.mockImplementation((sql: string) => {
       if (sql.includes("IN ('pendente', 'aguardando_vinculo')")) {
         return Promise.resolve({
           rows: [
@@ -755,10 +759,8 @@ describe('política sem FIFO — aguardando vínculo (migration 0051)', () => {
         });
       }
       if (sql.includes('nf_pedido_filhote')) {
-        // 1ª NF ganhou vínculo; 2ª (5999) continua sem.
-        return Promise.resolve(
-          String(params?.[0]) === '00005161' ? { rows: [{ pedido_acxe_omie: '423' }] } : { rows: [] },
-        );
+        consultasMapa += 1;
+        return Promise.resolve(consultasMapa === 1 ? { rows: [{ pedido_acxe_omie: '423' }] } : { rows: [] });
       }
       return Promise.resolve(respostaPool(sql));
     });
