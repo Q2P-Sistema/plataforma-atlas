@@ -72,6 +72,7 @@ import {
   anexarObsBaixa,
   processarBaixaPedidoQ2p,
   desfazerBaixaPedidoQ2p,
+  encerrarPedidoQ2p,
   listarPedidosAbertosQ2p,
   BaixaPedidoNaoAplicavelError,
   ETAPA_PEDIDO_Q2P_ABERTO,
@@ -765,6 +766,62 @@ describe('desfazerBaixaPedidoQ2p — reversão auditável', () => {
     expect(res.revertidos).toHaveLength(1);
     expect(alterarSpy).not.toHaveBeenCalled();
     expect(updates).toHaveLength(0);
+  });
+});
+
+describe('encerrarPedidoQ2p — encerramento manual (carga cancelada / FUP encerrado)', () => {
+  it('zera o pedido na sentinela, grava ledger sem movimentação com criterio=manual e motivo, e anota o cObs', async () => {
+    const { getDb } = await import('@atlas/core');
+    vi.mocked(getDb).mockReturnValue(montarDb({ mov: null }) as never);
+    consultarSpy.mockResolvedValue(pedidoLive(100, 54_000));
+
+    const res = await encerrarPedidoQ2p({
+      ncodped: 100,
+      motivo: 'FUP 00 - CANCELADO',
+      ator: { userId: 'u1', role: 'gestor' },
+    });
+
+    expect(res).toMatchObject({ status: 'encerrado', saldoAnteriorKg: 54_000, saldoNovoKg: 0.1 });
+    expect(alterarSpy).toHaveBeenCalledTimes(1);
+    const input = alterarSpy.mock.calls[0]![1] as { produto: { nQtde: number }; cObs: string };
+    expect(input.produto.nQtde).toBe(0.1);
+    expect(input.cObs).toContain('ENCERRAMENTO manual');
+    expect(input.cObs).toContain('FUP 00 - CANCELADO');
+    expect(inserts[0]).toMatchObject({
+      movimentacaoId: null,
+      ncodped: 100,
+      criterio: 'manual',
+      origem: 'manual',
+      motivo: 'FUP 00 - CANCELADO',
+      status: 'pendente',
+      saldoNovoKg: '0.1',
+      criadoPor: 'u1',
+    });
+    expect(updates.find((u) => u.table === 'baixaPedidoQ2p')?.set).toMatchObject({ status: 'concluida' });
+    expect(lockQuerySpy.mock.calls[0]![0]).toContain('pg_advisory_lock');
+  });
+
+  it('pedido já zerado → ja_zerado, sem chamada nem ledger', async () => {
+    const { getDb } = await import('@atlas/core');
+    vi.mocked(getDb).mockReturnValue(montarDb({ mov: null }) as never);
+    consultarSpy.mockResolvedValue(pedidoLive(100, 0.1));
+    const res = await encerrarPedidoQ2p({ ncodped: 100, motivo: 'x' });
+    expect(res.status).toBe('ja_zerado');
+    expect(alterarSpy).not.toHaveBeenCalled();
+    expect(inserts).toHaveLength(0);
+  });
+
+  it('dry-run só simula; falha da OMIE marca o ledger como falha e propaga', async () => {
+    const { getDb } = await import('@atlas/core');
+    vi.mocked(getDb).mockReturnValue(montarDb({ mov: null }) as never);
+    consultarSpy.mockResolvedValue(pedidoLive(100, 54_000));
+    expect((await encerrarPedidoQ2p({ ncodped: 100, motivo: 'x', dryRun: true })).status).toBe('simulado');
+    expect(alterarSpy).not.toHaveBeenCalled();
+    expect(inserts).toHaveLength(0);
+
+    alterarSpy.mockRejectedValueOnce(new Error('OMIE q2p 500'));
+    await expect(encerrarPedidoQ2p({ ncodped: 100, motivo: 'x' })).rejects.toThrow('OMIE q2p 500');
+    expect(updates.find((u) => u.table === 'baixaPedidoQ2p')?.set).toMatchObject({ status: 'falha' });
   });
 });
 

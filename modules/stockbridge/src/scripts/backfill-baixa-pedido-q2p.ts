@@ -18,6 +18,9 @@
  *                      seguem) — re-rodar é idempotente pelo ledger.
  *   --consultar <nCodPed>  Só consulta um pedido ao vivo e imprime o parse —
  *                      para validar o formato do ConsultarPedCompra em UAT.
+ *   --encerrar <nº,nº,...> --motivo "..."  Zera (0,1 kg) pedidos Q2P por NÚMERO
+ *                      (cNumero) — carga cancelada / processo encerrado no FUP.
+ *                      Ledger com criterio=manual. Com --execute aplica.
  *   --desfazer <nf> --motivo "..."  Reverte a baixa da NF (devolve a quantidade
  *                      aos pedidos, desativa o ledger, reabre como pendente).
  *                      Com --execute aplica; sem, só mostra o que faria.
@@ -39,6 +42,7 @@ import {
   listarBaixasPendentes,
   processarBaixaPedidoQ2p,
   desfazerBaixaPedidoQ2p,
+  encerrarPedidoQ2p,
   resolverPedidosAcxeDaNf,
   type CachePedidos,
   type ResultadoBaixa,
@@ -54,6 +58,7 @@ const flag = (nome: string): string | undefined => {
 };
 const CONSULTAR = flag('--consultar');
 const DESFAZER = flag('--desfazer');
+const ENCERRAR = flag('--encerrar');
 const MOTIVO = flag('--motivo');
 const NF = flag('--nf');
 const APENAS_VINCULO = args.includes('--apenas-vinculo');
@@ -73,6 +78,41 @@ async function main(): Promise<void> {
       nCodPed: Number(CONSULTAR),
     });
     console.log(JSON.stringify(ped, null, 2));
+    return;
+  }
+
+  if (ENCERRAR) {
+    if (!MOTIVO) {
+      console.error('--encerrar exige --motivo "..."');
+      process.exitCode = 2;
+      return;
+    }
+    const numeros = ENCERRAR.split(',')
+      .map((n) => n.trim())
+      .filter(Boolean);
+    const res = await getPool().query<{ ncodped: string; cnumero: string }>(
+      `SELECT ncodped::text AS ncodped, cnumero FROM public."tbl_pedidosCompras_Q2P" WHERE cnumero = ANY($1::text[])`,
+      [numeros],
+    );
+    const achados = new Set(res.rows.map((r) => r.cnumero));
+    for (const n of numeros)
+      if (!achados.has(n)) console.log(`Pedido ${n}: NAO encontrado no espelho — ignorado`);
+    console.log(
+      `\n${EXECUTE ? '▶ ENCERRAMENTO' : '○ DRY-RUN encerramento'} — ${res.rows.length} pedido(s)\n`,
+    );
+    let totalKg = 0;
+    for (const r of res.rows) {
+      try {
+        const out = await encerrarPedidoQ2p({ ncodped: Number(r.ncodped), motivo: MOTIVO, dryRun: !EXECUTE });
+        totalKg += out.status === 'ja_zerado' ? 0 : out.saldoAnteriorKg;
+        console.log(
+          `Pedido ${String(out.cnumero).padEnd(5)} ${out.produto.slice(0, 22).padEnd(22)} ${fmtKg(out.saldoAnteriorKg).padStart(10)} -> ${fmtKg(out.saldoNovoKg)} kg  ${out.status}`,
+        );
+      } catch (err) {
+        console.log(`Pedido ${r.cnumero}: ERRO ${(err as Error).message}`);
+      }
+    }
+    console.log(`\nTotal zerado: ${fmtKg(totalKg)} kg${EXECUTE ? '' : ' (nada alterado; use --execute)'}`);
     return;
   }
 

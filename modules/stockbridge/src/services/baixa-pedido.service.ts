@@ -49,7 +49,7 @@ const logger = createLogger('stockbridge:baixa-pedido');
 export const ETAPA_PEDIDO_Q2P_ABERTO = '15';
 const TOLERANCIA_KG = 0.0005;
 
-export type OrigemBaixa = 'fluxo' | 'retry' | 'backfill';
+export type OrigemBaixa = 'fluxo' | 'retry' | 'backfill' | 'manual';
 
 /**
  * Cache de pedidos consultados AO VIVO, com escopo de UMA execução (o backfill
@@ -1058,6 +1058,142 @@ function anexarObsReversao(
   return junto.length > LIMITE_OBS ? junto.slice(junto.length - LIMITE_OBS) : junto;
 }
 
+// ── Encerramento manual de pedido (carga cancelada / processo encerrado) ──────
+
+export interface ResultadoEncerramento {
+  ncodped: number;
+  cnumero: string | null;
+  produto: string;
+  saldoAnteriorKg: number;
+  saldoNovoKg: number;
+  status: 'encerrado' | 'ja_zerado' | 'simulado';
+  dryRun: boolean;
+}
+
+/**
+ * Zera (sentinela 0,1 kg) um pedido de compra Q2P que não será consumido por
+ * recebimento — carga cancelada (FUP "00 - CANCELADO") ou processo encerrado
+ * sem baixa (FUP "05 - Encerrado", NF recebida no legado). Decisão humana:
+ * exige motivo e ator; grava linha no ledger SEM movimentação
+ * (criterio='manual', migration 0050) para a trilha de auditoria, e anota o
+ * motivo no cObs/cObsInt do pedido como as baixas normais.
+ */
+export async function encerrarPedidoQ2p(input: {
+  ncodped: number;
+  motivo: string;
+  ator?: { userId: string; role: string };
+  dryRun?: boolean;
+}): Promise<ResultadoEncerramento> {
+  const db = getDb();
+  const dryRun = input.dryRun === true;
+  const pedido = await consultarPedidoCompra('q2p', { nCodPed: input.ncodped });
+  const item = pedido.produtos[0];
+  if (!item) throw new Error(`Pedido ${pedido.cNumero ?? input.ncodped} sem item de produto`);
+  const produto = item.cDescricao ?? item.cProduto;
+  const saldo = item.nQtde;
+  if (saldo <= QTD_SENTINELA_PEDIDO_ZERADO_KG) {
+    return {
+      ncodped: pedido.nCodPed,
+      cnumero: pedido.cNumero,
+      produto,
+      saldoAnteriorKg: saldo,
+      saldoNovoKg: saldo,
+      status: 'ja_zerado',
+      dryRun,
+    };
+  }
+  if (dryRun) {
+    return {
+      ncodped: pedido.nCodPed,
+      cnumero: pedido.cNumero,
+      produto,
+      saldoAnteriorKg: saldo,
+      saldoNovoKg: QTD_SENTINELA_PEDIDO_ZERADO_KG,
+      status: 'simulado',
+      dryRun,
+    };
+  }
+
+  const soltar = await adquirirLockProduto(item.nCodProd);
+  try {
+    const [ledgerRow] = await db
+      .insert(baixaPedidoQ2p)
+      .values({
+        movimentacaoId: null,
+        ncodped: pedido.nCodPed,
+        cnumero: pedido.cNumero,
+        ncodprod: item.nCodProd,
+        ncoditem: item.nCodItem,
+        quantidadeKg: String(d3(new Decimal(saldo).minus(QTD_SENTINELA_PEDIDO_ZERADO_KG))),
+        saldoAnteriorKg: String(saldo),
+        saldoNovoKg: String(QTD_SENTINELA_PEDIDO_ZERADO_KG),
+        status: 'pendente',
+        criterio: 'manual',
+        origem: 'manual',
+        motivo: input.motivo,
+        tentativas: 1,
+        criadoPor: input.ator?.userId ?? null,
+      })
+      .returning({ id: baixaPedidoQ2p.id });
+    const inputAlt = montarInputAlteracao({
+      pedido,
+      item,
+      saldoAnteriorKg: saldo,
+      saldoNovoKg: QTD_SENTINELA_PEDIDO_ZERADO_KG,
+      notaFiscal: '-',
+    });
+    inputAlt.cObs = anexarObsEncerramento(pedido.cObs, saldo, input.motivo);
+    inputAlt.cObsInt = anexarObsEncerramento(pedido.cObsInt, saldo, input.motivo);
+    try {
+      await alterarPedidoCompra('q2p', inputAlt);
+    } catch (err) {
+      await db
+        .update(baixaPedidoQ2p)
+        .set({
+          status: 'falha',
+          ultimoErro: { mensagem: (err as Error).message, timestamp: new Date().toISOString() },
+          updatedAt: new Date(),
+        })
+        .where(eq(baixaPedidoQ2p.id, ledgerRow!.id));
+      throw err;
+    }
+    await db
+      .update(baixaPedidoQ2p)
+      .set({ status: 'concluida', updatedAt: new Date() })
+      .where(eq(baixaPedidoQ2p.id, ledgerRow!.id));
+    logger.warn(
+      {
+        ncodped: pedido.nCodPed,
+        pedido: pedido.cNumero,
+        produto,
+        de: saldo,
+        motivo: input.motivo,
+        ator: input.ator,
+      },
+      'Pedido de compra Q2P ENCERRADO manualmente',
+    );
+    return {
+      ncodped: pedido.nCodPed,
+      cnumero: pedido.cNumero,
+      produto,
+      saldoAnteriorKg: saldo,
+      saldoNovoKg: QTD_SENTINELA_PEDIDO_ZERADO_KG,
+      status: 'encerrado',
+      dryRun,
+    };
+  } finally {
+    await soltar();
+  }
+}
+
+function anexarObsEncerramento(obsAtual: string | null, saldoAnterior: number, motivo: string): string {
+  const motivoAscii = motivo.normalize('NFD').replace(/[^\x20-\x7E]/g, '');
+  const linha = `Atlas - ENCERRAMENTO manual em ${formatarDataOmie()}: saldo ${fmtKgObs(saldoAnterior)} kg -> ${fmtKgObs(QTD_SENTINELA_PEDIDO_ZERADO_KG)} kg (${motivoAscii})`;
+  const base = (obsAtual ?? '').trim();
+  const junto = base ? `${base}\n${linha}` : linha;
+  return junto.length > LIMITE_OBS ? junto.slice(junto.length - LIMITE_OBS) : junto;
+}
+
 // ── Disparo fire-and-forget (hooks do recebimento/aprovação/retry) ─────────────
 
 /**
@@ -1194,7 +1330,8 @@ export interface LedgerItem {
   saldoAnteriorKg: number | null;
   saldoNovoKg: number | null;
   status: 'pendente' | 'concluida' | 'falha' | 'sem_pedido';
-  criterio: 'vinculo_nf' | 'fifo' | null;
+  criterio: 'vinculo_nf' | 'fifo' | 'manual' | null;
+  motivo: string | null;
   origem: OrigemBaixa;
   tentativas: number;
   ultimoErro: unknown;
@@ -1216,6 +1353,7 @@ export async function listarLedgerDaMovimentacao(movimentacaoId: string): Promis
     saldoNovoKg: r.saldoNovoKg != null ? Number(r.saldoNovoKg) : null,
     status: r.status,
     criterio: r.criterio ?? null,
+    motivo: r.motivo ?? null,
     origem: r.origem,
     tentativas: r.tentativas,
     ultimoErro: r.ultimoErro,

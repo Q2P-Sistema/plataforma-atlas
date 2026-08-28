@@ -408,7 +408,8 @@ export const baixaPedidoQ2p = stockbridgeSchema.table(
   'baixa_pedido_q2p',
   {
     id: uuid('id').defaultRandom().primaryKey(),
-    movimentacaoId: uuid('movimentacao_id').notNull().references(() => movimentacao.id),
+    /** NULL = encerramento manual de pedido (migration 0050), sem movimentação de origem. */
+    movimentacaoId: uuid('movimentacao_id').references(() => movimentacao.id),
     /** Pedido Q2P (id OMIE). NULL = linha de "resto sem pedido aberto". */
     ncodped: bigint('ncodped', { mode: 'number' }),
     cnumero: varchar('cnumero', { length: 50 }),
@@ -419,8 +420,10 @@ export const baixaPedidoQ2p = stockbridgeSchema.table(
     saldoNovoKg: numeric('saldo_novo_kg', { precision: 12, scale: 3 }),
     status: text('status').notNull().$type<'pendente' | 'concluida' | 'falha' | 'sem_pedido'>(),
     // Migration 0048: por que este pedido — vinculo NF→pedido (mapa 011) ou FIFO.
-    criterio: text('criterio').$type<'vinculo_nf' | 'fifo' | null>(),
-    origem: text('origem').notNull().default('fluxo').$type<'fluxo' | 'retry' | 'backfill'>(),
+    criterio: text('criterio').$type<'vinculo_nf' | 'fifo' | 'manual' | null>(),
+    origem: text('origem').notNull().default('fluxo').$type<'fluxo' | 'retry' | 'backfill' | 'manual'>(),
+    // Migration 0050: justificativa do gestor (encerramento manual / reversão).
+    motivo: text('motivo'),
     tentativas: smallint('tentativas').notNull().default(0),
     ultimoErro: jsonb('ultimo_erro'),
     criadoPor: uuid('criado_por').references(() => users.id),
