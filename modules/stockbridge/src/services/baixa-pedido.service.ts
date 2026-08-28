@@ -10,7 +10,7 @@ import {
   type AlterarPedidoCompraInput,
 } from '@atlas/integration-omie';
 import { QTD_SENTINELA_PEDIDO_ZERADO_KG, type StatusBaixaPedidoQ2p } from '../types.js';
-import { enviarAlertaBaixaPedidoQ2p } from './notificacao.service.js';
+import { enviarAlertaBaixaPedidoQ2p, enviarDigestBaixasAguardandoVinculo } from './notificacao.service.js';
 import { formatarDataOmie } from './omie-shared.js';
 
 /**
@@ -464,6 +464,31 @@ export async function processarBaixaPedidoQ2p(input: ProcessarBaixaInput): Promi
   const preferidos = await resolverPedidosAcxeDaNf(mov.notaFiscal, loteRow?.pedidoCompraAcxe);
   base.pedidosAcxePreferidos = [...preferidos];
 
+  // Política SEM FIFO (decisão de negócio 28/08/2026, migration 0051): a baixa
+  // só acontece no pedido Q2P casado com o pedido ACXE da NF filhote. Sem
+  // vínculo no mapa (FUP ainda não preenchida), a movimentação espera — o cron
+  // horário (reprocessarBaixasAguardandoVinculo) tenta de novo a cada carga.
+  if (preferidos.size === 0) {
+    if (!dryRun) {
+      await db
+        .update(movimentacao)
+        .set({ baixaPedidoQ2p: 'aguardando_vinculo', updatedAt: new Date() })
+        .where(eq(movimentacao.id, mov.id));
+    }
+    logger.info(
+      { movimentacaoId: mov.id, nf: mov.notaFiscal },
+      'Baixa de pedido Q2P aguardando vínculo NF→pedido (FUP)',
+    );
+    return {
+      ...base,
+      status: dryRun ? 'simulado' : 'aguardando_vinculo',
+      statusPrevisto: 'aguardando_vinculo',
+      alocacoes: [],
+      restanteKg: quantidadeKg,
+      kgJaDescontadoAntes: 0,
+    };
+  }
+
   const soltar = dryRun ? null : await adquirirLockProduto(ncodprod);
   try {
     // 1. Ledger existente: o que já foi descontado não se repete; linhas
@@ -518,7 +543,7 @@ export async function processarBaixaPedidoQ2p(input: ProcessarBaixaInput): Promi
     let restante = new Decimal(quantidadeKg).minus(jaDescontado);
     const alocacoes: AlocacaoPedido[] = [];
 
-    // 2. FIFO sobre os pedidos abertos, consultando cada um ao vivo.
+    // 2. Pedidos vinculados (ordem de previsão), consultando cada um ao vivo.
     if (restante.gt(TOLERANCIA_KG)) {
       let candidatos: PedidoCandidato[];
       try {
@@ -543,7 +568,10 @@ export async function processarBaixaPedidoQ2p(input: ProcessarBaixaInput): Promi
           cand: null,
         });
       }
-      const ordenados = [...candidatos.filter((c) => c.preferido), ...candidatos.filter((c) => !c.preferido)];
+      // Só os pedidos VINCULADOS à NF entram — nunca outro pedido do produto.
+      // Se o vinculado não cobrir a quantidade, o resto vira sem_saldo + alerta
+      // (o excedente é problema de cadastro/recebimento, não de outra carga).
+      const ordenados = candidatos.filter((c) => c.preferido);
 
       for (const cand of ordenados) {
         if (restante.lte(TOLERANCIA_KG)) break;
@@ -1251,6 +1279,82 @@ export function dispararBaixaPedidoQ2p(args: { movimentacaoId: string; origem?: 
   })();
 }
 
+// ── Cron: reprocessa quem está aguardando vínculo ──────────────────────────────
+
+export interface ResultadoReprocessamento {
+  avaliadas: number;
+  concluidas: number;
+  semSaldo: number;
+  falhas: number;
+  aindaAguardando: number;
+  alertadas: number;
+}
+
+/** Dias em 'aguardando_vinculo' a partir dos quais a Comex é avisada (digest diário). */
+export const DIAS_ALERTA_AGUARDANDO_VINCULO = 3;
+
+/**
+ * Roda de hora em hora (cron), logo após a carga do mapa NF→pedido pelo n8n:
+ * para cada entrada de importação 'pendente' ou 'aguardando_vinculo' com o
+ * dual concluído, tenta a baixa de novo — quem ganhou vínculo na FUP é baixado
+ * no pedido certo; quem não ganhou continua esperando. Com `enviarDigest`, as
+ * que esperam há mais de DIAS_ALERTA_AGUARDANDO_VINCULO dias vão num único
+ * e-mail para a Comex (o cron passa true uma vez por dia).
+ */
+export async function reprocessarBaixasAguardandoVinculo(
+  opts: { enviarDigest?: boolean } = {},
+): Promise<ResultadoReprocessamento> {
+  const pool = getPool();
+  const res = await pool.query<{ id: string; nota_fiscal: string; created_at: string }>(
+    `SELECT m.id, m.nota_fiscal, m.created_at::text AS created_at
+       FROM stockbridge.movimentacao m
+      WHERE m.ativo = true
+        AND m.tipo_movimento = 'entrada_nf' AND m.subtipo = 'importacao'
+        AND m.status_omie = 'concluida'
+        AND m.baixa_pedido_q2p IN ('pendente', 'aguardando_vinculo')
+      ORDER BY m.created_at`,
+  );
+  const out: ResultadoReprocessamento = {
+    avaliadas: res.rows.length,
+    concluidas: 0,
+    semSaldo: 0,
+    falhas: 0,
+    aindaAguardando: 0,
+    alertadas: 0,
+  };
+  const atrasadas: Array<{ notaFiscal: string; dias: number }> = [];
+  const cache: CachePedidos = new Map();
+  for (const row of res.rows) {
+    try {
+      const r = await processarBaixaPedidoQ2p({
+        movimentacaoId: row.id,
+        origem: 'retry',
+        cachePedidos: cache,
+      });
+      if (r.status === 'concluida') out.concluidas += 1;
+      else if (r.status === 'sem_saldo') out.semSaldo += 1;
+      else if (r.status === 'falha') out.falhas += 1;
+      else if (r.status === 'aguardando_vinculo') {
+        out.aindaAguardando += 1;
+        const dias = Math.floor((Date.now() - new Date(row.created_at).getTime()) / 86_400_000);
+        if (dias >= DIAS_ALERTA_AGUARDANDO_VINCULO) atrasadas.push({ notaFiscal: row.nota_fiscal, dias });
+      }
+    } catch (err) {
+      out.falhas += 1;
+      logger.error({ err, movimentacaoId: row.id }, 'Reprocessamento da baixa aguardando vínculo falhou');
+    }
+  }
+  if (opts.enviarDigest && atrasadas.length > 0) {
+    out.alertadas = atrasadas.length;
+    void enviarDigestBaixasAguardandoVinculo({
+      itens: atrasadas,
+      diasLimite: DIAS_ALERTA_AGUARDANDO_VINCULO,
+    });
+  }
+  logger.info(out, 'Reprocessamento de baixas aguardando vínculo concluído');
+  return out;
+}
+
 // ── Painel / retry ─────────────────────────────────────────────────────────────
 
 export interface BaixaPendenteItem {
@@ -1300,7 +1404,7 @@ export async function listarBaixasPendentes(): Promise<BaixaPendenteItem[]> {
       LEFT JOIN public."tbl_produtos_Q2P" pq ON pq.codigo_produto = COALESCE(m.produto_codigo_q2p, l.produto_codigo_q2p)
       LEFT JOIN public."tbl_produtos_ACXE" pa ON pa.codigo_produto = COALESCE(m.produto_codigo_acxe, l.produto_codigo_acxe)
      WHERE m.ativo = true
-       AND m.baixa_pedido_q2p IN ('pendente', 'falha', 'sem_saldo')
+       AND m.baixa_pedido_q2p IN ('pendente', 'aguardando_vinculo', 'falha', 'sem_saldo')
      ORDER BY m.created_at ASC
   `);
   return res.rows.map((r) => ({

@@ -25,9 +25,6 @@
  *                      aos pedidos, desativa o ledger, reabre como pendente).
  *                      Com --execute aplica; sem, só mostra o que faria.
  *   --nf <numero>      Restringe a uma NF.  --limit <n>  Limita a n movimentações.
- *   --apenas-vinculo   Processa só NFs com vínculo NF→pedido ACXE no mapa
- *                      (nf_pedido_mapa); as sem vínculo ficam pendentes para
- *                      quando o mapa as alcançar (evita FIFO em pedido errado).
  *   --json <arquivo>   Grava o relatório completo em JSON.
  *
  * Execução (na raiz do repo, com DATABASE_URL + OMIE_Q2P_KEY/SECRET do ambiente):
@@ -43,7 +40,6 @@ import {
   processarBaixaPedidoQ2p,
   desfazerBaixaPedidoQ2p,
   encerrarPedidoQ2p,
-  resolverPedidosAcxeDaNf,
   type CachePedidos,
   type ResultadoBaixa,
 } from '../services/baixa-pedido.service.js';
@@ -61,7 +57,6 @@ const DESFAZER = flag('--desfazer');
 const ENCERRAR = flag('--encerrar');
 const MOTIVO = flag('--motivo');
 const NF = flag('--nf');
-const APENAS_VINCULO = args.includes('--apenas-vinculo');
 const LIMIT = flag('--limit') ? Number(flag('--limit')) : undefined;
 const JSON_OUT = flag('--json');
 
@@ -156,16 +151,6 @@ async function main(): Promise<void> {
     const alvo = NF.replace(/^0+/, '');
     fila = fila.filter((f) => f.notaFiscal.replace(/^0+/, '') === alvo);
   }
-  if (APENAS_VINCULO) {
-    const comVinculo = [];
-    for (const item of fila) {
-      const v = await resolverPedidosAcxeDaNf(item.notaFiscal, null);
-      if (v.size > 0) comVinculo.push(item);
-      else
-        console.log(`NF ${item.notaFiscal.padEnd(9)} ADIADA — sem vínculo NF→pedido no mapa (fica pendente)`);
-    }
-    fila = comVinculo;
-  }
   if (LIMIT) fila = fila.slice(0, LIMIT);
 
   console.log(
@@ -185,6 +170,7 @@ async function main(): Promise<void> {
     sem_saldo: 0,
     falha: 0,
     aguardando: 0,
+    aguardandoVinculo: 0,
     kgDescontado: 0,
     kgSemPedido: 0,
   };
@@ -210,6 +196,7 @@ async function main(): Promise<void> {
     if (desfecho === 'concluida') totais.concluida += 1;
     else if (desfecho === 'sem_saldo') totais.sem_saldo += 1;
     else if (desfecho === 'falha') totais.falha += 1;
+    else if (desfecho === 'aguardando_vinculo') totais.aguardandoVinculo += 1;
     else totais.aguardando += 1;
     const kgDesc = res.alocacoes.reduce((acc, a) => acc + a.kgAlocado, 0);
     totais.kgDescontado += kgDesc;
@@ -253,7 +240,7 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    `\n── Resumo ── concluída: ${totais.concluida} · sem pedido: ${totais.sem_saldo} · falha: ${totais.falha} · aguardando OMIE: ${totais.aguardando}` +
+    `\n── Resumo ── concluída: ${totais.concluida} · sem pedido: ${totais.sem_saldo} · falha: ${totais.falha} · aguardando vínculo FUP: ${totais.aguardandoVinculo} · aguardando OMIE: ${totais.aguardando}` +
       `\n   descontado: ${fmtKg(totais.kgDescontado)} kg · sem pedido: ${fmtKg(totais.kgSemPedido)} kg` +
       `\n   (* = pedido Q2P casado com o pedido ACXE da NF)`,
   );

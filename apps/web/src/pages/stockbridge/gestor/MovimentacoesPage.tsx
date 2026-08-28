@@ -26,7 +26,7 @@ interface Movimentacao {
   aprovadoPor: { id: string | null; nome: string | null; em: string | null };
   statusOmie: string | null;
   /** Baixa do pedido de compra Q2P (só entradas de importação). */
-  baixaPedidoQ2p: 'pendente' | 'concluida' | 'sem_saldo' | 'falha' | null;
+  baixaPedidoQ2p: 'pendente' | 'aguardando_vinculo' | 'concluida' | 'sem_saldo' | 'falha' | null;
   ladoAcxe: LadoCnpj;
   ladoQ2p: LadoCnpj;
   createdAt: string;
@@ -85,6 +85,7 @@ function useApiFetch() {
 const BAIXA_PEDIDO_BADGE: Record<string, { label: string; cls: string; title: string }> = {
   concluida: { label: 'Baixado', cls: 'bg-emerald-50 text-emerald-700', title: 'Saldo do pedido de compra Q2P reduzido no OMIE' },
   pendente: { label: 'Pendente', cls: 'bg-atlas-muted/20 text-atlas-muted', title: 'Baixa do pedido de compra Q2P ainda não executada' },
+  aguardando_vinculo: { label: 'Aguardando vínculo', cls: 'bg-amber-50 text-amber-700', title: 'A planilha FUP ainda não informa o pedido desta NF — a baixa acontece automaticamente na hora seguinte ao preenchimento' },
   sem_saldo: { label: 'Sem pedido', cls: 'bg-amber-50 text-amber-700', title: 'Não havia pedido de compra Q2P em aberto suficiente — revisar no OMIE' },
   falha: { label: 'Falha', cls: 'bg-red-50 text-red-700', title: 'A baixa do pedido de compra Q2P falhou no OMIE — retentar' },
 };

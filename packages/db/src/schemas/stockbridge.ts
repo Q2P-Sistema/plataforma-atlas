@@ -172,7 +172,9 @@ export const movimentacao = stockbridgeSchema.table(
     custoUnitarioBrl: numeric('custo_unitario_brl', { precision: 14, scale: 6 }),
     // ACXEGDP-344 (migration 0047): baixa do pedido de compra Q2P desta entrada
     // de importacao. NULL = nao se aplica.
-    baixaPedidoQ2p: text('baixa_pedido_q2p').$type<'pendente' | 'concluida' | 'sem_saldo' | 'falha' | null>(),
+    baixaPedidoQ2p: text('baixa_pedido_q2p').$type<
+      'pendente' | 'aguardando_vinculo' | 'concluida' | 'sem_saldo' | 'falha' | null
+    >(),
     ativo: boolean('ativo').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

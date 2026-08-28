@@ -544,6 +544,42 @@ export async function enviarAlertaBaixaPedidoQ2p(args: {
 }
 
 /**
+ * ACXEGDP-344 (política sem FIFO): NFs de importação recebidas há mais de N
+ * dias e ainda sem vínculo NF→pedido na planilha FUP — a baixa do pedido Q2P
+ * fica parada até a Comex preencher as filhotes no FUP. Um e-mail por dia.
+ */
+export async function enviarDigestBaixasAguardandoVinculo(args: {
+  itens: Array<{ notaFiscal: string; dias: number }>;
+  diasLimite: number;
+}): Promise<void> {
+  if (args.itens.length === 0) return;
+  const to = getOpsEmail();
+  const config = getConfig();
+  const linkPainel = `${config.APP_URL}/stockbridge/movimentacoes`;
+  const subject = `StockBridge — ${args.itens.length} NF(s) recebida(s) sem vínculo com pedido na FUP`;
+  const lista = args.itens
+    .map((i) => `<li>NF ${escapeHtml(i.notaFiscal)} — recebida há ${i.dias} dia(s)</li>`)
+    .join('');
+  const corpoHtml = `
+    <p>As NFs abaixo foram recebidas há mais de ${args.diasLimite} dias, mas a planilha FUP ainda não informa a qual pedido elas pertencem. Sem esse vínculo a baixa no pedido de compra da Q2P não é feita (o Atlas não escolhe pedido por ordem de data).</p>
+    <p>Basta preencher as NFs filhotes no pedido correspondente da FUP — a baixa acontece automaticamente na hora seguinte.</p>
+    <ul>${lista}</ul>
+  `;
+  const { html, text } = buildEmailLayout({
+    titulo: 'NFs aguardando vínculo com pedido',
+    variante: 'alerta',
+    corpoHtml,
+    ctaLabel: 'Abrir movimentações',
+    ctaUrl: linkPainel,
+  });
+  try {
+    await sendEmail({ to, cc: alertaOpsCc(to), subject, html, text });
+  } catch (err) {
+    logger.error({ err, args }, 'Falha ao enviar digest de baixas aguardando vínculo');
+  }
+}
+
+/**
  * Resolve o email do usuario operador pelo id. Retorna null se nao encontrado
  * ou sem email — caller deve tratar fallback.
  */
