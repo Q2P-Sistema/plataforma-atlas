@@ -1,7 +1,11 @@
 import type { OmieCnpj } from '../client.js';
 import type { ConsultarNFResponse } from './nf.js';
 import type { IncluirAjusteEstoqueInput, IncluirAjusteEstoqueResponse } from './ajuste-estoque.js';
-import type { AlterarPedidoCompraInput, AlterarPedidoCompraResponse } from './pedido-compra.js';
+import type {
+  AlterarPedidoCompraInput,
+  AlterarPedidoCompraResponse,
+  PedidoCompraConsultado,
+} from './pedido-compra.js';
 import type {
   ListarAjusteEstoqueInput,
   ListarAjusteEstoqueResponse,
@@ -27,6 +31,7 @@ const ajustesRegistrados: MockAjusteRegistrado[] = [];
  */
 export function __resetMockState(): void {
   ajustesRegistrados.length = 0;
+  pedidosRegistrados.length = 0;
   mockIdSeq = 1_000_000;
 }
 
@@ -149,13 +154,116 @@ export function mockListarAjusteEstoque(
   };
 }
 
+// ── Pedido de compra (ACXEGDP-344) ────────────────────────────────────────────
+
+interface MockPedidoRegistrado {
+  cnpj: OmieCnpj;
+  pedido: PedidoCompraConsultado;
+}
+
+/**
+ * Pedidos de compra em memória: ConsultarPedCompra lê daqui e AlteraPedCompra
+ * grava a nova quantidade do item — assim o fluxo de baixa (consulta → altera →
+ * consulta) é verificável em dev/teste sem OMIE real.
+ */
+const pedidosRegistrados: MockPedidoRegistrado[] = [];
+
+/** Injeta um pedido pre-existente no mock (testes da baixa de pedido Q2P). */
+export function __injectMockPedidoCompra(cnpj: OmieCnpj, pedido: PedidoCompraConsultado): void {
+  const idx = pedidosRegistrados.findIndex((p) => p.cnpj === cnpj && p.pedido.nCodPed === pedido.nCodPed);
+  const entry = { cnpj, pedido: structuredClone(pedido) };
+  if (idx >= 0) pedidosRegistrados[idx] = entry;
+  else pedidosRegistrados.push(entry);
+}
+
+/** Snapshot (cópia) de um pedido registrado no mock — para asserts em teste. */
+export function __getMockPedidoCompra(cnpj: OmieCnpj, nCodPed: number): PedidoCompraConsultado | null {
+  const found = pedidosRegistrados.find((p) => p.cnpj === cnpj && p.pedido.nCodPed === nCodPed);
+  return found ? structuredClone(found.pedido) : null;
+}
+
+function acharPedidoMock(
+  cnpj: OmieCnpj,
+  ref: { nCodPed?: number; cCodIntPed?: string },
+): MockPedidoRegistrado | undefined {
+  return pedidosRegistrados.find(
+    (p) =>
+      p.cnpj === cnpj &&
+      ((ref.nCodPed != null && p.pedido.nCodPed === ref.nCodPed) ||
+        (ref.cCodIntPed != null && p.pedido.cCodIntPed === ref.cCodIntPed)),
+  );
+}
+
+export function mockConsultarPedidoCompra(
+  cnpj: OmieCnpj,
+  ref: { nCodPed: number } | { cCodIntPed: string },
+): PedidoCompraConsultado {
+  const found = acharPedidoMock(cnpj, ref);
+  if (found) return structuredClone(found.pedido);
+  // Sem fixture injetada: pedido sintetico com 1 item de 100.000 kg do produto
+  // PEAD 5502 (mesmo nCodProd do mockConsultarNF), etapa 15 (aberto).
+  const nCodPed = 'nCodPed' in ref ? ref.nCodPed : 88_000_001;
+  return {
+    nCodPed,
+    cCodIntPed: 'cCodIntPed' in ref ? ref.cCodIntPed : `MOCK-PED-${nCodPed}`,
+    cNumero: String(nCodPed % 1000),
+    cEtapa: '15',
+    dDtPrevisao: '15/04/2026',
+    dIncData: '01/04/2026',
+    nCodFor: 12345,
+    cCodIntFor: null,
+    cCodParc: '000',
+    nQtdeParc: 1,
+    cCodCateg: '2.01.01',
+    nCodCompr: 0,
+    cContato: null,
+    cContrato: null,
+    nCodCC: null,
+    nCodIntCC: null,
+    nCodProj: 0,
+    cObs: 'Pedido original ACXE: 1',
+    cObsInt: null,
+    frete: {},
+    produtos: [
+      {
+        nCodItem: nCodPed + 1,
+        cCodIntItem: null,
+        nCodProd: cnpj === 'acxe' ? 4_452_881_285 : 3_033_098_357,
+        cCodIntProd: null,
+        cProduto: 'PEAD-001',
+        cDescricao: 'PEAD 5502',
+        cNCM: '3901.20.29',
+        cUnidade: 'KG',
+        cEAN: null,
+        nPesoLiq: 1,
+        nPesoBruto: 1,
+        nQtde: 100_000,
+        nQtdeRec: 0,
+        nValUnit: 0,
+        nDesconto: 0,
+        codigoLocalEstoque: cnpj === 'acxe' ? '4498926337' : '8115873874',
+      },
+    ],
+  };
+}
+
 export function mockAlterarPedidoCompra(
   cnpj: OmieCnpj,
   input: AlterarPedidoCompraInput,
 ): AlterarPedidoCompraResponse {
+  const found = acharPedidoMock(cnpj, { nCodPed: input.nCodPed, cCodIntPed: input.cCodIntPed });
+  if (found) {
+    const item = found.pedido.produtos.find(
+      (p) => String(p.nCodItem) === String(input.produto.nCodItem) || p.nCodProd === input.produto.nCodProd,
+    );
+    if (item) item.nQtde = input.produto.nQtde;
+    if (input.cObs !== undefined) found.pedido.cObs = input.cObs;
+    if (input.cObsInt !== undefined) found.pedido.cObsInt = input.cObsInt;
+    if (input.dDtPrevisao) found.pedido.dDtPrevisao = input.dDtPrevisao;
+  }
   return {
     status: 'ok',
-    descricao: `Pedido ${input.cCodIntPed} alterado (mock) em ${cnpj}`,
-    codigoPedido: 99_999,
+    descricao: `Pedido ${input.cCodIntPed ?? input.nCodPed} alterado (mock) em ${cnpj}`,
+    codigoPedido: found?.pedido.nCodPed ?? input.nCodPed ?? 99_999,
   };
 }
