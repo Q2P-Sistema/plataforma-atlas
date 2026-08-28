@@ -205,12 +205,18 @@ export async function resolverPedidosAcxeDaNf(
   if (pedidoCompraAcxeDoLote) out.add(String(pedidoCompraAcxeDoLote).replace(/^0+/, ''));
   try {
     const pool = getPool();
+    // SEM filtro de ativo, de propósito: o mapa é auto-desativado quando todas
+    // as filhotes foram recebidas (upsertNfPedidoMapa) — ou seja, para toda NF
+    // que chega aqui o mapa já está INATIVO. Inativo significa "recebida", não
+    // "vínculo inválido". Com o filtro, 137 das 150 NFs do backfill perdiam o
+    // vínculo e caíam na FIFO; sem ele, casam com o pedido certo.
+    // (Cada carga diária do n8n insere filhotes novas e desativa as antigas, por
+    // isso o DISTINCT — a mesma NF aparece em dezenas de linhas históricas.)
     const res = await pool.query<{ pedido_acxe_omie: string }>(
       `SELECT DISTINCT mp.pedido_acxe_omie
          FROM stockbridge.nf_pedido_filhote f
          JOIN stockbridge.nf_pedido_mapa mp ON mp.id = f.mapa_id
-        WHERE f.ativo = true AND mp.ativo = true
-          AND ltrim(f.nf_filhote, '0') = ltrim($1, '0')`,
+        WHERE ltrim(f.nf_filhote, '0') = ltrim($1, '0')`,
       [notaFiscal],
     );
     for (const r of res.rows) out.add(String(r.pedido_acxe_omie).replace(/^0+/, ''));
@@ -765,6 +771,7 @@ async function gravarLedgerPendente(
       .update(baixaPedidoQ2p)
       .set({
         status: 'pendente',
+        criterio: aloc.preferido ? 'vinculo_nf' : 'fifo',
         cnumero: aloc.cnumero,
         ncoditem: aloc.ncoditem,
         quantidadeKg: String(aloc.kgAlocado),
@@ -789,6 +796,9 @@ async function gravarLedgerPendente(
       saldoAnteriorKg: String(aloc.saldoAnteriorKg),
       saldoNovoKg: String(aloc.saldoNovoKg),
       status: 'pendente',
+      // Auditoria do "por que ESTE pedido": vinculo_nf = mapa NF→pedido ACXE
+      // (feature 011) casado com o pedido Q2P; fifo = fallback por previsao.
+      criterio: aloc.preferido ? 'vinculo_nf' : 'fifo',
       origem: args.origem,
       tentativas: 1,
       criadoPor: args.criadoPor,
@@ -880,6 +890,172 @@ async function finalizarComFalha(args: {
     kgJaDescontadoAntes: d3(args.jaDescontado),
     erro: args.erro,
   };
+}
+
+// ── Reversão (desfazer uma baixa aplicada) ─────────────────────────────────────
+
+export interface ResultadoDesfazer {
+  movimentacaoId: string;
+  notaFiscal: string;
+  revertidos: Array<{ ncodped: number; cnumero: string | null; de: number; para: number }>;
+  ignorados: Array<{ ncodped: number; motivo: string }>;
+  dryRun: boolean;
+}
+
+/**
+ * Desfaz a baixa de UMA movimentação: devolve a cada pedido descontado a
+ * quantidade anterior (AlteraPedCompra absoluto) e reabre a movimentação
+ * ('pendente') para reprocessamento. Uso: baixa atribuída ao pedido errado
+ * (ex.: FIFO antes do vínculo NF→pedido existir), NF cancelada, etc.
+ *
+ * Segurança: só reverte um pedido se o saldo AO VIVO ainda for exatamente o
+ * `saldo_novo_kg` gravado — se outra baixa já mexeu nele depois, a reversão
+ * cega corromperia o saldo, então o pedido é IGNORADO e reportado. A linha do
+ * ledger é desativada (não apagada — auditoria) com o motivo em `ultimo_erro`.
+ */
+export async function desfazerBaixaPedidoQ2p(input: {
+  movimentacaoId: string;
+  motivo: string;
+  ator?: { userId: string; role: string };
+  dryRun?: boolean;
+}): Promise<ResultadoDesfazer> {
+  const db = getDb();
+  const dryRun = input.dryRun === true;
+  const [mov] = await db
+    .select()
+    .from(movimentacao)
+    .where(eq(movimentacao.id, input.movimentacaoId))
+    .limit(1);
+  if (!mov) throw new BaixaPedidoMovimentacaoNaoEncontradaError(input.movimentacaoId);
+  const ncodprod =
+    mov.produtoCodigoQ2p ??
+    (mov.loteId
+      ? (await db.select().from(lote).where(eq(lote.id, mov.loteId)).limit(1))[0]?.produtoCodigoQ2p
+      : null) ??
+    null;
+  if (!ncodprod) throw new BaixaPedidoNaoAplicavelError(mov.id, 'sem produto Q2P');
+
+  const soltar = dryRun ? null : await adquirirLockProduto(ncodprod);
+  const out: ResultadoDesfazer = {
+    movimentacaoId: mov.id,
+    notaFiscal: mov.notaFiscal,
+    revertidos: [],
+    ignorados: [],
+    dryRun,
+  };
+  try {
+    const ledger = await db
+      .select()
+      .from(baixaPedidoQ2p)
+      .where(and(eq(baixaPedidoQ2p.movimentacaoId, mov.id), eq(baixaPedidoQ2p.ativo, true)));
+
+    for (const row of ledger) {
+      if (
+        row.ncodped == null ||
+        row.status !== 'concluida' ||
+        row.saldoAnteriorKg == null ||
+        row.saldoNovoKg == null
+      ) {
+        // sem_pedido / pendente / falha: nada foi aplicado no OMIE — só desativa.
+        if (!dryRun) {
+          await db
+            .update(baixaPedidoQ2p)
+            .set({ ativo: false, updatedAt: new Date() })
+            .where(eq(baixaPedidoQ2p.id, row.id));
+        }
+        continue;
+      }
+      const anterior = Number(row.saldoAnteriorKg);
+      const alvoGravado = Number(row.saldoNovoKg);
+      const pedidoLive = await consultarPedidoCompra('q2p', { nCodPed: row.ncodped });
+      const item = acharItemDoProduto(pedidoLive, ncodprod);
+      if (!item) {
+        out.ignorados.push({ ncodped: row.ncodped, motivo: 'pedido sem item do produto' });
+        continue;
+      }
+      if (!aprox(item.nQtde, alvoGravado)) {
+        out.ignorados.push({
+          ncodped: row.ncodped,
+          motivo: `saldo ao vivo (${item.nQtde}) difere do gravado na baixa (${alvoGravado}) — outra alteração ocorreu depois; reverter manualmente`,
+        });
+        continue;
+      }
+      if (!dryRun) {
+        const inputAlt = montarInputAlteracao({
+          pedido: pedidoLive,
+          item,
+          saldoAnteriorKg: alvoGravado,
+          saldoNovoKg: anterior,
+          notaFiscal: mov.notaFiscal,
+        });
+        inputAlt.cObs = anexarObsReversao(
+          pedidoLive.cObs,
+          mov.notaFiscal,
+          alvoGravado,
+          anterior,
+          input.motivo,
+        );
+        inputAlt.cObsInt = anexarObsReversao(
+          pedidoLive.cObsInt,
+          mov.notaFiscal,
+          alvoGravado,
+          anterior,
+          input.motivo,
+        );
+        await alterarPedidoCompra('q2p', inputAlt);
+        await db
+          .update(baixaPedidoQ2p)
+          .set({
+            ativo: false,
+            ultimoErro: {
+              revertida: true,
+              motivo: input.motivo,
+              por: input.ator?.userId ?? null,
+              timestamp: new Date().toISOString(),
+            },
+            updatedAt: new Date(),
+          })
+          .where(eq(baixaPedidoQ2p.id, row.id));
+        logger.warn(
+          {
+            movimentacaoId: mov.id,
+            nf: mov.notaFiscal,
+            ncodped: row.ncodped,
+            pedido: row.cnumero,
+            de: alvoGravado,
+            para: anterior,
+            motivo: input.motivo,
+          },
+          'Baixa de pedido Q2P REVERTIDA',
+        );
+      }
+      out.revertidos.push({ ncodped: row.ncodped, cnumero: row.cnumero, de: alvoGravado, para: anterior });
+    }
+
+    if (!dryRun && out.ignorados.length === 0) {
+      await db
+        .update(movimentacao)
+        .set({ baixaPedidoQ2p: 'pendente', updatedAt: new Date() })
+        .where(eq(movimentacao.id, mov.id));
+    }
+    return out;
+  } finally {
+    if (soltar) await soltar();
+  }
+}
+
+function anexarObsReversao(
+  obsAtual: string | null,
+  notaFiscal: string,
+  de: number,
+  para: number,
+  motivo: string,
+): string {
+  const motivoAscii = motivo.normalize('NFD').replace(/[^\x20-\x7E]/g, '');
+  const linha = `Atlas - REVERSAO da baixa NF ${notaFiscal} em ${formatarDataOmie()}: saldo ${fmtKgObs(de)} kg -> ${fmtKgObs(para)} kg (${motivoAscii})`;
+  const base = (obsAtual ?? '').trim();
+  const junto = base ? `${base}\n${linha}` : linha;
+  return junto.length > LIMITE_OBS ? junto.slice(junto.length - LIMITE_OBS) : junto;
 }
 
 // ── Disparo fire-and-forget (hooks do recebimento/aprovação/retry) ─────────────
@@ -1018,6 +1194,7 @@ export interface LedgerItem {
   saldoAnteriorKg: number | null;
   saldoNovoKg: number | null;
   status: 'pendente' | 'concluida' | 'falha' | 'sem_pedido';
+  criterio: 'vinculo_nf' | 'fifo' | null;
   origem: OrigemBaixa;
   tentativas: number;
   ultimoErro: unknown;
@@ -1038,6 +1215,7 @@ export async function listarLedgerDaMovimentacao(movimentacaoId: string): Promis
     saldoAnteriorKg: r.saldoAnteriorKg != null ? Number(r.saldoAnteriorKg) : null,
     saldoNovoKg: r.saldoNovoKg != null ? Number(r.saldoNovoKg) : null,
     status: r.status,
+    criterio: r.criterio ?? null,
     origem: r.origem,
     tentativas: r.tentativas,
     ultimoErro: r.ultimoErro,

@@ -418,6 +418,8 @@ export const baixaPedidoQ2p = stockbridgeSchema.table(
     saldoAnteriorKg: numeric('saldo_anterior_kg', { precision: 12, scale: 3 }),
     saldoNovoKg: numeric('saldo_novo_kg', { precision: 12, scale: 3 }),
     status: text('status').notNull().$type<'pendente' | 'concluida' | 'falha' | 'sem_pedido'>(),
+    // Migration 0048: por que este pedido — vinculo NF→pedido (mapa 011) ou FIFO.
+    criterio: text('criterio').$type<'vinculo_nf' | 'fifo' | null>(),
     origem: text('origem').notNull().default('fluxo').$type<'fluxo' | 'retry' | 'backfill'>(),
     tentativas: smallint('tentativas').notNull().default(0),
     ultimoErro: jsonb('ultimo_erro'),

@@ -18,6 +18,9 @@
  *                      seguem) — re-rodar é idempotente pelo ledger.
  *   --consultar <nCodPed>  Só consulta um pedido ao vivo e imprime o parse —
  *                      para validar o formato do ConsultarPedCompra em UAT.
+ *   --desfazer <nf> --motivo "..."  Reverte a baixa da NF (devolve a quantidade
+ *                      aos pedidos, desativa o ledger, reabre como pendente).
+ *                      Com --execute aplica; sem, só mostra o que faria.
  *   --nf <numero>      Restringe a uma NF.  --limit <n>  Limita a n movimentações.
  *   --json <arquivo>   Grava o relatório completo em JSON.
  *
@@ -32,6 +35,7 @@ import { consultarPedidoCompra } from '@atlas/integration-omie';
 import {
   listarBaixasPendentes,
   processarBaixaPedidoQ2p,
+  desfazerBaixaPedidoQ2p,
   type CachePedidos,
   type ResultadoBaixa,
 } from '../services/baixa-pedido.service.js';
@@ -45,6 +49,8 @@ const flag = (nome: string): string | undefined => {
   return i !== -1 ? args[i + 1] : undefined;
 };
 const CONSULTAR = flag('--consultar');
+const DESFAZER = flag('--desfazer');
+const MOTIVO = flag('--motivo');
 const NF = flag('--nf');
 const LIMIT = flag('--limit') ? Number(flag('--limit')) : undefined;
 const JSON_OUT = flag('--json');
@@ -62,6 +68,35 @@ async function main(): Promise<void> {
       nCodPed: Number(CONSULTAR),
     });
     console.log(JSON.stringify(ped, null, 2));
+    return;
+  }
+
+  if (DESFAZER) {
+    if (!MOTIVO) {
+      console.error('--desfazer exige --motivo "..."');
+      process.exitCode = 2;
+      return;
+    }
+    const alvo = DESFAZER.replace(/^0+/, '');
+    const res = await getPool().query<{ id: string }>(
+      `SELECT id FROM stockbridge.movimentacao
+        WHERE ativo = true AND tipo_movimento = 'entrada_nf' AND baixa_pedido_q2p IS NOT NULL
+          AND ltrim(nota_fiscal, '0') = $1`,
+      [alvo],
+    );
+    if (res.rows.length === 0) {
+      console.error(`Nenhuma movimentação de importação com baixa para a NF ${DESFAZER}`);
+      process.exitCode = 2;
+      return;
+    }
+    for (const r of res.rows) {
+      const out = await desfazerBaixaPedidoQ2p({ movimentacaoId: r.id, motivo: MOTIVO, dryRun: !EXECUTE });
+      console.log(`\n${EXECUTE ? '▶ REVERTIDO' : '○ DRY-RUN reversão'} — NF ${out.notaFiscal}`);
+      for (const v of out.revertidos)
+        console.log(`  pedido #${v.cnumero ?? v.ncodped}: ${fmtKg(v.de)} -> ${fmtKg(v.para)} kg`);
+      for (const i of out.ignorados) console.log(`  IGNORADO pedido ${i.ncodped}: ${i.motivo}`);
+      if (!EXECUTE) console.log('  (nada alterado; use --execute)');
+    }
     return;
   }
 

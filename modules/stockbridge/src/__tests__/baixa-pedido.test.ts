@@ -71,6 +71,7 @@ import {
   montarInputAlteracao,
   anexarObsBaixa,
   processarBaixaPedidoQ2p,
+  desfazerBaixaPedidoQ2p,
   listarPedidosAbertosQ2p,
   BaixaPedidoNaoAplicavelError,
   ETAPA_PEDIDO_Q2P_ABERTO,
@@ -399,6 +400,31 @@ describe('processarBaixaPedidoQ2p — fluxo', () => {
     expect(alertaSpy).not.toHaveBeenCalled();
   });
 
+  it('resolve o vínculo NF→pedido ACXE SEM filtrar por ativo (mapa inativo = NF já recebida)', async () => {
+    await processarBaixaPedidoQ2p({ movimentacaoId: 'mov-1', origem: 'fluxo' });
+    const [sql] = poolQuerySpy.mock.calls.find((c) => String(c[0]).includes('nf_pedido_filhote'))!;
+    expect(sql).not.toMatch(/ativo\s*=\s*true/);
+    expect(sql).toContain('DISTINCT');
+  });
+
+  it('grava no ledger o critério da escolha: vinculo_nf para o casado, fifo para o resto', async () => {
+    poolQuerySpy.mockImplementation((sql: string) =>
+      Promise.resolve(
+        sql.includes('nf_pedido_filhote') ? { rows: [{ pedido_acxe_omie: '423' }] } : respostaPool(sql),
+      ),
+    );
+    // 193 (casado, 24.125) zera e o resto (2.875) vai por FIFO ao 194.
+    const res = await processarBaixaPedidoQ2p({ movimentacaoId: 'mov-1', origem: 'fluxo' });
+    expect(res.alocacoes.map((a) => [a.ncodped, a.preferido])).toEqual([
+      [100, true],
+      [200, false],
+    ]);
+    expect(inserts.map((i) => [i.ncodped, i.criterio])).toEqual([
+      [100, 'vinculo_nf'],
+      [200, 'fifo'],
+    ]);
+  });
+
   it('pedido casado com o pedido ACXE da NF (mapa) é descontado primeiro', async () => {
     poolQuerySpy.mockImplementation((sql: string) =>
       Promise.resolve(
@@ -663,6 +689,82 @@ describe('processarBaixaPedidoQ2p — fluxo', () => {
     expect(updates.find((u) => u.table === 'movimentacao')?.set).toMatchObject({
       baixaPedidoQ2p: 'falha',
     });
+  });
+});
+
+describe('desfazerBaixaPedidoQ2p — reversão auditável', () => {
+  const ledgerAplicado = [
+    {
+      id: 'l-1',
+      ncodped: 100,
+      cnumero: '193',
+      status: 'concluida',
+      quantidadeKg: '25500',
+      saldoAnteriorKg: '27000',
+      saldoNovoKg: '1500',
+      tentativas: 1,
+    },
+  ];
+
+  it('devolve a quantidade anterior ao pedido (absoluto), desativa o ledger com motivo e reabre a movimentação', async () => {
+    const { getDb } = await import('@atlas/core');
+    vi.mocked(getDb).mockReturnValue(
+      montarDb({ mov: { ...MOV_OK, baixaPedidoQ2p: 'concluida' }, ledger: ledgerAplicado }) as never,
+    );
+    consultarSpy.mockResolvedValue(pedidoLive(100, 1500)); // saldo ao vivo == gravado
+
+    const res = await desfazerBaixaPedidoQ2p({
+      movimentacaoId: 'mov-1',
+      motivo: 'FIFO pegou o pedido errado',
+      ator: { userId: 'u1', role: 'gestor' },
+    });
+
+    expect(res.revertidos).toEqual([{ ncodped: 100, cnumero: '193', de: 1500, para: 27000 }]);
+    expect(res.ignorados).toEqual([]);
+    expect(alterarSpy).toHaveBeenCalledTimes(1);
+    const input = alterarSpy.mock.calls[0]![1] as { produto: { nQtde: number }; cObs: string };
+    expect(input.produto.nQtde).toBe(27000);
+    expect(input.cObs).toContain('REVERSAO da baixa NF 00005161');
+    // eslint-disable-next-line no-control-regex
+    expect(input.cObs.split('\n').at(-1)).toMatch(/^[\x00-\x7F]*$/);
+    const ledgerUpd = updates.find((u) => u.table === 'baixaPedidoQ2p');
+    expect(ledgerUpd?.set).toMatchObject({
+      ativo: false,
+      ultimoErro: expect.objectContaining({
+        revertida: true,
+        motivo: 'FIFO pegou o pedido errado',
+        por: 'u1',
+      }),
+    });
+    expect(updates.find((u) => u.table === 'movimentacao')?.set).toMatchObject({
+      baixaPedidoQ2p: 'pendente',
+    });
+  });
+
+  it('NÃO reverte se o saldo ao vivo já mudou depois da baixa (outra NF mexeu) — ignora e não reabre', async () => {
+    const { getDb } = await import('@atlas/core');
+    vi.mocked(getDb).mockReturnValue(
+      montarDb({ mov: { ...MOV_OK, baixaPedidoQ2p: 'concluida' }, ledger: ledgerAplicado }) as never,
+    );
+    consultarSpy.mockResolvedValue(pedidoLive(100, 0.1)); // alguém já zerou depois
+
+    const res = await desfazerBaixaPedidoQ2p({ movimentacaoId: 'mov-1', motivo: 'teste' });
+    expect(res.revertidos).toEqual([]);
+    expect(res.ignorados[0]!.motivo).toMatch(/difere do gravado/);
+    expect(alterarSpy).not.toHaveBeenCalled();
+    expect(updates.find((u) => u.table === 'movimentacao')).toBeUndefined();
+  });
+
+  it('dry-run não escreve nada', async () => {
+    const { getDb } = await import('@atlas/core');
+    vi.mocked(getDb).mockReturnValue(
+      montarDb({ mov: { ...MOV_OK, baixaPedidoQ2p: 'concluida' }, ledger: ledgerAplicado }) as never,
+    );
+    consultarSpy.mockResolvedValue(pedidoLive(100, 1500));
+    const res = await desfazerBaixaPedidoQ2p({ movimentacaoId: 'mov-1', motivo: 'x', dryRun: true });
+    expect(res.revertidos).toHaveLength(1);
+    expect(alterarSpy).not.toHaveBeenCalled();
+    expect(updates).toHaveLength(0);
   });
 });
 
