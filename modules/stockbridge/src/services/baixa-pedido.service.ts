@@ -278,7 +278,11 @@ export function anexarObsBaixa(
   novo: number,
   data: string,
 ): string {
-  const linha = `Atlas — NF ${notaFiscal} recebida em ${data}: saldo ${fmtKgObs(anterior)} kg -> ${fmtKgObs(novo)} kg`;
+  // ASCII puro (ACXEGDP-344): o OMIE guarda estes campos em Latin-1 — acentos
+  // comuns sobrevivem ao round-trip (o "às" das obs pre-existentes se manteve),
+  // mas caracteres fora do Latin-1 viram mojibake. Um travessão "—" aqui gravou
+  // "ÂÂÂ" no pedido 207. Nada de travessão, aspas curvas ou símbolos.
+  const linha = `Atlas - NF ${notaFiscal} recebida em ${data}: saldo ${fmtKgObs(anterior)} kg -> ${fmtKgObs(novo)} kg`;
   const base = (obsAtual ?? '').trim();
   const junto = base ? `${base}\n${linha}` : linha;
   return junto.length > LIMITE_OBS ? junto.slice(junto.length - LIMITE_OBS) : junto;

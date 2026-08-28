@@ -207,8 +207,28 @@ describe('montarInputAlteracao / anexarObsBaixa', () => {
     expect(input.cObsInt).toContain('NF 00005161');
   });
 
+  // ACXEGDP-344: o OMIE guarda cObs/cObsInt em Latin-1. Um travessão gravou
+  // "ÂÂÂ" no pedido 207 na 1ª execução real. O texto que o Atlas acrescenta tem
+  // de ser ASCII puro (o texto PRE-EXISTENTE com acento sobrevive — comprovado).
+  it('anexarObsBaixa gera texto ASCII puro (Latin-1 safe) e preserva acento pre-existente', () => {
+    const out = anexarObsBaixa(
+      'Pedido alterado via API em 23/04/2026 às 17:13.',
+      '00005192',
+      27000,
+      0.1,
+      '28/08/2026',
+    );
+    const acrescentado = out.split('\n').at(-1)!;
+    // eslint-disable-next-line no-control-regex
+    expect(acrescentado).toMatch(/^[\x00-\x7F]*$/);
+    expect(acrescentado).not.toMatch(/[—–“”‘’…]/);
+    expect(acrescentado).toBe('Atlas - NF 00005192 recebida em 28/08/2026: saldo 27000 kg -> 0.1 kg');
+    // O texto original (com acento) segue intacto — só o nosso é restrito.
+    expect(out).toContain('às 17:13');
+  });
+
   it('anexarObsBaixa preserva o texto anterior e limita o tamanho', () => {
-    expect(anexarObsBaixa(null, '5161', 10, 5, '24/08/2026')).toMatch(/^Atlas — NF 5161/);
+    expect(anexarObsBaixa(null, '5161', 10, 5, '24/08/2026')).toMatch(/^Atlas - NF 5161/);
     const longa = 'x'.repeat(5000);
     const out = anexarObsBaixa(longa, '5161', 10, 5, '24/08/2026');
     expect(out.length).toBeLessThanOrEqual(3000);

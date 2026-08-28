@@ -770,7 +770,10 @@ async function retentarQ2pRetornoComodato(args: {
           idProduto: idProdutoQ2p,
           dataAtual: formatarDataOmie(),
           quantidade,
-          observacao: `Retry Q2P retorno comodato — ${perna} (op ${opId})`.slice(0, 240),
+          // ASCII puro: o OMIE guarda a observacao em Latin-1 e caracteres fora
+          // dele viram mojibake (ACXEGDP-344 — um travessao gravou "AAA" num
+          // pedido de compra). Acento comum passa; travessao nao.
+          observacao: `Retry Q2P retorno comodato - ${perna} (op ${opId})`.slice(0, 240),
           origem: 'AJU',
           // Espelha executarRetornoComodatoOmieDual: baixa=SAI/INV, entrada=ENT/INV
           tipo: perna === 'baixa' ? 'SAI' : 'ENT',
