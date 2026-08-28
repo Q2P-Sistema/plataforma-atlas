@@ -170,6 +170,9 @@ export const movimentacao = stockbridgeSchema.table(
     dtPrevistaRetorno: date('dt_prevista_retorno'),
     movimentacaoOrigemId: uuid('movimentacao_origem_id'),
     custoUnitarioBrl: numeric('custo_unitario_brl', { precision: 14, scale: 6 }),
+    // ACXEGDP-344 (migration 0047): baixa do pedido de compra Q2P desta entrada
+    // de importacao. NULL = nao se aplica.
+    baixaPedidoQ2p: text('baixa_pedido_q2p').$type<'pendente' | 'concluida' | 'sem_saldo' | 'falha' | null>(),
     ativo: boolean('ativo').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -398,6 +401,42 @@ export const nfPedidoFilhote = stockbridgeSchema.table(
   ],
 );
 
+// ── Baixa de pedido de compra Q2P (ledger — migration 0047, ACXEGDP-344) ──
+// Uma linha por (movimentacao de entrada de importacao, pedido Q2P descontado).
+// saldo_anterior/novo = quantidade do item ANTES/DEPOIS do AlteraPedCompra.
+export const baixaPedidoQ2p = stockbridgeSchema.table(
+  'baixa_pedido_q2p',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    movimentacaoId: uuid('movimentacao_id').notNull().references(() => movimentacao.id),
+    /** Pedido Q2P (id OMIE). NULL = linha de "resto sem pedido aberto". */
+    ncodped: bigint('ncodped', { mode: 'number' }),
+    cnumero: varchar('cnumero', { length: 50 }),
+    ncodprod: bigint('ncodprod', { mode: 'number' }).notNull(),
+    ncoditem: bigint('ncoditem', { mode: 'number' }),
+    quantidadeKg: numeric('quantidade_kg', { precision: 12, scale: 3 }).notNull(),
+    saldoAnteriorKg: numeric('saldo_anterior_kg', { precision: 12, scale: 3 }),
+    saldoNovoKg: numeric('saldo_novo_kg', { precision: 12, scale: 3 }),
+    status: text('status').notNull().$type<'pendente' | 'concluida' | 'falha' | 'sem_pedido'>(),
+    origem: text('origem').notNull().default('fluxo').$type<'fluxo' | 'retry' | 'backfill'>(),
+    tentativas: smallint('tentativas').notNull().default(0),
+    ultimoErro: jsonb('ultimo_erro'),
+    criadoPor: uuid('criado_por').references(() => users.id),
+    ativo: boolean('ativo').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('baixa_pedido_q2p_mov_pedido_uq')
+      .on(t.movimentacaoId, t.ncodped)
+      .where(sql`ativo = true AND ncodped IS NOT NULL`),
+    uniqueIndex('baixa_pedido_q2p_mov_sem_pedido_uq')
+      .on(t.movimentacaoId)
+      .where(sql`ativo = true AND ncodped IS NULL`),
+    index('baixa_pedido_q2p_ncodped_idx').on(t.ncodped),
+  ],
+);
+
 // ── Type exports ───────────────────────────────────────────
 export type Localidade = typeof localidade.$inferSelect;
 export type NewLocalidade = typeof localidade.$inferInsert;
@@ -418,6 +457,8 @@ export type NewFornecedorExclusao = typeof fornecedorExclusao.$inferInsert;
 export type ConfigProduto = typeof configProduto.$inferSelect;
 export type NewConfigProduto = typeof configProduto.$inferInsert;
 export type FamiliaOmieAtlas = typeof familiaOmieAtlas.$inferSelect;
+export type BaixaPedidoQ2p = typeof baixaPedidoQ2p.$inferSelect;
+export type NewBaixaPedidoQ2p = typeof baixaPedidoQ2p.$inferInsert;
 export type NewFamiliaOmieAtlas = typeof familiaOmieAtlas.$inferInsert;
 export type MovimentacaoLegado = typeof movimentacaoLegado.$inferSelect;
 export type NewMovimentacaoLegado = typeof movimentacaoLegado.$inferInsert;

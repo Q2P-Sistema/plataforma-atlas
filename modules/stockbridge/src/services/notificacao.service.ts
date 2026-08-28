@@ -482,6 +482,68 @@ export async function enviarAlertaPendenciaOmie(args: {
 }
 
 /**
+ * ACXEGDP-344: alerta ops quando a baixa do pedido de compra Q2P nao fechou —
+ * 'falha' (OMIE falhou; retentavel pelo painel) ou 'sem_saldo' (descontou o
+ * que havia mas sobrou quantidade sem pedido aberto — o mesmo aviso que o
+ * legado mandava: "restou X para descontar sem estoque associado").
+ * Sem codigos OMIE no corpo (ACXEGDP-313): produto por descricao, pedido pelo
+ * numero, NF.
+ */
+export async function enviarAlertaBaixaPedidoQ2p(args: {
+  movimentacaoId: string;
+  notaFiscal: string;
+  produtoDescricao: string;
+  quantidadeKg: number;
+  motivo: 'falha' | 'sem_saldo';
+  mensagemErro?: string;
+  restanteKg?: number;
+  pedidos: Array<{ numero: string; saldoAnteriorKg: number; saldoNovoKg: number }>;
+}): Promise<void> {
+  const to = getOpsEmail();
+  const config = getConfig();
+  const linkPainel = `${config.APP_URL}/stockbridge/movimentacoes`;
+  const ehFalha = args.motivo === 'falha';
+  const subject = ehFalha
+    ? `StockBridge — Baixa de pedido Q2P falhou (NF ${args.notaFiscal})`
+    : `StockBridge — Recebimento sem pedido Q2P suficiente (NF ${args.notaFiscal})`;
+  const intro = ehFalha
+    ? '<p>A quantidade recebida entrou no estoque, mas a baixa no pedido de compra da Q2P (OMIE) não foi concluída. Os pedidos já descontados não serão descontados de novo — basta retentar.</p>'
+    : '<p>A quantidade recebida entrou no estoque, mas não havia pedido de compra Q2P em aberto suficiente para descontar tudo. Verifique o pedido no OMIE (ou o cadastro do produto) e retente pelo painel.</p>';
+  const pedidosHtml =
+    args.pedidos.length > 0
+      ? `<p style="margin-top:12px;"><strong>Pedidos descontados nesta baixa:</strong></p><ul>${args.pedidos
+          .map((p) => `<li>Pedido ${escapeHtml(p.numero)}: ${fmtKg(p.saldoAnteriorKg)} → ${fmtKg(p.saldoNovoKg)}</li>`)
+          .join('')}</ul>`
+      : '';
+  const corpoHtml = `
+    ${intro}
+    ${emailDataList([
+      { label: 'NF', valor: args.notaFiscal },
+      { label: 'Produto', valor: args.produtoDescricao },
+      { label: 'Quantidade recebida', valor: fmtKg(args.quantidadeKg) },
+      ...(args.restanteKg != null && args.restanteKg > 0
+        ? [{ label: ehFalha ? 'Ainda por descontar' : 'Sem pedido para descontar', valor: fmtKg(args.restanteKg) }]
+        : []),
+      ...(args.mensagemErro ? [{ label: 'Erro reportado', valor: args.mensagemErro }] : []),
+    ])}
+    ${pedidosHtml}
+    <p style="color:#9ca3af;font-size:12px;margin-top:16px;">Detalhes técnicos — Movimentação: ${escapeHtml(args.movimentacaoId)}</p>
+  `;
+  const { html, text } = buildEmailLayout({
+    titulo: ehFalha ? 'Baixa de pedido Q2P pendente' : 'Recebimento sem pedido Q2P suficiente',
+    variante: ehFalha ? 'erro' : 'alerta',
+    corpoHtml,
+    ctaLabel: 'Abrir movimentações',
+    ctaUrl: linkPainel,
+  });
+  try {
+    await sendEmail({ to, cc: alertaOpsCc(to), subject, html, text });
+  } catch (err) {
+    logger.error({ err, args }, 'Falha ao enviar email de baixa de pedido Q2P');
+  }
+}
+
+/**
  * Resolve o email do usuario operador pelo id. Retorna null se nao encontrado
  * ou sem email — caller deve tratar fallback.
  */
