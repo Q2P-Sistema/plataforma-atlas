@@ -24,6 +24,7 @@ import {
   fmtKg,
 } from './notificacao.service.js';
 import { incluirAjusteIdempotente } from './omie-idempotente.js';
+import { dispararBaixaPedidoQ2p } from './baixa-pedido.service.js';
 import { COD_INT_AJUSTE_SUFIXO, buildCodIntAjuste, CNPJ_ACXE, CNPJ_Q2P_MATRIZ } from '../types.js';
 import type { SubtipoMovimento, UnidadeMedida } from '../types.js';
 
@@ -997,6 +998,7 @@ async function processarItemLimpo(
   }
 
   // Persistir lote + movimentacao em uma transacao (pode ser completa ou parcial)
+  const subtipoMov = inferirSubtipoPorNumeroNf(input.nf);
   let resultado: { loteId: string; loteCodigo: string; movimentacaoId: string };
   try {
     resultado = await db.transaction(async (tx) => {
@@ -1030,7 +1032,7 @@ async function processarItemLimpo(
         .values({
           notaFiscal: input.nf,
           tipoMovimento: 'entrada_nf',
-          subtipo: inferirSubtipoPorNumeroNf(input.nf),
+          subtipo: subtipoMov,
           loteId: loteCriado!.id,
           // STK-09 + feature 013: empresa E produto participam da chave de
           // idempotencia (migrations 0044 + 0046).
@@ -1051,6 +1053,9 @@ async function processarItemLimpo(
           observacoes: prep.input.observacoes ?? null,
           opId,
           statusOmie: pendenciaQ2P ? 'pendente_q2p' : 'concluida',
+          // ACXEGDP-344: entrada de importacao nasce com a baixa do pedido Q2P
+          // pendente; o servico de baixa resolve depois que o dual concluir.
+          baixaPedidoQ2p: subtipoMov === 'importacao' ? 'pendente' : null,
           tentativasQ2p: pendenciaQ2P ? 1 : 0,
           ultimoErroOmie: pendenciaQ2P
             ? {
@@ -1110,6 +1115,12 @@ async function processarItemLimpo(
       omie: { acxe: idACXE },
       mensagemErro: (pendenciaQ2P.erro.originalError as Error)?.message ?? 'erro desconhecido',
     };
+  }
+
+  // ACXEGDP-344: dual concluido → baixa o pedido de compra Q2P (fora do caminho
+  // critico; falha vira pendencia retentavel + alerta, nunca erro ao operador).
+  if (subtipoMov === 'importacao') {
+    dispararBaixaPedidoQ2p({ movimentacaoId: resultado.movimentacaoId, origem: 'fluxo' });
   }
 
   return {

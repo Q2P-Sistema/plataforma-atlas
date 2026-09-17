@@ -30,6 +30,8 @@ export interface MovimentacaoListItem {
   criadoPor: { id: string | null; nome: string | null };
   aprovadoPor: { id: string | null; nome: string | null; em: string | null };
   statusOmie: string | null;
+  /** ACXEGDP-344: baixa do pedido de compra Q2P (só entradas de importação). */
+  baixaPedidoQ2p: string | null;
   ladoAcxe: { status: string | null; dt: string | null; idMovest: string | null; usuario: string | null };
   ladoQ2p:  { status: string | null; dt: string | null; idMovest: string | null; usuario: string | null };
   createdAt: string;
@@ -103,6 +105,7 @@ export async function listar(filtros: ListarFiltros): Promise<ListarResultado> {
     criado_por: string | null;
     criado_por_nome: string | null;
     status_omie: string | null;
+    baixa_pedido_q2p: string | null;
     aprovado_por: string | null;
     aprovado_por_nome: string | null;
     aprovado_em: string | null;
@@ -133,6 +136,7 @@ export async function listar(filtros: ListarFiltros): Promise<ListarResultado> {
       m.criado_por,
       uc.name AS criado_por_nome,
       m.status_omie,
+      m.baixa_pedido_q2p,
       ap.aprovado_por,
       uap.name AS aprovado_por_nome,
       ap.aprovado_em::text
@@ -187,6 +191,7 @@ export async function listar(filtros: ListarFiltros): Promise<ListarResultado> {
       em: r.aprovado_em ? new Date(r.aprovado_em).toISOString() : null,
     },
     statusOmie: r.status_omie ?? null,
+    baixaPedidoQ2p: r.baixa_pedido_q2p ?? null,
     ladoAcxe: {
       status: r.mv_acxe === 1 ? 'Sucesso' : r.mv_acxe === -1 ? 'Saída' : r.mv_acxe != null ? `Status ${r.mv_acxe}` : null,
       dt: r.dt_acxe ? new Date(r.dt_acxe).toISOString() : null,

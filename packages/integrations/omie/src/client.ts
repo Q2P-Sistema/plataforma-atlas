@@ -80,20 +80,27 @@ async function executarChamadaOmie<TResponse = unknown>(
   const elapsed = Date.now() - started;
   const raw = await res.text();
   let body: unknown;
-  try { body = JSON.parse(raw); } catch { body = raw; }
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    body = raw;
+  }
 
   if (!res.ok) {
     // Inclui body (truncado se gigante) para facilitar debug
-    const bodyPreview = typeof body === 'string'
-      ? body.slice(0, 1000)
-      : JSON.stringify(body).slice(0, 1000);
+    const bodyPreview = typeof body === 'string' ? body.slice(0, 1000) : JSON.stringify(body).slice(0, 1000);
     logger.error(
-      { cnpj, endpoint: endpoint.endpoint, method: endpoint.method, status: res.status, elapsed, body: bodyPreview },
+      {
+        cnpj,
+        endpoint: endpoint.endpoint,
+        method: endpoint.method,
+        status: res.status,
+        elapsed,
+        body: bodyPreview,
+      },
       'OMIE HTTP erro',
     );
-    const omieFault = typeof body === 'object' && body !== null
-      ? (body as Record<string, unknown>)
-      : null;
+    const omieFault = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : null;
     const faultcode = omieFault?.faultcode;
     const faultstring = omieFault?.faultstring;
     throw new OmieApiError(
@@ -111,7 +118,10 @@ async function executarChamadaOmie<TResponse = unknown>(
   // OMIE as vezes retorna 200 com payload { faultcode, faultstring }
   if (typeof body === 'object' && body !== null && 'faultcode' in body) {
     const fault = body as { faultcode?: string; faultstring?: string };
-    logger.warn({ cnpj, endpoint: endpoint.endpoint, method: endpoint.method, fault, elapsed }, 'OMIE fault response');
+    logger.warn(
+      { cnpj, endpoint: endpoint.endpoint, method: endpoint.method, fault, elapsed },
+      'OMIE fault response',
+    );
     throw new OmieApiError(
       cnpj,
       endpoint.endpoint,
@@ -137,13 +147,36 @@ export interface CallOmieOptions {
 }
 
 /**
- * Só re-tenta falhas realmente transientes: erro de rede/timeout (httpStatus null)
- * ou 502/503/504 (infra). NÃO re-tenta HTTP 500 — a OMIE devolve 500 para falhas
- * de NEGÓCIO (com faultcode), que retry não resolve e só atrasa.
+ * Trava anti-flood da OMIE: consultar o MESMO recurso com os mesmos parâmetros
+ * em sequência curta devolve HTTP 500 com faultstring "Consumo redundante
+ * detectado. Aguarde N segundos..." (faultcode SOAP-ENV:Client-6). É um limite
+ * de RITMO, não erro de negócio: a mesma chamada passa depois da espera.
+ * Retorna os segundos pedidos (default 60) ou null se não for esse caso.
+ * ACXEGDP-344: aparece no backfill/baixa quando várias NFs do mesmo produto
+ * caem no mesmo pedido de compra.
+ */
+export function segundosDeEsperaRedundante(err: unknown): number | null {
+  if (!(err instanceof OmieApiError)) return null;
+  const msg = err.message ?? '';
+  if (!/REDUNDANT|[Cc]onsumo redundante/.test(msg)) return null;
+  const m = /Aguarde\s+(\d+)\s+segundo/i.exec(msg);
+  const segundos = m?.[1] ? Number(m[1]) : 60;
+  // +1s de folga: o relógio da OMIE não é o nosso.
+  return Math.min(Math.max(segundos, 1), 120) + 1;
+}
+
+/**
+ * Só re-tenta falhas realmente transientes: erro de rede/timeout (httpStatus null),
+ * 502/503/504 (infra) ou a trava de consumo redundante (500 + REDUNDANT, que é
+ * limite de ritmo). NÃO re-tenta os demais HTTP 500 — a OMIE devolve 500 para
+ * falhas de NEGÓCIO (com faultcode), que retry não resolve e só atrasa.
  */
 function ehTransiente(err: unknown): boolean {
   if (!(err instanceof OmieApiError)) return false;
-  return err.httpStatus === null || err.httpStatus === 502 || err.httpStatus === 503 || err.httpStatus === 504;
+  if (segundosDeEsperaRedundante(err) !== null) return true;
+  return (
+    err.httpStatus === null || err.httpStatus === 502 || err.httpStatus === 503 || err.httpStatus === 504
+  );
 }
 
 function sleep(ms: number): Promise<void> {
@@ -163,9 +196,19 @@ export async function callOmie<TResponse = unknown>(
     } catch (err) {
       ultimoErro = err;
       if (tentativa < retries && ehTransiente(err)) {
-        const backoff = 300 * (tentativa + 1); // 300ms, 600ms, ...
+        // Na trava de consumo redundante a OMIE diz quanto esperar — obedecer é
+        // o único jeito de a chamada passar (backoff de 300ms não resolve).
+        const esperaRedundante = segundosDeEsperaRedundante(err);
+        const backoff = esperaRedundante != null ? esperaRedundante * 1000 : 300 * (tentativa + 1);
         logger.warn(
-          { cnpj, endpoint: endpoint.endpoint, method: endpoint.method, tentativa: tentativa + 1, backoff },
+          {
+            cnpj,
+            endpoint: endpoint.endpoint,
+            method: endpoint.method,
+            tentativa: tentativa + 1,
+            backoff,
+            motivo: esperaRedundante != null ? 'consumo-redundante' : 'transiente',
+          },
           'OMIE leitura falhou (transiente) — retry',
         );
         await sleep(backoff);

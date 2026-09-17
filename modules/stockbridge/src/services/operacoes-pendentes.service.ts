@@ -15,6 +15,7 @@ import {
 } from './omie-saida.service.js';
 import { consultarValorUnitarioProduto } from './aprovacao.service.js';
 import { resolverDescricaoProdutoAcxe } from './produto-descricao.js';
+import { dispararBaixaPedidoQ2p } from './baixa-pedido.service.js';
 
 const logger = createLogger('stockbridge:operacoes-pendentes');
 
@@ -306,6 +307,8 @@ interface MovimentacaoRow {
   // Retorno de comodato (STK-03b): par baixa/entrada linkado pela origem.
   tipoMovimento: string;
   movimentacaoOrigemId: string | null;
+  // ACXEGDP-344: baixa do pedido Q2P pendente — disparada quando o dual conclui.
+  baixaPedidoQ2p?: string | null;
 }
 
 async function retentarQ2p(args: {
@@ -390,6 +393,11 @@ async function retentarQ2p(args: {
       },
       'Operação pendente Q2P concluída via retry',
     );
+
+    // ACXEGDP-344: dual fechou agora → baixa do pedido de compra Q2P.
+    if (args.mov.baixaPedidoQ2p === 'pendente') {
+      dispararBaixaPedidoQ2p({ movimentacaoId: args.mov.id, origem: 'fluxo' });
+    }
 
     return {
       movimentacaoId: args.mov.id,
@@ -762,7 +770,10 @@ async function retentarQ2pRetornoComodato(args: {
           idProduto: idProdutoQ2p,
           dataAtual: formatarDataOmie(),
           quantidade,
-          observacao: `Retry Q2P retorno comodato — ${perna} (op ${opId})`.slice(0, 240),
+          // ASCII puro: o OMIE guarda a observacao em Latin-1 e caracteres fora
+          // dele viram mojibake (ACXEGDP-344 — um travessao gravou "AAA" num
+          // pedido de compra). Acento comum passa; travessao nao.
+          observacao: `Retry Q2P retorno comodato - ${perna} (op ${opId})`.slice(0, 240),
           origem: 'AJU',
           // Espelha executarRetornoComodatoOmieDual: baixa=SAI/INV, entrada=ENT/INV
           tipo: perna === 'baixa' ? 'SAI' : 'ENT',
@@ -834,7 +845,14 @@ async function retentarQ2pRetornoComodato(args: {
 }
 
 async function retentarAcxeFaltando(args: {
-  mov: { id: string; opId: string; loteId: string | null; quantidadeKg: string; tentativasAcxeFaltando: number };
+  mov: {
+    id: string;
+    opId: string;
+    loteId: string | null;
+    quantidadeKg: string;
+    tentativasAcxeFaltando: number;
+    baixaPedidoQ2p?: string | null;
+  };
   ator: RetentarInput['ator'];
 }): Promise<RetentarResult> {
   const db = getDb();
@@ -928,6 +946,11 @@ async function retentarAcxeFaltando(args: {
       },
       'Operação pendente acxe-faltando concluída via retry',
     );
+
+    // ACXEGDP-344: dual + diferenca fechados → baixa do pedido de compra Q2P.
+    if (args.mov.baixaPedidoQ2p === 'pendente') {
+      dispararBaixaPedidoQ2p({ movimentacaoId: args.mov.id, origem: 'fluxo' });
+    }
 
     return {
       movimentacaoId: args.mov.id,

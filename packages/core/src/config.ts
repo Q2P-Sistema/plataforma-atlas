@@ -53,6 +53,14 @@ const envSchema = z.object({
   // (ja foram tratadas pelo legado PHP / nao fazem parte do periodo Atlas).
   // Sem set: usa 180 dias atras como fallback.
   STOCKBRIDGE_FISCAL_CUTOFF_DATE: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  // ACXEGDP-344: baixa automatica do pedido de compra Q2P (AlteraPedCompra)
+  // apos recebimento de importacao. Default LIGADO. 'false' desliga o disparo no
+  // fluxo — as movimentacoes ficam 'pendente' e podem ser processadas depois
+  // pelo painel ou pelo script de backfill (nada se perde).
+  STOCKBRIDGE_BAIXA_PEDIDO_Q2P_ENABLED: z
+    .enum(['true', 'false', '1', '0', ''])
+    .default('true')
+    .transform((v) => v !== 'false' && v !== '0'),
   // URL base do frontend (sem barra final) — usada para montar links em emails
   // (ex: "Re-submeter agora" no email de rejeicao). Default cobre dev local.
   APP_URL: z.string().url().default('http://localhost:5173'),

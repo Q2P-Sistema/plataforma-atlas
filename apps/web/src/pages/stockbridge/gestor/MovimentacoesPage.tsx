@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../../../stores/auth.store.js';
 import { TIPO_MOVIMENTO_LABEL, SUBTIPO_LABEL, rotulo } from '../labels.js';
 
@@ -25,6 +25,8 @@ interface Movimentacao {
   criadoPor: { id: string | null; nome: string | null };
   aprovadoPor: { id: string | null; nome: string | null; em: string | null };
   statusOmie: string | null;
+  /** Baixa do pedido de compra Q2P (só entradas de importação). */
+  baixaPedidoQ2p: 'pendente' | 'aguardando_vinculo' | 'concluida' | 'sem_saldo' | 'falha' | null;
   ladoAcxe: LadoCnpj;
   ladoQ2p: LadoCnpj;
   createdAt: string;
@@ -80,9 +82,20 @@ function useApiFetch() {
   };
 }
 
+const BAIXA_PEDIDO_BADGE: Record<string, { label: string; cls: string; title: string }> = {
+  concluida: { label: 'Baixado', cls: 'bg-emerald-50 text-emerald-700', title: 'Saldo do pedido de compra Q2P reduzido no OMIE' },
+  pendente: { label: 'Pendente', cls: 'bg-atlas-muted/20 text-atlas-muted', title: 'Baixa do pedido de compra Q2P ainda não executada' },
+  aguardando_vinculo: { label: 'Aguardando vínculo', cls: 'bg-amber-50 text-amber-700', title: 'A planilha FUP ainda não informa o pedido desta NF — a baixa acontece automaticamente na hora seguinte ao preenchimento' },
+  sem_saldo: { label: 'Sem pedido', cls: 'bg-amber-50 text-amber-700', title: 'Não havia pedido de compra Q2P em aberto suficiente — revisar no OMIE' },
+  falha: { label: 'Falha', cls: 'bg-red-50 text-red-700', title: 'A baixa do pedido de compra Q2P falhou no OMIE — retentar' },
+};
+
 export function MovimentacoesPage() {
   const apiFetch = useApiFetch();
+  const queryClient = useQueryClient();
   const role = useAuthStore((s) => s.user?.role) ?? 'operador';
+  const [retentando, setRetentando] = useState<string | null>(null);
+  const [erroRetry, setErroRetry] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [filtroTipo, setFiltroTipo] = useState('');
   const [filtroSubtipo, setFiltroSubtipo] = useState('');
@@ -105,6 +118,19 @@ export function MovimentacoesPage() {
   });
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / 50)) : 1;
+
+  const retentarBaixaPedido = async (movimentacaoId: string) => {
+    setRetentando(movimentacaoId);
+    setErroRetry(null);
+    try {
+      await apiFetch(`/api/v1/stockbridge/baixa-pedido/${movimentacaoId}/retentar`, { method: 'POST', body: '{}' });
+      await queryClient.invalidateQueries({ queryKey: ['sb', 'movimentacoes'] });
+    } catch (err) {
+      setErroRetry((err as Error).message);
+    } finally {
+      setRetentando(null);
+    }
+  };
 
   return (
     <div className="p-6 max-w-7xl">
@@ -179,6 +205,11 @@ export function MovimentacoesPage() {
           {(error as Error).message}
         </div>
       )}
+      {erroRetry && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-800">
+          Não foi possível retentar a baixa do pedido: {erroRetry}
+        </div>
+      )}
 
       {isLoading && <div className="p-6 text-sm text-atlas-muted">Carregando...</div>}
 
@@ -205,6 +236,7 @@ export function MovimentacoesPage() {
                   <th className="text-left px-3 py-2">Lançado por</th>
                   <th className="text-left px-3 py-2">Aprovado por</th>
                   <th className="text-left px-3 py-2">Status OMIE</th>
+                  <th className="text-left px-3 py-2">Pedido Q2P</th>
                 </tr>
               </thead>
               <tbody>
@@ -274,6 +306,31 @@ export function MovimentacoesPage() {
                         <span className="text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded">Pend. ACXE</span>
                       ) : m.statusOmie === 'falha' ? (
                         <span className="text-[10px] px-1.5 py-0.5 bg-red-50 text-red-700 rounded">Falha</span>
+                      ) : (
+                        <span className="text-atlas-muted">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      {m.baixaPedidoQ2p && BAIXA_PEDIDO_BADGE[m.baixaPedidoQ2p] ? (
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            title={BAIXA_PEDIDO_BADGE[m.baixaPedidoQ2p]!.title}
+                            className={`text-[10px] px-1.5 py-0.5 rounded ${BAIXA_PEDIDO_BADGE[m.baixaPedidoQ2p]!.cls}`}
+                          >
+                            {BAIXA_PEDIDO_BADGE[m.baixaPedidoQ2p]!.label}
+                          </span>
+                          {role !== 'operador' && m.baixaPedidoQ2p !== 'concluida' && m.statusOmie === 'concluida' && (
+                            <button
+                              type="button"
+                              disabled={retentando === m.id}
+                              onClick={() => void retentarBaixaPedido(m.id)}
+                              className="text-[10px] px-1.5 py-0.5 border border-atlas-border rounded hover:bg-atlas-bg disabled:opacity-50"
+                              title="Executar a baixa do pedido de compra Q2P agora"
+                            >
+                              {retentando === m.id ? 'Baixando…' : 'Baixar'}
+                            </button>
+                          )}
+                        </div>
                       ) : (
                         <span className="text-atlas-muted">—</span>
                       )}

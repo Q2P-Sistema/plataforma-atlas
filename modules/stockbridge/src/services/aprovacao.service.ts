@@ -29,6 +29,7 @@ import {
 } from './omie-saida.service.js';
 import { incluirAjusteIdempotente } from './omie-idempotente.js';
 import { resolverDescricaoProdutoAcxe } from './produto-descricao.js';
+import { dispararBaixaPedidoQ2p } from './baixa-pedido.service.js';
 
 const logger = createLogger('stockbridge:aprovacao');
 
@@ -496,6 +497,7 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
   }
 
   // Transacao: update aprovacao + lote (+ grava movimentacao se OMIE foi chamado)
+  let baixaPedidoAplicavel = false;
   const resultado = await db.transaction(async (tx) => {
     // Claim atomico (STK-01, ACXEGDP-281): so a transacao que efetivamente muda
     // pendente->aprovada prossegue. O SELECT+check anterior tinha janela TOCTOU —
@@ -537,6 +539,7 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
       const statusOmieMov: 'concluida' | 'pendente_q2p' | 'pendente_acxe_faltando' = pendencia
         ? pendencia.tipo
         : 'concluida';
+      const subtipoMov = inferirSubtipoPorNumeroNf(loteRow!.notaFiscal ?? '');
       const [movCriada] = await tx
         .insert(movimentacao)
         .values({
@@ -545,7 +548,7 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
           // STK-21: infere o subtipo pela mesma heurística de número de NF do
           // recebimento, em vez de hardcodar 'importacao'. NF nula → 'importacao'
           // (idêntico ao comportamento anterior).
-          subtipo: inferirSubtipoPorNumeroNf(loteRow!.notaFiscal ?? ''),
+          subtipo: subtipoMov,
           loteId: ap.loteId,
           // STK-09: empresa participa da chave de idempotencia (migration 0044);
           // derivada do cnpj do lote (mesma origem do recebimento).
@@ -569,6 +572,8 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
           observacoes: `Aprovada divergência ${ap.tipoDivergencia ?? ''} — qtd final ${ap.quantidadeRecebidaKg ?? loteRow!.quantidadeFisicaKg} kg`,
           opId: opId!,
           statusOmie: statusOmieMov,
+          // ACXEGDP-344: baixa do pedido Q2P pendente ate o dual concluir.
+          baixaPedidoQ2p: subtipoMov === 'importacao' ? 'pendente' : null,
           tentativasQ2p: isPendenteQ2p ? 1 : 0,
           tentativasAcxeFaltando: isPendenteAcxeFaltando ? 1 : 0,
           ultimoErroOmie: pendencia
@@ -581,6 +586,7 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
         })
         .returning();
       movimentacaoId = movCriada!.id;
+      baixaPedidoAplicavel = subtipoMov === 'importacao';
     }
 
     return {
@@ -591,6 +597,12 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
       movimentacaoId,
     };
   });
+
+  // ACXEGDP-344: divergencia aprovada com dual concluido → baixa o pedido Q2P.
+  // Com pendencia OMIE, quem concluir o retry dispara.
+  if (baixaPedidoAplicavel && !pendencia && resultado.movimentacaoId) {
+    dispararBaixaPedidoQ2p({ movimentacaoId: resultado.movimentacaoId, origem: 'fluxo' });
+  }
 
   logger.info(
     { aprovacaoId: input.id, perfilUsuario: input.perfilUsuario, loteStatus: resultado.statusLote, omieIds, pendencia },

@@ -18,7 +18,16 @@ export {
 } from './stockbridge/listar-ajuste-estoque.js';
 export {
   alterarPedidoCompra,
+  consultarPedidoCompra,
+  parsePedidoCompraConsultado,
   type AlterarPedidoCompraInput,
   type AlterarPedidoCompraResponse,
+  type PedidoCompraConsultado,
+  type ItemPedidoCompra,
 } from './stockbridge/pedido-compra.js';
-export { __resetMockState, __injectMockAjuste } from './stockbridge/mock.js';
+export {
+  __resetMockState,
+  __injectMockAjuste,
+  __injectMockPedidoCompra,
+  __getMockPedidoCompra,
+} from './stockbridge/mock.js';
