@@ -1,0 +1,88 @@
+Mensagem de envio do "Reporte Round 11" à OrbitIA
+Formatação WhatsApp: *texto* = negrito
+Acompanha a página/PDF do relatório completo (com evidências,
+payloads e a correção proposta em 10 pontos do ciclo de preço).
+========================================================================
+
+Oi, pessoal! Fechamos a revalidação do round de ontem — o relatório
+completo vai junto, com todas as evidências. O resumo:
+
+*O que confirmamos funcionando* ✅ — a busca da Empresa de Remessa
+(server-side, base inteira, provada com carteira vazia), a tela
+Recebimentos Previstos (nome, colunas e payload, ao centavo com o
+OMIE) e a conciliação de faturamento de agosto, que agora *fecha em
+ZERO nos 12 vendedores* (o resíduo que apontamos era erro da nossa
+referência — o Guilherme entra em agosto corretamente pela data de
+faturamento). Critério de aceite da conciliação: atingido.
+
+*O que bloqueia o go-live:*
+
+🔴 *1. A tag do benefício fiscal (já reportada ontem).* Segue sendo o
+único impedimento do envio triangular — e o pedido de teste #16479
+está com o retry automático repetindo o mesmo erro em loop; vale
+pausar o retry dele até a correção. Quando publicarem, nós clicamos em
+Reenviar e validamos tudo de uma vez.
+
+🔴 *2. Reformar o ciclo de "Ajuste de Preço" antes do go-live — os 10
+pontos do relatório.* Testamos o ciclo ponta a ponta (detalhe completo
+no relatório) e o motor, hoje, propõe preços que não correspondem ao
+que os vendedores reportaram: o valor padrão do formulário (R$ 15,80)
+venceu a moda e virou proposta de preço para 13 produtos; sem moda, o
+motor propôs derrubar uma família inteira em −30% num clique;
+sugestão rejeitada reaparece a cada recálculo — e o histórico mostra
+uma rejeitada em julho que foi reemitida e aprovada em agosto.
+Decidimos que essa funcionalidade *precisa estar correta na primeira
+versão*: a proposta de reforma, em 10 pontos, está no relatório
+(campo digitável sem default, consenso em vez de amostra, não sugerir
+sem moda, respeitar a rejeição, descartar registro incoerente, base
+no preço efetivo do produto com tratamento de override, sugestão por
+produto com família como fallback declarado, listar os registros que
+sustentam cada sugestão, preço mínimo cadastrado e confirmação de
+aplicação). Enquanto a reforma não sai, *nenhuma sugestão da tela
+deve ser aprovada* — avisamos o gestor do nosso lado. Nos digam o
+esforço/prazo desse pacote, que é o item que passa a dimensionar o
+go-live.
+
+🔴 *3. Criar o campo de preço mínimo — e ele afeta as alçadas de
+aprovação.* A tela Configurações → Preços diz "lista + mínimo", mas
+só a lista tem campo de digitação; o mínimo não tem onde ser
+preenchido (nem na família, nem no produto). Com o mínimo em R$ 0,00
+em todas as famílias, *a alçada do Diretor (venda abaixo do mínimo)
+nunca dispara no eixo de preço* — todo desconto cai na alçada do
+Gestor. Pedimos o campo nos dois níveis (família + override de
+produto); assim que existir, nós cadastramos os valores.
+
+🔴 *4. Volume da perda: campo em toneladas grava quilos.* Digitar 1
+no campo "(t)" grava volume_kg: 1. Já contaminou registro real (perda
+#20). Corrigir a conversão — e nos digam como preferem tratar o
+histórico existente.
+
+*5. (leve, mas visível)* O card "Maior Dispersão" mostra
+−111900,0% para um produto cuja linha na tabela diz 111,1% — sinal e
+escala.
+
+Uma correção ao relatório que vai junto: o "defeito 03" (sessão do
+gestor caindo para vendedor) *não procede* — apuramos internamente e
+foi troca de sessão feita por nós mesmos durante o teste, não
+comportamento do sistema. Desconsiderem esse item.
+
+*Para a rodada seguinte* (sem bloquear o go-live): os complementos do
+formulário de perda que ficaram fora dos 10 pontos (campo de preço
+aparecer também no motivo Concorrência, campo de nome do concorrente,
+dado do concorrente chegando aos painéis do gestor e à Dispersão de
+Preços), o renome da seção da Carteira do vendedor para "Recebimentos
+Previstos" (ficou só no cockpit), e o campo Cliente Faturado na mesma
+busca server-side da remessa (o teto de 200 está próximo para
+carteiras grandes).
+
+*Limpeza de QA* (podem remover): pedido #16479 fica até o reenvio;
+atendimento #79/perda #19 (ALFA), perda #21 (CATA TECIDOS), as 6
+perdas de teste de ontem (ABS 750SW ×3, PEAD 2000 ×3) e as sugestões
+de preço #3 a #7 (nenhum preço foi alterado por nós). A perda #20
+(DEBKEN) é registro real — permanece.
+
+E seguimos aguardando a estimativa de esforço da tela de clientes 90+
+dias sem compra, do outro dia.
+
+Qualquer dúvida sobre os testes, o relatório tem o passo a passo de
+cada um.

@@ -1,0 +1,46 @@
+Mensagem de WhatsApp — Devolutiva Round 6
+(responde ao "Relatório de Correções — CRM Q2P Round 5", 21/07/2026)
+Formatação WhatsApp: *texto* = negrito
+
+========================================================================
+
+Oi, pessoal! Concluímos a validação do relatório de vocês (Round 5, 21/07,
+depois do primeiro pedido de teste real contra o OMIE). Resultado: 8 dos
+9 itens testáveis corresponderam ao descrito, e teve um resultado que não
+bateu com o esperado (não é bug de vocês — ver abaixo). Vai por partes:
+
+*O que confirmamos corrigido:*
+✅ *Modalidade de Frete* — campo obrigatório, sem valor pré-selecionado,
+bloqueia envio vazio, confirmado tanto na tela de gestão quanto na do
+vendedor
+✅ *Espécie/Quantidade de Volumes* — Sacos calcula sozinho (testamos
+130kg → 6 sacos, bate com peso÷25 arredondado pra cima); Big Bag aceita
+digitação manual
+✅ *Entrega Prevista, obrigatoriedade no backend* — testamos direto por
+API (sem passar pela tela) removendo o campo, em dois cenários (tipo
+imediato e tipo futuro): o backend rejeitou os dois com "Este campo é
+obrigatório." Confirmado, é obrigatório também no backend, não só na tela
+✅ *Reenvio por registro* — corrigimos o CEP de um cliente que tinha
+falhado antes e usamos o botão de reenvio: sincronizou com sucesso, sem
+duplicar o cadastro, confirmamos direto no OMIE
+✅ *Edição de cliente* — o botão novo abre o formulário populado e salva
+as alterações corretamente
+✅ *Telefone/WhatsApp separados* — conferido em 3 telas diferentes,
+valores corretos e distintos
+✅ *Comissão no Cockpit → Performance Individual* — calculada para todos
+os vendedores com vendas no mês, mesmo sem aprovação manual
+✅ *Duplicar Metas com trava* — testamos com um vendedor que já tinha
+valores diferentes entre os meses: o travado manteve o valor, o
+destravado foi sobrescrito, como esperado
+
+*Resultado que não bateu com o esperado:*
+⚠️ Durante os testes de API, criamos um pedido de teste que *não falhou
+nas alíquotas* como o relatório de vocês previa — foi sincronizado ao
+OMIE sem erro nenhum, mas também sem os impostos preenchidos. Vamos
+confirmar isso do lado de cá, direto no OMIE.
+
+*Atenção:* esse pedido de teste (cliente e produto de teste, R$ 0,01)
+foi processado de verdade no OMIE — vamos confirmar se gerou nota
+fiscal e, se sim, providenciar o cancelamento.
+
+Qualquer dúvida, é só chamar!

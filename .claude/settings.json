@@ -10,7 +10,14 @@
       "Bash(pnpm --filter @atlas/api exec vitest run src/__tests__/totp.test.ts)",
       "Bash(grep -v -E '^\\(main|uat\\)$')",
       "Bash(.specify/scripts/bash/create-new-feature.sh \"Fila de recebimento de importacao em modo real + correcao de granularidade multi-produto\" --json --short-name \"fila-recebimento-real\")",
-      "Bash(python3 -c \"import yaml,sys; d=yaml.safe_load\\(open\\('deploy/portainer/atlas-uat.stack.yml'\\)\\); svc=d['services']['uat-atlas_api']['environment']; print\\('YAML OK — AUTH_2FA_ENABLED =', repr\\(svc.get\\('AUTH_2FA_ENABLED'\\)\\)\\); print\\('serviços:', list\\(d['services'].keys\\(\\)\\)\\)\")"
+      "Bash(python3 -c \"import yaml,sys; d=yaml.safe_load\\(open\\('deploy/portainer/atlas-uat.stack.yml'\\)\\); svc=d['services']['uat-atlas_api']['environment']; print\\('YAML OK — AUTH_2FA_ENABLED =', repr\\(svc.get\\('AUTH_2FA_ENABLED'\\)\\)\\); print\\('serviços:', list\\(d['services'].keys\\(\\)\\)\\)\")",
+      "WebFetch(domain:ajuda.omie.com.br)",
+      "Bash(curl -sS -o /dev/null -w \"http_code=%{http_code} url=%{url_effective}\\\\n\" --max-time 10 https://atlas.q2p.com.br/)",
+      "Bash(curl -sS --max-time 10 https://atlas.q2p.com.br/api/v1/health)",
+      "Bash(git grep *)",
+      "Bash(node -e ' *)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(jq keys? /tmp/claude-1000/-home-primebot-Documentos-Github-q2p-plataforma-atlas/39e5be12-3d98-429b-894e-eec169dc692a/tasks/w8j4dkre4.output)"
     ]
   },
   "enabledPlugins": {

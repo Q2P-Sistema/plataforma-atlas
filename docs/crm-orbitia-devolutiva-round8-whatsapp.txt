@@ -1,0 +1,87 @@
+Devolutiva pós-homologação — VERSÃO FINAL para envio (03/09)
+Formatação WhatsApp: *texto* = negrito
+========================================================================
+
+Oi, pessoal! Fechamos a bateria de validações de ontem e hoje. A
+notícia grande é boa: *a venda triangular foi homologada ponta a
+ponta* — os 4 PVs (19393 a 19396) passaram pela nossa esteira de
+validação sem nenhum erro: textos legais corretos e cruzados, CFOP
+5.924 com impostos zerados e sem financeiro nas remessas, estoque
+desmarcado nas vendas, códigos TRI pareados. Os 4 pedidos de teste já
+foram excluídos do OMIE. Parabéns pelo trabalho — ficou exatamente na
+especificação.
+
+Da rodada saíram 6 pontos. Um é urgente:
+
+🔴 *1. O campo "Empresa de Remessa" parou de buscar — triangular
+inoperante.* Ao digitar no campo (testamos "ALFA" e termos genéricos),
+nenhuma requisição é disparada — o campo de cliente, que é o mesmo
+componente, busca normalmente, e `GET /api/clientes/?search=ALFA`
+responde na hora. Em 31/08 o campo funcionava (foi por ele que criamos
+os testes). Enquanto não voltar, nenhuma venda triangular pode ser
+lançada pela interface. Deve ser correção pequena, mas é bloqueante.
+
+*2. Ajuste fino da remessa: CST do ICMS 50 + benefício fiscal.* Na
+homologação, a validação aprovou as remessas com uma auto-correção: o
+CST do ICMS deve ser *50 (suspensão)*, com `codigo_beneficio_fiscal`
+= "SP054020" no item (tínhamos passado CST 41). Ajustem a criação para
+já sair assim; o restante (IPI 53, PIS/COFINS 07, tudo zerado) está
+correto e não muda.
+
+*3. Fluxo de Caixa: removam as colunas "Pagar" e "Saldo" e renomeiem
+para "Recebimentos Previstos".* Rodamos a conciliação de contas a
+pagar, como combinado na D7: a coluna "Pagar" mostra R$ 972.738,77
+contra R$ 3.860.152,60 de títulos em aberto no OMIE, e o "Saldo" tem
+quebras de até R$ 4,3M que receber−pagar não explica. Decidimos
+simplificar: ficam só os recebimentos, que já batem com o OMIE. Isso
+*substitui a resposta anterior da D7* (não precisa mais sincronizar
+contas a pagar) e o que pedimos em 30/08 sobre manter a coluna. Como o
+número atual é 4x menor que o real, pedimos a remoção ainda antes do
+go-live — deve ser rápida.
+
+*4. Conciliação de faturamento: fechamos agosto ao centavo — e ela
+revelou duas correções.* 7 de 11 vendedores batem exatos com o OMIE.
+A diferença (R$ 188.998,12, o CRM sempre maior) tem duas causas,
+confirmadas pedido a pedido:
+
+(a) *Os totalizadores fecham o mês pela data de criação do pedido, não
+pela de faturamento.* Seis pedidos criados em agosto e faturados em
+01/09 somam R$ 119.872,24 no agosto do CRM (#16435 a #16440). O campo
+data_faturamento que vocês criaram está populado e correto — falta as
+telas usarem ele. 180 dos 459 pedidos de agosto têm as duas datas
+diferentes, então a regra distorce o tempo todo, só fica visível na
+virada do mês.
+
+(b) *Pedido com NF cancelada sem reemissão continua no realizado.*
+#16126 (R$ 15.177,75) e #16275 (R$ 53.948,13) aparecem como faturados
+sem data nem NF-e — conferimos no OMIE: as notas foram canceladas.
+Quando há reemissão o tratamento funciona (verificamos um caso); o
+cancelamento sem reemissão precisa tirar o pedido do realizado.
+
+Com (a) e (b), a conciliação de faturamento fecha em zero por
+vendedor — o critério de aceite que combinamos.
+
+*5. Requisito novo: tela de monitoramento do gestor — clientes 90+
+dias sem compra.* (Enviado em mensagem separada ao Marcelo em 03/09 —
+manter aqui só como referência: a regra de ocultar da carteira NÃO
+volta; entra apenas uma tela de listagem para o gestor com cliente,
+vendedor atual, última compra e dias sem compra; troca de vendedor
+manual no OMIE; cliente sai da lista quando voltar a comprar.)
+
+*6. Confirmação: vocês expurgaram os pedidos #16368 e #16381 no
+script de limpeza?* O #16381 devolve 404 e a numeração pula — tudo
+indica que foi a limpeza que autorizamos, só queremos a confirmação
+para o registro.
+
+E dois encerramentos do nosso lado: a *varredura de inscrição
+estadual está feita* — todos os 199 clientes com histórico de
+triangular têm IE; os sem IE nunca participaram, e a trava de vocês
+cobre casos novos. E validamos *dias úteis* (consistente nas três
+telas) e *"Aprovado" fora do realizado* (11 de 11 vendedores) —
+os dois itens estão encerrados.
+
+Sobre a *cota da API*: ficou sem prova nova (o teste de envio
+dependia justamente do campo do item 1). Assim que ele voltar,
+fazemos um envio simbólico e fechamos.
+
+Qualquer dúvida sobre os números, é só chamar.

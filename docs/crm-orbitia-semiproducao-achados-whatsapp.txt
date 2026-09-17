@@ -1,0 +1,63 @@
+Mensagem de WhatsApp — Achados da fase de semi-produção (uso real) — parte 2
+(continuação do compilado enviado em 31/07)
+Formatação WhatsApp: *texto* = negrito
+
+========================================================================
+
+Oi, pessoal! Seguimos na fase de uso real do CRM com a equipe comercial.
+Um reforço num ponto que já passamos, e mais alguns pontos novos que
+apareceram desde o último compilado (31/07):
+
+*Reforçando um pedido já feito*
+
+🔁 *Carteira (prospecção) limitada a 50 clientes* — no compilado
+anterior pedimos pra ampliar esse limite. Reforçando: esse limite está
+atrapalhando o uso normal da ferramenta no dia a dia da prospecção — não
+é só uma melhoria, é necessário pro funcionamento adequado da Carteira.
+Precisamos que mostre a lista completa de clientes.
+
+*Pontos novos*
+
+1️⃣ *Histórico de aprovações vazio* — na tela de aprovações do gestor, o
+histórico aparece vazio, apesar de já terem ocorrido várias aprovações
+nesse período de uso real. O histórico deveria listar o que já foi
+decidido (aprovado/rejeitado), não só os pendentes atuais.
+
+2️⃣ *Número de pedido exibido como ID interno do OMIE, em duas telas* —
+tanto em "Meus Pedidos" (login vendedor) quanto na aba "Histórico" da
+ficha do cliente, o pedido aparece identificado pelo ID interno do OMIE
+(código de 10 dígitos, ex.: 8488922568), em vez do número do pedido que
+o OMIE atribui e que identifica o pedido pra fora do sistema (ex.:
+18875). Como o mesmo padrão apareceu em duas telas diferentes, vale
+conferir se há outras telas com o mesmo problema.
+
+3️⃣ *Falta deletar pedido pendente de aprovação* — a edição de pedido em
+etapa 10 (pendente de aprovação) já foi discutida antes. Falta também a
+opção de deletar o pedido nesse mesmo estágio, ainda não sincronizado ao
+OMIE.
+
+4️⃣ *Editar/deletar pedido depois de aprovado* — mesmo após o gestor
+aprovar, ainda precisa ser possível editar/deletar o pedido — nesse caso
+a alteração precisaria refletir tanto no CRM quanto no OMIE, já que o
+pedido aprovado já foi sincronizado. Pode ser que isso exija uma nova
+aprovação do gestor para a alteração.
+
+5️⃣ *Campos de frete não são exigidos na criação do pedido* — hoje a
+criação de Pedido de Venda não está requisitando os campos de frete
+(nome da transportadora, endereço de entrega, etc.). Deveriam ser campos
+obrigatórios.
+
+6️⃣ *Histórico de vendas do cliente não mostra os produtos vendidos* — na
+aba "Histórico" da ficha do cliente, a lista de pedidos passados não
+mostra quais produtos foram vendidos em cada um — só dados do pedido em
+si (data, valor), sem o detalhe dos itens. O vendedor não consegue
+identificar, olhando o histórico, o que o cliente já comprou antes.
+
+*Melhoria (pode ficar pra uma próxima versão)*
+
+🔹 *Acesso à NF emitida via CRM* — depois que o pedido é faturado no
+OMIE, o CRM deveria dar acesso ao documento da NF-e emitida, pra o
+vendedor poder encaminhar ao cliente sem precisar acessar o OMIE
+diretamente.
+
+Qualquer dúvida, é só chamar!

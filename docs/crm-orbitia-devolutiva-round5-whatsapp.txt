@@ -1,0 +1,53 @@
+Mensagem de WhatsApp — Devolutiva Round 5
+(responde ao "Relatório de Correções — CRM Q2P Round 4", 18/07/2026)
+Formatação WhatsApp: *texto* = negrito
+
+========================================================================
+
+Oi, pessoal! Concluímos a validação do relatório de correções de vocês
+(Round 4, 18/07). Resultado: 6 dos 7 itens testáveis corresponderam ao
+descrito, 1 não correspondeu — e mais alguns pontos novos. Vai por partes:
+
+*O que confirmamos corrigido:*
+✅ *Cadastro de cliente* — fomos a fundo e achamos a causa raiz: o único
+campo realmente causando a falha de sincronização era o *CEP*, que o
+formulário deixa salvar vazio mesmo sendo obrigatório no OMIE. Com CEP
+preenchido, o cliente sincronizou certinho — confirmamos direto no OMIE.
+Só falta uma coisa: o cadastro está indo sem a *tag "Cliente"* no
+payload — precisa incluir isso.
+✅ Coluna Status com ícone de aviso junto ao "Aprovado" quando falha a
+sincronização com o OMIE
+✅ Mensagem explícita quando a Meta Global está zerada
+✅ Comissão Base, % e Totais batendo entre si na tela de Remuneração
+✅ Ajuste de Preço com casas decimais e sinal/cor corretos para reduções
+✅ Confirmado: os logs antigos do erro de codigo_categoria realmente
+pararam depois do hotfix — nenhum registro novo desde então
+
+*O que não correspondeu:*
+❌ *Duplicar metas do mês anterior* — a explicação de vocês (a chamada
+sempre funcionava, só a mensagem era genérica) não reflete o requisito
+correto. A regra é: a duplicação deve *sobrescrever* as metas do mês de
+destino, exceto vendedores com meta *travada*. Hoje o sistema não
+sobrescreve nenhuma meta, travada ou não — mesmo com a mensagem mais clara.
+
+*Pontos novos encontrados:*
+🆕 Telefone digitado em "Telefone Principal" aparece salvo sob o rótulo
+"WHATSAPP" na tela do cliente
+🆕 A linha "Totais" da tabela de comissão por família não bate com a soma
+das famílias efetivamente listadas na mesma tabela
+🆕 "Bônus por Novos Clientes": o card-resumo sempre mostra R$ 0 (o
+endpoint retorna vazio), e o valor calculado por cliente sempre vem no
+teto de R$ 2.000, independente do faturamento — confirmamos em 2
+clientes com faturamentos bem diferentes, ambos retornando exatamente
+R$ 2.000 em vez do 1,5% sobre o faturamento de cada um
+🆕 Não encontramos nenhuma forma de reenviar a sincronização de um
+registro específico que falhou — só existe um botão de "sincronizar
+tudo", geral
+🆕 Também não encontramos nenhuma tela de edição de cliente já
+cadastrado, em nenhum perfil
+
+*Aguardando de vocês:* o próximo teste real de pedido→OMIE segue
+esperando a confirmação do codigo_cenario_impostos — assim que tivermos
+esse dado, seguimos com o teste ponta a ponta do payload novo de vocês.
+
+Qualquer dúvida, é só chamar!

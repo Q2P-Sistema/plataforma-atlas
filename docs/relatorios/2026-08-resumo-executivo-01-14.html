@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Resumo Executivo — 01–14/08/2026</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f5f7;">
+<!-- ====== COPIE A PARTIR DAQUI (ou abra no navegador e copie o conteúdo renderizado) ====== -->
+<div style="max-width:720px;margin:0 auto;padding:24px;background:#ffffff;font-family:Arial,Helvetica,sans-serif;color:#172b4d;line-height:1.55;font-size:14px;">
+
+  <h1 style="font-size:22px;margin:0 0 4px;color:#172b4d;">Resumo Executivo — Atividades de 01–14/08/2026</h1>
+  <p style="margin:0 0 2px;"><strong>Responsável:</strong> Flavio Cicato Endo</p>
+  <p style="margin:0 0 2px;"><strong>Área:</strong> TI / Sistemas (Jira ACXEGDP)</p>
+  <p style="margin:0 0 2px;"><strong>Período:</strong> 01–14/08/2026</p>
+  <p style="margin:0 0 16px;color:#6b778c;font-size:12px;"><em>Fonte: Jira LiveMind — projeto ACXE - Gestão dos projetos e dos Sistemas.</em></p>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Números do período</h2>
+  <table style="border-collapse:collapse;width:100%;font-size:14px;">
+    <tr>
+      <th style="border:1px solid #dfe1e6;padding:8px 10px;text-align:left;background:#f4f5f7;">Indicador</th>
+      <th style="border:1px solid #dfe1e6;padding:8px 10px;text-align:right;background:#f4f5f7;">Valor</th>
+    </tr>
+    <tr>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;">Tarefas <strong>concluídas</strong></td>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;text-align:right;"><strong>24</strong></td>
+    </tr>
+    <tr>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;">Tarefas <strong>abertas</strong> no período</td>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;text-align:right;"><strong>13</strong> <span style="color:#6b778c;font-size:12px;">(6 concluídas na janela · 7 em andamento/backlog)</span></td>
+    </tr>
+    <tr>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;">Itens movimentados no total</td>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;text-align:right;">31</td>
+    </tr>
+  </table>
+
+  <div style="margin:16px 0;padding:12px 16px;background:#e3fcef;border-left:4px solid #00875a;border-radius:3px;">
+    <p style="margin:0;color:#006644;">Quinzena de duas naturezas distintas: uma grande <strong>faxina de board</strong> (18 cards de trabalho já entregue há semanas ou meses, finalmente fechados no Jira em duas sessões de organização — 04/08 e 08/08) e a resolução das <strong>3 pendências sinalizadas no relatório anterior</strong> (erro de emissão de NF por nova legislação SEFAZ, backup do banco quebrado, cálculo de impostos do OMIE). O trabalho realmente novo da quinzena girou em torno de um <strong>bug crítico de sincronização de NF</strong>, <strong>dados corrompidos por entidades HTML</strong> e o início do planejamento da migração para o <strong>n8n 3.0</strong>.</p>
+  </div>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Principais entregas por frente</h2>
+  <p style="margin:0 0 12px;font-size:12px;color:#6b778c;">
+    Legenda:
+    <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span>
+    <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffae6;color:#974f00;">EM ANDAMENTO</span>
+    <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span>
+  </p>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">1. Pendências do relatório anterior — todas fechadas</h3>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-312</strong> — Erro na emissão de NF e liquidação automática: pedidos rejeitados pelo SEFAZ por <strong>nova legislação tributária</strong> (regras de Triangular e Sucata).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-317</strong> — pgbackweb→Backblaze B2: causa raiz identificada (bug conhecido do SDK AWS Go v2 — checksums que o Backblaze não aceita); mitigado.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-323</strong> — OMIE IncluirPedido: confirmado que o bloco det[].imposto deve ser <strong>omitido</strong> para o OMIE calcular os impostos (os docs internos afirmavam o inverso).</li>
+  </ul>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">2. Sync de NF — bug crítico + qualidade de dados</h3>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-329</strong> — Sync NF ACXE travava com duplicate key: a OMIE <strong>troca o id interno (nIdNF)</strong> da mesma NF, e o upsert não tratava a troca — nenhuma NF da ACXE sincronizava há horas. Hotfix + correção nos 5 fluxos com o mesmo padrão.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-330</strong> — Decodificação de <strong>entidades HTML</strong> do OMIE (&amp;amp;, &amp;quot;, &amp;apos;) nas tabelas de NF — nomes de clientes apareciam corrompidos (ex.: "PCC Plastic &amp;amp; Consultation Center").</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-331</strong> — Mesma decodificação estendida a mais 10 tabelas (clientes, pedidos, comex, estoque, produtos, limites) — <strong>~351 linhas</strong> afetadas, incluindo um ciclo de "re-encoding" em fluxos que leem e regravam texto do OMIE.</li>
+  </ul>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">3. StockBridge — próxima fronteira: recebimento nacional automático</h3>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span> <strong>ACXEGDP-328</strong> — Levantamento completo para eliminar a digitação manual no recebimento nacional (puxar itens/quantidades/valores direto da NF, como já existe na importação). Achado central: <strong>só 4,3% dos itens têm código de produto na NF</strong> — a correlação precisa ser assistida e memorizada por (fornecedor, descrição). Spec grande, decisões de escopo a fechar antes de especificar.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffae6;color:#974f00;">EM ANDAMENTO</span> <strong>ACXEGDP-332</strong> — Investigação de NFs já recebidas que ainda aparecem como pendentes na listagem do recebimento internacional.</li>
+  </ul>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">4. Infraestrutura</h3>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-334</strong> — Ativação da conta OMIE da <strong>ACXE Filial</strong>.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffae6;color:#974f00;">EM ANDAMENTO</span> <strong>ACXEGDP-340</strong> — Exporta Estoque Planejador falhando com "tabela não pode se sobrepor" (13/08) — causa raiz no encadeamento de delete/create do Google Sheets sob rate limit; correção em andamento.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span> Preparação para o <strong>n8n 3.0</strong> (release out/2026): levantamento de impacto sobre 225 workflows (89 ativos) — a maioria já conforme; 2 subtarefas concluídas (trigger dos 6 sub-flows do Full Sync, workflow legado de snapshots migrado), 3 ainda pendentes (callers do Full Sync, revisão final do guia de breaking changes).</li>
+  </ul>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">5. Faxina de board — 18 cards antigos fechados</h3>
+  <p style="margin:0 0 8px;color:#42526e;">Duas sessões de organização (04/08 e 08/08) fecharam formalmente cards de trabalho já entregue há semanas ou meses — as datas de conclusão no Jira <strong>não</strong> refletem quando o trabalho realmente aconteceu:</p>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;">Rotina de verificação diária/semanal de BDs (ACXEGDP-1/3/6/7).</li>
+    <li style="margin-bottom:5px;">Negociação com a OMIE sobre reajustes (ACXEGDP-193).</li>
+    <li style="margin-bottom:5px;">Investigação completa do travamento do n8n por OOM em junho (ACXEGDP-170 a 175) — diagnóstico, causa raiz, fix imediato, refactor em sub-workflows e validação pós-fix (heap caiu de 1,53GB para 274MB, redução de 82%).</li>
+    <li style="margin-bottom:5px;">Auditoria de idempotência do fluxo de baixa de estoque da Filial (ACXEGDP-221).</li>
+    <li style="margin-bottom:5px;">Fix do backup de workflows no GitHub, publicado em 10/07 (ACXEGDP-304).</li>
+  </ul>
+  <div style="margin:8px 0 16px;padding:10px 14px;background:#f4f5f7;border-left:4px solid #6b778c;border-radius:3px;">
+    <p style="margin:0;color:#42526e;font-size:12.5px;">Ainda pendente de fechamento no Jira: os 3 cards de hardening pré-deploy do go-live (ACXEGDP-176, 183, 316) seguem "Tarefas pendentes" apesar do código estar em produção desde julho — ver relatório de 15–31/07.</p>
+  </div>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Em aberto para o restante de agosto</h2>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:4px;">StockBridge: recebimento nacional automático via NF — spec grande, decisões de escopo a fechar (-328)</li>
+    <li style="margin-bottom:4px;">Verificar NFs "fantasma" no recebimento internacional (-332)</li>
+    <li style="margin-bottom:4px;">Exporta Estoque Planejador: correção do encadeamento delete/create ainda em andamento (-340)</li>
+    <li style="margin-bottom:4px;">n8n 3.0: callers do Full Sync + revisão final do guia de breaking changes (-337/339)</li>
+    <li style="margin-bottom:4px;">Cards de hardening do go-live ainda não fechados no Jira (-176/183/316)</li>
+  </ul>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Anexo — 24 tarefas concluídas entre 01–14/08</h2>
+  <table style="border-collapse:collapse;width:100%;font-size:13px;">
+    <tr>
+      <th style="border:1px solid #dfe1e6;padding:6px 10px;text-align:left;background:#f4f5f7;width:60px;">Data</th>
+      <th style="border:1px solid #dfe1e6;padding:6px 10px;text-align:left;background:#f4f5f7;width:110px;">Chave</th>
+      <th style="border:1px solid #dfe1e6;padding:6px 10px;text-align:left;background:#f4f5f7;">Tarefa</th>
+    </tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">10/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-338</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Migrar/arquivar workflow DigitalOcean Snapshots (nós removidos no n8n 3.0)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">10/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-336</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Atualizar Execute Workflow Trigger v1→1.2 nos 6 sub-flows do Full Sync</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">08/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-175</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[PENDENTE→feito] Aumentar limite de heap do n8n-runner (NODE_OPTIONS)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">08/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-174</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Validação pós-refactor do OOM: heap caiu 82% (1,53GB → 274MB)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">08/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-173</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Refactor do workflow monolítico em orquestrador + 3 sub-workflows</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">08/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-172</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Fix imediato — restart do n8n-worker via Portainer</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">08/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-171</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Causa raiz do OOM — workflow semanal acumulando heap por 3 empresas</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">08/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-170</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Diagnóstico do travamento — logs do worker, runner e Redis</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">06/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-334</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">OMIE: ativação da conta ACXE Filial</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">04/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-208</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">n8n — alerta de retenção causado por execuções HITL em "waiting"</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">04/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-304</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Backup Workflows GitHub: falha 422 no GitHub_Cria_Arquivo</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">04/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-221</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Auditoria idempotência — Baixa de Estoques Filial</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">04/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-317</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">pgbackweb→Backblaze B2: falha crônica de upload multipart</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">04/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-323</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">OMIE IncluirPedido: omitir bloco det[].imposto para calcular impostos</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">04/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-329</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Sync NF ACXE trava com duplicate key (OMIE troca o nIdNF)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">04/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-312</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Erro na emissão de NF e liquidação automática (SEFAZ)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">04/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-193</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Negociação com a OMIE acerca dos aumentos</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">04/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-1</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Verificação diária da saúde dos Bancos de Dados</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">04/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-3</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Verificação semanal dos BDs</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">04/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-6</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Verificar n8n</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">04/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-7</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Verificar Portainer</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">04/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-330</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Sync NF: decodificar entidades HTML do OMIE (dest_razao/x_prod)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">04/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-331</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Entidades HTML do OMIE nos demais syncs (~351 linhas)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">03/08</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-315</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Reunião com LogComex</td></tr>
+  </table>
+
+  <p style="margin:14px 0 0;font-size:12px;color:#6b778c;"><em>Gerado em 19/08/2026 a partir do Jira (livemind.atlassian.net).</em></p>
+
+</div>
+<!-- ====== FIM ====== -->
+</body>
+</html>

@@ -1,0 +1,159 @@
+Devolutiva da revalidação dos Rounds 12-13 — para envio
+Formatação WhatsApp: *texto* = negrito
+========================================================================
+
+Oi, pessoal! Revalidamos tudo dos Rounds 12 e 13 — sete blocos de
+teste, incluindo uma rodada com captura de payload. O resultado é bom:
+*quase tudo passou, e o pacote de preço está de pé*. Segue o
+detalhamento.
+
+*O QUE CONFIRMAMOS FUNCIONANDO*
+
+✅ *Venda triangular: validada de ponta a ponta.* Criamos um par novo
+(nosso #16557 → PVs 19568 e 19569) e conferimos o payload que o OMIE
+devolveu: o `codigo_beneficio_fiscal: "SP054020"` está em `inf_adic`,
+no lugar certo, junto do `nao_gerar_financeiro`; CST do ICMS 50, CFOP
+5.924, impostos zerados, textos legais cruzados corretos. E o detalhe
+que mais importa: a nossa esteira aprovou *sem nenhuma auto-correção*
+— antes ela precisava consertar o CST e o benefício, agora o CRM já
+cria certo. Isso também fechou a cota da API (houve envio real) e o
+reenvio automático, que se antecipou e reenviou o #16479 sozinho
+quando o fix subiu.
+
+✅ *Preço mínimo: era perfil, como vocês apuraram.* Com as contas de
+Diretor criadas, a coluna de mínimo está editável nos dois níveis, o
+Gestor vê e não edita, e cadastramos um mínimo piloto. *A alçada do
+Diretor passou a funcionar de verdade*: um pedido abaixo do mínimo
+sobe corretamente para aprovação de nível Diretor, e nenhum outro
+perfil aprova. Item encerrado — não era bug.
+
+✅ *Motor de Ajuste de Preço: aprovado.* Testamos com 3 relatos
+coerentes num produto virgem (PP 1100N, lista R$ 9,50, concorrente
+R$ 8,55 nos três) e o motor gerou a sugestão *no nível produto*,
+etiqueta "Produto", delta −R$ 0,90 → R$ 8,60, *listando os 3
+registros de origem de verdade* (não só o contador). Confirmamos
+também o lado oposto: quando não há 3 relatos concordantes, não sugere
+nada. E o descarte de relato incoerente funciona — o que nos levou a
+um falso alarme nosso, explicado no item abaixo.
+
+✅ *Volume da perda em toneladas:* 1,5 t gravou 1.500 kg. Corrigido.
+
+✅ *Campo de preço do concorrente:* nasce vazio, aceita digitação e é
+obrigatório no motivo Preço. Corrigido.
+
+✅ *Card "Maior Dispersão":* card e tabela agora batem (ABS-003 com o
+mesmo percentual nos dois lugares). Fim da divergência de fator 1000.
+
+*UM FALSO ALARME NOSSO, QUE VALE CONTAR*
+
+Ao testar o motor, registramos 6 perdas no mesmo produto e o sistema
+respondeu "17 registros encontrados, mas nenhum atingiu consenso".
+Suspeitamos de defeito — e não era: lançamos justamente no ABS 750SW,
+o único produto com preço mínimo em vigor, com concorrente a R$ 9,00,
+bem abaixo do mínimo de R$ 15,22. *Os relatos foram descartados pela
+regra de coerência, corretamente.* Vocês estão certos, o motor está
+certo — e isso nos levou ao pedido nº 3 abaixo.
+
+*O QUE PEDIMOS NESTA RODADA*
+
+*1. O reset da Empresa de Remessa não foi corrigido.* O Round 12
+§2.1 deu como resolvido, mas no reteste continua: ao alternar a origem
+do pedido (Pedido da Gestão ↔ Em nome de um Vendedor), o Cliente
+Faturado é limpo e a *Empresa de Remessa permanece preenchida*. Vale
+conferir se a correção saiu só em uma das duas telas (novo pedido /
+edição).
+
+*2. Pedido excluído no OMIE continua "Enviado ao OMIE" no CRM.* Os
+PVs 19467/19468 (do #16479) foram excluídos no OMIE há dias e o
+pedido segue no CRM como enviado, apontando para números que não
+existem mais. A correção do Round 9 cobre pedido *cancelado* (que muda
+de etapa); a *exclusão* faz o pedido desaparecer da API, e a
+sincronização não trata isso como sinal. Como excluir PV no OMIE é
+prática corrente aqui, o pedido "enviado" com número morto engana
+vendedor e gestor. Sugestão: quando a consulta do PV vinculado voltar
+inexistente, refletir no CRM (status "Excluído no OMIE") e alertar nos
+Logs, como vocês já fazem para o cancelamento da remessa.
+
+*3. Quando o motor não sugere nada, não há como saber por quê.* A
+resposta do recalculo traz só "criadas" e um texto genérico — sem
+contagem por produto/família, sem os relatos descartados, sem o
+motivo, sem indicação de cooldown. Para descobrir o que aconteceu no
+nosso teste, tivemos que cruzar quatro endpoints à mão; o gestor não
+vai fazer isso, e a leitura dele vai ser "o sistema não funciona".
+Pedido: devolver (e mostrar na tela) o diagnóstico — algo como "X
+relatos descartados por preço abaixo do mínimo", "produto Y com 2 de
+3 relatos", "família Z em cooldown até tal data". Complementa bem o
+ponto 8 da reforma, que cobriu o caso da sugestão gerada.
+
+*4. Pedido em alçada de Diretor deveria aparecer para o gestor,
+desabilitado.* Hoje ele *não aparece* na tela do gestor — só na do
+Diretor. O gestor fica cego para um pedido da própria equipe: não sabe
+que existe, não explica ao vendedor por que está parado, e perde o
+sinal mais relevante (alguém negociando abaixo do mínimo). Pedimos que
+apareça na fila dele com o nível exigido ("Aguardando aprovação do
+Diretor") e o botão de aprovar desabilitado. É o mesmo padrão que o
+sistema já aplica no preço mínimo, onde o Gestor vê e não edita.
+
+*5. O Cockpit ainda leva 10 a 15 segundos — por outra causa.* A
+correção de vocês funcionou: o fluxo de caixa caiu de ~20 s para menos
+de 4 s. Mas medimos três carregamentos (10,3 s / 15,1 s / 4,4 s) e o
+gargalo agora é outro: `GET /api/clientes/?page_size=1000` traz *924
+KB em 7 a 8 segundos*, e a tela só renderiza os KPIs depois que essa
+chamada termina — o fluxo de caixa é disparado em série, só depois
+dela. Enquanto ela roda há contenção visível no backend (uma resposta
+de 2 bytes levou 3,7 s). Pedido: o Cockpit não precisa da base de
+clientes inteira para montar KPIs — é o mesmo vício que vocês já
+corrigiram no campo Cliente Faturado —, e as chamadas do dashboard
+poderiam ser paralelas em vez de encadeadas.
+
+*6. Dois pontos do painel de perdas que seguem em aberto* (vocês não
+declararam correção, é só para ficar na lista): o "gap potencial" ao
+lado das perdas continua mostrando o gap da meta da equipe (R$ 16,9M,
+idêntico ao indicador do topo); e a contagem de perdas agora diverge
+em três telas — 13 no topo do card, 10 na lista de recentes e 12 na
+tela Análises. No mesmo espírito, o rótulo "Gap R$" significa coisas
+diferentes no Cockpit (acumulado vs meta) e em Análises (projeção vs
+meta).
+
+*UMA ANOMALIA DE DADO QUE O FIX DE VOCÊS REVELOU*
+
+O PEAD-101 (lista R$ 9,90) aparece com *preço mínimo praticado de
+R$ 0,01*, o que infla a dispersão dele para 196,9%. Conferimos na
+nossa réplica do banco do OMIE: *não existe nenhuma venda desse
+produto a R$ 0,01*. Ou seja, é um registro do lado do CRM sem
+contrapartida no ERP — vale vocês rastrearem a origem (pedido que
+nunca sincronizou? importação legada?). E confirmamos que os nossos
+pedidos de teste a R$ 0,01 não distorcem nada além do que o cadastro
+já distorce, porque o produto que usamos (ABS-023) já tem lista em
+R$ 0,01.
+
+*RESPONDENDO O QUE VOCÊS PERGUNTARAM*
+
+• *Parâmetros do motor* (50% de consenso, mínimo 3 relatos, 30% de
+tolerância, 60 dias de cooldown): estão bons, seguimos com eles. Se
+mudarmos, avisamos.
+
+• *Bloqueio abaixo do mínimo*: mantemos o modelo atual, com a exceção
+via aprovação do Diretor — concordamos com a recomendação de vocês,
+não queremos bloqueio duro.
+
+• *"Erro grave de cálculo"*: era o snapshot de R$ 0,01 que vocês já
+corrigiram. Podem considerar encerrado.
+
+• *Famílias REC sem preço*: é dado nosso mesmo, vamos precificar.
+Dimensionamos: 23 produtos com venda no período (ABS REC 7, PEBD REC
+6, PS REC 10). Achamos também o PRD076 "ND - PEBD 2001" com lista
+*zero* (não 0,01), se quiserem olhar.
+
+• *Volumes de perda contaminados*: vamos confirmar registro a registro
+com os vendedores antes de qualquer correção, como vocês propuseram.
+
+*LIMPEZA DE QA* (podem remover): atendimentos 92 a 100 e
+oportunidades-perdidas 29 a 37; sugestão de preço #8; pedidos #16557
+e #16562; e os PVs 19568/19569 no OMIE — esses dois nós excluímos.
+Vamos reverter também o mínimo piloto que cadastramos no ABS 750SW.
+
+E seguimos no aguardo da estimativa da *tela de clientes com 90+ dias
+sem compra* (o pedido da semana passada), para encaixar no plano.
+
+Qualquer dúvida sobre os testes, é só chamar.
