@@ -1,6 +1,6 @@
 # plataforma-atlas Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-06-24
+Auto-generated from all feature plans. Last updated: 2026-09-17
 
 ## Active Technologies
 - TypeScript 5.5+ (strict mode) / Node.js 20 LTS + Express 4 (API), React 18 + Vite (frontend), Drizzle ORM (queries), decimal.js (aritmetica financeira), recharts (graficos), Zod (validacao) (002-hedge-engine)
@@ -22,6 +22,8 @@ Auto-generated from all feature plans. Last updated: 2026-06-24
 - PostgreSQL 16 — **leitura** de `public."tbl_posicaoEstoque_ACXE"`, `public."tbl_posicaoEstoque_Q2P"`, `public."tbl_locaisEstoques_ACXE"`, `public."tbl_locaisEstoques_Q2P"`; **escrita** apenas na nova tabela de config `stockbridge.conferencia_local_map` (seed + edição futura). Sem escrita em OMIE. (011-conferencia-estoque)
 - TypeScript 5.5+ strict, Node.js 20 LTS + Express 4 (rota de recebimento), `@atlas/integrations-omie` (cliente `consultarNF`), `@atlas/core` (`createLogger`, `sendEmail`, `getAdminEmail`), Zod (validação de entrada já existente), React 18 + TanStack Query (exibição da mensagem). Sem novas dependências. (012-validacao-busca-nf)
 - Nenhum novo. Leitura **ao vivo** da API OMIE via `produtos/nfconsultar/` (chamada já existente no fluxo); nenhuma escrita em banco além do recebimento normal já existente. Sem migration. (012-validacao-busca-nf)
+- TypeScript 5.5+ strict, Node.js 20 LTS + Express 4 (rotas de fila/detalhe/recebimento nacional por NF), Drizzle ORM (tabela de correlação + migration) e raw SQL via `getPool()` (query da fila sobre o espelho), decimal.js (valor do item), Zod (validação), React 18 + TanStack Query + Tailwind (aba "Compra nacional" da `FilaOmiePage`). Sem dependência nova. (015-recebimento-nacional-nf)
+- PostgreSQL 16 — **leitura** de `public."tbl_nf_header_Q2P"`, `public."tbl_nf_itens_Q2P"`, `public."tbl_produtos_Q2P"`, `stockbridge.localidade`, `stockbridge.localidade_correlacao`, `stockbridge.fornecedor_exclusao`; **escrita** em `stockbridge.movimentacao`, `stockbridge.aprovacao` (fluxo já existente) e na nova `stockbridge.correlacao_produto_fornecedor`. (015-recebimento-nacional-nf)
 
 - TypeScript 5.5+ (strict mode, ES2022, bundler resolution) / Node.js 20 LTS + Express 4.x (backend), React 18 (frontend), Vite 5 (build), Drizzle ORM (query builder + migrations), shadcn/ui + Tailwind CSS (design system), Zustand (client state), TanStack Query (server state), Zod (validação runtime), Pino (logs estruturados), argon2 (hash senhas), otplib (TOTP 2FA) (001-atlas-infra-base)
 
@@ -42,9 +44,9 @@ npm test && npm run lint
 TypeScript 5.5+ (strict mode, ES2022, bundler resolution) / Node.js 20 LTS: Follow standard conventions
 
 ## Recent Changes
+- 015-recebimento-nacional-nf: Added TypeScript 5.5+ strict, Node.js 20 LTS + Express 4 (rotas de fila/detalhe/recebimento nacional por NF), Drizzle ORM (tabela de correlação + migration) e raw SQL via `getPool()` (query da fila sobre o espelho), decimal.js (valor do item), Zod (validação), React 18 + TanStack Query + Tailwind (aba "Compra nacional" da `FilaOmiePage`). Sem dependência nova.
 - 012-validacao-busca-nf: Added TypeScript 5.5+ strict, Node.js 20 LTS + Express 4 (rota de recebimento), `@atlas/integrations-omie` (cliente `consultarNF`), `@atlas/core` (`createLogger`, `sendEmail`, `getAdminEmail`), Zod (validação de entrada já existente), React 18 + TanStack Query (exibição da mensagem). Sem novas dependências.
 - 011-conferencia-estoque: Added TypeScript 5.5+ (strict), Node.js 20 LTS + Backend — Express 4, Drizzle ORM (tabela de config + migration), raw SQL via `getPool()` (@atlas/core) para a agregação, Zod (validação). Frontend — React 18 + Vite, TanStack Query, Tailwind (componentes hand-rolled), lucide-react, `@atlas/ui` (`ShellLayout`, `SidebarSubItem`)
-- 010-fiscal-nf-mapa: Added TypeScript 5.5+ strict, Node.js 20 LTS + Express 4, Drizzle ORM, Zod, `@atlas/core` (getPool, createLogger)
 
 
 <!-- MANUAL ADDITIONS START -->
