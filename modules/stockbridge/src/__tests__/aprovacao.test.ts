@@ -741,3 +741,44 @@ describe('aprovacao.service#inferirNivelAprovacao', () => {
     expect(inferirNivelAprovacao('subtipo-desconhecido')).toBe('gestor');
   });
 });
+
+// Feature 015 (ACXEGDP-328), T067 — ramo recebimento_externo em aprovar():
+// so muda o status. Sem lote, sem movimentacao, sem OMIE (invariante 9).
+describe('aprovacao.service#aprovar — recebimento_externo (feature 015, T067)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const rowExterno = {
+    id: 'apr-ext', loteId: null, movimentacaoId: null, status: 'pendente',
+    precisaNivel: 'gestor', tipoAprovacao: 'recebimento_externo', lancadoPor: 'op-1',
+    nfChaveAcesso: '35260868176072000128550010000667241693158505', notaFiscal: '66724', nfItemDescricao: 'SUCATA PSAI',
+  };
+
+  it('gestor aprova: claim atomico pendente->aprovada, devolve loteStatus=sem_lote, zero OMIE, zero insert', async () => {
+    const { getDb } = await import('@atlas/core');
+    const omieMod = await import('@atlas/integration-omie');
+    const db = criarDbComTabelas(await tabelas(rowExterno));
+    vi.mocked(getDb).mockReturnValue(db as never);
+    const res = await aprovar({ id: 'apr-ext', usuarioId: 'g1', perfilUsuario: 'gestor' });
+    expect(res).toEqual({ id: 'apr-ext', loteStatus: 'sem_lote' });
+    expect(db.update).toHaveBeenCalled();
+    expect(db.insert).not.toHaveBeenCalled();
+    expect(omieMod.incluirAjusteEstoque).not.toHaveBeenCalled();
+    const setArg = vi.mocked(db.set).mock.calls[0]![0] as Record<string, unknown>;
+    expect(setArg).toMatchObject({ status: 'aprovada', aprovadoPor: 'g1' });
+  });
+
+  it('operador nao aprova (nivel gestor); ja aprovada -> AprovacaoStatusInvalidoError', async () => {
+    const { getDb } = await import('@atlas/core');
+    vi.mocked(getDb).mockReturnValue(criarDbComTabelas(await tabelas(rowExterno)) as never);
+    await expect(aprovar({ id: 'apr-ext', usuarioId: 'o1', perfilUsuario: 'operador' })).rejects.toThrow(AprovacaoNivelInsuficienteError);
+
+    vi.mocked(getDb).mockReturnValue(criarDbComTabelas(await tabelas({ ...rowExterno, status: 'aprovada' })) as never);
+    await expect(aprovar({ id: 'apr-ext', usuarioId: 'g1', perfilUsuario: 'gestor' })).rejects.toThrow(AprovacaoStatusInvalidoError);
+  });
+
+  it('perdedor da corrida (claim devolve vazio) recebe AprovacaoStatusInvalidoError', async () => {
+    const { getDb } = await import('@atlas/core');
+    vi.mocked(getDb).mockReturnValue(criarDbComTabelas(await tabelas(rowExterno), { claimFalha: true }) as never);
+    await expect(aprovar({ id: 'apr-ext', usuarioId: 'g1', perfilUsuario: 'gestor' })).rejects.toThrow(AprovacaoStatusInvalidoError);
+  });
+});

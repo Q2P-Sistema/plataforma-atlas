@@ -6,6 +6,7 @@ import {
   normalizarDescricaoSql,
 } from './fiscal-recebida-sql.js';
 import { converterItemNfParaKg, type ConversaoNf } from './unidade-nf.js';
+import { sugerirProdutosEmLote } from './correlacao-produto.service.js';
 
 const logger = createLogger('stockbridge:fila-nacional');
 
@@ -35,19 +36,24 @@ export const CFOPS_RECEBIMENTO_NACIONAL: readonly string[] = Object.freeze(['1.1
 
 export class DataCorteNaoConfiguradaError extends Error {
   constructor() {
-    super(
-      'A fila de recebimento nacional não está configurada: falta a data de corte (STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE). ' +
-        'Defina como 7 dias antes da entrada em operação. O recebimento manual continua disponível.',
-    );
+    // Sem nome de variavel de ambiente: este texto vira userMessage na rota.
+    // O detalhe tecnico (STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE) fica no log.
+    super('A fila de recebimento nacional ainda não está configurada neste ambiente: falta a data de corte. O recebimento manual continua disponível.');
     this.name = 'DataCorteNaoConfiguradaError';
   }
 }
 
 export class NfNacionalNaoEncontradaError extends Error {
-  constructor(public readonly chaveAcesso: string, motivo?: string) {
+  /**
+   * @param motivo    complemento curto da moldura "NF não encontrada — …"
+   * @param mensagem  texto COMPLETO alternativo, para quando a NF foi localizada
+   *                  mas nao cabe na fila (ex.: nenhum item no recorte de CFOP)
+   */
+  constructor(public readonly chaveAcesso: string, motivo?: string, mensagem?: string) {
     super(
-      `NF não encontrada na fila de recebimento nacional${motivo ? ` — ${motivo}` : ''}. ` +
-        'Se a nota existe e já chegou, receba pelo formulário manual.',
+      mensagem ??
+        `NF não encontrada na fila de recebimento nacional${motivo ? ` — ${motivo}` : ''}. ` +
+          'Se a nota existe e já chegou, receba pelo formulário manual.',
     );
     this.name = 'NfNacionalNaoEncontradaError';
   }
@@ -76,7 +82,7 @@ export function getDataCorteFilaNacional(): string {
   const cfg = getConfig() as { STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE?: string };
   const v = cfg.STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE;
   if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) {
-    logger.error('STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE ausente ou invalida — fila nacional recusada');
+    logger.error('STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE ausente ou invalida (esperado YYYY-MM-DD, 7 dias antes da entrada em operacao) — fila nacional recusada');
     throw new DataCorteNaoConfiguradaError();
   }
   return v;
@@ -107,6 +113,28 @@ function recebidoSql(): string {
 const FORNECEDOR_NAO_EXCLUIDO_SQL = `NOT EXISTS (
         SELECT 1 FROM stockbridge.fornecedor_exclusao fe
          WHERE fe.reincluido_em IS NULL AND fe.fornecedor_cnpj = h.dest_cnpj_cpf)`;
+
+// Espelho SQL da tabela FATOR_UNIDADE_NF (unidade-nf.ts) — SO para a pendencia por
+// restante na query da fila (FR-030). Unidade fora da tabela -> NULL -> o item
+// segue a regra simples (recebido/nao recebido); a conferencia de coerencia e
+// o bloqueio continuam sendo feitos em TS, no detalhe.
+const FATOR_KG_SQL = `CASE upper(btrim(i.u_com)) WHEN 'KG' THEN 1 WHEN 'TON' THEN 1000 WHEN 'TL' THEN 1000 END`;
+
+/** Σ quantidade_nf_kg ja gravada (caminho novo) para a linha (h, i) — lado da NF. */
+function nfJaAtribuidaSql(): string {
+  return `(SELECT COALESCE(SUM(m.quantidade_nf_kg), 0) FROM stockbridge.movimentacao m
+            WHERE m.ativo = true AND m.subtipo = 'compra_nacional'
+              AND m.nf_chave_acesso = h.c_chave_nfe
+              AND m.nf_item_descricao_normalizada = ${normalizarDescricaoSql('i.x_prod')})`;
+}
+
+/** Existe solicitacao de baixa externa PENDENTE para a linha (h, i). */
+function baixaSolicitadaSql(): string {
+  return `EXISTS (SELECT 1 FROM stockbridge.aprovacao a
+            WHERE a.tipo_aprovacao = 'recebimento_externo' AND a.status = 'pendente'
+              AND a.nf_chave_acesso = h.c_chave_nfe
+              AND ${normalizarDescricaoSql('a.nf_item_descricao')} = ${normalizarDescricaoSql('i.x_prod')})`;
+}
 
 /**
  * Fila de NFs nacionais pendentes. Degrada para lista vazia em falha de BANCO
@@ -150,7 +178,12 @@ export async function getFilaNacional(params: { q?: string | null; fornecedor?: 
           h.c_chave_nfe, h.n_nf, h.dest_razao, h.dest_cnpj_cpf, h.d_emi,
           ${descNorm}                    AS desc_norm,
           i.v_tot_item,
-          ${recebidoSql()}               AS recebido
+          ${recebidoSql()}               AS recebido,
+          -- FR-030 (research D25): pendencia por RESTANTE do lado da NF. Item com
+          -- 1 de N produtos gravado (falha/retomada) continua na fila; legado
+          -- (match por numero, sem parcela) NAO cai aqui — nf_atribuida = 0.
+          (i.q_com * ${FATOR_KG_SQL})    AS nf_kg,
+          ${nfJaAtribuidaSql()}          AS nf_atribuida
         FROM public."tbl_nf_header_Q2P" h
         JOIN public."tbl_nf_itens_Q2P" i ON i.n_id_nf = h.n_id_nf
         WHERE h.tp_nf = 0
@@ -158,6 +191,21 @@ export async function getFilaNacional(params: { q?: string | null; fornecedor?: 
           AND h.d_emi >= $2::date
           ${nfValida}
           AND ${FORNECEDOR_NAO_EXCLUIDO_SQL}${filtros}
+      ),
+      itens AS (
+        SELECT c_chave_nfe, n_nf, dest_razao, dest_cnpj_cpf, d_emi, desc_norm,
+               SUM(v_tot_item)                                          AS v_tot_item,
+               bool_and(recebido)                                       AS recebido,
+               SUM(nf_kg)                                               AS nf_kg,
+               MAX(nf_atribuida)                                        AS nf_atribuida
+        FROM linhas
+        GROUP BY c_chave_nfe, n_nf, dest_razao, dest_cnpj_cpf, d_emi, desc_norm
+      ),
+      itens_flag AS (
+        SELECT *,
+               (NOT recebido
+                OR (nf_kg IS NOT NULL AND nf_atribuida > 0 AND nf_atribuida < nf_kg - 1)) AS pendente
+        FROM itens
       )
       SELECT
         c_chave_nfe                                                   AS nf_chave_acesso,
@@ -166,12 +214,12 @@ export async function getFilaNacional(params: { q?: string | null; fornecedor?: 
         dest_cnpj_cpf                                                 AS fornecedor_cnpj,
         d_emi::text                                                   AS dt_emissao,
         (CURRENT_DATE - d_emi::date)::int                             AS dias_desde_emissao,
-        COUNT(DISTINCT desc_norm)::int                                AS itens_total,
-        COUNT(DISTINCT desc_norm) FILTER (WHERE NOT recebido)::int    AS itens_pendentes,
+        COUNT(*)::int                                                 AS itens_total,
+        COUNT(*) FILTER (WHERE pendente)::int                         AS itens_pendentes,
         SUM(v_tot_item)::float8                                       AS valor_total_brl
-      FROM linhas
+      FROM itens_flag
       GROUP BY c_chave_nfe, n_nf, dest_razao, dest_cnpj_cpf, d_emi
-      HAVING COUNT(DISTINCT desc_norm) FILTER (WHERE NOT recebido) > 0
+      HAVING COUNT(*) FILTER (WHERE pendente) > 0
       ORDER BY d_emi ASC, n_nf ASC
       `,
       args,
@@ -234,6 +282,8 @@ export interface ItemNfNacional {
   /** quantidadeNfKg − quantidadeNfJaAtribuidaKg (null quando bloqueado) */
   quantidadeRestanteKg: number | null;
   baixadoComoExterno: boolean;
+  /** ha solicitacao de baixa externa PENDENTE de aprovacao — o item continua na fila, marcado */
+  baixaSolicitada: boolean;
   /** detalhe da conversao (para quem precisa dos dois R$/kg) */
   conversao: ConversaoNf;
 }
@@ -273,6 +323,7 @@ interface LinhaRow {
   v_tot_item: number;
   recebido: boolean;
   baixado_externo: boolean;
+  baixa_solicitada: boolean;
   nf_ja_atribuida_kg: number;
   conferida_ja_gravada_kg: number;
 }
@@ -320,6 +371,7 @@ export async function getDetalheNfNacional(chaveAcesso: string): Promise<Detalhe
                WHERE a.tipo_aprovacao = 'recebimento_externo' AND a.status = 'aprovada'
                  AND a.nf_chave_acesso = h.c_chave_nfe
                  AND ${normalizarDescricaoSql('a.nf_item_descricao')} = ${descNorm}) AS baixado_externo,
+      ${baixaSolicitadaSql()}                          AS baixa_solicitada,
       (SELECT COALESCE(SUM(m.quantidade_nf_kg), 0) FROM stockbridge.movimentacao m
         WHERE m.ativo = true AND m.subtipo = 'compra_nacional'
           AND m.nf_chave_acesso = h.c_chave_nfe
@@ -339,7 +391,7 @@ export async function getDetalheNfNacional(chaveAcesso: string): Promise<Detalhe
   );
 
   if (res.rows.length === 0) {
-    throw new NfNacionalNaoEncontradaError(chave, 'não está no espelho ou é anterior à data de corte');
+    throw new NfNacionalNaoEncontradaError(chave, 'ainda não foi sincronizada ou é anterior à data de corte');
   }
   const cab = res.rows[0]!;
   if (cab.cancelada || cab.deletada) throw new NfNacionalCanceladaError(cab.nota_fiscal);
@@ -348,7 +400,11 @@ export async function getDetalheNfNacional(chaveAcesso: string): Promise<Detalhe
   const cfops = new Set(CFOPS_RECEBIMENTO_NACIONAL);
   const elegiveis = res.rows.filter((r) => cfops.has(r.cfop));
   if (elegiveis.length === 0) {
-    throw new NfNacionalNaoEncontradaError(chave, 'nenhum item da nota está no recorte de CFOP do recebimento nacional');
+    throw new NfNacionalNaoEncontradaError(
+      chave,
+      undefined,
+      `A NF ${cab.nota_fiscal} foi localizada, mas nenhum item dela é compra de mercadoria coberta por este recebimento. Se for o caso, receba pelo formulário manual.`,
+    );
   }
 
   // Agrega por descricao normalizada — sao lotes distintos, somam (D18/D20).
@@ -357,6 +413,15 @@ export async function getDetalheNfNacional(chaveAcesso: string): Promise<Detalhe
     const g = grupos.get(r.desc_norm);
     if (g) g.push(r);
     else grupos.set(r.desc_norm, [r]);
+  }
+
+  // Historia 3 (FR-006): sugestao memorizada por (fornecedor, descricao normalizada).
+  // Best-effort — falha aqui nao pode derrubar o detalhe da NF.
+  let sugestoes = new Map<string, ProdutoSugerido[]>();
+  try {
+    sugestoes = await sugerirProdutosEmLote(cab.fornecedor_cnpj, Array.from(grupos.keys()));
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, chave }, 'Sugestão de correlação indisponível — detalhe segue sem pré-seleção');
   }
 
   const itens: ItemNfNacional[] = [];
@@ -391,9 +456,9 @@ export async function getDetalheNfNacional(chaveAcesso: string): Promise<Detalhe
     const conferidaJaGravada = Number(primeira.conferida_ja_gravada_kg);
     const quantidadeNfKg = conversao.ok ? conversao.quantidadeKg : null;
 
-    // A sugestao de produto (correlacao memorizada) e ligada na Historia 3 —
-    // ate la o operador escolhe o produto no combobox a cada vez (FR-005).
-    const produtosSugeridos: ProdutoSugerido[] = [];
+    // Sem correlacao memorizada, o operador escolhe o produto no combobox (FR-005);
+    // 'sem_correlacao' e informativo para a UI, nao um bloqueio de servidor.
+    const produtosSugeridos: ProdutoSugerido[] = sugestoes.get(descNormalizada) ?? [];
     const bloqueio: BloqueioItemNf = bloqueioUnidade ?? (produtosSugeridos.length === 0 ? 'sem_correlacao' : null);
 
     itens.push({
@@ -416,6 +481,7 @@ export async function getDetalheNfNacional(chaveAcesso: string): Promise<Detalhe
       quantidadeConferidaJaGravadaKg: conferidaJaGravada,
       quantidadeRestanteKg: quantidadeNfKg != null ? Math.max(0, quantidadeNfKg - nfJaAtribuida) : null,
       baixadoComoExterno: linhas.some((l) => l.baixado_externo),
+      baixaSolicitada: linhas.some((l) => l.baixa_solicitada),
       conversao,
     });
   }

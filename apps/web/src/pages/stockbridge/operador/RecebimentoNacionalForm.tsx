@@ -569,7 +569,6 @@ export function ProdutoCombobox({ empresa, valor, onChange }: ProdutoComboboxPro
                 <div className="truncate" title={p.descricao}>
                   {p.descricao}
                 </div>
-                <div className="text-[11px] text-atlas-muted">cód. {p.codigo}</div>
               </button>
             ))}
           </div>

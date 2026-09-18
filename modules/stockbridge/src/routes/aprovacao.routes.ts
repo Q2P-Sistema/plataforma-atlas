@@ -15,6 +15,12 @@ import {
   ResubmissaoDuplicadaError,
 } from '../services/aprovacao.service.js';
 import { OmieAjusteError } from '../services/recebimento.service.js';
+import {
+  listarBaixasExternasAprovadas,
+  reverterRecebimentoExterno,
+  RecebimentoExternoNaoEncontradoError,
+  MotivoObrigatorioError,
+} from '../services/recebimento-externo.service.js';
 import { mapearErroOmieParaResposta } from '../services/erros-omie.js';
 import type { Perfil } from '../types.js';
 
@@ -137,6 +143,54 @@ router.post('/api/v1/stockbridge/aprovacoes/:id/dispensar', requireOperador, asy
     res.json({ data: result, error: null });
   } catch (err) {
     tratarErro(res, err, { role: (req.user?.role ?? 'operador') as Perfil });
+  }
+});
+
+// ── Feature 015 — baixas por recebimento externo (gestor/diretor) ────────────
+
+// GET /api/v1/stockbridge/aprovacoes/baixas-externas — baixas APROVADAS (as que
+// tiraram item da fila nacional), para o gestor ver e, se preciso, reverter.
+router.get('/api/v1/stockbridge/aprovacoes/baixas-externas', requireGestor, async (_req: Request, res: Response) => {
+  try {
+    const data = await listarBaixasExternasAprovadas();
+    res.json({ data, error: null });
+  } catch (err) {
+    logger.error({ err }, 'Erro ao listar baixas externas');
+    res.status(500).json({ data: null, error: { code: 'LISTAR_BAIXAS_EXTERNAS_FAIL', message: (err as Error).message } });
+  }
+});
+
+// POST /api/v1/stockbridge/aprovacoes/:id/reverter — gestor/diretor
+// Reverte uma baixa externa APROVADA: vira 'rejeitada' com motivo "Reversão: …"
+// e o item volta a fila nacional (FR-031). Restrito ao tipo recebimento_externo —
+// NAO e uma reversao generica de aprovacoes.
+const ReverterSchema = z.object({ motivo: z.string().min(1).max(1000) });
+router.post('/api/v1/stockbridge/aprovacoes/:id/reverter', requireGestor, async (req: Request, res: Response) => {
+  const id = req.params.id as string | undefined;
+  const userId = req.user?.id;
+  const perfil = (req.user?.role ?? 'gestor') as Perfil;
+  if (!userId || !id) {
+    res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessão inválida' } });
+    return;
+  }
+  const parsed = ReverterSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ data: null, error: { code: 'MOTIVO_OBRIGATORIO', userMessage: 'Informe o motivo da reversão.', message: 'motivo é obrigatório' } });
+    return;
+  }
+  try {
+    const result = await reverterRecebimentoExterno({ id, usuarioId: userId, perfilUsuario: perfil, motivo: parsed.data.motivo });
+    res.json({ data: result, error: null });
+  } catch (err) {
+    if (err instanceof RecebimentoExternoNaoEncontradoError) {
+      res.status(404).json({ data: null, error: { code: 'BAIXA_EXTERNA_NAO_ENCONTRADA', userMessage: err.message, message: err.message } });
+      return;
+    }
+    if (err instanceof MotivoObrigatorioError) {
+      res.status(400).json({ data: null, error: { code: 'MOTIVO_OBRIGATORIO', userMessage: err.message, message: err.message } });
+      return;
+    }
+    tratarErro(res, err, { role: perfil });
   }
 });
 

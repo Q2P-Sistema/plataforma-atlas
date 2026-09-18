@@ -20,6 +20,11 @@ vi.mock('@atlas/core', () => ({
   getConfig: () => ({ STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE: dataCorte }),
 }));
 
+const sugerirSpy = vi.fn(async () => new Map<string, unknown[]>());
+vi.mock('../services/correlacao-produto.service.js', () => ({
+  sugerirProdutosEmLote: (cnpj: string, descricoes: string[]) => sugerirSpy(cnpj, descricoes),
+}));
+
 const omieSpies = { incluirAjusteEstoque: vi.fn(), listarAjusteEstoque: vi.fn(), consultarNF: vi.fn() };
 vi.mock('@atlas/integration-omie', () => ({
   ...omieSpies,
@@ -47,6 +52,8 @@ beforeEach(() => {
   dataCorte = '2026-09-11';
   poolQuerySpy.mockReset();
   poolQuerySpy.mockImplementation((sql: string) => Promise.resolve(respostaPadrao(sql)));
+  sugerirSpy.mockReset();
+  sugerirSpy.mockImplementation(async () => new Map());
   for (const s of Object.values(omieSpies)) s.mockReset();
 });
 
@@ -97,8 +104,20 @@ describe('getFilaNacional — exclusoes obrigatorias (T026)', () => {
 
   it('so devolve NF com item pendente (HAVING) e a pendencia e por DESCRICAO normalizada', async () => {
     const { sql } = await sqlDaFila();
-    expect(sql).toContain('HAVING COUNT(DISTINCT desc_norm) FILTER (WHERE NOT recebido) > 0');
+    expect(sql).toContain('GROUP BY c_chave_nfe, n_nf, dest_razao, dest_cnpj_cpf, d_emi, desc_norm');
+    expect(sql).toContain('HAVING COUNT(*) FILTER (WHERE pendente) > 0');
     expect(sql).toContain('unaccent(i.x_prod)');
+  });
+
+  it('FR-030 (T050a): item PARCIALMENTE atribuido (restante > 1 kg do lado da NF) continua pendente', async () => {
+    const { sql } = await sqlDaFila();
+    // fator SQL espelha a tabela KG/TON/TL (unidade fora da tabela -> NULL -> regra simples)
+    expect(sql).toContain("CASE upper(btrim(i.u_com)) WHEN 'KG' THEN 1 WHEN 'TON' THEN 1000 WHEN 'TL' THEN 1000 END");
+    expect(sql).toContain('SUM(m.quantidade_nf_kg)');
+    expect(sql).toContain('m.nf_item_descricao_normalizada = upper(regexp_replace(btrim(unaccent(i.x_prod))');
+    expect(sql).toMatch(/NOT recebido\s+OR \(nf_kg IS NOT NULL AND nf_atribuida > 0 AND nf_atribuida < nf_kg - 1\)/);
+    // legado (match por numero, sem parcela): nf_atribuida = 0 -> NAO reentra pela regra do restante
+    expect(sql).toContain("m.subtipo = 'compra_nacional'");
   });
 
   it('nunca usa n_id_receb (universal em NF de entrada — research D1)', async () => {
@@ -202,7 +221,7 @@ function linha(o: Partial<Record<string, unknown>>) {
     fornecedor_nome: 'ISOFORMA PLASTICOS INDUSTRIAIS LTDA', fornecedor_cnpj: '68.176.072/0001-28',
     dt_emissao: '2026-08-06', dias_desde_emissao: 42, cancelada: false, deletada: false, fornecedor_excluido: false,
     n_cod_item: '1', x_prod: 'SUCATA  PSAI MOIDO MESCLADO GROSSO', desc_norm: 'SUCATA PSAI MOIDO MESCLADO GROSSO',
-    cfop: '1.102', q_com: 13160, u_com: 'KG', v_tot_item: 156604, recebido: false, baixado_externo: false,
+    cfop: '1.102', q_com: 13160, u_com: 'KG', v_tot_item: 156604, recebido: false, baixado_externo: false, baixa_solicitada: false,
     nf_ja_atribuida_kg: 0, conferida_ja_gravada_kg: 0,
     ...o,
   };
@@ -254,7 +273,45 @@ describe('getDetalheNfNacional (T015/T016)', () => {
     expect(it.rsPorKg).toBeCloseTo(11.9, 2);
     expect(it.jaRecebido).toBe(false);
     expect(it.quantidadeRestanteKg).toBe(13160);
-    expect(it.bloqueio).toBe('sem_correlacao'); // sugestao so na Historia 3
+    expect(it.bloqueio).toBe('sem_correlacao'); // sem memoria -> operador escolhe (FR-005)
+    expect(it.produtosSugeridos).toEqual([]);
+    expect(it.baixaSolicitada).toBe(false);
+  });
+
+  it('Historia 3 (T040): sugestao memorizada e consultada EM LOTE por (cnpj, descricoes normalizadas) e pre-seleciona', async () => {
+    sugerirSpy.mockImplementation(async () => new Map([
+      ['SUCATA PSAI MOIDO MESCLADO GROSSO', [
+        { codigo: 3033097757, descricao: 'PS CRISTAL A', vezesUsada: 4 },
+        { codigo: 3033097763, descricao: 'PS AI B', vezesUsada: 2 },
+      ]],
+    ]));
+    detalheCom([linha({}), linha({ n_cod_item: '2', x_prod: 'OUTRA', desc_norm: 'OUTRA' })]);
+    const d = await getDetalheNfNacional(CHAVE);
+    expect(sugerirSpy).toHaveBeenCalledTimes(1);
+    expect(sugerirSpy).toHaveBeenCalledWith('68.176.072/0001-28', ['SUCATA PSAI MOIDO MESCLADO GROSSO', 'OUTRA']);
+    const sucata = d.itens.find((i) => i.descricaoNormalizada.startsWith('SUCATA'))!;
+    expect(sucata.produtosSugeridos.map((p) => p.codigo)).toEqual([3033097757, 3033097763]); // 1:N (D18), ordem de uso
+    expect(sucata.bloqueio).toBeNull();
+    expect(d.itens.find((i) => i.descricaoNormalizada === 'OUTRA')!.bloqueio).toBe('sem_correlacao');
+  });
+
+  it('sugestao indisponivel (falha de banco) NAO derruba o detalhe — segue sem pre-selecao', async () => {
+    sugerirSpy.mockImplementation(async () => { throw new Error('relation does not exist'); });
+    detalheCom([linha({})]);
+    const d = await getDetalheNfNacional(CHAVE);
+    expect(d.itens[0]!.produtosSugeridos).toEqual([]);
+    expect(d.itens[0]!.bloqueio).toBe('sem_correlacao');
+  });
+
+  it('Historia 6 (T069): baixa externa PENDENTE marca o item (baixaSolicitada) mas ele segue pendente na fila', async () => {
+    detalheCom([linha({ baixa_solicitada: true })]);
+    const [it] = (await getDetalheNfNacional(CHAVE)).itens;
+    expect(it!.baixaSolicitada).toBe(true);
+    expect(it!.jaRecebido).toBe(false);
+    expect(it!.baixadoComoExterno).toBe(false);
+    // e o SQL do detalhe distingue pendente ('pendente') de aprovada
+    const sql = String(poolQuerySpy.mock.calls.find((c) => !String(c[0]).includes('information_schema'))![0]);
+    expect(sql).toMatch(/a\.tipo_aprovacao = 'recebimento_externo' AND a\.status = 'pendente'/);
   });
 
   it('agrega linhas de MESMA descricao (somando, nunca descartando) — NF 58084 da Zaraplast (D18)', async () => {

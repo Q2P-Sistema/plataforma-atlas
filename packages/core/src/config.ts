@@ -61,6 +61,15 @@ const envSchema = z.object({
   // optional AQUI porque este schema Zod e global e uma chave obrigatoria derrubaria
   // o boot da API inteira (hedge, forecast, breakingpoint), nao so a fila.
   STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  // Feature 015: baixa por "recebimento externo" — item de NF nacional que entrou
+  // no estoque fora do Atlas (ex.: direto no OMIE). Sem movimentacao, sem OMIE;
+  // aprovacao de gestor. E um RISCO permanente (tira trabalho da fila sem
+  // contrapartida em estoque): default LIGADO enquanto o recebimento direto no
+  // OMIE for possivel; 'false' desliga sem migration quando o modulo estiver validado.
+  STOCKBRIDGE_RECEBIMENTO_EXTERNO_ENABLED: z
+    .enum(['true', 'false', '1', '0', ''])
+    .default('true')
+    .transform((v) => v !== 'false' && v !== '0'),
   // ACXEGDP-344: baixa automatica do pedido de compra Q2P (AlteraPedCompra)
   // apos recebimento de importacao. Default LIGADO. 'false' desliga o disparo no
   // fluxo — as movimentacoes ficam 'pendente' e podem ser processadas depois

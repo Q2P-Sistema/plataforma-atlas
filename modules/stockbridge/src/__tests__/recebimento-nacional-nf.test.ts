@@ -71,6 +71,11 @@ vi.mock('../services/notificacao.service.js', () => ({
   enviarAlertaRecebimentoNacionalLote: (a: unknown) => notificacaoSpy(a),
 }));
 
+const registrarUsoSpy = vi.fn().mockResolvedValue({ criada: true });
+vi.mock('../services/correlacao-produto.service.js', () => ({
+  registrarUsoCorrelacao: (a: unknown) => registrarUsoSpy(a),
+}));
+
 const detalheMock = vi.fn();
 vi.mock('../services/fila-nacional.service.js', async () => {
   const real = await vi.importActual<typeof import('../services/fila-nacional.service.js')>('../services/fila-nacional.service.js');
@@ -104,7 +109,7 @@ function item(o: Partial<ItemNfNacional> & { descricao?: string; q?: number; u?:
     bloqueio: conv.ok ? 'sem_correlacao' : conv.motivo === 'unidade_incoerente' ? 'unidade_incoerente' : 'unidade_nao_conversivel',
     bloqueioMensagem: conv.ok ? null : conv.mensagem, jaRecebido: false,
     quantidadeNfJaAtribuidaKg: 0, quantidadeConferidaJaGravadaKg: 0,
-    quantidadeRestanteKg: nfKg, baixadoComoExterno: false, conversao: conv,
+    quantidadeRestanteKg: nfKg, baixadoComoExterno: false, baixaSolicitada: false, conversao: conv,
     ...o,
   };
 }
@@ -153,6 +158,8 @@ beforeEach(() => {
   falharMovNaChamada = null;
   chamadasMov = 0;
   notificacaoSpy.mockClear();
+  registrarUsoSpy.mockReset();
+  registrarUsoSpy.mockResolvedValue({ criada: true });
   detalheMock.mockReset();
   detalheMock.mockResolvedValue(detalhe([item({})]));
 });
@@ -426,5 +433,40 @@ describe('bloqueios e validacoes de entrada', () => {
       ],
     }))).rejects.toBeInstanceOf(ValidacaoRecebimentoNacionalError);
     expect(inserts).toHaveLength(0);
+  });
+});
+
+describe('memoria da correlacao ao concluir (FR-007, T041)', () => {
+  it('produto gravado -> registrarUsoCorrelacao com fornecedor da NF, descricao do item, produto e operador', async () => {
+    await processarRecebimentoNacionalPorNf(base());
+    expect(registrarUsoSpy).toHaveBeenCalledTimes(1);
+    expect(registrarUsoSpy).toHaveBeenCalledWith({
+      fornecedorCnpj: '68.176.072/0001-28', fornecedorNome: 'ISOFORMA PLASTICOS INDUSTRIAIS LTDA',
+      descricaoNf: 'SUCATA  PSAI MOIDO MESCLADO GROSSO', produtoCodigoQ2p: 3033097757, produtoDescricao: 'PS CRISTAL A', userId: USER,
+    });
+  });
+
+  it('1:N: um registro por produto do item (o conjunto vira memoria, D18)', async () => {
+    await processarRecebimentoNacionalPorNf(base({
+      itens: [{ indice: 0, descricaoFornecedor: 'SUCATA  PSAI MOIDO MESCLADO GROSSO', produtos: [
+        { produtoCodigoQ2p: 3033097757, quantidadeKg: 8000, localidadeId: LOC_A },
+        { produtoCodigoQ2p: 3033097763, quantidadeKg: 5160, localidadeId: LOC_A },
+      ] }],
+    }));
+    expect(registrarUsoSpy.mock.calls.map((c) => (c[0] as { produtoCodigoQ2p: number }).produtoCodigoQ2p)).toEqual([3033097757, 3033097763]);
+  });
+
+  it('so o que foi GRAVADO vira memoria: produto que falhou na escrita nao e memorizado', async () => {
+    falharMovNaChamada = 1;
+    const r = await processarRecebimentoNacionalPorNf(base());
+    expect(r.produtos[0]!.status).toBe('falha');
+    expect(registrarUsoSpy).not.toHaveBeenCalled();
+  });
+
+  it('falha ao memorizar NAO desfaz o recebimento (best-effort)', async () => {
+    registrarUsoSpy.mockRejectedValue(new Error('relation does not exist'));
+    const r = await processarRecebimentoNacionalPorNf(base());
+    expect(r.resumo.enviadosParaAprovacao).toBe(1);
+    expect(movs()).toHaveLength(1);
   });
 });

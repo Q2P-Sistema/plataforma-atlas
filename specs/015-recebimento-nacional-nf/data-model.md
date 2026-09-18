@@ -218,7 +218,7 @@ Reusa `stockbridge.aprovacao`, **sem tabela nova**. A tabela já traz cadeia de 
 
 **Rastro**: como o mesmo papel (gestor) aprova tanto o recebimento normal quanto a afirmação de que ele ocorreu fora, `shared.audit_log` é a trilha principal deste caminho. A trigger de `aprovacao` já cobre INSERT/UPDATE/DELETE.
 
-**Reversão**: `status` volta a `pendente` por ação de gestor, devolvendo o item à fila. Auditado pela mesma trigger.
+**Reversão**: por ação de gestor (com motivo), a aprovação passa de `aprovada` para `rejeitada` com `rejeicao_motivo = 'Reversão: <motivo>'` — não volta a `pendente`, o que recolocaria uma solicitação na caixa do gestor; o que aconteceu foi a baixa ser desfeita, e é isso que o registro diz. Como só `aprovada` retira o item da fila (§3.1), ele volta a aparecer. Auditado pela mesma trigger.
 
 ---
 

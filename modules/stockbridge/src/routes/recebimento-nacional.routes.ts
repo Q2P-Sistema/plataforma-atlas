@@ -21,9 +21,23 @@ import {
   NfNacionalCanceladaError,
   FornecedorExcluidoError,
 } from '../services/fila-nacional.service.js';
+import { definirConjuntoCorrelacao } from '../services/correlacao-produto.service.js';
+import {
+  solicitarRecebimentoExterno,
+  recebimentoExternoHabilitado,
+  RecebimentoExternoDesabilitadoError,
+  MotivoObrigatorioError,
+  ItemJaRecebidoError,
+  NenhumItemPendenteError,
+  ItemNaoCorrespondeError,
+} from '../services/recebimento-externo.service.js';
 
 const logger = createLogger('stockbridge:recebimento-nacional');
 const router: Router = Router();
+
+// Payload invalido e sempre defeito de cliente (UI desatualizada, chamada fora
+// da tela). O detalhe Zod fica em `message`; o operador ve so isto.
+const USER_MSG_INVALID = 'Não foi possível processar o pedido — os dados enviados são inválidos. Recarregue a página e tente de novo.';
 
 const EmpresaSchema = z.enum(['acxe', 'q2p']);
 
@@ -39,7 +53,7 @@ router.get(
     if (!parsed.success) {
       res.status(400).json({
         data: null,
-        error: { code: 'INVALID_INPUT', message: parsed.error.issues.map((i) => i.message).join('; ') },
+        error: { code: 'INVALID_INPUT', userMessage: USER_MSG_INVALID, message: parsed.error.issues.map((i) => i.message).join('; ') },
       });
       return;
     }
@@ -70,7 +84,7 @@ router.get(
     if (!parsed.success) {
       res.status(400).json({
         data: null,
-        error: { code: 'INVALID_INPUT', message: parsed.error.issues.map((i) => i.message).join('; ') },
+        error: { code: 'INVALID_INPUT', userMessage: USER_MSG_INVALID, message: parsed.error.issues.map((i) => i.message).join('; ') },
       });
       return;
     }
@@ -129,7 +143,7 @@ router.post(
       res.status(400).json({
         data: null,
         error: {
-          code: 'INVALID_INPUT',
+          code: 'INVALID_INPUT', userMessage: USER_MSG_INVALID,
           message: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
         },
       });
@@ -224,7 +238,7 @@ router.get(
   async (req: Request, res: Response) => {
     const parsed = FilaNacionalQuerySchema.safeParse(req.query);
     if (!parsed.success) {
-      res.status(400).json({ data: null, error: { code: 'INVALID_QUERY', message: parsed.error.issues.map((i) => i.message).join('; ') } });
+      res.status(400).json({ data: null, error: { code: 'INVALID_QUERY', userMessage: USER_MSG_INVALID, message: parsed.error.issues.map((i) => i.message).join('; ') } });
       return;
     }
     try {
@@ -247,12 +261,14 @@ router.get(
   async (req: Request, res: Response) => {
     const parsed = ChaveAcessoSchema.safeParse(req.params.chaveAcesso);
     if (!parsed.success) {
-      res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', message: parsed.error.issues.map((i) => i.message).join('; ') } });
+      res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', userMessage: USER_MSG_INVALID, message: parsed.error.issues.map((i) => i.message).join('; ') } });
       return;
     }
     try {
       const data = await getDetalheNfNacional(parsed.data);
-      res.json({ data, error: null });
+      // A UI esconde a acao de baixa externa quando a flag esta desligada (T070);
+      // a flag e configuracao de ambiente, e a tela precisa saber sem tentar o POST.
+      res.json({ data: { ...data, recebimentoExternoHabilitado: recebimentoExternoHabilitado() }, error: null });
     } catch (err) {
       if (responderErroFilaNacional(res, err)) return;
       logger.error({ err, chave: parsed.data }, 'Erro ao detalhar NF nacional');
@@ -301,7 +317,7 @@ router.post(
       res.status(400).json({
         data: null,
         error: {
-          code: 'INVALID_INPUT',
+          code: 'INVALID_INPUT', userMessage: USER_MSG_INVALID,
           message: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
         },
       });
@@ -352,6 +368,159 @@ router.post(
       }
       logger.error({ err, chave: parsed.data.nf_chave_acesso }, 'Erro inesperado em recebimento nacional por NF');
       res.status(500).json({ data: null, error: { code: 'RECEBIMENTO_NACIONAL_NF_FAIL', message: (err as Error).message } });
+    }
+  },
+);
+
+// ── Historia 3/4 — correlacao memorizada (contrato §4) ──────────────────────
+// O cliente manda o CONJUNTO de produtos da descricao; fornecedor (cnpj/nome) e
+// nome do produto sao resolvidos AQUI, a partir da chave da NF e do catalogo —
+// nunca aceitos do payload. Produto que saiu do conjunto e desativado, nao apagado.
+const CorrelacaoBodySchema = z
+  .object({
+    nf_chave_acesso: ChaveAcessoSchema,
+    descricao_nf: z.string().trim().min(1).max(500),
+    produtos_codigo_q2p: z.array(z.number().int().positive()).max(20),
+  })
+  .strict();
+
+router.put(
+  '/api/v1/stockbridge/recebimento/nacional/correlacao',
+  requireOperador,
+  requireArmazemVinculado,
+  async (req: Request, res: Response) => {
+    const parsed = CorrelacaoBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        data: null,
+        error: { code: 'INVALID_INPUT', userMessage: USER_MSG_INVALID, message: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') },
+      });
+      return;
+    }
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessão sem usuário' } });
+      return;
+    }
+    const codigos = parsed.data.produtos_codigo_q2p;
+    if (new Set(codigos).size !== codigos.length) {
+      res.status(400).json({
+        data: null,
+        error: { code: 'PRODUTO_REPETIDO_NO_ITEM', userMessage: 'O mesmo produto aparece mais de uma vez.', message: 'produtos_codigo_q2p com repetição' },
+      });
+      return;
+    }
+    try {
+      const detalhe = await getDetalheNfNacional(parsed.data.nf_chave_acesso);
+      const result = await definirConjuntoCorrelacao({
+        fornecedorCnpj: detalhe.fornecedorCnpj,
+        fornecedorNome: detalhe.fornecedorNome,
+        descricaoNf: parsed.data.descricao_nf,
+        produtosCodigoQ2p: codigos,
+        userId,
+      });
+      if (result.produtosNaoEncontrados.length > 0) {
+        const n = result.produtosNaoEncontrados.length;
+        res.status(404).json({
+          data: null,
+          error: {
+            code: 'PRODUTO_NAO_ENCONTRADO',
+            userMessage: n === 1 ? 'O produto informado não existe no cadastro da Q2P.' : `${n} produtos informados não existem no cadastro da Q2P.`,
+            message: `produtos não encontrados: ${result.produtosNaoEncontrados.join(', ')}`,
+          },
+        });
+        return;
+      }
+      res.json({ data: { adicionados: result.adicionados, mantidos: result.mantidos, desativados: result.desativados }, error: null });
+    } catch (err) {
+      if (responderErroFilaNacional(res, err)) return;
+      logger.error({ err, chave: parsed.data.nf_chave_acesso }, 'Erro ao definir correlação fornecedor→produto');
+      res.status(500).json({ data: null, error: { code: 'CORRELACAO_FAIL', message: (err as Error).message } });
+    }
+  },
+);
+
+// ── Historia 6 — baixa por recebimento externo (contrato §5) ───────────────
+// NAO cria movimentacao, NAO altera estoque, NAO chama OMIE: so uma aprovacao
+// de gestor por item. `itens` vazio/ausente = todos os pendentes da NF.
+const RecebimentoExternoBodySchema = z
+  .object({
+    nf_chave_acesso: ChaveAcessoSchema,
+    motivo: z.string().trim().min(1, 'motivo é obrigatório').max(1000),
+    itens: z
+      .array(z.object({ indice: z.number().int().nonnegative(), descricao_fornecedor: z.string().min(1).max(500) }).strict())
+      .max(50)
+      .optional(),
+  })
+  .strict();
+
+router.post(
+  '/api/v1/stockbridge/recebimento/nacional/recebimento-externo',
+  requireOperador,
+  requireArmazemVinculado,
+  async (req: Request, res: Response) => {
+    // Flag primeiro: desligada, nem valida o corpo — a capacidade nao existe.
+    if (!recebimentoExternoHabilitado()) {
+      res.status(403).json({
+        data: null,
+        error: {
+          code: 'RECEBIMENTO_EXTERNO_DESABILITADO',
+          userMessage: 'A baixa por recebimento externo está desligada neste ambiente.',
+          message: 'STOCKBRIDGE_RECEBIMENTO_EXTERNO_ENABLED=false',
+        },
+      });
+      return;
+    }
+    const parsed = RecebimentoExternoBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      const soMotivo = parsed.error.issues.every((i) => i.path[0] === 'motivo');
+      res.status(400).json({
+        data: null,
+        error: {
+          code: soMotivo ? 'MOTIVO_OBRIGATORIO' : 'INVALID_INPUT',
+          userMessage: soMotivo ? 'Informe o motivo da baixa: onde e como este item foi recebido fora do Atlas.' : USER_MSG_INVALID,
+          message: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
+        },
+      });
+      return;
+    }
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessão sem usuário' } });
+      return;
+    }
+    try {
+      const result = await solicitarRecebimentoExterno({
+        nfChaveAcesso: parsed.data.nf_chave_acesso,
+        motivo: parsed.data.motivo,
+        itens: parsed.data.itens?.map((it) => ({ indice: it.indice, descricaoFornecedor: it.descricao_fornecedor })) ?? null,
+        userId,
+      });
+      res.status(201).json({ data: result, error: null });
+    } catch (err) {
+      if (responderErroFilaNacional(res, err)) return;
+      if (err instanceof RecebimentoExternoDesabilitadoError) {
+        res.status(403).json({ data: null, error: { code: 'RECEBIMENTO_EXTERNO_DESABILITADO', userMessage: err.message, message: err.message } });
+        return;
+      }
+      if (err instanceof MotivoObrigatorioError) {
+        res.status(400).json({ data: null, error: { code: 'MOTIVO_OBRIGATORIO', userMessage: err.message, message: err.message } });
+        return;
+      }
+      if (err instanceof ItemJaRecebidoError) {
+        res.status(409).json({ data: null, error: { code: 'ITEM_JA_RECEBIDO', userMessage: err.message, message: err.message } });
+        return;
+      }
+      if (err instanceof NenhumItemPendenteError) {
+        res.status(409).json({ data: null, error: { code: 'NENHUM_ITEM_PENDENTE', userMessage: err.message, message: err.message } });
+        return;
+      }
+      if (err instanceof ItemNaoCorrespondeError) {
+        res.status(400).json({ data: null, error: { code: 'ITEM_NAO_ENCONTRADO', userMessage: err.message, message: err.message } });
+        return;
+      }
+      logger.error({ err, chave: parsed.data.nf_chave_acesso }, 'Erro ao solicitar baixa por recebimento externo');
+      res.status(500).json({ data: null, error: { code: 'RECEBIMENTO_EXTERNO_FAIL', message: (err as Error).message } });
     }
   },
 );

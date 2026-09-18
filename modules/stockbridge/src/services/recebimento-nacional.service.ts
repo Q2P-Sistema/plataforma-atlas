@@ -6,6 +6,7 @@ import { converterParaKg } from './motor.service.js';
 import { enviarAlertaRecebimentoNacionalLote } from './notificacao.service.js';
 import { getDetalheNfNacional, type DetalheNfNacional, type ItemNfNacional } from './fila-nacional.service.js';
 import { normalizarDescricaoNf } from './descricao-nf.js';
+import { registrarUsoCorrelacao } from './correlacao-produto.service.js';
 import type { UnidadeMedida, SubtipoMovimento } from '../types.js';
 
 const logger = createLogger('stockbridge:recebimento-nacional');
@@ -383,7 +384,7 @@ export async function processarRecebimentoNacional(
     itens: itensProcessados.map((r) => {
       const prod = produtosByCodigo.get(`${r.empresa}:${r.produtoCodigoAcxe}`);
       return {
-        produto: prod?.descricao ?? `SKU ${r.produtoCodigoAcxe}`,
+        produto: prod?.descricao ?? 'Produto não localizado no cadastro',
         empresa: r.empresa,
         galpao: r.galpao,
         quantidadeKg: r.quantidadeKg,
@@ -902,6 +903,23 @@ export async function processarRecebimentoNacionalPorNf(
         quantidadeKg: pp.quantidadeKg, quantidadeNfKg: pp.quantidadeNfKg, divergenciaKg: pp.divergenciaKg, valorItemBrl: pp.valorItemBrl,
         mensagemErro: `Não foi possível registrar "${pp.produtoDescricao}". Tente novamente; o que já entrou não será duplicado.`,
       });
+    }
+  }
+
+  // Historia 3 (FR-007): a escolha do operador vira memoria — SO para o que foi
+  // gravado, e best-effort: falhar aqui nao desfaz recebimento nenhum.
+  for (const c of criados) {
+    try {
+      await registrarUsoCorrelacao({
+        fornecedorCnpj: detalhe.fornecedorCnpj,
+        fornecedorNome: detalhe.fornecedorNome,
+        descricaoNf: c.item.descricaoFornecedor,
+        produtoCodigoQ2p: c.input.produtoCodigoQ2p,
+        produtoDescricao: c.produtoDescricao,
+        userId: input.userId,
+      });
+    } catch (err) {
+      logger.warn({ err, nf: detalhe.notaFiscal, produto: c.produtoDescricao }, 'Não foi possível memorizar a correlação fornecedor→produto');
     }
   }
 

@@ -100,6 +100,12 @@ export interface PendenciaItem {
   /** Apenas para saida sem lote: galpao + empresa do material. */
   galpao: string | null;
   empresa: 'acxe' | 'q2p' | null;
+  // Feature 015 (migration 0052): identidade da NF nas aprovacoes do recebimento
+  // nacional por NF e do recebimento_externo — a tela do gestor mostra NF + item.
+  produtoCodigoQ2p: number | null;
+  notaFiscal: string | null;
+  nfItemDescricao: string | null;
+  nfChaveAcesso: string | null;
 }
 
 /**
@@ -141,6 +147,10 @@ export async function listarPendencias(perfil: Perfil): Promise<PendenciaItem[]>
     aprov_galpao: string | null;
     aprov_empresa: string | null;
     produto_descricao: string | null;
+    aprov_produto_codigo_q2p: string | null;
+    aprov_nota_fiscal: string | null;
+    aprov_nf_item_descricao: string | null;
+    aprov_nf_chave_acesso: string | null;
   }>(sql`
     SELECT a.id,
            a.lote_id,
@@ -158,11 +168,19 @@ export async function listarPendencias(perfil: Perfil): Promise<PendenciaItem[]>
            a.produto_codigo_acxe AS aprov_produto_codigo_acxe,
            a.galpao AS aprov_galpao,
            a.empresa AS aprov_empresa,
-           p.descricao AS produto_descricao
+           -- Feature 015: recebimento nacional grava o produto em produto_codigo_q2p
+           -- (produto_codigo_acxe NULL). Sem o JOIN no catalogo Q2P a tela caia em "SKU 0".
+           COALESCE(p.descricao, pq.descricao) AS produto_descricao,
+           a.produto_codigo_q2p AS aprov_produto_codigo_q2p,
+           a.nota_fiscal AS aprov_nota_fiscal,
+           a.nf_item_descricao AS aprov_nf_item_descricao,
+           a.nf_chave_acesso AS aprov_nf_chave_acesso
     FROM stockbridge.aprovacao a
     LEFT JOIN stockbridge.lote l ON l.id = a.lote_id
     LEFT JOIN public."tbl_produtos_ACXE" p
       ON p.codigo_produto = COALESCE(a.produto_codigo_acxe, l.produto_codigo_acxe)
+    LEFT JOIN public."tbl_produtos_Q2P" pq
+      ON pq.codigo_produto = a.produto_codigo_q2p
     WHERE a.status = 'pendente'
       AND a.precisa_nivel IN (${niveisIn})
     ORDER BY a.lancado_em DESC
@@ -184,7 +202,14 @@ export async function listarPendencias(perfil: Perfil): Promise<PendenciaItem[]>
     const delta = previsto != null && recebido != null ? Number((recebido - previsto).toFixed(3)) : null;
     const codigoAcxeRaw = r.aprov_produto_codigo_acxe ?? r.lote_produto_codigo_acxe;
     const codigoAcxe = codigoAcxeRaw != null ? Number(codigoAcxeRaw) : 0;
-    const fornecedor = r.lote_fornecedor_nome ?? r.produto_descricao ?? `SKU ${codigoAcxe}`;
+    // ACXEGDP-313: nunca "SKU 0" para o gestor. Ordem: fornecedor do lote > descricao
+    // do produto (ACXE ou Q2P) > descricao do item da NF (recebimento_externo, que
+    // nao tem produto) > rotulo neutro.
+    const fornecedor =
+      r.lote_fornecedor_nome ??
+      r.produto_descricao ??
+      (r.aprov_nf_item_descricao ? r.aprov_nf_item_descricao.trim() : null) ??
+      (codigoAcxe > 0 ? `SKU ${codigoAcxe}` : 'Item da NF');
     return {
       id: r.id,
       loteId: r.lote_id,
@@ -201,6 +226,10 @@ export async function listarPendencias(perfil: Perfil): Promise<PendenciaItem[]>
       produto: { codigoAcxe, fornecedor },
       galpao: r.aprov_galpao,
       empresa: (r.aprov_empresa as 'acxe' | 'q2p' | null) ?? null,
+      produtoCodigoQ2p: r.aprov_produto_codigo_q2p != null ? Number(r.aprov_produto_codigo_q2p) : null,
+      notaFiscal: r.aprov_nota_fiscal,
+      nfItemDescricao: r.aprov_nf_item_descricao,
+      nfChaveAcesso: r.aprov_nf_chave_acesso,
     };
   });
 }
@@ -362,6 +391,13 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
   // Saidas manuais (migration 0026) — fluxo dedicado, agnostico de lote.
   if (TIPOS_SAIDA_MANUAL.has(apPre.tipoAprovacao)) {
     return aprovarSaidaManual(apPre, input);
+  }
+
+  // Feature 015: baixa por recebimento externo — SEM movimentacao, SEM estoque,
+  // SEM OMIE. Aprovar so muda o status; o item sai da fila nacional porque a
+  // checagem de "ja recebida" enxerga a aprovacao 'aprovada' (itemNacionalRecebidoSql).
+  if (apPre.tipoAprovacao === 'recebimento_externo') {
+    return aprovarRecebimentoExterno(apPre.id, input);
   }
 
   // Recebimento nacional (entrada_manual sem lote, padrao saida manual com
@@ -879,6 +915,30 @@ export async function dispensarRejeicao(input: {
     .where(eq(aprovacao.id, input.id));
   logger.info({ aprovacaoId: input.id, usuarioId: input.usuarioId }, 'Rejeição dispensada pelo operador');
   return { id: input.id, jaEstavaDispensada: false };
+}
+
+/**
+ * Feature 015 (research D22): aprovacao de 'recebimento_externo'. Claim atomico
+ * pendente -> aprovada (mesmo padrao STK-01 das demais), sem tocar em lote,
+ * movimentacao ou OMIE — e o invariante 9 do contrato. `loteStatus` e 'sem_lote'.
+ */
+async function aprovarRecebimentoExterno(id: string, input: AprovarInput): Promise<AprovarResult> {
+  const db = getDb();
+  const [ap] = await db
+    .update(aprovacao)
+    .set({ status: 'aprovada', aprovadoPor: input.usuarioId, aprovadoEm: new Date() })
+    .where(and(eq(aprovacao.id, id), eq(aprovacao.status, 'pendente')))
+    .returning();
+  if (!ap) {
+    const [check] = await db.select().from(aprovacao).where(eq(aprovacao.id, id)).limit(1);
+    if (!check) throw new AprovacaoNaoEncontradaError(id);
+    throw new AprovacaoStatusInvalidoError(id, check.status);
+  }
+  logger.info(
+    { aprovacaoId: ap.id, nf: ap.notaFiscal, item: ap.nfItemDescricao, usuarioId: input.usuarioId },
+    'Recebimento externo aprovado — item retirado da fila nacional (sem movimentacao, sem OMIE)',
+  );
+  return { id: ap.id, loteStatus: 'sem_lote' };
 }
 
 /**

@@ -122,7 +122,7 @@ export function converterItemNfParaKg(
       ok: false,
       motivo: 'unidade_nao_conversivel',
       unidadeOriginal: unidadeOriginal || '(vazia)',
-      mensagem: `Unidade "${unidadeOriginal || '(vazia)'}" não é conversível para Kg. Este item precisa ser recebido pelo formulário manual.`,
+      mensagem: `Unidade "${unidadeOriginal || '(vazia)'}" não é conversível para kg. Este item precisa ser recebido pelo formulário manual.`,
     };
   }
 
