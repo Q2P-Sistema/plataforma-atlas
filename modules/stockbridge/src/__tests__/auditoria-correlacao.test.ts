@@ -3,16 +3,20 @@ import { describe, it, expect, afterAll } from 'vitest';
 // Feature 015 (ACXEGDP-328), T006c — Principio IV, gate explicito: "testes de
 // integracao DEVEM incluir ao menos um caso que verifica gravacao no audit log
 // apos operacao de dominio". A trigger so pode ser provada contra um Postgres
-// REAL com a migration 0052 aplicada. Sem DATABASE_URL o describe e PULADO —
-// nunca falha por ausencia de banco, nunca "passa" fingindo.
+// REAL com a migration 0052 aplicada. O describe so roda com OPT-IN EXPLICITO
+// (ATLAS_DB_INTEGRATION=1 + DATABASE_URL): o CI define DATABASE_URL com um valor
+// dummy (so para o Zod de @atlas/core) e NAO tem Postgres — gatear apenas pela
+// existencia da variavel faria o teste tentar conectar la e falhar com
+// ECONNREFUSED (foi o que quebrou o CI do PR #99). Sem o opt-in o describe e
+// PULADO — nunca falha por ausencia de banco, nunca "passa" fingindo.
 //
 // Tambem confere (T006b/T007) que o seed de fornecedor_exclusao da 0052 esta
 // ativo e que os dois indices unicos existem.
 //
-// Rodar:  DATABASE_URL=postgres://... pnpm --filter @atlas/stockbridge test auditoria-correlacao
+// Rodar:  ATLAS_DB_INTEGRATION=1 DATABASE_URL=postgres://... pnpm --filter @atlas/stockbridge exec vitest run src/__tests__/auditoria-correlacao.test.ts
 
 const DB_URL = process.env.DATABASE_URL;
-const temBanco = typeof DB_URL === 'string' && DB_URL.length > 0;
+const temBanco = process.env.ATLAS_DB_INTEGRATION === '1' && typeof DB_URL === 'string' && DB_URL.length > 0;
 
 type Pool = { query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>; end?: () => Promise<void> };
 
@@ -101,7 +105,7 @@ describe.skipIf(!temBanco)('migration 0052 — auditoria, indices e seed (integr
   });
 });
 
-describe.skipIf(temBanco)('migration 0052 — integracao (pulado: sem DATABASE_URL)', () => {
+describe.skipIf(temBanco)('migration 0052 — integracao (pulado: sem ATLAS_DB_INTEGRATION=1 e DATABASE_URL)', () => {
   it('documenta que a prova da trigger exige banco real', () => {
     expect(temBanco).toBe(false);
   });
