@@ -77,6 +77,17 @@ export STOCKBRIDGE_ADMIN_CC_EMAIL="flavio.endo@acxe-polimeros.com.br"
 # nao fazem parte do periodo coberto pelo Atlas). Sem set: usa 180 dias atras.
 # export STOCKBRIDGE_FISCAL_CUTOFF_DATE="2026-04-01"
 
+# Corte FIXO (YYYY-MM-DD) da fila de recebimento nacional por NF (feature 015).
+# NF emitida antes desta data nunca aparece na fila; depois, fica ate ser recebida
+# ou baixada. Definir como 7 dias antes da entrada em operacao. Sem set, a fila
+# nacional nao sobe (o servico recusa e loga) — nao ha default.
+# export STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE="2026-09-11"
+
+# Baixa por recebimento externo (feature 015): item de NF nacional que entrou fora
+# do Atlas. Default ligado. Desligar ('false') quando o StockBridge estiver
+# validado e o recebimento direto no OMIE deixar de acontecer.
+# export STOCKBRIDGE_RECEBIMENTO_EXTERNO_ENABLED=true
+
 # URL base do frontend (sem barra final). Usado em links de email
 # (ex: "Re-submeter agora" no email de rejeicao). Em prod, apontar para o dominio.
 export APP_URL="http://localhost:5173"
