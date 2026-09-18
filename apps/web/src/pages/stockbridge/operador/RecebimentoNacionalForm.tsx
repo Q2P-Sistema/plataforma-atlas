@@ -5,7 +5,7 @@ import { useAuthStore } from '../../../stores/auth.store.js';
 type Empresa = 'acxe' | 'q2p';
 type Unidade = 't' | 'kg' | 'saco' | 'bigbag';
 
-interface Localidade {
+export interface Localidade {
   id: string;
   codigo: string;
   nome: string;
@@ -51,7 +51,7 @@ function novoItem(): ItemForm {
 
 const FATOR_KG: Record<Unidade, number> = { t: 1000, kg: 1, saco: 25, bigbag: 1000 };
 
-function useApiFetch() {
+export function useApiFetch() {
   const csrfToken = useAuthStore((s) => s.csrfToken);
   return async (url: string, opts: RequestInit = {}) => {
     const headers: Record<string, string> = {
@@ -60,8 +60,9 @@ function useApiFetch() {
     };
     if (csrfToken) headers['x-csrf-token'] = csrfToken;
     const res = await fetch(url, { credentials: 'include', ...opts, headers });
-    const body = (await res.json()) as { data: unknown; error: { code?: string; message?: string } | null };
-    if (!res.ok) throw new Error(body.error?.message ?? 'Erro');
+    const body = (await res.json()) as { data: unknown; error: { code?: string; userMessage?: string; message?: string } | null };
+    // Prefere userMessage (pt-BR, sem codigo OMIE) quando a rota o fornece.
+    if (!res.ok) throw new Error(body.error?.userMessage ?? body.error?.message ?? 'Erro');
     return body;
   };
 }
@@ -482,13 +483,13 @@ function ItemRow({ indice, valor, podeRemover, onMudar, onRemover, valorRateadoB
   );
 }
 
-interface ProdutoComboboxProps {
+export interface ProdutoComboboxProps {
   empresa: Empresa;
   valor: { codigo: number; descricao: string } | null;
   onChange: (p: { codigo: number; descricao: string }) => void;
 }
 
-function ProdutoCombobox({ empresa, valor, onChange }: ProdutoComboboxProps) {
+export function ProdutoCombobox({ empresa, valor, onChange }: ProdutoComboboxProps) {
   const apiFetch = useApiFetch();
   const [aberto, setAberto] = useState(false);
   const [termo, setTermo] = useState('');

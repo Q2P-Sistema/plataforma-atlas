@@ -4,8 +4,12 @@ import { useAuthStore } from '../../../stores/auth.store.js';
 import { ConferenciaModal } from './ConferenciaModal.js';
 import { ReSubmeterModal } from './ReSubmeterModal.js';
 import { RecebimentoNacionalForm } from './RecebimentoNacionalForm.js';
+import { RecebimentoNacionalNfPanel } from './RecebimentoNacionalNfPanel.js';
 
 type Aba = 'importacao' | 'nacional';
+// Feature 015: a aba nacional alterna entre a fila de NFs do espelho (padrao) e o
+// formulario manual, que permanece para NF fora do espelho (FR-014).
+type ModoNacional = 'fila' | 'manual';
 
 interface FilaItem {
   nf: string;
@@ -70,6 +74,7 @@ export function FilaOmiePage() {
   const apiFetch = useApiFetch();
   const queryClient = useQueryClient();
   const [aba, setAba] = useState<Aba>('importacao');
+  const [modoNacional, setModoNacional] = useState<ModoNacional>('fila');
   const [buscaNf, setBuscaNf] = useState('');
   const [queryKey, setQueryKey] = useState<{ nf?: string; cnpj?: string }>({});
   // Feature 013: a conferência é da NF inteira — o modal recebe TODOS os itens.
@@ -180,7 +185,9 @@ export function FilaOmiePage() {
         <p className="text-sm text-atlas-muted">
           {aba === 'importacao'
             ? 'Busque uma NF de importação ou devolução de cliente para confirmar o recebimento físico.'
-            : 'Registre a entrada de uma NF nacional escolhendo produto, empresa e estoque destino.'}
+            : modoNacional === 'fila'
+              ? 'Escolha a nota fiscal do fornecedor, confira os itens e dê entrada — quantidade e valor vêm da própria nota.'
+              : 'Registre a entrada de uma NF nacional que não está na lista, escolhendo produto, empresa e estoque destino.'}
         </p>
       </div>
 
@@ -210,7 +217,20 @@ export function FilaOmiePage() {
       </div>
 
       {aba === 'nacional' ? (
-        <RecebimentoNacionalForm />
+        modoNacional === 'fila' ? (
+          <RecebimentoNacionalNfPanel onAbrirManual={() => setModoNacional('manual')} />
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={() => setModoNacional('fila')}
+              className="mb-3 text-sm text-atlas-muted hover:text-atlas-ink transition-colors"
+            >
+              ← Voltar à lista de notas fiscais
+            </button>
+            <RecebimentoNacionalForm />
+          </>
+        )
       ) : (
         <ImportacaoSection
           buscaNf={buscaNf}

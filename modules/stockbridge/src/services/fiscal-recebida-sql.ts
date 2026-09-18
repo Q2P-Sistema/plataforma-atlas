@@ -25,11 +25,85 @@
  * (recebimento resumível) — o EXISTS por NF marcava a NF toda como recebida com
  * 1 de N produtos, sumindo pendências do cockpit/pendências fiscais.
  */
-export function recebidaViaMovimentacaoSql(nfExpr: string, produtoExpr?: string): string {
+export function recebidaViaMovimentacaoSql(
+  nfExpr: string,
+  produtoExpr?: string,
+  opts: RecebidaViaMovimentacaoOpts = {},
+): string {
+  // Feature 015 (ACXEGDP-328): parametrizado em subtipo e coluna de produto. Os
+  // defaults reproduzem BYTE A BYTE o SQL de antes — os 5 servicos consumidores
+  // (cockpit, cockpit-executivo, pendencias-fiscais, nf-pedido-mapa, recebimento)
+  // nao mudam de resultado (fiscal-recebida-regressao.test.ts).
+  const subtipo = opts.subtipo ?? 'importacao';
+  const colunaProduto = opts.colunaProduto ?? 'produto_codigo_acxe';
   const produtoFiltro = produtoExpr ? `
-                AND m.produto_codigo_acxe = ${produtoExpr}` : '';
+                AND m.${colunaProduto} = ${produtoExpr}` : '';
   return `EXISTS (SELECT 1 FROM stockbridge.movimentacao m
-              WHERE m.ativo = true AND m.subtipo = 'importacao' AND m.nota_fiscal = ${nfExpr}${produtoFiltro})`;
+              WHERE m.ativo = true AND m.subtipo = '${subtipo}' AND m.nota_fiscal = ${nfExpr}${produtoFiltro})`;
+}
+
+/**
+ * Feature 015: o caminho nacional grava o produto em `produto_codigo_q2p` (as 144
+ * movimentacoes existentes tem `produto_codigo_acxe` NULL — fluxo single-empresa)
+ * e usa `subtipo = 'compra_nacional'`. Reusar a funcao acima como esta erraria nos
+ * dois predicados e devolveria "nunca recebida" para 100% das NFs nacionais (D11).
+ */
+export type RecebidaViaMovimentacaoOpts = {
+  subtipo?: 'importacao' | 'compra_nacional';
+  colunaProduto?: 'produto_codigo_acxe' | 'produto_codigo_q2p';
+};
+
+/**
+ * Normalizacao de descricao em SQL — a MESMA regra de `normalizarDescricao` em TS
+ * (trim, espacos colapsados, caixa alta, sem acento), para casar o `x_prod` do
+ * espelho com `nf_item_descricao_normalizada` gravado pelo Atlas. Exige a extensao
+ * `unaccent` (criada na migration 0052).
+ */
+export function normalizarDescricaoSql(expr: string): string {
+  return `upper(regexp_replace(btrim(unaccent(${expr})), '\\s+', ' ', 'g'))`;
+}
+
+/**
+ * Feature 015 (ACXEGDP-328): item de NF NACIONAL ja recebido — checagem em DUAS
+ * VIAS mais a baixa externa (data-model §3.1, research D21):
+ *
+ *  1. Caminho novo: movimentacao com `nf_chave_acesso` + descricao normalizada do
+ *     item. Granularidade por linha da NF (97,5% dos itens nao tem codigo de
+ *     produto — a descricao e a unica identidade da linha).
+ *  2. Historico do formulario manual (145 linhas) e tudo que ele criar daqui em
+ *     diante (NF fora do espelho nunca tera chave): casa por NUMERO sem zeros a
+ *     esquerda + empresa. Por NF inteira — o manual nao guarda a linha de origem.
+ *     `subtipo = 'compra_nacional'` NAO e opcional: sem ele o ramo casa com as
+ *     saidas automaticas da Q2P, que tambem gravam nota_fiscal + empresa sem chave,
+ *     e uma NF de compra pendente sumiria da fila.
+ *     Cobertura medida ~90% (5% de numeros inexistentes no espelho, 5% ambiguos);
+ *     o resto e o motivo de existir o recebimento_externo (via 3).
+ *  3. Baixa externa APROVADA para (chave, descricao normalizada) — o item entrou
+ *     fora do Atlas (ex.: direto no OMIE). Sem movimentacao, so a aprovacao.
+ *
+ * `chaveExpr` ex.: `h.c_chave_nfe`; `descricaoExpr` = expressao JA normalizada
+ * (ex.: `normalizarDescricaoSql('i.x_prod')`); `nfNumeroExpr` ex.: `h.n_nf`.
+ */
+export function itemNacionalRecebidoSql(args: {
+  chaveExpr: string;
+  descricaoNormalizadaExpr: string;
+  nfNumeroExpr: string;
+}): string {
+  return `(
+    EXISTS (SELECT 1 FROM stockbridge.movimentacao m
+              WHERE m.ativo = true AND m.subtipo = 'compra_nacional'
+                AND m.nf_chave_acesso = ${args.chaveExpr}
+                AND m.nf_item_descricao_normalizada = ${args.descricaoNormalizadaExpr})
+    OR EXISTS (SELECT 1 FROM stockbridge.movimentacao m
+              WHERE m.ativo = true AND m.subtipo = 'compra_nacional'
+                AND m.nf_chave_acesso IS NULL
+                AND m.empresa = 'q2p'
+                AND ltrim(m.nota_fiscal, '0') = ltrim(${args.nfNumeroExpr}, '0'))
+    OR EXISTS (SELECT 1 FROM stockbridge.aprovacao a
+              WHERE a.tipo_aprovacao = 'recebimento_externo' AND a.status = 'aprovada'
+                AND a.nf_chave_acesso = ${args.chaveExpr}
+                AND ${normalizarDescricaoSql('a.nf_item_descricao')} = ${args.descricaoNormalizadaExpr})
+  )`;
 }
 
 /**

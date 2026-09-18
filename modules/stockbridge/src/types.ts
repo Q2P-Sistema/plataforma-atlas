@@ -60,7 +60,11 @@ export type TipoAprovacao =
   | 'saida_descarte'
   | 'saida_quebra'
   | 'ajuste_inventario'
-  | 'retorno_comodato';
+  | 'retorno_comodato'
+  // Feature 015 (ACXEGDP-328, migration 0052): baixa de item de NF nacional que
+  // entrou fora do Atlas (ex.: recebimento direto no OMIE). Sem movimentacao,
+  // sem lote, sem produto — identifica-se pela chave de acesso da NF.
+  | 'recebimento_externo';
 
 export type TipoDivergencia = 'faltando' | 'varredura' | 'cruzada' | 'fiscal_pendente';
 
