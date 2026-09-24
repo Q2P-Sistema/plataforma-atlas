@@ -71,7 +71,10 @@ function useApiFetch() {
 }
 
 interface SkuSelecionado {
+  /** id interno do OMIE — vai para o backend, NUNCA para a tela (ACXEGDP-313) */
   produtoCodigoAcxe: number;
+  /** codigo comercial do produto ("SAN-002") — este sim e o que o operador le e busca */
+  codigoProduto?: string | null;
   descricaoProduto: string;
   saldoOmieKg: number;
   galpao: string;
@@ -230,7 +233,7 @@ export function SaidaManualPage() {
   const skusAgrupados = useMemo(() => {
     const m = new Map<
       number,
-      { codigoProdutoAcxe: number; descricaoProduto: string; familia: string | null; saldoTotal: number }
+      { codigoProdutoAcxe: number; codigoProduto: string; descricaoProduto: string; familia: string | null; saldoTotal: number }
     >();
     for (const it of itensFiltrados) {
       if (it.codigoProdutoAcxe == null) continue; // sem match na tbl_produtos_ACXE — pula
@@ -239,6 +242,7 @@ export function SaidaManualPage() {
       else
         m.set(it.codigoProdutoAcxe, {
           codigoProdutoAcxe: it.codigoProdutoAcxe,
+          codigoProduto: it.codigoProduto,
           descricaoProduto: it.descricaoProduto,
           familia: it.descricaoFamilia,
           saldoTotal: it.saldoKg,
@@ -377,7 +381,9 @@ export function SaidaManualPage() {
                 <div className="font-medium text-atlas-ink truncate" title={s.descricaoProduto}>
                   {s.descricaoProduto}
                 </div>
-                <div className="text-[10px] font-mono text-atlas-muted">SKU {s.codigoProdutoAcxe}</div>
+                {/* codigo COMERCIAL ("SAN-002"), que e por onde a busca filtra —
+                    nunca o id interno do OMIE (ACXEGDP-313) */}
+                {s.codigoProduto && <div className="text-[10px] font-mono text-atlas-muted">SKU {s.codigoProduto}</div>}
               </div>
               <div className="text-atlas-muted truncate">{s.familia ?? '—'}</div>
               <div className="text-right font-mono">{fmtKg(s.saldoTotal)}</div>
@@ -386,6 +392,7 @@ export function SaidaManualPage() {
                   onClick={() =>
                     setSkuModal({
                       produtoCodigoAcxe: s.codigoProdutoAcxe,
+                      codigoProduto: s.codigoProduto,
                       descricaoProduto: s.descricaoProduto,
                       saldoOmieKg: s.saldoTotal,
                       galpao: galpaoSelecionado,
@@ -592,7 +599,12 @@ function SaidaManualModal({ sku, onClose, onSuccess, galpoesDisponiveis }: Saida
         <div className="pb-4 mb-4 border-b border-atlas-border">
           <div className="text-sm font-medium text-atlas-ink truncate">{sku.descricaoProduto}</div>
           <div className="text-[11px] text-atlas-muted">
-            SKU <span className="font-mono">{sku.produtoCodigoAcxe}</span> ·{' '}
+            {/* codigo comercial quando houver; o id do OMIE fica so no payload (ACXEGDP-313) */}
+            {sku.codigoProduto && (
+              <>
+                SKU <span className="font-mono">{sku.codigoProduto}</span> ·{' '}
+              </>
+            )}
             <strong>{labelGalpao(sku.galpao)}</strong> · Empresa{' '}
             <strong>{sku.empresaUI}</strong>
           </div>
