@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Bell, CheckCircle2 } from 'lucide-react';
 import { Modal } from '@atlas/ui';
 import { useAuthStore } from '../../../stores/auth.store.js';
+import { labelGalpao } from '../labels.js';
 
 interface ComodatoAberto {
   movimentacaoId: string;
@@ -28,20 +29,6 @@ const fmtData = (iso: string | null) => {
   if (m) return `${m[3]}/${m[2]}/${m[1]}`;
   return new Date(iso).toLocaleDateString('pt-BR');
 };
-
-const GALPAO_LABELS: Record<string, string> = {
-  '11.1': 'Santo André — Importado (11.1)',
-  '11.2': 'Santo André — Nacional (11.2) · Q2P',
-  '12.1': 'Santo André — Importado (12.1)',
-  '12.2': 'Santo André — Nacional (12.2) · Q2P',
-  '21.1': 'Extrema (21.1)',
-  '21.2': 'Extrema — Nacional (21.2) · ACXE',
-  '31.1': 'Armazém Externo / ATN (31.1)',
-  '90': 'TROCA (virtual)',
-  '90.0.1': 'TROCA (virtual)',
-  '90.0.2': 'TRÂNSITO (virtual)',
-};
-const labelGalpao = (g: string) => GALPAO_LABELS[g] ?? g;
 
 function useApiFetch() {
   const csrfToken = useAuthStore((s) => s.csrfToken);

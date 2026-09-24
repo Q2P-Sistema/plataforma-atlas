@@ -602,8 +602,10 @@ function ImportacaoSection({
                   <span className="font-serif text-lg text-atlas-ink">{item.produto.nome}</span>
                   <span className="font-mono text-xs text-atlas-muted">NF {item.nf}</span>
                 </div>
+                {/* produto ja esta no titulo, por descricao — o codigo do OMIE
+                    nao vai para a tela (ACXEGDP-313) */}
                 <div className="text-xs text-atlas-muted">
-                  {item.cnpj.toUpperCase()} · cód. {item.produto.codigo} · {item.dtEmissao}
+                  {item.cnpj.toUpperCase()} · {item.dtEmissao}
                 </div>
               </div>
               <div className="text-right">
