@@ -194,7 +194,7 @@ describe('caminho limpo 1:1 (T017/T027)', () => {
     });
   });
 
-  it('valor do item = v_tot_item (custo_unitario x kg reproduz a NF, sem rateio digitado)', async () => {
+  it('valor do item = valor do item na NF (custo_unitario x kg reproduz a NF, sem rateio digitado)', async () => {
     const r = await processarRecebimentoNacionalPorNf(base());
     const [m] = movs();
     expect(Number(m!.custoUnitarioBrl) * 13160).toBeCloseTo(156604, 1);
@@ -333,7 +333,7 @@ describe('distribuicao 1:N e rateio ancorado na NF (FR-021/FR-022, D25)', () => 
     }))).rejects.toMatchObject({ code: 'PRODUTO_REPETIDO_NO_ITEM' });
   });
 
-  it('N produtos: Σ valor = v_tot_item, Σ quantidade_nf_kg = nf do item, custo unitario = v_tot/conferida', async () => {
+  it('N produtos: Σ valor = valor do item, Σ quantidade_nf_kg = nf do item, custo unitario = valor_item/conferida', async () => {
     const r = await processarRecebimentoNacionalPorNf(base({
       itens: [{ indice: 0, descricaoFornecedor: 'SUCATA  PSAI MOIDO MESCLADO GROSSO', quantidadeConferidaKg: 13500, motivoDivergencia: 'balança', produtos: tres }],
     }));
@@ -347,7 +347,7 @@ describe('distribuicao 1:N e rateio ancorado na NF (FR-021/FR-022, D25)', () => 
     expect(r.produtos.reduce((s, p) => s + (p.valorItemBrl ?? 0), 0)).toBeCloseTo(156604, 1);
   });
 
-  it('RETOMADA em duas levas: a soma dos valores fecha em v_tot_item, nao no dobro (defeito R1 corrigido)', async () => {
+  it('RETOMADA em duas levas: a soma dos valores fecha no valor do item, nao no dobro (defeito R1 corrigido)', async () => {
     // 1a leva: item distribuido em 2 produtos (6.580 + 6.580); a gravacao do 2o FALHA.
     falharMovNaChamada = 2;
     const r1 = await processarRecebimentoNacionalPorNf(base({
@@ -383,7 +383,7 @@ describe('distribuicao 1:N e rateio ancorado na NF (FR-021/FR-022, D25)', () => 
 
 describe('bloqueios e validacoes de entrada', () => {
   it('item bloqueado por unidade incoerente vira status por produto (nao erro) e nada e gravado', async () => {
-    detalheMock.mockResolvedValue(detalhe([item({ q: 1.375, u: 'KG', v: 20352.34 })]));
+    detalheMock.mockResolvedValue(detalhe([item({ q: 1.375, u: 'KG', v: 19731.26 })]));
     const r = await processarRecebimentoNacionalPorNf(base({
       itens: [{ indice: 0, descricaoFornecedor: 'SUCATA  PSAI MOIDO MESCLADO GROSSO', produtos: [{ produtoCodigoQ2p: 3033097757, quantidadeKg: 1375, localidadeId: LOC_A }] }],
     }));

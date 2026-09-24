@@ -50,7 +50,9 @@ Todas as consultas de evidência foram feitas no **PROD** (`pg-acxe`, banco `acx
 
 ## D3. Não existe valor total da NF no espelho — o total é derivado
 
-**Decisão**: o "valor total da NF" exibido no cabeçalho é **calculado** como `SUM(v_tot_item)` dos itens. O valor de cada item é `v_tot_item` (não `v_prod`).
+> **Revista em 24/09/2026 (D26).** A escolha original de `v_tot_item` como valor do item estava **errada**: o espelho grava em `v_prod` o valor do item já com tributos (o `<vItem>` do XML) e em `v_tot_item` esse mesmo valor **mais o IPI outra vez**. O que abaixo aparece como "3,3% maior — carrega tributos/frete/acessórios" é, na verdade, o IPI contado em dobro. O campo correto é `v_prod`. A parte desta decisão que continua válida é a primeira: o espelho não tem total de cabeçalho, e o total exibido é a soma dos itens.
+
+**Decisão**: o "valor total da NF" exibido no cabeçalho é **calculado** como a soma dos itens. O valor de cada item é `v_prod` (D26) — não `v_tot_item`.
 
 **Evidência**: `public."tbl_nf_header_Q2P"` tem 28 colunas e **nenhuma** de valor total (só `n_nf`, `d_emi`, `tp_nf`, `dest_*`, flags de cancelamento etc). Não há tabela auxiliar de totais — as únicas tabelas de NF no espelho são `tbl_nf_header_*`, `tbl_nf_itens_*` e as `tbl_staging_nf_header_*`.
 
@@ -63,7 +65,7 @@ Diferença entre os dois candidatos a "valor do item" (1.413 itens do recorte, j
 
 `v_tot_item` é 3,3% maior — carrega tributos/frete/acessórios que `v_prod` não tem.
 
-**Rationale**: `v_tot_item` é o valor com que a mercadoria efetivamente entra, coerente com a decisão do card de usar o valor discriminado da NF em vez do rateio por peso. Nenhum item tem `v_tot_item` nulo no recorte.
+**Rationale (original, superado por D26)**: `v_tot_item` foi escolhido por parecer "o valor com que a mercadoria efetivamente entra". A comparação acima foi lida como "v_tot_item tem tributos que v_prod não tem" quando a relação real é `v_tot_item = v_prod + IPI` com o IPI **já dentro** de `v_prod`. Só o XML de uma NF real (59697, D26) permitiu ver qual dos dois fecha no `<vNF>`. Nenhum item tem `v_prod` nulo no recorte.
 
 **Consequência para a spec**: o critério **SC-001/SC-006** ("a soma dos itens confere com o total exibido") é, por construção, uma checagem de **consistência de exibição** (o total mostrado é a soma dos itens exibidos, incluindo os bloqueados), não uma conferência contra um total fiscal independente — que o espelho não guarda. Registrado aqui para não prometer uma validação que o dado não sustenta.
 
@@ -348,7 +350,7 @@ A NF 58396 traz a mesma descrição repetida em linhas separadas (`MC PEBD EB-85
 
 **Impacto no modelo**: o índice único da tabela De→Para **não pode** ser `(fornecedor, descrição)` — precisa ser `(fornecedor, descrição, produto)`, permitindo N linhas por descrição. A sugestão automática passa a propor o **conjunto** de produtos já usado para aquela descrição, e o operador confirma ou ajusta a distribuição.
 
-**Onde o rateio de ACXEGDP-178 sobrevive**: dentro de um item que se divide. O valor do item (`v_tot_item`) é distribuído entre os N produtos proporcionalmente ao peso atribuído a cada um. A lógica existente é reaproveitável nesse escopo reduzido.
+**Onde o rateio de ACXEGDP-178 sobrevive**: dentro de um item que se divide. O valor do item (`v_prod`, D26) é distribuído entre os N produtos proporcionalmente ao peso atribuído a cada um. A lógica existente é reaproveitável nesse escopo reduzido.
 
 ---
 
@@ -469,8 +471,8 @@ Formato do número no Atlas: 145/145 só dígitos, sem zeros à esquerda, sem es
 **Decisão**: além de constar na tabela de conversão (D5), a unidade declarada **MUST** produzir um preço por quilo plausível. A conferência compara a leitura declarada com a leitura alternativa da **mesma linha** — não o preço contra uma tabela de valores absolutos. Contradição bloqueia o item; o sistema nunca escolhe qual campo está errado.
 
 ```text
-rs_por_kg_declarado   = v_tot_item / (q_com × fator(u_com))
-rs_por_kg_alternativo = v_tot_item / (q_com × fator_da_outra_leitura)
+rs_por_kg_declarado   = v_prod / (q_com × fator(u_com))        -- v_prod, não v_tot_item (D26)
+rs_por_kg_alternativo = v_prod / (q_com × fator_da_outra_leitura)
 faixa plausível       = R$ 0,10 a R$ 100 por quilo
 
 declarado plausível                           -> converte
@@ -480,7 +482,7 @@ nenhum plausível                              -> INCONCLUSIVO: bloqueia
 
 **Resultado medido** (1.626 itens elegíveis de 2026 com unidade conversível): **1.612 liberados, 14 bloqueados por contradição, 0 inconclusivos.**
 
-Os 14 seguem o mesmo padrão — NF 58067, Zaraplast: `q_com = 1,375`, `u_com = 'KG'`, `v_tot_item = 20.352,34`. Lido como KG, R$ 14.801/kg; lido como tonelada, R$ 14,80/kg, coerente com resina. A quantidade está em toneladas com a unidade rotulada KG, e pela tabela de D5 o sistema entraria **1,375 kg no lugar de 1.375 kg**.
+Os 14 seguem o mesmo padrão — NF 58067, Zaraplast: `q_com = 1,375`, `u_com = 'KG'`, `v_prod = 19.731,26`. Lido como KG, R$ 14.350/kg; lido como tonelada, R$ 14,35/kg, coerente com resina. A quantidade está em toneladas com a unidade rotulada KG, e pela tabela de D5 o sistema entraria **1,375 kg no lugar de 1.375 kg**.
 
 > **Correção de um critério anterior errado.** A primeira formulação desta decisão bloqueava todo item cujo preço caísse "fora de ambas as faixas" de preço absoluto. Medindo, ela reprovaria **10 itens perfeitamente coerentes**: papelão e sucata de plástico a R$ 0,35–0,40/kg declarados em `KG`, e sucata rígida a R$ 300/tonelada declarada em `TON` — que é o mesmo R$ 0,30/kg. Material barato não é material com unidade errada. O erro estava em comparar o preço contra valores absolutos em vez de comparar as duas leituras possíveis da linha.
 
@@ -504,10 +506,10 @@ Forma correta:
 
 ```text
 quantidade_nf_kg(produto) = quantidade_nf_do_item × (kg_produto / quantidade_conferida_do_item)
-valor_produto             = v_tot_item          × (quantidade_nf_kg / quantidade_nf_do_item)
+valor_produto             = v_prod              × (quantidade_nf_kg / quantidade_nf_do_item)
 ```
 
-A soma fecha em `v_tot_item` independentemente de quantas submissões houver.
+A soma fecha no valor do item (`v_prod`, D26) independentemente de quantas submissões houver.
 
 **O defeito que isto corrige (pendência)**. `quantidadeRestanteKg` estava definida como `conferida − já recebida`. A conferida **não é conhecida** antes de o operador digitá-la e nenhuma tabela a persiste para um item nunca submetido. Além disso ela quebra nas duas pontas da divergência: item de 13.160 kg conferido em 12.900 deixaria resto de 260 kg e ficaria preso na fila para sempre, apesar de integralmente tratado; conferido em 13.500, o resto seria −340 e a regra escrita como "chega a zero" também nunca fecharia.
 
@@ -515,13 +517,40 @@ Forma correta: `restante = quantidade_nf_do_item − Σ quantidade_nf_kg das mov
 
 **Origem**: os dois defeitos foram **introduzidos por revisões anteriores desta própria especificação** — a regra de retomada foi acrescentada numa passada sem revisitar a fórmula do rateio escrita noutra. Registrado aqui porque é o tipo de erro que só aparece na combinação (item 1:N + recebimento retomado) e não em teste de caminho feliz.
 
+## D26. O valor do item é `v_prod` — `v_tot_item` soma o IPI duas vezes
+
+**Decisão**: toda leitura de valor de item da NF nacional usa `tbl_nf_itens_Q2P.v_prod`. `v_tot_item` **não** é usado em nenhum cálculo, exibição ou gravação.
+
+**Como apareceu**: primeiro teste em UAT (24/09/2026), NF 59697 da Zaraplast (2 linhas de `MC PEI TX-7003+AZ`, 24,75 t). A tela mostrava **R$ 280.028,73**; o XML da NF-e diz **`<vNF>` 267.300,15**. Diferença: R$ 12.728,58 — exatamente o `<vIPI>` total da nota.
+
+**Evidência (XML × espelho, item 1)**:
+
+| Origem | Campo | Valor |
+|---|---|---|
+| XML | `<vProd>` (mercadoria, sem IPI) | 113.142,92 |
+| XML | `<vIPI>` | 5.657,15 |
+| XML | `<vItem>` (mercadoria + IPI) | **118.800,07** |
+| espelho | `v_un_com × q_com` (10.285,72 × 11) | 113.142,92 |
+| espelho | `v_prod` | **118.800,07** |
+| espelho | `v_tot_item` | 124.457,22 = 118.800,07 + 5.657,15 |
+
+Ou seja: o OMIE mapeia `v_prod` ← `<vItem>` (já com IPI) e `v_tot_item` = `v_prod` + IPI de novo. Σ`v_prod` dos 2 itens = 267.300,15 = `<vNF>`; Σ`v_tot_item` = 280.028,73.
+
+**Em escala (PROD, recorte da feature, 2026, 1.663 linhas)**: 1.431 com `v_tot_item − v_prod` = `v_prod − v_un_com × q_com` (o mesmo tributo somado duas vezes); 178 sem tributo (os três valores iguais); 27 em que `v_un_com × q_com` não serve de referência por unidade incoerente (D24) — mas nelas `v_tot_item − v_prod` continua sendo o IPI. **Nenhuma** linha em que `v_tot_item` seja o valor certo.
+
+**O que o erro afetava**: valor da NF e do item na tela, R$/kg exibido, e — o que importa — `custo_unitario_brl` gravado na movimentação, que vai ao OMIE no ajuste de estoque da aprovação. Em NF com IPI (resina, filme), o estoque entraria ~5% a ~10% acima do valor da nota. Em sucata (sem IPI) os campos coincidem — por isso os dois primeiros recebimentos de UAT (São Judas Tadeu, 36537/36565, R$ 5,00/kg) saíram corretos e não precisam de correção.
+
+**O que NÃO muda**: a conferência de coerência de unidade (D24). Medida com os dois campos em PROD: 1.633 liberados / 14 bloqueados, idêntico — a diferença do IPI é pequena demais para atravessar a faixa de R$ 0,10–100/kg.
+
+**Lição**: D3 comparou as somas dos dois campos e escolheu o maior por um raciocínio plausível ("tem mais coisa dentro") sem uma referência externa. O que decidiu foi o `<vNF>` de um XML real. Para campos de valor de espelho OMIE com nomes ambíguos, a validação mínima é fechar contra o total de um documento fiscal conhecido.
+
 ## Resumo das decisões
 
 | # | Decisão | Impacto |
 |---|---|---|
 | D1 | "Já recebida" só pelo lado Atlas; `n_id_receb` descartado | Query da fila mais simples, mas exige D2 |
 | D2 | Janela temporal configurável, default 30 dias | Fila nasce com 41 itens em vez de 3.241 |
-| D3 | Total da NF é derivado (`SUM(v_tot_item)`); item usa `v_tot_item` | O total exibido é consistência de exibição, não conferência fiscal |
+| D3 | Total da NF é derivado (soma dos itens); item usava `v_tot_item` — **revisto em D26** | O total exibido é consistência de exibição, não conferência fiscal |
 | D4 | Reusar `fornecedor_exclusao` com coluna de escopo | Sem hard-code; primeira consumidora real da tabela |
 | D5 | Tabela de unidades KG/TON/TL; resto bloqueia | 99,6% de cobertura sem heurística |
 | D6 | CFOP com ponto; `1.101` inexistente no período | Filtro precisa do formato `'1.102'` |
@@ -543,4 +572,5 @@ Forma correta: `restante = quantidade_nf_do_item − Σ quantidade_nf_kg das mov
 | D22 | `recebimento_externo` com aprovação de gestor e flag | Válvula para os ~10% e para recebimento feito direto no OMIE |
 | D23 | Corte fixo de 7 dias no go-live (substitui os 30 de D2) | Fila de estreia com 2 NFs; 94% de cobertura do prazo real |
 | D24 | Unidade conferida comparando as duas leituras da linha | 14 bloqueados, 1.612 liberados; critério de preço absoluto refutado |
+| D26 | Valor do item é `v_prod`; `v_tot_item` soma o IPI duas vezes | Corrige valor exibido e custo unitário gravado (~5–10% a mais em NF com IPI); achado no 1º teste em UAT |
 | D25 | Rateio e pendência ancorados na quantidade da NF | Evita dobrar o valor no estoque e prender item na fila |

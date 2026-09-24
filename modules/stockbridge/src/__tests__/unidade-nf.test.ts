@@ -77,15 +77,15 @@ describe('unidade-nf — bloqueio por unidade desconhecida (FR-009)', () => {
 });
 
 describe('unidade-nf — conferencia de coerencia (FR-029, D24)', () => {
-  it('NF 58067 Zaraplast: 1,375 KG a R$ 20.352,34 e tonelada rotulada KG -> bloqueia por contradicao', () => {
-    const r = converterItemNfParaKg(1.375, 'KG', 20352.34);
+  it('NF 58067 Zaraplast: 1,375 KG a R$ 19.731,26 (v_prod) e tonelada rotulada KG -> bloqueia por contradicao', () => {
+    const r = converterItemNfParaKg(1.375, 'KG', 19731.26);
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.motivo).toBe('unidade_incoerente');
     if (r.motivo !== 'unidade_incoerente') return;
-    // lido como KG: ~R$ 14.801/kg (implausivel); lido como tonelada: ~R$ 14,80/kg (plausivel)
-    expect(r.rsPorKgDeclarado).toBeCloseTo(14801.7, 0);
-    expect(r.rsPorKgAlternativo).toBeCloseTo(14.8, 1);
+    // lido como KG: ~R$ 14.350/kg (implausivel); lido como tonelada: ~R$ 14,35/kg (plausivel)
+    expect(r.rsPorKgDeclarado).toBeCloseTo(14350.0, 0);
+    expect(r.rsPorKgAlternativo).toBeCloseTo(14.35, 1);
     expect(r.leituraDeclarada).toBe('kg');
     expect(r.leituraAlternativa).toBe('tonelada');
     expect(r.mensagem).toContain('não escolhe');

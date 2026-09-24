@@ -124,7 +124,7 @@ Confiabilidade medida do segundo ramo, sobre os 144 pares (NF, produto) do fluxo
 | `fornecedorNome` / `fornecedorCnpj` | `h.dest_razao` / `h.dest_cnpj_cpf` (rotulado "Fornecedor" — research D7) |
 | `dtEmissao` / `diasDesdeEmissao` | `h.d_emi` |
 | `itensTotal` / `itensPendentes` | contagem; pendência pela checagem de duas vias (§3.1), por descrição de item |
-| `valorTotalBrl` | `SUM(i.v_tot_item)` — o espelho não guarda total de cabeçalho (research D3) |
+| `valorTotalBrl` | `SUM(i.v_prod)` — o espelho não guarda total de cabeçalho (research D3); `v_prod`, não `v_tot_item`, que soma o IPI duas vezes (research D26) |
 
 **Filtros obrigatórios**: `tp_nf = 0`; CFOP em `('1.101','1.102','2.101','2.102')` (com ponto — research D6); não cancelada/deletada (`nfValidaSql`); `d_emi >= data_corte`, o corte **fixo** de 7 dias anteriores ao go-live (research D23); fornecedor sem exclusão ativa (research D4); `HAVING` itens pendentes > 0.
 
@@ -136,7 +136,7 @@ Confiabilidade medida do segundo ramo, sobre os 144 pares (NF, produto) do fluxo
 | `descricaoFornecedor` | `i.x_prod` |
 | `quantidadeNf` / `unidadeOriginal` | `i.q_com` / `i.u_com` |
 | `quantidadeNfKg` | convertida; `null` quando a unidade bloqueia |
-| `valorUnitarioBrl` / `valorTotalItemBrl` | `i.v_un_com` / `i.v_tot_item` |
+| `valorUnitarioBrl` / `valorTotalItemBrl` | `i.v_un_com` / `i.v_prod` (research D26 — **não** `v_tot_item`) |
 | `produtosSugeridos` | **lista** vinda do De→Para (pode ter 0, 1 ou N) |
 | `bloqueio` | `null` \| `'unidade_nao_conversivel'` \| `'unidade_incoerente'` \| `'sem_correlacao'` |
 | `jaRecebido` | pela checagem de duas vias (§3.1) |
@@ -161,8 +161,8 @@ Itens com a **mesma descrição** na mesma NF são agregados antes de exibir —
 **A tabela sozinha não basta.** O espelho contém itens cuja unidade declarada contradiz a quantidade. A conferência compara o **preço por quilo resultante da unidade declarada** com uma faixa plausível para plástico e sucata (**R$ 0,10 a R$ 100/kg**):
 
 ```text
-rs_por_kg_declarado  = v_tot_item / (q_com × fator(u_com))
-rs_por_kg_alternativo = v_tot_item / (q_com × fator_da_outra_leitura)
+rs_por_kg_declarado  = v_prod / (q_com × fator(u_com))          -- v_prod, não v_tot_item (research D26)
+rs_por_kg_alternativo = v_prod / (q_com × fator_da_outra_leitura)
 
 declarado plausível                         -> converte normalmente
 declarado implausível, alternativo plausível -> CONTRADIÇÃO: bloqueia
@@ -171,7 +171,7 @@ nenhum dos dois plausível                    -> INCONCLUSIVO: bloqueia
 
 Resultado medido nos 1.626 itens elegíveis de 2026 com unidade conversível: **1.612 liberados, 14 bloqueados por contradição, 0 inconclusivos**.
 
-Os 14 são todos do mesmo padrão — NF 58067, Zaraplast: `q_com = 1,375`, `u_com = 'KG'`, `v_tot_item = 20.352,34`. Lido como KG dá **R$ 14.801/kg**; lido como tonelada dá **R$ 14,80/kg**, coerente com resina. A quantidade está em toneladas com a unidade rotulada KG, e pela tabela de conversão o sistema entraria **1,375 kg no lugar de 1.375 kg**.
+Os 14 são todos do mesmo padrão — NF 58067, Zaraplast: `q_com = 1,375`, `u_com = 'KG'`, `v_prod = 19.731,26`. Lido como KG dá **R$ 14.350/kg**; lido como tonelada dá **R$ 14,35/kg**, coerente com resina. A quantidade está em toneladas com a unidade rotulada KG, e pela tabela de conversão o sistema entraria **1,375 kg no lugar de 1.375 kg**.
 
 > **O critério anterior estava errado.** Uma versão anterior bloqueava todo item cujo preço caísse "fora de ambas as faixas" de preço absoluto. Isso reprovaria **10 itens perfeitamente coerentes**: papelão e sucata de plástico a R$ 0,35–0,40/kg declarados em KG, e sucata rígida a R$ 300/tonelada declarada em TON — que é o mesmo R$ 0,30/kg. Material barato não é material com unidade errada. O critério correto compara as duas **leituras possíveis da mesma linha**, não o preço contra uma tabela de valores.
 
@@ -231,16 +231,16 @@ Por **produto** recebido (não por item da NF — um item pode gerar N produtos)
 
 **Cálculo do valor**, em duas etapas:
 
-1. O valor do item é `v_tot_item` da NF (FR-010).
+1. O valor do item é `v_prod` da NF (FR-010) — o valor com tributos, uma vez; `v_tot_item` soma o IPI em dobro (research D26).
 2. Quando o item se divide entre N produtos, esse valor é rateado **por peso** entre eles (FR-022), com o denominador sendo a **quantidade conferida do item inteiro** — nunca a soma da submissão:
 
    ```text
    quantidade_nf_kg(produto) = quantidade_nf_do_item × (kg_produto / quantidade_conferida_do_item)
-   valor_produto             = v_tot_item          × (quantidade_nf_kg(produto) / quantidade_nf_do_item)
+   valor_produto             = v_prod              × (quantidade_nf_kg(produto) / quantidade_nf_do_item)
    custo_unitario_brl        = valor_produto / kg_produto
    ```
 
-   > ⚠️ **O denominador não pode ser `Σ kg_produtos` da submissão.** Com recebimento retomado, uma submissão parcial teria `Σ` igual à própria parcela, e cada leva receberia o valor **integral** do item: um item de R$ 156.604 recebido em duas levas de 6.580 kg gravaria R$ 156.604 em cada uma — o dobro do valor da NF entrando no estoque. Ancorando na quantidade do item, a soma fecha em `v_tot_item` independentemente de quantas submissões houver.
+   > ⚠️ **O denominador não pode ser `Σ kg_produtos` da submissão.** Com recebimento retomado, uma submissão parcial teria `Σ` igual à própria parcela, e cada leva receberia o valor **integral** do item: um item de R$ 156.604 recebido em duas levas de 6.580 kg gravaria R$ 156.604 em cada uma — o dobro do valor da NF entrando no estoque. Ancorando na quantidade do item, a soma fecha no valor do item (`v_prod`) independentemente de quantas submissões houver.
 
 O rateio de ACXEGDP-178 não morre — muda de escopo. Antes distribuía o total da NF entre itens digitados; agora distribui o valor de **um item** entre os produtos em que ele foi classificado.
 

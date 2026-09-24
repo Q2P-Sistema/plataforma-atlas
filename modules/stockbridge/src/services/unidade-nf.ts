@@ -11,7 +11,7 @@
  *
  *  2. Conferencia de coerencia entre unidade declarada e quantidade (D24): ha
  *     itens rotulados KG cuja quantidade esta em toneladas (NF 58067, Zaraplast:
- *     q_com=1,375 KG a R$ 14.801 "por quilo" — e tonelada). Convertidos pela
+ *     q_com=1,375 KG a R$ 14.350 "por quilo" — e tonelada). Convertidos pela
  *     tabela entrariam com 1/1000 da quantidade. A conferencia compara as DUAS
  *     leituras da mesma linha: o R$/kg pela unidade declarada e o R$/kg pela
  *     leitura alternativa (KG<->tonelada). Declarada plausivel -> converte;
@@ -108,7 +108,10 @@ const fmtBrl = (v: number): string =>
  *
  * @param quantidade  `q_com` da NF, na unidade declarada
  * @param unidadeRaw  `u_com` da NF, como veio
- * @param valorTotal  `v_tot_item` da NF (R$) — base do preco implicito
+ * @param valorTotal  valor do item da NF (R$), de `i.v_prod` — base do preco
+ *                    implicito. NAO `v_tot_item`, que soma o IPI duas vezes
+ *                    (D26). A troca nao muda nenhum veredito: medido em PROD,
+ *                    1.633 liberados / 14 bloqueados com os dois campos.
  */
 export function converterItemNfParaKg(
   quantidade: number,

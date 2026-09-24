@@ -221,7 +221,7 @@ function linha(o: Partial<Record<string, unknown>>) {
     fornecedor_nome: 'ISOFORMA PLASTICOS INDUSTRIAIS LTDA', fornecedor_cnpj: '68.176.072/0001-28',
     dt_emissao: '2026-08-06', dias_desde_emissao: 42, cancelada: false, deletada: false, fornecedor_excluido: false,
     n_cod_item: '1', x_prod: 'SUCATA  PSAI MOIDO MESCLADO GROSSO', desc_norm: 'SUCATA PSAI MOIDO MESCLADO GROSSO',
-    cfop: '1.102', q_com: 13160, u_com: 'KG', v_tot_item: 156604, recebido: false, baixado_externo: false, baixa_solicitada: false,
+    cfop: '1.102', q_com: 13160, u_com: 'KG', valor_item: 156604, recebido: false, baixado_externo: false, baixa_solicitada: false,
     nf_ja_atribuida_kg: 0, conferida_ja_gravada_kg: 0,
     ...o,
   };
@@ -316,10 +316,10 @@ describe('getDetalheNfNacional (T015/T016)', () => {
 
   it('agrega linhas de MESMA descricao (somando, nunca descartando) — NF 58084 da Zaraplast (D18)', async () => {
     detalheCom([
-      linha({ n_cod_item: '1', x_prod: '1.40.101 MC PP HOMO H301+AX', desc_norm: '1.40.101 MC PP HOMO H301+AX', q_com: 2.75, u_com: 'TL', v_tot_item: 39428.21 }),
-      linha({ n_cod_item: '2', x_prod: '1.40.101 MC PP HOMO H301+AX', desc_norm: '1.40.101 MC PP HOMO H301+AX', q_com: 1.375, u_com: 'TL', v_tot_item: 19714.1 }),
-      linha({ n_cod_item: '3', x_prod: '1.40.101 MC PP HOMO H301+AX', desc_norm: '1.40.101 MC PP HOMO H301+AX', q_com: 8.25, u_com: 'TL', v_tot_item: 118284.64 }),
-      linha({ n_cod_item: '4', x_prod: 'PPCO0006 MC PP HECO CP141+AX', desc_norm: 'PPCO0006 MC PP HECO CP141+AX', q_com: 5.5, u_com: 'TL', v_tot_item: 78856.43 }),
+      linha({ n_cod_item: '1', x_prod: '1.40.101 MC PP HOMO H301+AX', desc_norm: '1.40.101 MC PP HOMO H301+AX', q_com: 2.75, u_com: 'TL', valor_item: 39428.21 }),
+      linha({ n_cod_item: '2', x_prod: '1.40.101 MC PP HOMO H301+AX', desc_norm: '1.40.101 MC PP HOMO H301+AX', q_com: 1.375, u_com: 'TL', valor_item: 19714.1 }),
+      linha({ n_cod_item: '3', x_prod: '1.40.101 MC PP HOMO H301+AX', desc_norm: '1.40.101 MC PP HOMO H301+AX', q_com: 8.25, u_com: 'TL', valor_item: 118284.64 }),
+      linha({ n_cod_item: '4', x_prod: 'PPCO0006 MC PP HECO CP141+AX', desc_norm: 'PPCO0006 MC PP HECO CP141+AX', q_com: 5.5, u_com: 'TL', valor_item: 78856.43 }),
     ]);
     const d = await getDetalheNfNacional(CHAVE);
     expect(d.itens).toHaveLength(2);
@@ -332,8 +332,41 @@ describe('getDetalheNfNacional (T015/T016)', () => {
     expect(homo.valorUnitarioBrl).toBeCloseTo(177426.95 / 12.375, 2);
   });
 
+  it('D26: valor do item vem de i.v_prod — NF 59697 da Zaraplast fecha no vNF, sem IPI em dobro', async () => {
+    // Caso real que expos o defeito em UAT (24/09/2026). XML da NF 59697:
+    //   item 1: vProd 113.142,92 + IPI 5.657,15 => vItem 118.800,07
+    //   item 2: vProd 141.428,65 + IPI 7.071,43 => vItem 148.500,08
+    //   vNF = 267.300,15
+    // O espelho grava v_prod = vItem (certo) e v_tot_item = vItem + IPI de novo,
+    // que somava 280.028,73 na tela — R$ 12.728,58 a mais, o IPI contado 2x.
+    detalheCom([
+      linha({ n_cod_item: '1', x_prod: 'MC PEI TX-7003+AZ', desc_norm: 'MC PEI TX-7003+AZ', cfop: '2.102', q_com: 11, u_com: 'TL', valor_item: 118800.07 }),
+      linha({ n_cod_item: '2', x_prod: 'MC PEI TX-7003+AZ', desc_norm: 'MC PEI TX-7003+AZ', cfop: '2.102', q_com: 13.75, u_com: 'TL', valor_item: 148500.08 }),
+    ]);
+    const d = await getDetalheNfNacional(CHAVE);
+    expect(d.valorTotalBrl).toBeCloseTo(267300.15, 2);
+    expect(d.valorTotalBrl).not.toBeCloseTo(280028.73, 2);
+    const [it] = d.itens;
+    expect(it!.linhasAgregadas).toBe(2);
+    expect(it!.quantidadeNfKg).toBeCloseTo(24750, 3);
+    expect(it!.valorTotalItemBrl).toBeCloseTo(267300.15, 2);
+    expect(it!.rsPorKg).toBeCloseTo(10.8, 2); // era 11,31 com o campo errado
+
+    // e a consulta le mesmo a coluna certa, nas duas queries
+    const sql = String(poolQuerySpy.mock.calls.find((c) => !String(c[0]).includes('information_schema'))![0]);
+    expect(sql).toContain('i.v_prod');
+    expect(sql).not.toMatch(/i\.v_tot_item/);
+  });
+
+  it('D26: a query da FILA tambem soma i.v_prod (valor da nota na lista)', async () => {
+    const { sql } = await sqlDaFila();
+    expect(sql).toContain('i.v_prod');
+    expect(sql).not.toMatch(/i\.v_tot_item/);
+    expect(sql).toContain('SUM(valor_item)::float8');
+  });
+
   it('KG rotulado com quantidade em tonelada (NF 58067) -> bloqueio unidade_incoerente, quantidadeNfKg null', async () => {
-    detalheCom([linha({ x_prod: 'MC PEAD GM9450F+ AN', desc_norm: 'MC PEAD GM9450F+ AN', q_com: 1.375, u_com: 'KG', v_tot_item: 20352.34 })]);
+    detalheCom([linha({ x_prod: 'MC PEAD GM9450F+ AN', desc_norm: 'MC PEAD GM9450F+ AN', q_com: 1.375, u_com: 'KG', valor_item: 19731.26 })]);
     const [it] = (await getDetalheNfNacional(CHAVE)).itens;
     expect(it!.bloqueio).toBe('unidade_incoerente');
     expect(it!.quantidadeNfKg).toBeNull();
@@ -342,7 +375,7 @@ describe('getDetalheNfNacional (T015/T016)', () => {
   });
 
   it('unidade desconhecida (UN) -> bloqueio unidade_nao_conversivel', async () => {
-    detalheCom([linha({ u_com: 'UN', q_com: 9040, v_tot_item: 4520 })]);
+    detalheCom([linha({ u_com: 'UN', q_com: 9040, valor_item: 4520 })]);
     const [it] = (await getDetalheNfNacional(CHAVE)).itens;
     expect(it!.bloqueio).toBe('unidade_nao_conversivel');
   });

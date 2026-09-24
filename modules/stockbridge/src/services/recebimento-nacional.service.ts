@@ -512,7 +512,8 @@ async function resolverProdutosNacionais(
 // balanca (quando difere), o produto do catalogo por item e o estoque destino.
 //
 // Diferencas deliberadas em relacao ao manual e a importacao:
-//  - valor do item = v_tot_item da NF (nao rateio por peso digitado);
+//  - valor do item = valor do item na NF, `i.v_prod` (nao rateio por peso
+//    digitado; e NAO `v_tot_item`, que soma o IPI duas vezes — D26);
 //  - divergencia aceita nos DOIS sentidos, com motivo + aprovacao (D17) — a
 //    importacao recusa receber acima da NF; aqui 26 dos 29 casos reais sao acima;
 //  - um item da NF pode virar N produtos (sucata classificada por grau, D18) —
@@ -751,9 +752,9 @@ export async function processarRecebimentoNacionalPorNf(
 
     // Rateio ancorado na quantidade da NF (D25): fracao = kg_p / conferida.
     //   quantidade_nf_kg(p) = nf_do_item × fracao
-    //   valor(p)            = v_tot_item × fracao   (= v_tot_item × nf(p) / nf_do_item)
-    //   custo_unitario      = valor(p) / kg_p        (= v_tot_item / conferida)
-    // Soma fecha em v_tot_item independentemente de quantas submissoes houver.
+    //   valor(p)            = valor_item × fracao   (= valor_item × nf(p) / nf_do_item)
+    //   custo_unitario      = valor(p) / kg_p        (= valor_item / conferida)
+    // Soma fecha no valor do item independentemente de quantas submissoes houver.
     const vTotItem = new Decimal(item.valorTotalItemBrl);
     const conferidaDec = new Decimal(conferida);
     for (const p of it.produtos) {
