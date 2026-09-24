@@ -12,7 +12,7 @@ O recebimento nacional é hoje 100% digitação: o operador digita número da NF
 
 1. **Fila nacional** — query nova sobre o espelho (`tbl_nf_header_Q2P` ⋈ `tbl_nf_itens_Q2P`), na forma de `getFilaPendente` (feature 014), com filtros próprios: CFOP do recorte, janela temporal, exclusão de fornecedor e pendência pelo lado Atlas. Renderiza na aba "Compra nacional" que já existe em `FilaOmiePage`.
 2. **Correlação memorizada 1:N** — tabela nova `stockbridge.correlacao_produto_fornecedor` (De→Para por fornecedor + descrição normalizada → **conjunto** de produtos).
-3. **Entrada guiada pela NF, com divergência** — caminho novo no service nacional: valor vem de `v_tot_item`, quantidade vem pré-preenchida mas é substituível pelo peso conferido; a diferença é gravada e vai para aprovação do gestor. Depois disso, reusa o que já existe: 1 movimentação + 1 aprovação por produto, ajuste OMIE na aprovação.
+3. **Entrada guiada pela NF, com divergência** — caminho novo no service nacional: valor vem de `v_prod` (research D26 — não `v_tot_item`), quantidade vem pré-preenchida mas é substituível pelo peso conferido; a diferença é gravada e vai para aprovação do gestor. Depois disso, reusa o que já existe: 1 movimentação + 1 aprovação por produto, ajuste OMIE na aprovação.
 4. **Distribuição de um item entre N produtos** — sucata entra como uma linha fiscal e é classificada por grau; o valor do item é rateado por peso entre os produtos resultantes.
 5. **Recebimento externo** — declaração, com aprovação de gestor, de que os itens já entraram fora do Atlas (tipicamente direto no OMIE). Retira o item da fila sem criar movimentação. Reusa `stockbridge.aprovacao`; atrás de flag.
 
@@ -49,7 +49,7 @@ O recebimento nacional é hoje 100% digitação: o operador digita número da NF
 |---|---|---|
 | **I. Monólito Modular com Fronteiras Inegociáveis** | Todo o código novo vive em `modules/stockbridge/*` e `apps/web`. A tabela nova nasce em `stockbridge.*` (nunca em `public`), conforme o gate. Nenhuma leitura de tabela privada de outro módulo; as tabelas `public."tbl_*"` são o espelho OMIE, exceção prevista no próprio princípio. Migration centralizada em `packages/db/migrations/`. | ✅ PASS |
 | **II. OMIE é Fonte de Verdade, Atlas Lê do Postgres** | A fila e o detalhe da NF leem **exclusivamente** do espelho Postgres — zero chamada à API OMIE no caminho de leitura, inclusive mais estrito que a importação (que chama `consultarNF` ao buscar). A única escrita no OMIE continua sendo o ajuste de estoque na aprovação, caminho já existente e já documentado como exceção. Nenhum status de documento OMIE é setado pelo Atlas. | ✅ PASS |
-| **III. Dinheiro Só em TypeScript** | Valor do item (`v_tot_item`), conversão de unidade e custo unitário são calculados em TS com decimal.js, cobertos por Vitest. Nada em n8n. A feature **reduz** exposição: substitui o rateio por peso digitado pelo valor discriminado na própria NF. | ✅ PASS |
+| **III. Dinheiro Só em TypeScript** | Valor do item (`v_prod`, D26), conversão de unidade e custo unitário são calculados em TS com decimal.js, cobertos por Vitest. Nada em n8n. A feature **reduz** exposição: substitui o rateio por peso digitado pelo valor discriminado na própria NF. | ✅ PASS |
 | **IV. Audit Log Append-Only via Trigger** | A tabela nova `stockbridge.correlacao_produto_fornecedor` nasce na mesma migration com a trigger de auditoria padrão (`stockbridge.audit_<tabela>` + `trg_audit_sb_<tabela>`), cobrindo INSERT/UPDATE/DELETE, conforme a skill `stockbridge-migration`. Correção de correlação é UPDATE auditado, não DELETE. | ✅ PASS |
 | **V. Validação Paralela, Zero Big-Bang** | O caminho manual atual **permanece intacto e disponível** (FR-014) — o fluxo por NF é adicionado ao lado, não no lugar. Isso é validação paralela dentro do próprio módulo: as duas origens convivem e podem ser comparadas antes de qualquer decisão de aposentar o formulário manual. O StockBridge segue sob o regime de validação paralela contra o legado PHP, que esta feature não altera. | ✅ PASS |
 
@@ -97,7 +97,7 @@ modules/stockbridge/src/
 │   ├── unidade-nf.ts                   # NOVO: tabela explícita KG/TON/TL → Kg + conferência contra o
 │   │                                   #   preço implícito; incoerência bloqueia (D24)
 │   ├── recebimento-externo.service.ts  # NOVO: baixa de item já recebido fora do Atlas + reversão
-│   └── recebimento-nacional.service.ts # ESTENDER: caminho por NF — valor de v_tot_item,
+│   └── recebimento-nacional.service.ts # ESTENDER: caminho por NF — valor de v_prod (D26),
 │                                       #   peso conferido + divergência, distribuição 1:N com
 │                                       #   rateio por peso. Caminho manual intacto.
 ├── routes/

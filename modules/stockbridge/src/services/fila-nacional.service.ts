@@ -29,7 +29,16 @@ const logger = createLogger('stockbridge:fila-nacional');
  *    constante — PLASTFIX e a contraparte ACXE sao seed da migration 0052.
  *  - D18/D20: linhas de mesma descricao na mesma NF sao AGREGADAS (somadas, nunca
  *    descartadas — sao lotes distintos); a pendencia e por descricao normalizada.
- *  - D3: o espelho nao guarda total de cabecalho — valor da NF = SUM(v_tot_item).
+ *  - D3: o espelho nao guarda total de cabecalho — valor da NF = soma dos itens.
+ *  - D26 (ACXEGDP-328, 24/09/2026): o valor do item e `i.v_prod`, NAO `i.v_tot_item`.
+ *    O espelho grava `v_prod` = valor do item COM tributos (o `<vItem>` do XML) e
+ *    `v_tot_item` = `v_prod` + IPI OUTRA VEZ. Provado na NF 59697 da Zaraplast:
+ *    XML `<vItem>` 118.800,07 = `v_prod`; `v_tot_item` 124.457,22 = + 5.657,15 de IPI;
+ *    Σ`v_prod` = 267.300,15 = `<vNF>` exato, Σ`v_tot_item` = 280.028,73 (IPI em dobro).
+ *    Medido em PROD (2026, recorte da feature): 1.431 de 1.663 linhas com o IPI
+ *    duplicado, 178 sem tributo (campos iguais) e nenhuma em que `v_tot_item` seja
+ *    o valor certo. Usar `v_tot_item` inflava o valor exibido E o custo unitario
+ *    gravado — que vai ao OMIE no ajuste de estoque.
  */
 
 export const CFOPS_RECEBIMENTO_NACIONAL: readonly string[] = Object.freeze(['1.101', '1.102', '2.101', '2.102']);
@@ -177,7 +186,7 @@ export async function getFilaNacional(params: { q?: string | null; fornecedor?: 
         SELECT
           h.c_chave_nfe, h.n_nf, h.dest_razao, h.dest_cnpj_cpf, h.d_emi,
           ${descNorm}                    AS desc_norm,
-          i.v_tot_item,
+          i.v_prod                       AS valor_item,  -- D26: NAO v_tot_item (IPI em dobro)
           ${recebidoSql()}               AS recebido,
           -- FR-030 (research D25): pendencia por RESTANTE do lado da NF. Item com
           -- 1 de N produtos gravado (falha/retomada) continua na fila; legado
@@ -194,7 +203,7 @@ export async function getFilaNacional(params: { q?: string | null; fornecedor?: 
       ),
       itens AS (
         SELECT c_chave_nfe, n_nf, dest_razao, dest_cnpj_cpf, d_emi, desc_norm,
-               SUM(v_tot_item)                                          AS v_tot_item,
+               SUM(valor_item)                                          AS valor_item,
                bool_and(recebido)                                       AS recebido,
                SUM(nf_kg)                                               AS nf_kg,
                MAX(nf_atribuida)                                        AS nf_atribuida
@@ -216,7 +225,7 @@ export async function getFilaNacional(params: { q?: string | null; fornecedor?: 
         (CURRENT_DATE - d_emi::date)::int                             AS dias_desde_emissao,
         COUNT(*)::int                                                 AS itens_total,
         COUNT(*) FILTER (WHERE pendente)::int                         AS itens_pendentes,
-        SUM(v_tot_item)::float8                                       AS valor_total_brl
+        SUM(valor_item)::float8                                       AS valor_total_brl
       FROM itens_flag
       GROUP BY c_chave_nfe, n_nf, dest_razao, dest_cnpj_cpf, d_emi
       HAVING COUNT(*) FILTER (WHERE pendente) > 0
@@ -264,7 +273,7 @@ export interface ItemNfNacional {
   unidadeOriginal: string;
   /** null quando bloqueado por unidade */
   quantidadeNfKg: number | null;
-  /** media ponderada Σv_tot_item / Σq_com — nao o v_un_com de uma das linhas */
+  /** media ponderada Σvalor_item / Σq_com — nao o v_un_com de uma das linhas */
   valorUnitarioBrl: number;
   valorTotalItemBrl: number;
   /** R$/kg pela leitura declarada (null quando bloqueado) */
@@ -320,7 +329,8 @@ interface LinhaRow {
   cfop: string;
   q_com: number;
   u_com: string | null;
-  v_tot_item: number;
+  /** valor do item COM tributos, lido de `i.v_prod` — ver D26 no topo do arquivo */
+  valor_item: number;
   recebido: boolean;
   baixado_externo: boolean;
   baixa_solicitada: boolean;
@@ -365,7 +375,7 @@ export async function getDetalheNfNacional(chaveAcesso: string): Promise<Detalhe
       i.cfop                                           AS cfop,
       i.q_com::float8                                  AS q_com,
       i.u_com                                          AS u_com,
-      i.v_tot_item::float8                             AS v_tot_item,
+      i.v_prod::float8                                 AS valor_item,  -- D26: NAO v_tot_item
       ${recebidoSql()}                                 AS recebido,
       EXISTS (SELECT 1 FROM stockbridge.aprovacao a
                WHERE a.tipo_aprovacao = 'recebimento_externo' AND a.status = 'aprovada'
@@ -429,7 +439,7 @@ export async function getDetalheNfNacional(chaveAcesso: string): Promise<Detalhe
   for (const [descNormalizada, linhas] of grupos) {
     const primeira = linhas[0]!;
     const quantidadeNf = linhas.reduce((s, l) => s + Number(l.q_com), 0);
-    const valorTotalItemBrl = linhas.reduce((s, l) => s + Number(l.v_tot_item), 0);
+    const valorTotalItemBrl = linhas.reduce((s, l) => s + Number(l.valor_item), 0);
     const unidades = new Set(linhas.map((l) => (l.u_com ?? '').trim().toUpperCase()));
     const unidadeOriginal = (primeira.u_com ?? '').trim().toUpperCase();
 
@@ -494,7 +504,7 @@ export async function getDetalheNfNacional(chaveAcesso: string): Promise<Detalhe
     dtEmissao: cab.dt_emissao,
     diasDesdeEmissao: Number(cab.dias_desde_emissao),
     cfop: Array.from(new Set(elegiveis.map((r) => r.cfop))).join(', '),
-    valorTotalBrl: elegiveis.reduce((s, l) => s + Number(l.v_tot_item), 0),
+    valorTotalBrl: elegiveis.reduce((s, l) => s + Number(l.valor_item), 0),
     itens,
     linhasForaDoRecorte: res.rows.length - elegiveis.length,
   };

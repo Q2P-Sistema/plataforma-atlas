@@ -37,7 +37,7 @@ FROM stockbridge.movimentacao
 WHERE subtipo='compra_nacional' ORDER BY created_at DESC LIMIT 3;"
 ```
 
-Sem divergência, `quantidade_kg` e `quantidade_nf_kg` devem ser iguais e `quantidade_divergencia_kg` deve ser zero; `custo_unitario_brl × quantidade_kg` reproduz o `v_tot_item` do item (SC-001).
+Sem divergência, `quantidade_kg` e `quantidade_nf_kg` devem ser iguais e `quantidade_divergencia_kg` deve ser zero; `custo_unitario_brl × quantidade_kg` reproduz o `v_prod` do item (SC-001) — **não** o `v_tot_item`, que soma o IPI duas vezes (research D26). Numa NF com IPI, confira também contra o `<vNF>` do XML: a soma dos itens tem de bater.
 
 ---
 
@@ -89,7 +89,7 @@ FROM stockbridge.movimentacao
 WHERE subtipo='compra_nacional' AND nf_chave_acesso = '<chave>';"
 ```
 
-A soma de `valor_produto` deve reproduzir o `v_tot_item` do item da NF (SC-006).
+A soma de `valor_produto` deve reproduzir o `v_prod` do item da NF (SC-006).
 
 ---
 
