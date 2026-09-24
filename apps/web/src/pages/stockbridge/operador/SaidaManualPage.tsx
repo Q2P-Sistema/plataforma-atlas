@@ -449,10 +449,11 @@ export function SaidaManualPage() {
                       {TIPO_APROVACAO_LABEL[r.tipoAprovacao] ?? r.tipoAprovacao}
                     </span>
                     <span className="font-serif text-base text-atlas-ink truncate">{r.fornecedor}</span>
+                    {/* produto ja aparece por descricao no titulo — codigo OMIE nao vai para a tela (ACXEGDP-313) */}
                     <span className="text-xs text-atlas-muted">
-                      SKU {r.produtoCodigoAcxe}
-                      {r.galpao && <> · {labelGalpao(r.galpao)}</>}
-                      {r.empresa && <> · {r.empresa.toUpperCase()}</>}
+                      {[r.galpao ? labelGalpao(r.galpao) : null, r.empresa ? r.empresa.toUpperCase() : null]
+                        .filter(Boolean)
+                        .join(' · ')}
                     </span>
                   </div>
                   <div className="text-xs text-red-700 dark:text-red-300 italic truncate">

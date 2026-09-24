@@ -48,6 +48,26 @@ export const ROLE_LABEL: Record<string, string> = {
   admin: 'Administrador',
 };
 
+/**
+ * Galpões por código curto do Atlas. Existem cópias byte-idênticas em
+ * MovimentacoesPage, AprovacoesPage, ComodatoRetornoPage e SaidaManualPage —
+ * novas telas devem importar daqui; as quatro podem migrar quando forem tocadas.
+ */
+export const GALPAO_LABELS: Record<string, string> = {
+  '11.1': 'Santo André — Importado (11.1)',
+  '11.2': 'Santo André — Nacional (11.2) · Q2P',
+  '12.1': 'Santo André — Importado (12.1)',
+  '12.2': 'Santo André — Nacional (12.2) · Q2P',
+  '21.1': 'Extrema (21.1)',
+  '21.2': 'Extrema — Nacional (21.2) · ACXE',
+  '31.1': 'Armazém Externo / ATN (31.1)',
+  '90': 'TROCA (virtual)',
+  '90.0.1': 'TROCA (virtual)',
+  '90.0.2': 'TRÂNSITO (virtual)',
+};
+
+export const labelGalpao = (g: string): string => GALPAO_LABELS[g] ?? g;
+
 /** Aplica um mapa de rótulos; valor desconhecido volta como veio. */
 export function rotulo(map: Record<string, string>, v: string | null | undefined): string {
   if (!v) return '—';

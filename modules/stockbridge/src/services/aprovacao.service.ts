@@ -249,6 +249,17 @@ export interface MinhaRejeicaoItem {
   empresa: 'acxe' | 'q2p' | null;
   lancadoEm: string;
   rejeitadoEm: string;
+  // Feature 015 (migration 0052): recebimento nacional por NF nao tem lote nem
+  // produto ACXE — sem estes campos o card do operador nao tem como se
+  // identificar (imprimia o literal "NF · Q2P · 11.2", sem numero nenhum).
+  /** numero da NF, sem zeros a esquerda */
+  notaFiscal: string | null;
+  /** descricao do item como veio na NF do fornecedor */
+  nfItemDescricao: string | null;
+  /** razao social do fornecedor, do espelho, pela chave de acesso */
+  fornecedorNome: string | null;
+  /** descricao do produto escolhido (catalogo Q2P ou ACXE) */
+  produtoDescricao: string | null;
 }
 
 /**
@@ -285,6 +296,10 @@ export async function listarMinhasRejeicoes(userId: string): Promise<MinhaRejeic
     aprov_galpao: string | null;
     aprov_empresa: string | null;
     produto_descricao: string | null;
+    nota_fiscal: string | null;
+    nf_item_descricao: string | null;
+    nf_fornecedor_nome: string | null;
+    produto_descricao_q2p: string | null;
   }>(sql`
     SELECT a.id, a.lote_id, a.tipo_aprovacao, a.quantidade_recebida_kg,
            a.rejeicao_motivo, a.lancado_em, a.aprovado_em,
@@ -294,11 +309,21 @@ export async function listarMinhasRejeicoes(userId: string): Promise<MinhaRejeic
            a.produto_codigo_acxe AS aprov_produto_codigo_acxe,
            a.galpao AS aprov_galpao,
            a.empresa AS aprov_empresa,
-           p.descricao AS produto_descricao
+           p.descricao AS produto_descricao,
+           -- Feature 015: identidade do recebimento nacional por NF (sem lote).
+           a.nota_fiscal AS nota_fiscal,
+           a.nf_item_descricao AS nf_item_descricao,
+           pq.descricao AS produto_descricao_q2p,
+           -- subquery escalar, nao JOIN: duplicata no espelho multiplicaria a linha.
+           -- dest_razao e o FORNECEDOR em NF de entrada (research D7).
+           (SELECT h.dest_razao FROM public."tbl_nf_header_Q2P" h
+             WHERE h.c_chave_nfe = a.nf_chave_acesso LIMIT 1) AS nf_fornecedor_nome
     FROM stockbridge.aprovacao a
     LEFT JOIN stockbridge.lote l ON l.id = a.lote_id
     LEFT JOIN public."tbl_produtos_ACXE" p
       ON p.codigo_produto = COALESCE(a.produto_codigo_acxe, l.produto_codigo_acxe)
+    LEFT JOIN public."tbl_produtos_Q2P" pq
+      ON pq.codigo_produto = COALESCE(a.produto_codigo_q2p, l.produto_codigo_q2p)
     WHERE a.status = 'rejeitada'
       AND a.lancado_por = ${userId}::uuid
       AND a.dispensada_em IS NULL
@@ -318,7 +343,10 @@ export async function listarMinhasRejeicoes(userId: string): Promise<MinhaRejeic
   return rows.rows.map((r) => {
     const codigoAcxeRaw = r.aprov_produto_codigo_acxe ?? r.lote_produto_codigo_acxe;
     const codigoAcxe = codigoAcxeRaw != null ? Number(codigoAcxeRaw) : 0;
-    const fornecedor = r.lote_fornecedor_nome ?? r.produto_descricao ?? `SKU ${codigoAcxe}`;
+    const produtoDescricao = r.produto_descricao ?? r.produto_descricao_q2p;
+    // Nunca "SKU <codigo>": codigo OMIE nao vai para a tela (ACXEGDP-313). Sem
+    // nome no catalogo, a descricao do item da NF identifica melhor que um numero.
+    const fornecedor = r.lote_fornecedor_nome ?? produtoDescricao ?? r.nf_item_descricao?.trim() ?? 'Produto não identificado';
     return {
       id: r.id,
       loteId: r.lote_id,
@@ -332,6 +360,10 @@ export async function listarMinhasRejeicoes(userId: string): Promise<MinhaRejeic
       empresa: (r.aprov_empresa as 'acxe' | 'q2p' | null) ?? null,
       lancadoEm: new Date(r.lancado_em).toISOString(),
       rejeitadoEm: new Date(r.aprovado_em ?? r.lancado_em).toISOString(),
+      notaFiscal: r.nota_fiscal,
+      nfItemDescricao: r.nf_item_descricao,
+      fornecedorNome: r.nf_fornecedor_nome,
+      produtoDescricao,
     };
   });
 }
