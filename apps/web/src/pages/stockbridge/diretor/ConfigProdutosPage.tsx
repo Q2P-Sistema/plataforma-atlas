@@ -129,8 +129,8 @@ export function ConfigProdutosPage() {
               className={`grid ${GRID_COLS} text-xs border-b border-atlas-border/60 px-3 py-2 hover:bg-atlas-bg/60 items-center`}
             >
               <div>
+                {/* so a descricao: o codigo e o id interno do OMIE (ACXEGDP-313) */}
                 <div className="font-medium">{p.nomeProduto}</div>
-                <div className="text-[10px] font-mono text-atlas-muted">{p.produtoCodigoAcxe}</div>
               </div>
               <div className="text-atlas-muted">{p.familiaOmie ?? '—'}</div>
               <div className="text-atlas-muted">

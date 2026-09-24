@@ -312,10 +312,11 @@ export function PendenciasFiscaisPage() {
                     <td className="px-3 py-2 font-mono text-xs">{n.notaFiscal}</td>
                     <td className="px-3 py-2">
                       <div className="text-atlas-ink">{n.produtoNome ?? '—'}</div>
-                      <div className="text-[11px] text-atlas-muted">
-                        {n.produtoCodigoAcxe ? `cod ${n.produtoCodigoAcxe}` : '—'}
-                        {!n.emMetricas && <span className="ml-1 text-amber-700 dark:text-amber-400">· fora de métrica</span>}
-                      </div>
+                      {/* o produto ja aparece por descricao acima; o codigo e o id
+                          interno do OMIE e nao vai para a tela (ACXEGDP-313) */}
+                      {!n.emMetricas && (
+                        <div className="text-[11px] text-amber-700 dark:text-amber-400">fora de métrica</div>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right font-mono text-atlas-ink">{fmtKg(n.qtdeKg)}</td>
                     <td className="px-3 py-2 font-mono text-xs">{n.cfop ?? '—'}</td>

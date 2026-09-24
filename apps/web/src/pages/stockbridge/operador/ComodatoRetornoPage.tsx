@@ -166,10 +166,10 @@ export function ComodatoRetornoPage() {
               }`}
             >
               <div>
+                {/* so a descricao: o codigo e o id interno do OMIE (ACXEGDP-313) */}
                 <div className="font-medium text-atlas-ink truncate" title={c.produtoDescricao}>
                   {c.produtoDescricao}
                 </div>
-                <div className="text-[10px] font-mono text-atlas-muted">{c.produtoCodigoAcxe}</div>
               </div>
               <div className="truncate" title={c.cliente ?? ''}>
                 {c.cliente ?? '—'}
