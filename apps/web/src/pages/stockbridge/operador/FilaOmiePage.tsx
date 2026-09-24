@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../../../stores/auth.store.js';
+import { labelGalpao } from '../labels.js';
 import { ConferenciaModal } from './ConferenciaModal.js';
 import { ReSubmeterModal } from './ReSubmeterModal.js';
 import { RecebimentoNacionalForm } from './RecebimentoNacionalForm.js';
@@ -36,6 +37,12 @@ interface MinhaRejeicao {
   galpao: string | null;
   empresa: 'acxe' | 'q2p' | null;
   rejeitadoEm: string;
+  // Feature 015: recebimento nacional por NF — o card se identifica por NF,
+  // fornecedor e item, como na lista de notas acima.
+  notaFiscal: string | null;
+  nfItemDescricao: string | null;
+  fornecedorNome: string | null;
+  produtoDescricao: string | null;
 }
 
 /** Feature 014: item da fila real — NF filhote mapeada, emitida, com produto pendente. */
@@ -56,6 +63,24 @@ const TIPO_LABEL: Record<string, { label: string; color: string }> = {
   retorno_remessa: { label: 'Retorno Remessa', color: 'bg-atlas-muted/20 text-atlas-muted' },
   retorno_comodato: { label: 'Retorno Comodato', color: 'bg-atlas-muted/20 text-atlas-muted' },
 };
+
+/**
+ * Como uma rejeição se identifica no card. Três origens caem nesta lista e
+ * nenhuma compartilha o mesmo identificador:
+ *  - importação: tem lote; o fornecedor vem do lote;
+ *  - recebimento nacional por NF (feature 015): tem NF, fornecedor do espelho e
+ *    a descrição do item como veio na nota;
+ *  - formulário nacional manual (FR-014): não tem lote NEM NF — a aprovação é
+ *    gravada sem os campos fiscais. Identifica-se pelo produto, e NÃO se rotula
+ *    como "Fornecedor": ali `fornecedor` já é a descrição do produto, resolvida
+ *    no servidor (nunca um código OMIE — ACXEGDP-313).
+ */
+function identidadeRejeicao(r: MinhaRejeicao): { titulo: string; mono: boolean; fornecedor: string | null; produto: string | null } {
+  const produto = r.produtoDescricao ?? r.nfItemDescricao?.trim() ?? null;
+  if (r.loteCodigo) return { titulo: `Lote ${r.loteCodigo}`, mono: false, fornecedor: r.fornecedor, produto };
+  if (r.notaFiscal) return { titulo: `NF ${r.notaFiscal}`, mono: true, fornecedor: r.fornecedorNome, produto };
+  return { titulo: r.fornecedor, mono: false, fornecedor: null, produto: null };
+}
 
 function useApiFetch() {
   const csrfToken = useAuthStore((s) => s.csrfToken);
@@ -294,25 +319,48 @@ export function FilaOmiePage() {
             </p>
             <div className="flex flex-col gap-2">
               {lista.map((r) => (
+                // Mesma anatomia do card da lista de notas (identificação à esquerda,
+                // número à direita, ação no fim) — muda a cor e a ação. Feature 015.
                 <div
                   key={r.id}
-                  className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 flex items-center gap-3"
+                  className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 flex items-center gap-4"
                 >
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-baseline gap-2 mb-0.5">
-                      <span className="font-serif text-base text-atlas-ink">
-                        {r.loteCodigo ?? `NF · ${r.empresa?.toUpperCase() ?? ''} · ${r.galpao ?? ''}`}
-                      </span>
-                      <span className="text-xs text-atlas-muted">
-                        {r.empresa?.toUpperCase()} · {r.quantidadeRecebidaKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg
-                      </span>
+                    <div className="flex items-baseline gap-3 flex-wrap">
+                      {(() => {
+                        const id = identidadeRejeicao(r);
+                        return (
+                          <>
+                            <span className={id.mono ? 'font-mono text-sm text-atlas-ink' : 'font-serif text-base text-atlas-ink truncate'}>
+                              {id.titulo}
+                            </span>
+                            {id.fornecedor && (
+                              <span className="text-sm text-atlas-ink truncate" title={id.fornecedor}>
+                                <span className="text-xs text-atlas-muted mr-1">Fornecedor</span>
+                                {id.fornecedor}
+                              </span>
+                            )}
+                            {id.produto && (
+                              <span className="text-xs text-atlas-muted truncate" title={r.nfItemDescricao ?? undefined}>
+                                {id.produto}
+                              </span>
+                            )}
+                          </>
+                        );
+                      })()}
+                      {r.galpao && <span className="text-xs text-atlas-muted">{labelGalpao(r.galpao)}</span>}
                     </div>
-                    <div className="text-xs text-red-700 dark:text-red-300 italic truncate">
+                    <div className="text-xs text-red-700 dark:text-red-300 italic truncate mt-0.5">
                       "{r.motivoRejeicao || 'sem motivo registrado'}"
                     </div>
                   </div>
-                  <div className="text-right text-xs text-atlas-muted whitespace-nowrap">
-                    rejeitado em {new Date(r.rejeitadoEm).toLocaleDateString('pt-BR')}
+                  <div className="text-right whitespace-nowrap">
+                    <div className="font-serif text-atlas-ink">
+                      {r.quantidadeRecebidaKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg
+                    </div>
+                    <div className="text-[11px] text-atlas-muted">
+                      rejeitado em {new Date(r.rejeitadoEm).toLocaleDateString('pt-BR')}
+                    </div>
                   </div>
                   <div className="flex flex-col gap-1.5 whitespace-nowrap">
                     {aba === 'importacao' && (
