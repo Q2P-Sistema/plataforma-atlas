@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '@atlas/ui';
 import { useAuthStore } from '../../../stores/auth.store.js';
-import { SUBTIPO_LABEL, rotulo } from '../labels.js';
+import { SUBTIPO_LABEL, rotulo, labelGalpao } from '../labels.js';
 
 interface Pendencia {
   id: string;
@@ -58,20 +58,6 @@ const TIPO_LABEL: Record<string, string> = {
 };
 
 const fmtKg0 = (v: number) => Math.abs(v).toLocaleString('pt-BR', { maximumFractionDigits: 0 });
-
-const GALPAO_LABELS: Record<string, string> = {
-  '11.1': 'Santo André — Importado (11.1)',
-  '11.2': 'Santo André — Nacional (11.2) · Q2P',
-  '12.1': 'Santo André — Importado (12.1)',
-  '12.2': 'Santo André — Nacional (12.2) · Q2P',
-  '21.1': 'Extrema (21.1)',
-  '21.2': 'Extrema — Nacional (21.2) · ACXE',
-  '31.1': 'Armazém Externo / ATN (31.1)',
-  '90': 'TROCA (virtual)',
-  '90.0.1': 'TROCA (virtual)',
-  '90.0.2': 'TRÂNSITO (virtual)',
-};
-const labelGalpao = (g: string) => GALPAO_LABELS[g] ?? g;
 
 function useApiFetch() {
   const csrfToken = useAuthStore((s) => s.csrfToken);

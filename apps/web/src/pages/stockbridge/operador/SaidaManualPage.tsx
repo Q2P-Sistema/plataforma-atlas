@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '@atlas/ui';
 import { useAuthStore } from '../../../stores/auth.store.js';
+import { labelGalpao } from '../labels.js';
 
 type Empresa = 'acxe' | 'q2p';
 type Subtipo = 'transf_intra_cnpj' | 'comodato' | 'amostra' | 'descarte' | 'quebra' | 'inventario_menos';
@@ -23,21 +24,6 @@ interface MeuEstoqueItem {
 }
 
 /** Sub-estoques pos migration 0030 (granularidade .1 importado / .2 nacional). */
-const GALPAO_LABELS: Record<string, string> = {
-  '11.1': 'Santo André — Importado (11.1)',
-  '11.2': 'Santo André — Nacional (11.2) · Q2P',
-  '12.1': 'Santo André — Importado (12.1)',
-  '12.2': 'Santo André — Nacional (12.2) · Q2P',
-  '21.1': 'Extrema (21.1)',
-  '21.2': 'Extrema — Nacional (21.2) · ACXE',
-  '31.1': 'Armazém Externo / ATN (31.1)',
-  '90': 'TROCA (virtual)',
-  '90.0.1': 'TROCA (virtual)',
-  '90.0.2': 'TRÂNSITO (virtual)',
-};
-function labelGalpao(g: string): string {
-  return GALPAO_LABELS[g] ?? g;
-}
 
 interface MeuEstoqueResponse {
   galpoes: string[];
