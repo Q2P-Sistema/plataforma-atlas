@@ -1,0 +1,59 @@
+Mensagem de WhatsApp — envio do PDF crm-orbitia-devolutiva-round7.pdf
+Formatação WhatsApp: *texto* = negrito
+
+========================================================================
+
+Oi, pessoal! Analisamos os dois documentos de vocês e rodamos hoje,
+depois do deploy, a bateria de testes — incluindo as ações que vocês
+pediram. Segue o PDF consolidado, que atualiza e substitui o relatório
+de 30/08 como referência única. O resumo:
+
+✅ *Nº Pedido do Cliente: encerrado.* Repetimos o teste de duas pontas
+após o deploy e o campo chegou certo no OMIE, conferido lá dentro.
+
+📋 Aceitamos a sugestão de vocês e *já rodamos hoje as conciliações
+3 e 4* contra o que está no ar. A nº 3 (estoque) *passou sem nenhuma
+diferença*: totais idênticos ao OMIE e 27 de 27 produtos com reserva
+calculando certo — *a correção da reserva está confirmada e
+encerrada*. A nº 4 registrou o retrato: o drill-down fica a R$ 1.084
+do OMIE (duas das três datas ao centavo), e a coluna agregada segue
+divergente como vocês mapearam — no PDF anotamos dois padrões que
+devem ajudar na correção. Faltam revalidar o "Aprovado" no realizado
+(caso controlado) e os dias úteis (na virada do mês).
+
+📌 *Mudança de requisito a favor do prazo:* definimos que toda entrega
+em endereço diferente do cadastral será sempre venda triangular. Com
+isso o *endereço de entrega sai da lista* — a leitura de vocês de que
+era o candidato natural a sair da primeira versão estava correta, e a
+solução veio pelo processo. Isso responde a definição D4.
+
+⚠️ *A contrapartida: a venda triangular vira road block* — e hoje ela
+não funciona. Nenhuma triangular criada pelo CRM jamais sincronizou
+(3 falhas em 3 tentativas; os 9 sucessos são todos pedidos comuns). O
+erro do OMIE indica que as duas pernas vão com o *mesmo código de
+integração* e a segunda é rejeitada como duplicata. No PDF estão o
+erro completo, as consequências e a *especificação pronta da perna de
+remessa* (CFOP 5.924, não gerar financeiro, impostos zerados) — é o
+documento de referência que faltou no caso do endereço; aqui ele
+existe, e se o CRM criar as duas pernas com essas marcações, a esteira
+que já valida os pedidos manuais funciona sem mudança.
+
+🔎 Achados novos da rodada, detalhados no PDF: a reaprovação de pedido
+editado *soma* os itens em vez de substituir; a exclusão bloqueia por
+não conseguir consultar a etapa (sugerimos consulta rápida ao OMIE
+antes de editar/excluir); a tela de Aprovações não identifica pedido
+triangular; e a tela de Logs de Erro não recebe as falhas de envio ao
+OMIE.
+
+📊 *D2 reconferida hoje:* a tabela legada segue divergente (08/09:
+R$ 1.668.836 contra R$ 1.020.729 nos títulos) — reforça a correção de
+vocês de apontar a coluna para os títulos.
+
+✅ *Reenvio do LUBIAN: autorizado* — podem executar pela Carteira;
+avisem quando concluir que conferimos o cadastro no OMIE.
+
+As demais definições (D1, D3, D5–D8) respondemos em mensagem separada.
+A tabela final do PDF traz o status e a classificação de todos os
+itens.
+
+Qualquer dúvida sobre os testes, é só chamar.

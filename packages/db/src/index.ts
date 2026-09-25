@@ -80,6 +80,7 @@ export {
   configProduto,
   movimentacaoLegado,
   baixaPedidoQ2p,
+  correlacaoProdutoFornecedor,
   type Localidade,
   type NewLocalidade,
   type LocalidadeCorrelacao,
@@ -102,4 +103,6 @@ export {
   type NewMovimentacaoLegado,
   type BaixaPedidoQ2p,
   type NewBaixaPedidoQ2p,
+  type CorrelacaoProdutoFornecedor,
+  type NewCorrelacaoProdutoFornecedor,
 } from './schemas/stockbridge.js';

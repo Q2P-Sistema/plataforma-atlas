@@ -1,0 +1,56 @@
+Mensagem de WhatsApp — envio do relatório consolidado para o go-live
+(acompanha o PDF crm-orbitia-devolutiva-modulo-gestor.pdf)
+Formatação WhatsApp: *texto* = negrito
+
+========================================================================
+
+Oi, pessoal! Segue o relatório consolidado com tudo que temos em aberto
+para a primeira versão em produção.
+
+Antes de mais nada: *revalidamos tudo que vocês reportaram como
+corrigido* antes de montar esse documento. Oito pontos foram confirmados
+resolvidos e saíram do relatório — número do pedido nas telas, histórico
+de aprovações, produtos no histórico do cliente, as duas datas chegando
+certas no OMIE, regra dos 90 dias, meta global em kg, edição em etapa 10
+e os campos de frete obrigatórios. Está tudo listado logo na abertura do
+PDF.
+
+O que sobrou está separado em dois blocos:
+
+*Bloco 1 — Road block (8 itens).* O que precisa estar de pé antes de
+irmos para produção. Cada um vem com a evidência: números do OMIE lado a
+lado com os do CRM, ou teste controlado.
+
+*Bloco 2 — Melhorias.* Importantes, mas não travam o go-live. Inclui os
+requisitos de tela que combinamos na reunião (Recebimentos Previstos,
+reorganização em abas).
+
+Dois pontos que vale destacar:
+
+1️⃣ O *"Nº Pedido do Cliente"* segue quebrando a sincronização — testamos
+hoje. Criamos o mesmo pedido duas vezes, mesmo cliente e produto,
+variando só esse campo: com ele preenchido falha, sem ele o pedido é
+criado no OMIE normalmente. Está bem isolado.
+
+2️⃣ Em dois casos, *o dado correto já está no próprio sistema* — é só
+usar o campo certo. No estoque, o payload já traz o "saldo_kg" com o
+valor correto (só o "disponivel_kg" desconta a reserva duas vezes). No
+fluxo de caixa, o drill-down por vendedor bate com o OMIE; só a coluna
+agregada infla. Isso deve simplificar bastante as duas correções.
+
+Também aproveitamos para revisar uma conclusão nossa que estava errada:
+tínhamos levantado que a maioria das posições de estoque estaria
+desatualizada — conferimos contra o OMIE e não procede, os galpões
+ativos estão com posição do dia. Está registrado no relatório.
+
+Sobre o *prazo*: nosso objetivo é subir a primeira versão no início da
+semana. Sabemos que é apertado, e o item do endereço de entrega é o mais
+pesado da lista (é campo novo, não só tornar obrigatório). Se algum item
+não couber, é melhor conversarmos antes do que descobrirmos na hora.
+
+E respondendo ao que vocês pediram: o detalhamento da *divergência nos
+painéis de vendas* está no relatório — era exatamente isso que fomos
+investigar. Qual tela, qual métrica, qual valor, com a referência do
+OMIE.
+
+Qualquer dúvida sobre como chegamos em cada número, é só chamar.

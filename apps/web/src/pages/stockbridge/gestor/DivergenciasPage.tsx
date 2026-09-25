@@ -222,10 +222,8 @@ export function DivergenciasPage() {
                     </td>
                     <td className="px-3 py-2">
                       <div className="text-atlas-ink">{d.produtoNome ?? '—'}</div>
-                      <div className="text-[11px] text-atlas-muted">
-                        {d.produtoFamilia ?? '—'}
-                        {d.produtoCodigoAcxe ? ` · cod ${d.produtoCodigoAcxe}` : ''}
-                      </div>
+                      {/* familia identifica; o codigo e o id interno do OMIE (ACXEGDP-313) */}
+                      <div className="text-[11px] text-atlas-muted">{d.produtoFamilia ?? '—'}</div>
                     </td>
                     <td className={`px-3 py-2 text-right font-mono ${d.quantidadeDeltaKg < 0 ? 'text-red-700' : d.quantidadeDeltaKg > 0 ? 'text-amber-700' : 'text-atlas-ink'}`}>
                       {fmtKg(d.quantidadeDeltaKg)} kg

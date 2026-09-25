@@ -31,6 +31,16 @@ app.use(
 app.use(cors({ origin: config.APP_URL, credentials: true }));
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
+// UAT 25/09/2026: sem isto, uma resposta 200 devolvida pelo fallback de SPA do
+// nginx (janela de deploy em que o Traefik ainda não via a API saudável e caía
+// no Host-only router do web) ficava sem Cache-Control e o navegador a guardava
+// no cache heurístico — /auth/me passou a devolver HTML velho por ~1h30 depois
+// do deploy, o front não conseguia ler o usuário e voltava pro login sozinho.
+// JSON-only API: nunca deve ser cacheada pelo navegador.
+app.use((_req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
 
 // Routes
 app.use(healthRouter);

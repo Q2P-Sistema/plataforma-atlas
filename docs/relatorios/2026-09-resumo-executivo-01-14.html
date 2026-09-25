@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Resumo Executivo — 01–14/09/2026</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f5f7;">
+<!-- ====== COPIE A PARTIR DAQUI (ou abra no navegador e copie o conteúdo renderizado) ====== -->
+<div style="max-width:760px;margin:0 auto;padding:24px;background:#ffffff;font-family:Arial,Helvetica,sans-serif;color:#172b4d;line-height:1.55;font-size:14px;">
+
+  <h1 style="font-size:22px;margin:0 0 4px;color:#172b4d;">Resumo Executivo — Atividades de 01–14/09/2026</h1>
+  <p style="margin:0 0 2px;"><strong>Responsável:</strong> Flavio Cicato Endo</p>
+  <p style="margin:0 0 2px;"><strong>Área:</strong> TI / Sistemas (Jira ACXEGDP)</p>
+  <p style="margin:0 0 2px;"><strong>Período:</strong> 01–14/09/2026</p>
+  <p style="margin:0 0 16px;color:#6b778c;font-size:12px;"><em>Fonte: Jira LiveMind — projeto ACXE - Gestão dos projetos e dos Sistemas + apontamento de horas (Tempo).</em></p>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Números do período</h2>
+  <table style="border-collapse:collapse;width:100%;font-size:14px;">
+    <tr>
+      <th style="border:1px solid #dfe1e6;padding:8px 10px;text-align:left;background:#f4f5f7;">Indicador</th>
+      <th style="border:1px solid #dfe1e6;padding:8px 10px;text-align:right;background:#f4f5f7;">Valor</th>
+    </tr>
+    <tr>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;">Tarefas <strong>concluídas</strong></td>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;text-align:right;"><strong>14</strong></td>
+    </tr>
+    <tr>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;">Tarefas <strong>abertas</strong> no período</td>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;text-align:right;"><strong>24</strong> <span style="color:#6b778c;font-size:12px;">(14 concluídas na janela · 10 em andamento/backlog)</span></td>
+    </tr>
+    <tr>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;">Itens movimentados no total</td>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;text-align:right;">24</td>
+    </tr>
+  </table>
+
+  <div style="margin:16px 0;padding:12px 16px;background:#e3fcef;border-left:4px solid #00875a;border-radius:3px;">
+    <p style="margin:0;color:#006644;">Quinzena dominada por uma resposta rápida à <strong>Reforma Tributária</strong> (mudanças no CST do ICMS, código de benefício fiscal, bloco IBS/CBS) que já bateu no ajuste automático de PV via OMIE, encadeada com uma leva de bugs na <strong>venda triangular</strong> (CFOP, bypass indevido da análise de crédito, texto fiscal obrigatório) — praticamente tudo resolvido numa única sessão intensa em 01/09. Em paralelo, a migração completa do fluxo "Espelha PC COMEX" de MySQL para Postgres avançou 6 de 8 etapas, incluindo o cutover em produção. Como nas quinzenas anteriores, o <strong>CRM em semi-produção</strong> seguiu sendo a frente que mais consumiu tempo do responsável — e ganhou um desdobramento maior: a <strong>Fase 2 do CRM</strong>, que mira eliminar de vez o acesso dos vendedores ao OMIE.</p>
+  </div>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Principais entregas por frente</h2>
+  <p style="margin:0 0 12px;font-size:12px;color:#6b778c;">
+    Legenda:
+    <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span>
+    <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffae6;color:#974f00;">EM ANDAMENTO</span>
+    <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span>
+  </p>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">1. Reforma Tributária e venda triangular — sessão intensa de 01/09</h3>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-354</strong> — Reforma Tributária no ajuste automático de PV (1iPx): CST ICMS 41→50/51 e código de benefício fiscal por tipo de item.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-356</strong> — Venda triangular: texto fiscal obrigatório validado nas duas pernas do PV.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-357</strong> — Corrigido bug que reescrevia o CFOP interestadual (6.924) para interno (5.924) na auto-correção triangular.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-358</strong> — Corrigida classificação triangular que zeraria impostos de venda tributada indevidamente.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-359</strong> — Corrigido bug em que a baixa de estoque decidia só pelo primeiro item e ignorava a flag dos demais (3 fluxos ativos).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-360</strong> — Otimizada chamada redundante no fluxo de exportação de fornecedores/clientes, com retry-chain.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-364</strong> — O bypass triangular da análise de crédito agora exige o CFOP correto (5.924/6.924), não mais só uma flag isolada — fecha um risco de zerar impostos indevidamente.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span> <strong>ACXEGDP-355</strong> — Bloco IBS/CBS (imposto.reforma_tributaria) no PV OMIE ainda em definição — a reforma tributária segue com etapas pendentes.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span> <strong>ACXEGDP-362 / 363 / 365 / 367</strong> — Pendências do mesmo mergulho: replicar o "porteiro" (claim atômico) em mais 2 fluxos, um PV com sucata pulando a análise de crédito, a checagem da perna par do triangular antes do bypass (aguardando o CRM), e validar com o fiscal um CST/alíquota que sai errado do OMIE.</li>
+  </ul>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">2. Anexo C / cobertura de NCM — ainda em andamento</h3>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffae6;color:#974f00;">EM ANDAMENTO</span> <strong>ACXEGDP-366</strong> — Cadastro ACXE sem cobertura para 34 NCM, com a família PVC inteira ausente do Anexo C de produtos resultantes — foi o maior item de tempo da quinzena depois do CRM e da verificação diária, e segue em andamento.</li>
+  </ul>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">3. Espelha PC COMEX — migração MySQL→Postgres (Rev 4.0)</h3>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-369 a 372, 374, 376</strong> — DDL e carga dos 164 registros do MySQL, conversão dos 8 nós MySQL→Postgres, resiliência com retry-chain no lugar do retry nativo, configuração centralizada, cutover em produção e gate de pedido internacional (absorve o antigo ACXEGDP-117) — 6 das 8 etapas da revisão já concluídas.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span> <strong>ACXEGDP-373 / 375</strong> — Faltam os testes completos em UAT e o desligamento da dupla escrita no MySQL legado pós-cutover.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span> <strong>ACXEGDP-368</strong> — Card-mãe da revisão segue aberto até essas duas etapas fecharem.</li>
+  </ul>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">4. CRM (OrbitIA) — semi-produção segue como maior consumo de tempo + nova Fase 2</h3>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span> <strong>ACXEGDP-325</strong> — Semi-produção continua sendo, de longe, a frente que mais consumiu tempo do responsável na quinzena — superou até o volume da quinzena anterior.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span> <strong>ACXEGDP-377</strong> — Nova iniciativa aberta em 14/09: <strong>Fase 2 do CRM</strong>, com o objetivo de tornar o CRM autossuficiente e eliminar a necessidade de acesso ao OMIE na operação de vendas — próximo grande capítulo do projeto.</li>
+  </ul>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">5. Operação e suporte</h3>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffae6;color:#974f00;">EM ANDAMENTO</span> <strong>ACXEGDP-333</strong> — Verificação diária do sistema seguiu consumindo boa parte dos dias úteis, como de costume.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-361</strong> — Recriada a Data Table "Integração Bancos Crédito" que havia sido apagada, parando o fluxo do banco Flow/Modde.</li>
+  </ul>
+  <div style="margin:8px 0 16px;padding:10px 14px;background:#f4f5f7;border-left:4px solid #6b778c;border-radius:3px;">
+    <p style="margin:0;color:#42526e;font-size:12.5px;">Itens pontuais de suporte e retomadas de backlog antigo (posição fiscal do cockpit, suporte ao Planejador) também tiveram pequenas doses de tempo na quinzena, sem gerar novidade relevante além do já reportado.</p>
+  </div>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Em aberto para o restante de setembro</h2>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:4px;">Reforma tributária: bloco IBS/CBS ainda em definição (-355); validar com o fiscal o CST/alíquota do CFOP 5.924 (-367)</li>
+    <li style="margin-bottom:4px;">Triangular: replicar o "porteiro" em mais 2 fluxos (-362); PV com sucata pulando a análise de crédito (-363); checagem da perna par, aguardando o CRM (-365)</li>
+    <li style="margin-bottom:4px;">Anexo C: cobertura de NCM / família PVC ainda em andamento (-366)</li>
+    <li style="margin-bottom:4px;">Espelha PC COMEX: testes em UAT e desligamento da dupla escrita MySQL (-373/375/368)</li>
+    <li style="margin-bottom:4px;">CRM Fase 2: eliminar o acesso ao OMIE na operação de vendas — kickoff (-377)</li>
+    <li style="margin-bottom:4px;"><strong>CRM semi-produção segue como a frente que mais consome tempo do responsável</strong> (-325)</li>
+  </ul>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Anexo — 14 tarefas concluídas entre 01–14/09</h2>
+  <table style="border-collapse:collapse;width:100%;font-size:13px;">
+    <tr>
+      <th style="border:1px solid #dfe1e6;padding:6px 10px;text-align:left;background:#f4f5f7;width:60px;">Data</th>
+      <th style="border:1px solid #dfe1e6;padding:6px 10px;text-align:left;background:#f4f5f7;width:110px;">Chave</th>
+      <th style="border:1px solid #dfe1e6;padding:6px 10px;text-align:left;background:#f4f5f7;">Tarefa</th>
+    </tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">11/09</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-364</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Bypass triangular da análise de crédito passa a exigir CFOP 5.924/6.924</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">10/09</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-376</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Gate de pedido internacional pelo país do fornecedor (absorve ACXEGDP-117)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">10/09</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-374</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Cut-over PROD, sticky notes, spec e PR da Rev 4.0</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">10/09</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-372</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Config centralizada, typeVersion atualizado e expressões .item nos loops</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">10/09</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-371</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Resiliência: retry-chain OMIE no lugar do retry nativo</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">10/09</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-370</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Conversão dos 8 nós MySQL para Postgres</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">10/09</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-369</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">DDL Postgres da tabela de controle COMEX + carga dos 164 registros do MySQL</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">03/09</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-361</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Recriar Data Table "Integração Bancos Crédito"</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">01/09</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-360</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Exporta Lista Fornecedores/Clientes: chamada redundante + retry-chain</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">01/09</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-359</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">BUG: baixa de estoque decidia por det[0] e ignorava os demais itens</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">01/09</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-358</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Classificação triangular que zeraria impostos indevidamente</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">01/09</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-357</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">BUG: auto-correção triangular reescrevia CFOP interestadual para interno</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">01/09</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-356</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Venda triangular: texto fiscal obrigatório nas duas pernas do PV</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">01/09</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-354</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Reforma Tributária: CST ICMS 41→50/51 e código de benefício fiscal</td></tr>
+  </table>
+
+  <p style="margin:14px 0 0;font-size:12px;color:#6b778c;"><em>Gerado em 17/09/2026 a partir do Jira (livemind.atlassian.net) e do apontamento de horas (Tempo).</em></p>
+
+</div>
+<!-- ====== FIM ====== -->
+</body>
+</html>

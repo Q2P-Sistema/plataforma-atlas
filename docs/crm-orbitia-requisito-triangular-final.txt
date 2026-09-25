@@ -1,0 +1,132 @@
+Requisito triangular — texto FINAL para envio (com a redação da
+remessa corrigida). Substitui todos os rascunhos anteriores.
+Formatação WhatsApp: *texto* = negrito
+========================================================================
+
+@Marcelo OrbitIA — acho que este requisito não entrou no que passamos
+para o fluxo triangular. Ele vem da operação fiscal e vale para os
+dois pedidos de venda do par. Como afeta a forma de criar os PVs, vale
+olhar antes de subir o deploy.
+
+Resumo: cada perna da triangular precisa sair com um texto padrão no
+campo de observações da NF (dados_adicionais_nf, dados adicionais do
+pedido de venda). São dois modelos — um para a perna de VENDA e um
+para a de REMESSA — e o bloco com os dados da empresa é preenchido
+automaticamente, sem digitação manual. Sem esses textos a NF sai
+incompleta para o fisco.
+
+1️⃣ *Os dois modelos*
+
+O texto legal é fixo. A única parte que o CRM preenche é o bloco da
+empresa ({RAZÃO SOCIAL} até {IE}). Usar exatamente esta redação:
+
+VENDA (faturamento):
+"Mercadoria recebida para fins de industrialização, entregue na
+empresa {RAZÃO SOCIAL}, endereço: {LOGRADOURO, Nº}, CEP {CEP},
+município: {CIDADE}, UF: {UF}, CNPJ: {CNPJ}, IE: {IE}, com nossa NF
+nº ______, série ____, data: __/__/____, na operação de Remessa por
+Ordem de Terceiros.
+(*) Emitida nos termos do art. 129, § 2º, em conjunto com o art. 406
+do Decreto nº 45.490/00 (RICMS/SP), e do art. 415, inciso I, do
+RIPI/2002."
+
+REMESSA:
+"Mercadoria enviada para fins de industrialização *por conta e ordem
+da empresa* {RAZÃO SOCIAL}, endereço: {LOGRADOURO, Nº}, CEP {CEP},
+município: {CIDADE}, UF: {UF}, CNPJ: {CNPJ}, IE: {IE}, conforme nossa
+NF nº ______, série ____, data: __/__/____, na operação de Remessa por
+Ordem de Terceiros.
+(*) Emitida nos termos do art. 129, § 2º, em conjunto com o art. 406
+do Decreto nº 45.490/00 (RICMS/SP), e do art. 415, inciso I, do
+RIPI/2002."
+
+Repare que as aberturas são diferentes de propósito: na VENDA a
+empresa citada é onde a mercadoria foi *entregue* (a industrializadora);
+na REMESSA a mercadoria é entregue no próprio destinatário do PV, e a
+empresa citada é a faturada — *por conta e ordem* de quem a remessa
+acontece. O texto que está em produção hoje usa "entregue na empresa"
+nas duas pernas — na remessa isso estava errado e já corrigimos na
+redação acima.
+
+2️⃣ *O bloco da empresa vem do PV par — cruzado*
+
+O {RAZÃO SOCIAL}...{IE} não é um CNPJ que o vendedor digita ou
+escolhe. Cada perna cita a empresa da outra perna. Confirmamos num par
+real (PVs 19211 e 19212, faturados em 25/08):
+
+• 19211 (venda, cliente RWM) → o texto cita SOMMAPLAST, cliente do 19212
+• 19212 (remessa, cliente SOMMAPLAST) → o texto cita RWM, cliente do 19211
+
+Isso é exigência da própria legislação citada no texto: cada NF
+identifica o outro estabelecimento da operação. Na prática simplifica
+a implementação de vocês — com o par identificado, o bloco inteiro
+(razão social, endereço, CEP, município, UF, CNPJ, IE) é derivado do
+cadastro do cliente da outra perna.
+
+3️⃣ *Como as pernas devem ser criadas*
+
+As flags do item não são só identificação — são requisito de criação.
+Sem elas o estoque baixa duas vezes ou o financeiro duplica:
+
+Perna VENDA/faturamento → nao_movimentar_estoque = "S" nos itens
+  → texto que abre com "Mercadoria recebida..."
+Perna REMESSA → nao_gerar_financeiro = "S" nos itens
+  → texto que abre com "Mercadoria enviada... por conta e ordem..."
+
+Uma perna movimenta estoque (remessa), a outra gera financeiro
+(venda) — nunca as duas coisas na mesma perna. E o CFOP não serve para
+identificar a perna: no par real, a venda saiu com 5.123, não com o
+5.924 da remessa.
+
+4️⃣ *Identificador ligando as duas pernas — precisamos do aceite de
+vocês*
+
+Hoje nada no pedido diz "estes dois PVs são o mesmo negócio", e sem
+isso a gente não consegue conferir se cada perna citou a empresa
+certa. O pedido é usar, no codigo_pedido_integracao (cabeçalho do PV),
+o padrão:
+
+TRI-<idPar>-V   → perna de VENDA (faturamento)
+TRI-<idPar>-R   → perna de REMESSA
+
+Não é campo novo — vocês já vão preencher esse campo com o id de vocês
+de qualquer forma, é só combinar o formato. Ele mantém a unicidade que
+o OMIE exige, pareia as pernas pelo mesmo <idPar> e diz qual perna é
+qual. E deixa a contraparte derivável: de TRI-4711-V montamos
+TRI-4711-R e consultamos direto, sem busca nem heurística. Mantenham o
+valor curto — já esbarramos em limite de 30 caracteres em código de
+integração no OMIE.
+
+Se precisarem desse campo para um id próprio, avisem que usamos o
+numero_contrato (100% livre, zero uso em 3.981 pedidos). Só não dá
+para usar o numero_pedido_cliente, que carrega o PO real do cliente.
+
+5️⃣ *O trecho da NF fica em branco*
+
+"com nossa NF nº ______, série ____, data __/__/____" referencia a NF
+da outra perna, que só existe depois da emissão. Sai em branco,
+exatamente como no modelo — o preenchimento é manual, pela nossa
+equipe, após o faturamento. Não automatizar.
+
+6️⃣ *O que a nossa validação vai fazer do lado de cá*
+
+Para vocês saberem o contrato: o nosso fluxo confere o PV na etapa de
+validação e procura só as âncoras do texto (a expressão "Remessa por
+Ordem de Terceiros", os números dos artigos, a abertura
+recebida/enviada e, na remessa, "por conta e ordem"), tolerante a
+acentuação, espaçamento e pontuação. Os pedidos antigos, que seguem
+uma redação abreviada, também passam — então podem implementar a
+redação nova sem quebrar o que já existe.
+
+O que a validação barra é o pedido sem o texto ou com placeholder não
+substituído, que é o caso que faz a NF sair incompleta.
+
+Observação técnica: o OMIE grava a quebra de linha desse campo como
+|, e ela corta no meio da frase — achamos "para fins
+de|industrializacao" no pedido real. Se forem ler ou comparar esse
+campo em algum ponto, normalizem antes.
+
+Nos avisem sobre o formato do identificador (item 4️⃣) — é a peça que
+fecha a validação do nosso lado. Os itens 2️⃣ e 3️⃣ podem exigir ajuste
+no que já está pronto; se for o caso, digam o impacto que a gente
+prioriza junto.

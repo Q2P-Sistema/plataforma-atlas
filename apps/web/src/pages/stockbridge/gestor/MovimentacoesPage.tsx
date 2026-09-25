@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../../../stores/auth.store.js';
-import { TIPO_MOVIMENTO_LABEL, SUBTIPO_LABEL, rotulo } from '../labels.js';
+import { TIPO_MOVIMENTO_LABEL, SUBTIPO_LABEL, rotulo, labelGalpao } from '../labels.js';
 
 interface LadoCnpj {
   status: string | null;
@@ -31,20 +31,6 @@ interface Movimentacao {
   ladoQ2p: LadoCnpj;
   createdAt: string;
 }
-
-const GALPAO_LABELS: Record<string, string> = {
-  '11.1': 'Santo André — Importado (11.1)',
-  '11.2': 'Santo André — Nacional (11.2) · Q2P',
-  '12.1': 'Santo André — Importado (12.1)',
-  '12.2': 'Santo André — Nacional (12.2) · Q2P',
-  '21.1': 'Extrema (21.1)',
-  '21.2': 'Extrema — Nacional (21.2) · ACXE',
-  '31.1': 'Armazém Externo / ATN (31.1)',
-  '90': 'TROCA (virtual)',
-  '90.0.1': 'TROCA (virtual)',
-  '90.0.2': 'TRÂNSITO (virtual)',
-};
-const labelGalpao = (g: string) => GALPAO_LABELS[g] ?? g;
 
 /**
  * Resolve quais empresas foram tocadas na movimentacao. Quando os dois lados

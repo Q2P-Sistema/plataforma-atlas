@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '@atlas/ui';
 import { useAuthStore } from '../../../stores/auth.store.js';
+import { labelGalpao } from '../labels.js';
 
 type Empresa = 'acxe' | 'q2p';
 type Subtipo = 'transf_intra_cnpj' | 'comodato' | 'amostra' | 'descarte' | 'quebra' | 'inventario_menos';
@@ -23,21 +24,6 @@ interface MeuEstoqueItem {
 }
 
 /** Sub-estoques pos migration 0030 (granularidade .1 importado / .2 nacional). */
-const GALPAO_LABELS: Record<string, string> = {
-  '11.1': 'Santo André — Importado (11.1)',
-  '11.2': 'Santo André — Nacional (11.2) · Q2P',
-  '12.1': 'Santo André — Importado (12.1)',
-  '12.2': 'Santo André — Nacional (12.2) · Q2P',
-  '21.1': 'Extrema (21.1)',
-  '21.2': 'Extrema — Nacional (21.2) · ACXE',
-  '31.1': 'Armazém Externo / ATN (31.1)',
-  '90': 'TROCA (virtual)',
-  '90.0.1': 'TROCA (virtual)',
-  '90.0.2': 'TRÂNSITO (virtual)',
-};
-function labelGalpao(g: string): string {
-  return GALPAO_LABELS[g] ?? g;
-}
 
 interface MeuEstoqueResponse {
   galpoes: string[];
@@ -85,7 +71,10 @@ function useApiFetch() {
 }
 
 interface SkuSelecionado {
+  /** id interno do OMIE — vai para o backend, NUNCA para a tela (ACXEGDP-313) */
   produtoCodigoAcxe: number;
+  /** codigo comercial do produto ("SAN-002") — este sim e o que o operador le e busca */
+  codigoProduto?: string | null;
   descricaoProduto: string;
   saldoOmieKg: number;
   galpao: string;
@@ -244,7 +233,7 @@ export function SaidaManualPage() {
   const skusAgrupados = useMemo(() => {
     const m = new Map<
       number,
-      { codigoProdutoAcxe: number; descricaoProduto: string; familia: string | null; saldoTotal: number }
+      { codigoProdutoAcxe: number; codigoProduto: string; descricaoProduto: string; familia: string | null; saldoTotal: number }
     >();
     for (const it of itensFiltrados) {
       if (it.codigoProdutoAcxe == null) continue; // sem match na tbl_produtos_ACXE — pula
@@ -253,6 +242,7 @@ export function SaidaManualPage() {
       else
         m.set(it.codigoProdutoAcxe, {
           codigoProdutoAcxe: it.codigoProdutoAcxe,
+          codigoProduto: it.codigoProduto,
           descricaoProduto: it.descricaoProduto,
           familia: it.descricaoFamilia,
           saldoTotal: it.saldoKg,
@@ -391,7 +381,9 @@ export function SaidaManualPage() {
                 <div className="font-medium text-atlas-ink truncate" title={s.descricaoProduto}>
                   {s.descricaoProduto}
                 </div>
-                <div className="text-[10px] font-mono text-atlas-muted">SKU {s.codigoProdutoAcxe}</div>
+                {/* codigo COMERCIAL ("SAN-002"), que e por onde a busca filtra —
+                    nunca o id interno do OMIE (ACXEGDP-313) */}
+                {s.codigoProduto && <div className="text-[10px] font-mono text-atlas-muted">SKU {s.codigoProduto}</div>}
               </div>
               <div className="text-atlas-muted truncate">{s.familia ?? '—'}</div>
               <div className="text-right font-mono">{fmtKg(s.saldoTotal)}</div>
@@ -400,6 +392,7 @@ export function SaidaManualPage() {
                   onClick={() =>
                     setSkuModal({
                       produtoCodigoAcxe: s.codigoProdutoAcxe,
+                      codigoProduto: s.codigoProduto,
                       descricaoProduto: s.descricaoProduto,
                       saldoOmieKg: s.saldoTotal,
                       galpao: galpaoSelecionado,
@@ -449,10 +442,11 @@ export function SaidaManualPage() {
                       {TIPO_APROVACAO_LABEL[r.tipoAprovacao] ?? r.tipoAprovacao}
                     </span>
                     <span className="font-serif text-base text-atlas-ink truncate">{r.fornecedor}</span>
+                    {/* produto ja aparece por descricao no titulo — codigo OMIE nao vai para a tela (ACXEGDP-313) */}
                     <span className="text-xs text-atlas-muted">
-                      SKU {r.produtoCodigoAcxe}
-                      {r.galpao && <> · {labelGalpao(r.galpao)}</>}
-                      {r.empresa && <> · {r.empresa.toUpperCase()}</>}
+                      {[r.galpao ? labelGalpao(r.galpao) : null, r.empresa ? r.empresa.toUpperCase() : null]
+                        .filter(Boolean)
+                        .join(' · ')}
                     </span>
                   </div>
                   <div className="text-xs text-red-700 dark:text-red-300 italic truncate">
@@ -605,7 +599,12 @@ function SaidaManualModal({ sku, onClose, onSuccess, galpoesDisponiveis }: Saida
         <div className="pb-4 mb-4 border-b border-atlas-border">
           <div className="text-sm font-medium text-atlas-ink truncate">{sku.descricaoProduto}</div>
           <div className="text-[11px] text-atlas-muted">
-            SKU <span className="font-mono">{sku.produtoCodigoAcxe}</span> ·{' '}
+            {/* codigo comercial quando houver; o id do OMIE fica so no payload (ACXEGDP-313) */}
+            {sku.codigoProduto && (
+              <>
+                SKU <span className="font-mono">{sku.codigoProduto}</span> ·{' '}
+              </>
+            )}
             <strong>{labelGalpao(sku.galpao)}</strong> · Empresa{' '}
             <strong>{sku.empresaUI}</strong>
           </div>

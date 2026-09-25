@@ -1,0 +1,52 @@
+Requisito novo — textos de observação da NF nos pedidos triangulares
+Formatação WhatsApp: *texto* = negrito
+========================================================================
+
+Pessoal, mais um requisito para o fluxo triangular — este vem da
+operação fiscal e vale para *os dois pedidos de venda* do par:
+
+*Cada perna da triangular precisa sair com um texto padrão no campo de
+observações da NF* (dados adicionais do pedido de venda). São dois
+modelos — um para o pedido de VENDA (faturamento) e um para o de
+REMESSA — e o bloco com os dados da empresa deve ser *preenchido
+automaticamente com o cadastro do cliente do PV par* (cada perna cita
+a empresa da outra, cruzado), com razão social, endereço, CEP,
+município/UF, CNPJ e IE, sem digitação manual. Detalhes no complemento
+que enviamos em seguida.
+
+Modelo — pedido de VENDA (faturamento):
+
+"Mercadoria recebida para fins de industrialização, entregue na
+empresa {RAZÃO SOCIAL}, endereço: {LOGRADOURO, Nº}, CEP {CEP},
+município: {CIDADE}, UF: {UF}, CNPJ: {CNPJ}, IE: {IE}, com nossa NF
+nº ______, série ____, data: __/__/____, na operação de Remessa por
+Ordem de Terceiros.
+(*) Emitida nos termos do art. 129, § 2º, em conjunto com o art. 406
+do Decreto nº 45.490/00 (RICMS/SP), e do art. 415, inciso I, do
+RIPI/2002."
+
+Modelo — pedido de REMESSA:
+
+"Mercadoria enviada para fins de industrialização, entregue na
+empresa {RAZÃO SOCIAL}, endereço: {LOGRADOURO, Nº}, CEP {CEP},
+município: {CIDADE}, UF: {UF}, CNPJ: {CNPJ}, IE: {IE}, com nossa NF
+nº ______, série ____, data: __/__/____, na operação de Remessa por
+Ordem de Terceiros.
+(*) Emitida nos termos do art. 129, § 2º, em conjunto com o art. 406
+do Decreto nº 45.490/00 (RICMS/SP), e do art. 415, inciso I, do
+RIPI/2002."
+
+Dois pontos de implementação:
+
+1️⃣ O texto legal é fixo; a única parte que o CRM preenche
+automaticamente é o bloco da empresa ({RAZÃO SOCIAL} até {IE}). Os
+modelos acima já estão revisados — usar exatamente esta redação.
+
+2️⃣ O trecho "com nossa NF nº ______, série ____, data __/__/____"
+referencia a NF da outra perna da operação, que só existe depois da
+emissão. Ele deve sair *em branco, exatamente como está no modelo* —
+o preenchimento é manual, pela nossa equipe, após o faturamento. Não
+automatizar essa parte.
+
+Podem considerar este item parte do pacote da venda triangular — sem
+esses textos a NF sai incompleta para o fisco.

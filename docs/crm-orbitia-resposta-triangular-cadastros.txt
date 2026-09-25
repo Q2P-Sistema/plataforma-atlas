@@ -1,0 +1,52 @@
+Resposta à OrbitIA — triangular (órfãs), cadastros de teste, D1 e D7
+Formatação WhatsApp: *texto* = negrito
+NOTA INTERNA (não enviar): os itens 2, 3 e 4 dependem de confirmação
+do Flavio — cadastros (inativar os 4+4 no OMIE), D1 (sim) e D7 (opção
+rápida). O item 1 está pronto para envio imediato.
+
+========================================================================
+
+Oi, pessoal! Respondendo aos três pontos:
+
+*1. Remessas órfãs: confirmado, já foram excluídas.* Os pedidos 19354
+e 19355 foram excluídos do OMIE por nós mesmos, na época dos testes.
+Conferimos também na nossa réplica da base do OMIE: nenhum dos dois
+existe. Caminho livre para reenviar o #16366 e o #16367 como validação
+da correção — e sugerimos incluir na mesma leva o *#16381* (o teste
+que fizemos ontem): também é anterior à atualização e a remessa órfã
+dele (19363) igualmente já foi excluída. Com os três sincronizando com
+as duas pernas certas, damos o item por validado.
+
+*2. Cadastros de teste: verificamos os 13 na base do OMIE — e só 4
+existem lá.* São eles: Cliente Teste QA Ltda (CNPJ 12.345.678/0001-95),
+Fornecedor Teste ACXE (que está EM DOBRO no próprio OMIE) e Fornecedor
+Teste Q2P. Esses 4 nós inativamos no OMIE. *Os outros 9 não existem no
+OMIE* — pelo padrão, devem ser cadastros com o código provisório falso
+do bug que vocês descreveram (§2.4): nesses casos a sincronização não
+tem de onde recriar nada, então a remoção pode ser feita aí no CRM
+mesmo. Vale vocês conferirem o código OMIE desses 9 para confirmar.
+
+Aproveitando a mesma limpeza, encontramos *outros 4 cadastros de teste
+no OMIE* que não estavam na lista de vocês: CLIENTE TESTE, TESTE QA
+CEP COMPLETO LTDA, CLIENTE DE TESTE INTEGRACAO OMIE e FORNECEDOR DE
+TESTE INTEGRACAO OMIE. Dois deles têm tag Cliente — ou seja, vão
+aparecer para os vendedores quando a nova regra da tag subir. Vamos
+inativá-los também.
+
+*3. D1 — sim: TROCA e TRÂNSITO ficam fora do estoque disponível*,
+junto com os locais desativados que já acordamos. Hoje estão zerados,
+mas a regra já vale desde a implementação.
+
+*4. D7 — sigam com a alternativa rápida* (coluna "Pagar" na fonte
+atual com o "Saldo" recalculado por cima). Uma condição do nosso lado:
+depois da correção da coluna "Receber", vamos rodar a conciliação de
+contas a pagar (nº 5 do roteiro) — se a coluna "Pagar" apresentar as
+mesmas distorções que encontramos na "Receber", a sincronização de
+contas a pagar como entidade própria entra como prioridade da primeira
+rodada pós-go-live.
+
+Sobre a correção do triangular: ficou exatamente na linha da
+especificação que mandamos — código próprio por perna, remessa com
+CFOP 5.924, impostos zerados e sem financeiro, e os dois números do
+OMIE guardados. Assim que subir e os três reenvios validarem, esse
+road block sai da lista.

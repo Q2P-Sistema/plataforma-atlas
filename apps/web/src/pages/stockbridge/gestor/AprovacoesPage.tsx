@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '@atlas/ui';
 import { useAuthStore } from '../../../stores/auth.store.js';
-import { SUBTIPO_LABEL, rotulo } from '../labels.js';
+import { SUBTIPO_LABEL, rotulo, labelGalpao } from '../labels.js';
 
 interface Pendencia {
   id: string;
@@ -22,6 +22,26 @@ interface Pendencia {
   /** Saidas manuais sem lote: galpao + empresa do material. */
   galpao: string | null;
   empresa: 'acxe' | 'q2p' | null;
+  // Feature 015 (ACXEGDP-328): recebimento nacional por NF e baixa externa —
+  // produto Q2P (sem ACXE) e identidade da NF/item, para o card nao cair em "SKU 0".
+  produtoCodigoQ2p: number | null;
+  notaFiscal: string | null;
+  nfItemDescricao: string | null;
+  nfChaveAcesso: string | null;
+}
+
+/** Baixa por recebimento externo ja APROVADA (feature 015, FR-031) — reversivel pelo gestor. */
+interface BaixaExterna {
+  id: string;
+  nfChaveAcesso: string;
+  notaFiscal: string;
+  nfItemDescricao: string;
+  quantidadeNfKg: number | null;
+  motivo: string | null;
+  lancadoPor: string;
+  lancadoEm: string;
+  aprovadoPor: string | null;
+  aprovadoEm: string | null;
 }
 
 const TIPO_LABEL: Record<string, string> = {
@@ -33,22 +53,11 @@ const TIPO_LABEL: Record<string, string> = {
   saida_descarte: 'Descarte/Perda',
   saida_quebra: 'Quebra técnica',
   ajuste_inventario: 'Ajuste de inventário',
-  retorno_comodato: 'Retorno de Comodato',
+  retorno_comodato: 'Retorno de comodato',
+  recebimento_externo: 'Baixa — recebido fora do Atlas',
 };
 
-const GALPAO_LABELS: Record<string, string> = {
-  '11.1': 'Santo André — Importado (11.1)',
-  '11.2': 'Santo André — Nacional (11.2) · Q2P',
-  '12.1': 'Santo André — Importado (12.1)',
-  '12.2': 'Santo André — Nacional (12.2) · Q2P',
-  '21.1': 'Extrema (21.1)',
-  '21.2': 'Extrema — Nacional (21.2) · ACXE',
-  '31.1': 'Armazém Externo / ATN (31.1)',
-  '90': 'TROCA (virtual)',
-  '90.0.1': 'TROCA (virtual)',
-  '90.0.2': 'TRÂNSITO (virtual)',
-};
-const labelGalpao = (g: string) => GALPAO_LABELS[g] ?? g;
+const fmtKg0 = (v: number) => Math.abs(v).toLocaleString('pt-BR', { maximumFractionDigits: 0 });
 
 function useApiFetch() {
   const csrfToken = useAuthStore((s) => s.csrfToken);
@@ -176,11 +185,12 @@ export function AprovacoesPage() {
 
       <div className="flex flex-col gap-3">
         {pendencias.map((p) => {
-          const hasDivergencia = p.deltaKg != null && Math.abs(p.deltaKg) > 1;
+          const externo = p.tipoAprovacao === 'recebimento_externo';
+          const hasDivergencia = !externo && p.deltaKg != null && Math.abs(p.deltaKg) > 1;
           return (
             <div
               key={p.id}
-              className={`bg-atlas-card border rounded-lg p-4 ${hasDivergencia ? 'border-red-200 dark:border-red-800 bg-red-50/30 dark:bg-red-900/10' : 'border-amber-200 dark:border-amber-800 bg-amber-50/30 dark:bg-amber-900/10'}`}
+              className={`bg-atlas-card border rounded-lg p-4 ${hasDivergencia ? 'border-red-200 dark:border-red-800 bg-red-50/30 dark:bg-red-900/10' : externo ? 'border-sky-200 dark:border-sky-800 bg-sky-50/30 dark:bg-sky-900/10' : 'border-amber-200 dark:border-amber-800 bg-amber-50/30 dark:bg-amber-900/10'}`}
             >
               <div className="flex justify-between items-start mb-3">
                 <div className="flex-1">
@@ -200,14 +210,25 @@ export function AprovacoesPage() {
                     )}
                   </div>
                   <div className="font-serif text-base text-atlas-ink">
-                    {p.loteCodigo ? `Lote ${p.loteCodigo} — ` : ''}{p.produto.fornecedor}
+                    {externo
+                      ? <>NF {p.notaFiscal} — {p.nfItemDescricao?.trim() || 'item da nota'}</>
+                      : <>{p.loteCodigo ? `Lote ${p.loteCodigo} — ` : ''}{p.produto.fornecedor}</>}
                   </div>
-                  {!p.loteCodigo && (p.galpao || p.empresa) && (
+                  {externo && (
                     <div className="text-xs text-atlas-muted mt-0.5">
-                      SKU <span className="font-mono">{p.produto.codigoAcxe}</span>
-                      {p.galpao && <> · {labelGalpao(p.galpao)}</>}
-                      {p.empresa && <> · {p.empresa.toUpperCase()}</>}
-                      {p.quantidadeRecebidaKg != null && <> · {Math.abs(p.quantidadeRecebidaKg).toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg</>}
+                      {p.quantidadePrevistaKg != null && <>{fmtKg0(p.quantidadePrevistaKg)} kg na nota · </>}
+                      sem movimentação de estoque — só retira o item da fila de recebimento
+                    </div>
+                  )}
+                  {!externo && !p.loteCodigo && (p.notaFiscal || p.galpao || p.empresa) && (
+                    <div className="text-xs text-atlas-muted mt-0.5">
+                      {/* produto ja esta no titulo, por descricao — nunca o codigo OMIE (ACXEGDP-313) */}
+                      {[
+                        p.notaFiscal ? `NF ${p.notaFiscal}${p.nfItemDescricao ? ` · item "${p.nfItemDescricao.trim()}"` : ''}` : null,
+                        p.galpao ? labelGalpao(p.galpao) : null,
+                        p.empresa ? p.empresa.toUpperCase() : null,
+                        p.quantidadeRecebidaKg != null ? `${fmtKg0(p.quantidadeRecebidaKg)} kg` : null,
+                      ].filter(Boolean).join(' · ')}
                     </div>
                   )}
                   <div className="text-xs text-atlas-muted mt-0.5">
@@ -218,8 +239,8 @@ export function AprovacoesPage() {
 
               {hasDivergencia && (
                 <div className="grid grid-cols-3 gap-2 mb-3">
-                  <Cell label="Previsto NF" value={`${p.quantidadePrevistaKg?.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg`} />
-                  <Cell label="Recebido" value={`${p.quantidadeRecebidaKg?.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg`} accent="text-amber-700" />
+                  <Cell label={p.notaFiscal ? `Na NF ${p.notaFiscal}` : 'Previsto NF'} value={`${p.quantidadePrevistaKg?.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg`} />
+                  <Cell label="Conferido" value={`${p.quantidadeRecebidaKg?.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg`} accent="text-amber-700" />
                   <Cell label="Diferença" value={`${p.deltaKg! > 0 ? '+' : ''}${p.deltaKg?.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg`} accent={p.deltaKg! < 0 ? 'text-red-700' : 'text-amber-700'} />
                 </div>
               )}
@@ -251,11 +272,17 @@ export function AprovacoesPage() {
         })}
       </div>
 
+      <BaixasExternasSection apiFetch={apiFetch} onFeedback={setFeedback} />
+
       {rejeitando && (
         <Modal open title="Rejeitar pendência" onClose={() => setRejeitando(null)}>
           <div className="space-y-3">
             <p className="text-sm text-atlas-muted">
-              Lote <strong>{rejeitando.loteCodigo}</strong> — {rejeitando.produto.fornecedor}
+              {rejeitando.loteCodigo
+                ? <>Lote <strong>{rejeitando.loteCodigo}</strong> — {rejeitando.produto.fornecedor}</>
+                : rejeitando.notaFiscal
+                  ? <>NF <strong>{rejeitando.notaFiscal}</strong> — {rejeitando.tipoAprovacao === 'recebimento_externo' ? rejeitando.nfItemDescricao?.trim() : rejeitando.produto.fornecedor}</>
+                  : rejeitando.produto.fornecedor}
             </p>
             <div>
               <label className="block text-xs font-semibold text-atlas-muted mb-1">Motivo da rejeição *</label>
@@ -292,6 +319,112 @@ export function AprovacoesPage() {
         </Modal>
       )}
     </div>
+  );
+}
+
+/**
+ * Feature 015 (FR-031) — baixas por recebimento externo ja aprovadas. Sao as
+ * que tiraram um item da fila nacional sem movimentar estoque; o gestor pode
+ * reverter (com motivo) e o item volta a fila. Auditado.
+ */
+function BaixasExternasSection({
+  apiFetch,
+  onFeedback,
+}: {
+  apiFetch: ReturnType<typeof useApiFetch>;
+  onFeedback: (f: { tipo: 'sucesso' | 'erro'; texto: string }) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [revertendo, setRevertendo] = useState<BaixaExterna | null>(null);
+  const [motivo, setMotivo] = useState('');
+
+  const { data: baixas = [], isLoading } = useQuery<BaixaExterna[]>({
+    queryKey: ['stockbridge', 'aprovacoes', 'baixas-externas'],
+    queryFn: async () => (await apiFetch('/api/v1/stockbridge/aprovacoes/baixas-externas')).data as BaixaExterna[],
+    refetchInterval: 60_000,
+  });
+
+  const reverterMut = useMutation({
+    mutationFn: async (args: { b: BaixaExterna; motivo: string }) =>
+      apiFetch(`/api/v1/stockbridge/aprovacoes/${args.b.id}/reverter`, { method: 'POST', body: JSON.stringify({ motivo: args.motivo }) }).then(() => args.b),
+    onSuccess: (b) => {
+      setRevertendo(null);
+      setMotivo('');
+      onFeedback({ tipo: 'sucesso', texto: `✓ Baixa revertida: NF ${b.notaFiscal} — ${b.nfItemDescricao.trim()} voltou à fila de recebimento.` });
+      queryClient.invalidateQueries({ queryKey: ['stockbridge'] });
+      queryClient.invalidateQueries({ queryKey: ['sb', 'rec-nacional'] });
+    },
+    onError: (err) => onFeedback({ tipo: 'erro', texto: `Erro ao reverter: ${(err as Error).message}` }),
+  });
+
+  if (isLoading || baixas.length === 0) return null;
+
+  return (
+    <details className="mt-8 group">
+      <summary className="cursor-pointer text-sm font-serif text-atlas-ink select-none">
+        Baixas por recebimento fora do Atlas
+        <span className="ml-2 text-xs font-sans text-atlas-muted">{baixas.length} {baixas.length === 1 ? 'aprovada' : 'aprovadas'} · itens retirados da fila sem movimentar estoque</span>
+      </summary>
+      <div className="mt-3 flex flex-col gap-2">
+        {baixas.map((b) => (
+          <div key={b.id} className="bg-atlas-card border border-atlas-border rounded-lg p-3 flex items-center gap-4 flex-wrap">
+            <div className="flex-1 min-w-[16rem]">
+              <div className="text-sm text-atlas-ink">
+                <span className="font-mono">NF {b.notaFiscal}</span> — {b.nfItemDescricao.trim()}
+                {b.quantidadeNfKg != null && <span className="text-atlas-muted"> · {fmtKg0(b.quantidadeNfKg)} kg na nota</span>}
+              </div>
+              {b.motivo && <div className="text-xs text-atlas-muted italic mt-0.5">"{b.motivo}"</div>}
+              <div className="text-[11px] text-atlas-muted mt-0.5">
+                aprovada em {b.aprovadoEm ? new Date(b.aprovadoEm).toLocaleString('pt-BR') : '—'}
+              </div>
+            </div>
+            <button
+              onClick={() => setRevertendo(b)}
+              disabled={reverterMut.isPending}
+              className="px-3 py-1.5 border border-atlas-border text-atlas-ink rounded text-xs font-medium hover:bg-atlas-bg/60 whitespace-nowrap"
+            >
+              Reverter baixa
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {revertendo && (
+        <Modal open title="Reverter baixa" onClose={() => { setRevertendo(null); setMotivo(''); }}>
+          <div className="space-y-3">
+            <p className="text-sm text-atlas-muted">
+              NF <strong>{revertendo.notaFiscal}</strong> — {revertendo.nfItemDescricao.trim()} volta à fila de recebimento nacional. Nada é movimentado no estoque.
+            </p>
+            <div>
+              <label className="block text-xs font-semibold text-atlas-muted mb-1">Motivo da reversão *</label>
+              <textarea
+                value={motivo}
+                onChange={(e) => setMotivo(e.target.value)}
+                rows={3}
+                autoFocus
+                placeholder="Ex.: a baixa foi lançada na nota errada"
+                className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg text-atlas-ink placeholder:text-atlas-muted rounded text-sm"
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => { setRevertendo(null); setMotivo(''); }}
+                className="px-4 py-2 border border-atlas-border bg-atlas-card text-atlas-ink hover:bg-atlas-bg/60 rounded text-sm"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => reverterMut.mutate({ b: revertendo, motivo })}
+                disabled={!motivo.trim() || reverterMut.isPending}
+                className={`px-5 py-2 rounded text-sm font-medium ${motivo.trim() ? 'bg-atlas-btn-bg text-atlas-btn-text hover:opacity-90' : 'bg-atlas-muted/20 text-atlas-muted cursor-not-allowed'}`}
+              >
+                {reverterMut.isPending ? 'Enviando…' : 'Confirmar reversão'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </details>
   );
 }
 

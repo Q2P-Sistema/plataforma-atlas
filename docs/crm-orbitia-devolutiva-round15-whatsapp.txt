@@ -1,0 +1,140 @@
+Devolutiva da revalidação do Round 14 — para envio
+Formatação WhatsApp: *texto* = negrito
+========================================================================
+
+Oi, pessoal! Revalidamos as seis correções do Round 14 nos sete blocos
+do roteiro, com captura de payload. Cinco confirmadas, uma foi erro
+nosso, e a bateria trouxe alguns pontos novos. Vamos por partes.
+
+*CONFIRMADO FUNCIONANDO* ✅
+
+• *Pedido excluído no OMIE:* a base inteira ficou com 0 pedidos em
+"Enviado ao OMIE" e 11 em "Excluído no OMIE" — os 5 que vocês
+perguntaram (#6386, #6408, #6409, #6540, #16479) mais 6 que o fix
+pegou sozinho (#6450, #6497, #16284, #16365/#16366/#16367). Sobre a
+dúvida de vocês: todos os 4 já não existiam no OMIE (dois excluídos em
+julho/agosto, dois sem registro), e o #6386 da ALFATERM era 14 kg a
+R$ 1,00 — teste, não venda real. Podem apagar os quatro.
+
+• *Motor de preço explicando o motivo:* na tela, expansível, produto a
+produto ("1 de 3 relatos mínimos necessários", "sobra de produtos sem
+quorum próprio").
+
+• *Cockpit:* KPIs em ~1 segundo; o `/clientes/` saiu do caminho crítico
+e só o card de Risco espera por ele.
+
+• *Perdas e rótulos:* "Recentes" acompanha o mês, "gap potencial"
+removido, "Gap Acumulado"/"Gap Projetado" nos lugares certos. E a
+contagem 13 × 12 que reportamos era mesmo perda registrada entre os
+dois carregamentos — no mesmo instante, Cockpit 4 = Análises 4.
+
+• *Alçadas de aprovação, isoladas pela primeira vez:* criamos três
+pedidos como vendedora — no preço de lista (R$ 15,50) foi direto ao
+OMIE sem aprovação; a R$ 15,00 (entre mínimo e lista) caiu em Gestor;
+a R$ 14,00 (abaixo do mínimo) caiu em Diretor. E o "Rejeitar" também
+está travado no backend (403 "requer decisão do diretor").
+
+• *Reset da Empresa de Remessa:* com hard-refresh o campo limpa ao
+trocar origem e ao trocar vendedor — o que reportamos era cache do
+nosso navegador. Item retirado.
+
+*O QUE PEDIMOS NESTA RODADA*
+
+🔴 *1. Logs de Erro: volume esconde os demais erros.* O alerta de
+"excluído no OMIE" é regravado a cada ciclo de sincronização, sem
+dedupe: 294 registros só para o #16479 e 217 para cada um de
+#16366/#16367 desde 12/09 — hoje, 50 em cinco horas. Como a tela
+mostra só os 50 mais recentes, sem paginação, qualquer outro erro fica
+invisível. A tabela inteira tem 26.597 registros desde 08/06, quase
+tudo "connection already closed" / "could not translate host name"
+do sync, mais 191 "duplicate key accounts_vendedor" (20/08). E o
+filtro "Últ. 3 meses" não altera o retorno da API. Pedimos: dedupe ou
+agrupamento por pedido/tipo com contador e última ocorrência,
+paginação ou filtro real por período — e, à parte, vale olhar por que
+o sync gera tanta falha de conexão.
+
+🔴 *2. Na triangular, o alerta de exclusão afirma um fato falso.* No
+#16479 a mensagem diz "a perna de remessa (OMIE #8501490524) foi
+excluída, mas a de faturamento não". Só que as duas foram — conferimos
+na nossa réplica do OMIE: 8501490524 é mesmo a remessa (PV 19467), e a
+de faturamento (8501490542, PV 19468) também foi excluída, no mesmo
+dia. Parece que a detecção examina só uma perna — e aí o caso inverso
+(faturamento excluído, remessa viva, mercadoria já saiu) passaria sem
+alerta. Além disso o status geral mudou para "Excluído no OMIE" num
+caso que, pela regra que vocês descreveram, só alertaria. Mesma
+mensagem em #16366 e #16367.
+
+🔴 *3. Pedido em alçada de Diretor aparece aprovável para o gestor na
+fila de Pedidos Futuros.* A correção de vocês funciona na fila de
+Ajustes de Preço — mas o #16592 tem entrega futura e caiu em "Pedidos
+Futuros — Aguardando Aprovação", onde "Aprovar e agendar" e "Rejeitar"
+aparecem habilitados, sem o aviso do Diretor. Conferimos logados como
+Gestor e como Diretor: a tela é **idêntica** nos dois perfis — o
+Gestor também vê os botões habilitados, sem indicação de que a
+decisão pertence ao Diretor. A checagem de `abaixo_minimo` está só no
+template de uma fila; o card de Futuros tem template próprio sem ela.
+O backend segura corretamente (confirmamos 403 "Este pedido requer
+decisão do diretor." ao chamar `/recusar/` como Gestor), mas a tela
+diz o contrário para os dois perfis. Testamos até o fim: clicamos em
+"Rejeitar" como Gestor, preenchendo o motivo no prompt nativo, e
+conferimos o pedido depois — `status` seguiu `pendente_aprovacao`,
+`aprovado_em` nulo, `motivo_recusa` vazio (o texto digitado não foi
+salvo em lugar nenhum). O dado está seguro, mas a tela **não avisa o
+usuário do erro**: sem toast, sem mensagem, ela só volta à mesma view
+como se nada tivesse acontecido — o Gestor fica sem saber se a ação
+foi aplicada ou não. Pedimos os dois ajustes juntos: (a) a mesma
+guarda proativa do card de Ajuste de Preço (esconder os botões e
+mostrar "Aguardando aprovação do Diretor" quando `nivel_aprovacao` for
+Diretor), estendida ao card de Futuros; (b) tratamento do 403 com
+mensagem de erro visível, para qualquer fila.
+
+🔴 *4. Dropdown do preço do concorrente — três ajustes.*
+(a) Os rótulos estão arredondados para inteiro: "R$ 15/kg" repetido
+dez vezes, indistinguível — os valores estão certos (15,50, 15,45…), só
+falta formatar com duas casas. (b) Produto sem mínimo cadastrado: PEAD
+EM5333AAH (lista 9,90) gera 199 opções até R$ 0,00, e PEAD (lista
+12,38) gera 249, terminando em 0,02 e −0,03 — preço negativo por
+acúmulo de ponto flutuante. Precisa de um piso quando não há mínimo
+(% da lista ou custo); do nosso lado, vamos cadastrar os mínimos, que
+resolve na raiz. (c) Família REC (lista R$ 0,01): uma única opção
+"R$ 0/kg" — grava, e o relato a R$ 0 entra no motor. Enquanto o
+reciclado não tiver preço, sugerimos o campo permitir digitação para
+essas famílias ou o motor ignorar relatos de família com lista ≤ 0,01.
+Detalhe menor: a última opção sai em 14,20, abaixo do mínimo 14,22.
+
+*5. Formulário de Novo Pedido não avisa a faixa nem o nível.* Vendedor
+e gestor só veem sinal para "abaixo do mínimo". A R$ 15,00 a coluna
+Ajuste mostra "—", não há aviso e o botão diz "Enviar ao OMIE" — a
+vendedora só descobre que caiu em aprovação depois de enviar. Pedimos
+o aviso antes do envio, com a faixa acionada e o nível (Gestor ou
+Diretor).
+
+*6. Alertas com código interno do OMIE.* As mensagens mostram
+"PV 8484647017" em vez do número do pedido (18651). O registro já tem
+o campo `omie_numero_pedido_visivel` — é só trocar o campo na mensagem.
+Vale para os Logs e para os tooltips da lista de pedidos.
+
+*7. Resíduos leves, só para a lista:* no card de Análises, "Por
+vendedor: Ana Camila — 17 perdas" sob o cabeçalho "4 perdas ·
+setembro" (janela diferente); "R$ R$" duplicado em três lugares
+(Cockpit "R$ R$ 0/disp.", Análises "recuperar R$ R$ 7.4M" e "Precisa
+R$ R$ 100k"); e `/api/sync/status` levando 3,9 s.
+
+*UMA PERGUNTA DE DESENHO*
+
+Pedido criado pelo próprio gestor na faixa entre mínimo e lista vai
+direto ao OMIE, sem passar por aprovação (o formulário do gestor só
+checa "abaixo do mínimo"). Faz sentido — quem lança é quem aprovaria —,
+mas significa desconto do gestor sem registro de aprovação. É
+intencional? Estamos bem com isso, só queremos confirmar que é
+desenho e não brecha.
+
+*LIMPEZA DE QA* (podem remover): pedidos #16592 (pendente Diretor),
+#16593 (pendente Gestor) e #16594 (enviado — o PV 19593 no OMIE nós
+mesmos apagamos), e o atendimento #101. Os testes antigos #6386,
+#6408, #6409 e #6540 também podem ir.
+
+E seguimos aguardando: a tela de clientes 90+ dias sem compra — pode
+entrar na próxima rodada, sim.
+
+Qualquer dúvida sobre os testes, é só chamar.

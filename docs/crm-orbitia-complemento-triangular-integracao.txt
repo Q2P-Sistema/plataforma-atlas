@@ -1,0 +1,86 @@
+Complemento ao requisito da triangular — par real analisado no OMIE
+Formatação WhatsApp: *texto* = negrito
+========================================================================
+
+Pessoal, complementando o requisito da triangular: fomos olhar um par
+real no OMIE (PVs 19211 e 19212, faturados em 25/08) e saíram algumas
+coisas que *mudam um pouco o que mandamos antes* — e uma delas afeta a
+correção que vocês já têm pronta. Por favor, leiam antes de subir o
+deploy.
+
+1️⃣ *Identificador ligando as duas pernas*
+
+Hoje nada no pedido diz "estes dois PVs são o mesmo negócio". O pedido
+é: no *codigo_pedido_integracao* (cabeçalho do PV), usar o padrão
+
+TRI-<idPar>-V  → perna de VENDA (faturamento)
+TRI-<idPar>-R  → perna de REMESSA
+
+Não é campo novo — vocês já vão preencher esse campo com o id de vocês
+de qualquer forma; é só combinar o formato. Ele mantém a unicidade que
+o OMIE exige, pareia as pernas pelo mesmo <idPar> e diz qual perna é
+qual. E a contraparte fica derivável: de TRI-4711-V montamos TRI-4711-R
+e consultamos direto, sem busca. Mantenham o valor curto — já
+esbarramos em limite de 30 caracteres em código de integração no OMIE.
+
+Se precisarem desse campo para um id próprio de vocês, avisem que
+usamos o *numero_contrato* (está 100% livre — zero uso em 3.981
+pedidos). Só não usar o numero_pedido_cliente, que carrega o PO real
+do cliente.
+
+2️⃣ *O bloco da empresa no texto da NF não é escolha livre — vem do
+PV par*
+
+Corrigindo o que descrevemos antes: no par real, cada perna cita a
+empresa da OUTRA perna, cruzado —
+
+• 19211 (venda, cliente RWM) → texto cita SOMMAPLAST, cliente do 19212
+• 19212 (remessa, cliente SOMMAPLAST) → texto cita RWM, cliente do 19211
+
+Ou seja, {RAZÃO SOCIAL} até {IE} sai do *cadastro do cliente do PV
+par*, não de um CNPJ digitado pelo vendedor. Com o <idPar> em mãos, o
+bloco inteiro é derivado — isso simplifica a implementação de vocês.
+(É também o que a legislação citada no texto exige: cada NF identifica
+o outro estabelecimento da operação.)
+
+3️⃣ *As flags de item são REQUISITO de criação — e definem qual texto
+vai em qual perna*
+
+Importante: não é só identificação, é como as pernas devem ser criadas
+— senão o estoque baixa duas vezes ou o financeiro duplica.
+
+Perna VENDA/faturamento → *nao_movimentar_estoque = "S"* nos itens
+  → texto que abre com "Mercadoria recebida..."
+Perna REMESSA → *nao_gerar_financeiro = "S"* nos itens
+  → texto que abre com "Mercadoria enviada..."
+
+Uma perna movimenta estoque (remessa), a outra gera financeiro
+(venda) — nunca as duas coisas na mesma perna. O CFOP não serve para
+identificar a perna: no par real, a venda saiu com 5.123 (venda à
+ordem), não com o 5.924 da remessa.
+
+4️⃣ *Sobre a redação — sigam com a revisada, sem medo*
+
+O texto em produção hoje tem um "que" sobrando ("Mercadoria que
+recebida"), não tem acentuação e cita a lei abreviada. O modelo
+revisado que mandamos corrige tudo. Do nosso lado, a validação vai
+procurar só as âncoras ("Remessa por Ordem de Terceiros", os números
+dos artigos, e a abertura recebida/enviada), tolerante a acento,
+espaçamento e pontuação — os dois padrões passam, então podem
+implementar a redação nova sem quebrar o que já existe.
+
+O que a validação vai barrar: pedido sem o texto, ou com placeholder
+não substituído — o caso que faz a NF sair incompleta para o fisco.
+
+Observação técnica: o OMIE grava a quebra de linha desse campo como
+"|", cortando no meio da frase (achamos "para fins de|industrializacao"
+no pedido real). Se forem ler ou comparar esse campo, normalizem.
+
+5️⃣ *O trecho da NF fica em branco mesmo*
+
+Confirmado: "com nossa NF nº ______, série ____, data __/__/____" sai
+em branco, exatamente como no modelo — preenchimento manual da nossa
+equipe após o faturamento. A validação não olha esse trecho.
+
+Nos avisem o que acharem do formato do identificador (item 1) antes de
+subir — é a peça que fecha a nossa validação do lado de cá.

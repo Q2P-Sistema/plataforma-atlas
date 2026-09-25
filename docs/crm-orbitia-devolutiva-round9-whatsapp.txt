@@ -1,0 +1,55 @@
+Devolutiva da revalidação do Round 11 — para envio imediato
+Formatação WhatsApp: *texto* = negrito
+========================================================================
+
+Oi, pessoal! Revalidamos as quatro entregas do round de hoje. Três
+passaram limpas — e a quarta travou num detalhe de payload que já
+localizamos para vocês:
+
+✅ *Busca da Empresa de Remessa: corrigida de verdade.* Testamos
+inclusive com um vendedor de carteira vazia — a busca é server-side e
+cobre a base inteira, nas duas telas (novo pedido e edição).
+
+✅ *Recebimentos Previstos: perfeito.* Tela renomeada, Pagar e Saldo
+fora da tela e da API, e as datas conferidas batem ao centavo com o
+OMIE.
+
+✅ *Conciliação de faturamento: fechou em ZERO.* Todos os 12
+vendedores de agosto batem exatos com o OMIE (o décimo segundo é o
+Guilherme, que a regra nova trouxe corretamente para agosto pela data
+de faturamento — nossa referência anterior é que o tinha deixado de
+fora). Os 6 pedidos da virada migraram para setembro, e setembro
+também fecha exato. Critério de aceite atingido.
+
+🔴 *4. O envio da triangular voltou a falhar — mas é ajuste de uma
+linha.* Criamos e aprovamos um pedido de teste (#16479); a perna de
+remessa foi rejeitada pelo OMIE com o erro, verbatim:
+
+"ERROR: Tag [CODIGO_BENEFICIO_FISCAL] não faz parte da estrutura do
+tipo complexo [icms]!"
+
+O `codigo_beneficio_fiscal` foi montado dentro do bloco `icms` do
+item — e o OMIE espera essa tag em *`inf_adic`* do item (o mesmo bloco
+do `nao_gerar_financeiro`). Confirmamos no payload real da nossa
+esteira de validação, que é a referência: o ICMS leva só o
+`cod_sit_trib_icms: "50"`, e o `codigo_beneficio_fiscal: "SP054020"`
+vai em `inf_adic`. Nenhum PV foi criado no OMIE (nada a limpar); o
+#16479 ficou "Aprovado + Falha OMIE" com o Reenviar disponível.
+
+Quando corrigirem, avisem que nós mesmos clicamos em *Reenviar* no
+#16479 — isso valida de uma vez a correção, o botão de reenvio e
+fecha a última pendência técnica. (Aliás, o erro de hoje veio como
+validação de schema do OMIE, não como bloqueio de cota — bom sinal de
+que a conta está liberada; o reenvio confirma.)
+
+E três observações menores para a fila de vocês, sem urgência:
+o campo *Cliente Faturado* ainda carrega a carteira client-side com
+page_size=200 e sem busca — a Ana Camila já tem 191 clientes, o teto
+está próximo (vale migrar para a mesma busca server-side da remessa);
+a *Empresa de Remessa não é limpa* ao trocar a origem do pedido,
+enquanto o Cliente Faturado é (reset inconsistente); e o Cockpit ficou
+~20 s em "Carregando..." num primeiro acesso hoje (resolveu no
+reload — pode ter relação com os timeouts de banco que aparecem nos
+logs de 30/08 e 01/09).
+
+Qualquer dúvida, é só chamar.

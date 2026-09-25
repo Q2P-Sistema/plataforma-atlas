@@ -170,6 +170,18 @@ export const movimentacao = stockbridgeSchema.table(
     dtPrevistaRetorno: date('dt_prevista_retorno'),
     movimentacaoOrigemId: uuid('movimentacao_origem_id'),
     custoUnitarioBrl: numeric('custo_unitario_brl', { precision: 14, scale: 6 }),
+    // Feature 015 (ACXEGDP-328, migration 0052): recebimento nacional a partir da NF.
+    // nf_chave_acesso e a identidade do documento (o numero colide entre fornecedores);
+    // nf_item_descricao amarra a movimentacao a linha da NF que a originou — 97,5% dos
+    // itens nao tem codigo de produto, entao a pendencia por item e por descricao.
+    // NULL em todas as linhas anteriores e no formulario manual (NF fora do espelho).
+    nfChaveAcesso: varchar('nf_chave_acesso', { length: 44 }),
+    nfItemDescricao: varchar('nf_item_descricao', { length: 500 }),
+    nfItemDescricaoNormalizada: varchar('nf_item_descricao_normalizada', { length: 500 }),
+    // quantidade_kg = conferida na balanca; quantidade_nf_kg = parcela da NF atribuida
+    // a esta movimentacao (proporcional ao peso em item distribuido entre N produtos).
+    quantidadeNfKg: numeric('quantidade_nf_kg', { precision: 12, scale: 3 }),
+    quantidadeDivergenciaKg: numeric('quantidade_divergencia_kg', { precision: 12, scale: 3 }),
     // ACXEGDP-344 (migration 0047): baixa do pedido de compra Q2P desta entrada
     // de importacao. NULL = nao se aplica.
     baixaPedidoQ2p: text('baixa_pedido_q2p').$type<
@@ -196,6 +208,17 @@ export const movimentacao = stockbridgeSchema.table(
     uniqueIndex('movimentacao_nf_saida_idempotencia_idx')
       .on(t.notaFiscal, t.empresa)
       .where(sql`tipo_movimento = 'saida_automatica' AND ativo = true AND empresa IS NOT NULL`),
+    // Migration 0052 (ACXEGDP-328): idempotencia do recebimento nacional por NF.
+    // Chave = documento (chave de acesso) + linha da NF (descricao normalizada) +
+    // produto. A descricao entra porque duas linhas distintas da mesma NF podem ser
+    // classificadas no MESMO produto (lotes) — sem ela a segunda colidiria e seria
+    // traduzida para 'ja_recebido', perdendo quantidade em silencio. Linhas sem chave
+    // (historico + formulario manual) ficam fora do indice.
+    uniqueIndex('movimentacao_nf_nacional_idempotencia_idx')
+      .on(t.nfChaveAcesso, t.nfItemDescricaoNormalizada, t.produtoCodigoQ2p)
+      .where(
+        sql`subtipo = 'compra_nacional' AND ativo = true AND nf_chave_acesso IS NOT NULL AND produto_codigo_q2p IS NOT NULL`,
+      ),
   ],
 );
 
@@ -217,6 +240,10 @@ export const aprovacao = stockbridgeSchema.table(
       | 'saida_quebra'
       | 'ajuste_inventario'
       | 'retorno_comodato'
+      // Feature 015 (migration 0052): baixa de item que entrou fora do Atlas
+      // (ex.: recebimento direto no OMIE). Sem movimentacao, sem lote, sem produto —
+      // identifica-se pela NF. Ver relaxamento de aprovacao_chk_lote_ou_sku.
+      | 'recebimento_externo'
     >(),
     quantidadePrevistaKg: numeric('quantidade_prevista_kg', { precision: 12, scale: 3 }),
     quantidadeRecebidaKg: numeric('quantidade_recebida_kg', { precision: 12, scale: 3 }),
@@ -240,6 +267,11 @@ export const aprovacao = stockbridgeSchema.table(
     movimentacaoId: uuid('movimentacao_id'),
     // Migration 0029: operador descarta rejeicao da inbox sem alterar status
     dispensadaEm: timestamp('dispensada_em', { withTimezone: true }),
+    // Feature 015 (migration 0052): identidade da NF para 'recebimento_externo' e
+    // para a tela do gestor exibir NF/item nas aprovacoes do recebimento nacional.
+    nfChaveAcesso: varchar('nf_chave_acesso', { length: 44 }),
+    notaFiscal: varchar('nota_fiscal', { length: 50 }),
+    nfItemDescricao: varchar('nf_item_descricao', { length: 500 }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -305,6 +337,39 @@ export const fornecedorExclusao = stockbridgeSchema.table(
     reincluidoEm: timestamp('reincluido_em', { withTimezone: true }),
     reincluidoPor: uuid('reincluido_por').references(() => users.id),
   },
+);
+
+// ── Correlacao produto x descricao do fornecedor (feature 015, migration 0052) ──
+// Memoria do De->Para entre a descricao livre do item da NF e os produtos do
+// catalogo Q2P. E 1:N por descricao: sucata entra como uma linha fiscal e e
+// classificada por grau em varios produtos (NF 66461 da ISOFORMA: 1 item -> 3).
+// Correcao e UPDATE/soft delete (ativo=false), nunca DELETE — trigger de auditoria.
+export const correlacaoProdutoFornecedor = stockbridgeSchema.table(
+  'correlacao_produto_fornecedor',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    fornecedorCnpj: varchar('fornecedor_cnpj', { length: 50 }).notNull(),
+    fornecedorNome: varchar('fornecedor_nome', { length: 255 }).notNull(),
+    descricaoNf: varchar('descricao_nf', { length: 500 }).notNull(),
+    descricaoNormalizada: varchar('descricao_normalizada', { length: 500 }).notNull(),
+    produtoCodigoQ2p: bigint('produto_codigo_q2p', { mode: 'number' }).notNull(),
+    produtoDescricao: varchar('produto_descricao', { length: 255 }).notNull(),
+    vezesUsada: integer('vezes_usada').notNull().default(0),
+    ultimaVezUsadaEm: timestamp('ultima_vez_usada_em', { withTimezone: true }),
+    criadoPor: uuid('criado_por').notNull().references(() => users.id),
+    atualizadoPor: uuid('atualizado_por').references(() => users.id),
+    ativo: boolean('ativo').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Um par (fornecedor, descricao) pode apontar para N produtos, mas cada produto
+    // aparece uma vez por par enquanto ativo.
+    uniqueIndex('correlacao_produto_fornecedor_ativa_idx')
+      .on(t.fornecedorCnpj, t.descricaoNormalizada, t.produtoCodigoQ2p)
+      .where(sql`ativo = true`),
+    index('correlacao_produto_fornecedor_lookup_idx').on(t.fornecedorCnpj, t.descricaoNormalizada),
+  ],
 );
 
 // ── Config Produto ─────────────────────────────────────────
@@ -473,3 +538,5 @@ export type NfPedidoMapa = typeof nfPedidoMapa.$inferSelect;
 export type NewNfPedidoMapa = typeof nfPedidoMapa.$inferInsert;
 export type NfPedidoFilhote = typeof nfPedidoFilhote.$inferSelect;
 export type NewNfPedidoFilhote = typeof nfPedidoFilhote.$inferInsert;
+export type CorrelacaoProdutoFornecedor = typeof correlacaoProdutoFornecedor.$inferSelect;
+export type NewCorrelacaoProdutoFornecedor = typeof correlacaoProdutoFornecedor.$inferInsert;

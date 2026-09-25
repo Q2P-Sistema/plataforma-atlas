@@ -60,6 +60,14 @@ services:
       # Data de corte (YYYY-MM-DD) p/ gap fiscal/físico no Cockpit. Sem set: 180d atrás.
       STOCKBRIDGE_FISCAL_CUTOFF_DATE: ${STOCKBRIDGE_FISCAL_CUTOFF_DATE}
 
+      # Feature 015 (ACXEGDP-328): recebimento nacional por NF.
+      # Data de corte FIXA (YYYY-MM-DD) = 7 dias antes da entrada em operacao. Sem ela
+      # a fila devolve 503 de proposito (nao ha default). Vazio equivale a ausente.
+      STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE: ${STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE:-}
+      # Baixa por "recebimento fora do Atlas" (aprovacao de gestor). Default ligado;
+      # 'false' desliga sem migration quando o modulo estiver validado.
+      STOCKBRIDGE_RECEBIMENTO_EXTERNO_ENABLED: ${STOCKBRIDGE_RECEBIMENTO_EXTERNO_ENABLED:-true}
+
       # Shared secret n8n ↔ Atlas (saídas automáticas + mapa NF↔pedido).
       # Deve ser IDÊNTICO ao ATLAS_INTEGRATION_KEY da instância n8n.
       ATLAS_INTEGRATION_KEY: ${ATLAS_INTEGRATION_KEY}

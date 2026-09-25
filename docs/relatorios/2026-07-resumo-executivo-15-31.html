@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Resumo Executivo — 15–31/07/2026</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f5f7;">
+<!-- ====== COPIE A PARTIR DAQUI (ou abra no navegador e copie o conteúdo renderizado) ====== -->
+<div style="max-width:720px;margin:0 auto;padding:24px;background:#ffffff;font-family:Arial,Helvetica,sans-serif;color:#172b4d;line-height:1.55;font-size:14px;">
+
+  <h1 style="font-size:22px;margin:0 0 4px;color:#172b4d;">Resumo Executivo — Atividades de 15–31/07/2026</h1>
+  <p style="margin:0 0 2px;"><strong>Responsável:</strong> Flavio Cicato Endo</p>
+  <p style="margin:0 0 2px;"><strong>Área:</strong> TI / Sistemas (Jira ACXEGDP)</p>
+  <p style="margin:0 0 2px;"><strong>Período:</strong> 15–31/07/2026</p>
+  <p style="margin:0 0 16px;color:#6b778c;font-size:12px;"><em>Fonte: Jira LiveMind — projeto ACXE - Gestão dos projetos e dos Sistemas.</em></p>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Números do período</h2>
+  <table style="border-collapse:collapse;width:100%;font-size:14px;">
+    <tr>
+      <th style="border:1px solid #dfe1e6;padding:8px 10px;text-align:left;background:#f4f5f7;">Indicador</th>
+      <th style="border:1px solid #dfe1e6;padding:8px 10px;text-align:right;background:#f4f5f7;">Valor</th>
+    </tr>
+    <tr>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;">Tarefas <strong>concluídas</strong></td>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;text-align:right;"><strong>19</strong></td>
+    </tr>
+    <tr>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;">Tarefas <strong>abertas</strong> no período</td>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;text-align:right;"><strong>15</strong> <span style="color:#6b778c;font-size:12px;">(4 concluídas na janela · 11 em andamento/backlog)</span></td>
+    </tr>
+    <tr>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;">Itens movimentados no total</td>
+      <td style="border:1px solid #dfe1e6;padding:8px 10px;text-align:right;">30</td>
+    </tr>
+  </table>
+
+  <div style="margin:16px 0;padding:12px 16px;background:#e3fcef;border-left:4px solid #00875a;border-radius:3px;">
+    <p style="margin:0;color:#006644;">Quinzena do <strong>go-live de produção do Atlas</strong>. A janela original de 24/07 foi <strong>cancelada horas antes</strong> por um bug de produção no StockBridge (NF presa em recebimento); replanejada para <strong>31/07</strong> com a versão <strong>v1.1.9</strong>, incluindo hardening de segurança pré-deploy. Volume de tickets baixo comparado às janelas anteriores — o esforço da quinzena foi concentrado em validação, artefatos de deploy e apagar incêndios, não em desenvolvimento de features novas.</p>
+  </div>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Principais entregas por frente</h2>
+  <p style="margin:0 0 12px;font-size:12px;color:#6b778c;">
+    Legenda:
+    <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span>
+    <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffae6;color:#974f00;">EM ANDAMENTO</span>
+    <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span>
+    <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ffebe6;color:#bf2600;">INCIDENTE</span>
+  </p>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">1. Go-live de produção do Atlas — replanejamento e execução</h3>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ffebe6;color:#bf2600;">INCIDENTE</span> <strong>ACXEGDP-320</strong> <em>(cancelado)</em> — Go-live PROD: planejamento original para <strong>24/07</strong> — cancelado horas antes da janela.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ffebe6;color:#bf2600;">INCIDENTE</span> <strong>ACXEGDP-324</strong> — Causa do cancelamento: NF 5376 presa em "Aguardando recebimento" — aprovação de divergência não gravava o produto na movimentação (hotfix 0bfc3da na tarde de 24/07; operação seguiu no UAT).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffae6;color:#974f00;">EM ANDAMENTO</span> <strong>ACXEGDP-321</strong> — GMUD formal do go-live replanejado para <strong>sexta 31/07, 17h30–21h00</strong>, release <strong>v1.1.9</strong>; aprovado por Flavio Endo em 27/07. Card segue aberto — <strong>PIR a registrar após o go/no-go de segunda 03/08</strong>.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span> <strong>ACXEGDP-322</strong> — Ativação da saída automática (n8n→Atlas) em produção — adiada, fora do escopo do go-live (decisão de 23/07).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span> <strong>ACXEGDP-323</strong> — OMIE IncluirPedido: omitir bloco de impostos para o OMIE calcular — a revisar nos fluxos e na integração do CRM.</li>
+  </ul>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">2. Correções pré-deploy (hardening de segurança e cauda da auditoria)</h3>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-311, 275–280, 252, 254, 255, 246, 247</strong> — últimos 12 achados da Auditoria Completa (ACXEGDP-238) fechados na manhã de 15/07, encerrando formalmente a leva de julho.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-313</strong> — mensagens de erro exibiam códigos internos do OMIE em vez de descrição do produto/local — corrigido no mesmo dia em que foi aberto.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffae6;color:#974f00;">EM ANDAMENTO</span> <strong>ACXEGDP-316</strong> — 2FA de gestor/diretor era barreira só client-side — corrigido no backend (PR #92) antes do deploy; card ainda não fechado no Jira.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffae6;color:#974f00;">EM ANDAMENTO</span> <strong>ACXEGDP-176</strong> — e-mail de divergência de recebimento exibia "25.000 kg" em vez de "25 Kg" — corrigido (PR #93); card ainda não fechado no Jira.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffae6;color:#974f00;">EM ANDAMENTO</span> <strong>ACXEGDP-183</strong> — posição fiscal: falso-positivo de importação por não considerar recebimento via legado — corrigido (PR #94); card ainda não fechado no Jira.</li>
+  </ul>
+  <div style="margin:8px 0 16px;padding:10px 14px;background:#f4f5f7;border-left:4px solid #6b778c;border-radius:3px;">
+    <p style="margin:0;color:#42526e;font-size:12.5px;">Três correções pré-deploy (316, 176, 183) já estão mergeadas e em produção via UAT, mas os cards no Jira seguem em "Tarefas pendentes" — higiene de board a fazer.</p>
+  </div>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">3. StockBridge — funcionalidade e produção</h3>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-115</strong> — recebimento de NF com mais de um produto — card fechado em 17/07 (funcionalidade já implementada desde a feature 013/migration 0046; fechamento é organização de board).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-177 / 178</strong> — melhorias de distribuição de campos e rateio de valor/Kg no recebimento de NF nacional.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ffebe6;color:#bf2600;">INCIDENTE</span> <strong>ACXEGDP-324</strong> — (ver seção 1) NF 5376 presa em produção — resolvido no mesmo dia.</li>
+  </ul>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">4. CRM (OrbitIA) — nova fase: semi-produção</h3>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span> <strong>ACXEGDP-325</strong> — CRM em <strong>semi-produção</strong> com vendedores e gestor reais desde 22/07 — achados de uso real, ainda em backlog de triagem.</li>
+  </ul>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">5. Infraestrutura — memory leak do n8n e backups</h3>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffae6;color:#974f00;">EM ANDAMENTO</span> <strong>ACXEGDP-326</strong> — restart programado do n8n_worker por limiar de memória (2200MB) — mitigação paliativa; o leak (~142MB/dia) persiste desde a correção anterior (ACXEGDP-308).</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span> <strong>ACXEGDP-327</strong> — causa raiz do leak ainda não identificada — próximo passo é heap snapshot diff.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span> <strong>ACXEGDP-317</strong> — pgbackweb→Backblaze B2: falha crônica de upload (a cada 1–4 dias) segue deixando pg_dump zumbi — backup automático continua quebrado; backup manual obrigatório na janela do go-live.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#e3fcef;color:#006644;">CONCLUÍDA</span> <strong>ACXEGDP-318 / 319</strong> — retry interno de 180s na Liquidação Automática de PV à Vista; correção de acks prematuros em consumidores RabbitMQ que matavam o redelivery.</li>
+  </ul>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">6. Outras iniciativas</h3>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#ebecf0;color:#42526e;">BACKLOG</span> <strong>ACXEGDP-314</strong> — Cockpit Executivo v2 ("onde está o meu dinheiro") — nova visão em paralelo ao cockpit atual.</li>
+    <li style="margin-bottom:5px;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffae6;color:#974f00;">EM ANDAMENTO</span> <strong>ACXEGDP-315</strong> — reunião com LogComex.</li>
+  </ul>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Em aberto para o início de agosto</h2>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:4px;"><strong>PIR do go-live a registrar após o go/no-go de segunda 03/08</strong> (-321)</li>
+    <li style="margin-bottom:4px;">CRM semi-produção — triagem dos achados de uso real (-325)</li>
+    <li style="margin-bottom:4px;">Causa raiz do leak de memória do n8n_worker (-327)</li>
+    <li style="margin-bottom:4px;">Backup automático do banco continua quebrado (-317)</li>
+    <li style="margin-bottom:4px;">Cockpit Executivo v2 (-314)</li>
+    <li style="margin-bottom:4px;">Fechar cards de hardening já entregue (-316/176/183) — pendência de higiene de board</li>
+  </ul>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Anexo — 19 tarefas concluídas entre 15–31/07</h2>
+  <table style="border-collapse:collapse;width:100%;font-size:13px;">
+    <tr>
+      <th style="border:1px solid #dfe1e6;padding:6px 10px;text-align:left;background:#f4f5f7;width:60px;">Data</th>
+      <th style="border:1px solid #dfe1e6;padding:6px 10px;text-align:left;background:#f4f5f7;width:110px;">Chave</th>
+      <th style="border:1px solid #dfe1e6;padding:6px 10px;text-align:left;background:#f4f5f7;">Tarefa</th>
+    </tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">24/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-324</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">StockBridge: NF 5376 presa em "Aguardando recebimento"</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">23/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-178</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Recebimento NF Nacional: valor da NF total + rateio de Kg por produto</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">23/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-177</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Melhorar distribuição dos campos no Recebimento de Nacionais</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">22/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-319</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Corrigir waits parqueáveis em consumidores RabbitMQ (ack prematuro)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">22/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-318</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Retry interno 180s no ExtraiCR_OMIE — Liquidação Automática PV à Vista</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">17/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-115</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Recebimento de NF com mais de um produto</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">15/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-313</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">Mensagens de erro exibiam códigos internos do OMIE</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">15/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-255</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[EML-22] Workflow "Resumo Executivo de TI": destinatários hardcoded</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">15/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-254</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[EML-11/15-21] Ajustes finos de e-mail</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">15/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-252</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[EML-03/04/05/12/19] Dados errados e enums crus nos e-mails</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">15/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-247</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[SEG-09] Sem rate limit em forgot/reset-password</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">15/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-246</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[SEG-08] Integration key (n8n) sem comparação timing-safe</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">15/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-280</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[MOD-13/16] Routers montados após error handler; sem validação Zod</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">15/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-279</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[MOD-10/11/12] Forecast: cache/N+1, preço inflado, demanda duplicada</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">15/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-278</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[MOD-07/08/09/14/15] Hedge: filtro de status, datas UTC, custo NDF fictício</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">15/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-277</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[MOD-06] Hedge: salvarSnapshot nunca chamado (código morto)</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">15/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-276</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[MOD-05] Hedge: gerarAlertas sem dedup</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">15/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-275</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[MOD-04] Hedge: recalcularBuckets nunca zera buckets obsoletos</td></tr>
+    <tr><td style="border:1px solid #dfe1e6;padding:6px 10px;">15/07</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">ACXEGDP-311</td><td style="border:1px solid #dfe1e6;padding:6px 10px;">[STK-01b] processarRecebimento: opId aleatório + OMIE pré-tx</td></tr>
+  </table>
+
+  <p style="margin:14px 0 0;font-size:12px;color:#6b778c;"><em>Gerado em 03/08/2026 a partir do Jira (livemind.atlassian.net).</em></p>
+
+</div>
+<!-- ====== FIM ====== -->
+</body>
+</html>
