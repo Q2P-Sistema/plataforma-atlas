@@ -33,11 +33,12 @@ export function iniciarCronsStockBridge(): void {
   logger.info('Cron registrado: alerta-comodato-vencido (0 8 * * * BR)');
 
   // ACXEGDP-344: baixa do pedido Q2P sem FIFO — quem ficou 'aguardando_vinculo'
-  // e tenta de novo a cada hora (o n8n carrega o mapa NF->pedido da FUP de hora
-  // em hora, em :00). Roda em :10 para pegar a carga recem-feita. Digest de
-  // atrasadas (> 3 dias) so na rodada das 08h.
+  // e tenta de novo a cada hora. O n8n (workflow "FUP para BD e StockBridge")
+  // carrega o mapa NF->pedido em :13, das 8h as 18h, seg-sab. Roda em :20 para
+  // pegar a carga recem-feita. Digest de atrasadas (> 3 dias) so na rodada das
+  // 08h. Respeita STOCKBRIDGE_BAIXA_PEDIDO_Q2P_ENABLED (desligada, nao faz nada).
   cron.schedule(
-    '10 * * * *',
+    '20 * * * *',
     () => {
       const horaBr = new Date().toLocaleString('en-US', {
         timeZone: 'America/Sao_Paulo',
@@ -48,5 +49,5 @@ export function iniciarCronsStockBridge(): void {
     },
     { timezone: 'America/Sao_Paulo' },
   );
-  logger.info('Cron registrado: baixa-pedido-aguardando-vinculo (10 * * * * BR)');
+  logger.info('Cron registrado: baixa-pedido-aguardando-vinculo (20 * * * * BR)');
 }

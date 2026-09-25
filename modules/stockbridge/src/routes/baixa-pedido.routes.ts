@@ -8,6 +8,7 @@ import {
   retentarBaixaPedidoQ2p,
   BaixaPedidoMovimentacaoNaoEncontradaError,
   BaixaPedidoNaoAplicavelError,
+  BaixaPedidoDesligadaError,
 } from '../services/baixa-pedido.service.js';
 import type { Perfil } from '../types.js';
 
@@ -120,6 +121,16 @@ router.post(
         res.status(409).json({
           data: null,
           error: { code: 'BAIXA_NAO_APLICAVEL', message: err.message },
+        });
+        return;
+      }
+      if (err instanceof BaixaPedidoDesligadaError) {
+        res.status(409).json({
+          data: null,
+          error: {
+            code: 'BAIXA_DESLIGADA',
+            message: 'A baixa de pedido de compra está desligada neste ambiente.',
+          },
         });
         return;
       }

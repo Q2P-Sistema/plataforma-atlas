@@ -12,6 +12,8 @@ const lockQuerySpy = vi.fn();
 const consultarSpy = vi.fn();
 const alterarSpy = vi.fn();
 const alertaSpy = vi.fn();
+// Mutável pelos testes da flag; hoisted porque vi.mock sobe para o topo do arquivo.
+const configBaixa = vi.hoisted(() => ({ habilitada: true }));
 
 vi.mock('@atlas/core', () => ({
   createLogger: () => ({
@@ -32,6 +34,7 @@ vi.mock('@atlas/core', () => ({
   getConfig: () => ({
     SEED_ADMIN_EMAIL: 'admin@atlas.local',
     APP_URL: 'https://atlas.test',
+    STOCKBRIDGE_BAIXA_PEDIDO_Q2P_ENABLED: configBaixa.habilitada,
   }),
   sendEmail: vi.fn().mockResolvedValue(undefined),
   buildEmailLayout: (o: { titulo?: string }) => ({
@@ -770,6 +773,34 @@ describe('política sem FIFO — aguardando vínculo (migration 0051)', () => {
     expect(vi.mocked(enviarDigestBaixasAguardandoVinculo)).toHaveBeenCalledWith(
       expect.objectContaining({ itens: [{ notaFiscal: '00005999', dias: 5 }] }),
     );
+  });
+  it('flag desligada: reprocessamento não consulta nada nem escreve no OMIE (UAT no ar após o go-live)', async () => {
+    const { reprocessarBaixasAguardandoVinculo } = await import('../services/baixa-pedido.service.js');
+    configBaixa.habilitada = false;
+    try {
+      poolQuerySpy.mockClear();
+      alterarSpy.mockClear();
+      const out = await reprocessarBaixasAguardandoVinculo({ enviarDigest: true });
+      expect(out).toEqual({ avaliadas: 0, concluidas: 0, semSaldo: 0, falhas: 0, aindaAguardando: 0, alertadas: 0 });
+      expect(poolQuerySpy).not.toHaveBeenCalled();
+      expect(alterarSpy).not.toHaveBeenCalled();
+    } finally {
+      configBaixa.habilitada = true;
+    }
+  });
+
+  it('flag desligada: retry do painel recusa (BaixaPedidoDesligadaError), dryRun continua permitido', async () => {
+    const { retentarBaixaPedidoQ2p, BaixaPedidoDesligadaError } = await import('../services/baixa-pedido.service.js');
+    configBaixa.habilitada = false;
+    try {
+      alterarSpy.mockClear();
+      await expect(
+        retentarBaixaPedidoQ2p({ movimentacaoId: 'mov-1', ator: { userId: 'u1', role: 'gestor' } }),
+      ).rejects.toBeInstanceOf(BaixaPedidoDesligadaError);
+      expect(alterarSpy).not.toHaveBeenCalled();
+    } finally {
+      configBaixa.habilitada = true;
+    }
   });
 });
 
