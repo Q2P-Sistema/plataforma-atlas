@@ -86,7 +86,9 @@ Esperado: uma linha por produto; **Σ valor = 155.375,00** e **Σ quantidade_nf_
 | **37365** | DUTRAFER | 25/06 | BORRA DE PP (5.040 kg) + PROTETOR PEAD (1.720 kg) | R$ 23.316,00 |
 | **1389** | ECOPLAST | 31/07 | DESPERDÍCIOS E RESÍDUOS (6 TON) + SUCATA DE PLÁSTICO (3.492 kg) | R$ 5.526,80 |
 
-A **37365 (DUTRAFER)** é a mais indicada: menor volume, os dois itens em KG e descrições bem distintas.
+Atenção à data do corte: a **37365 é de 25/06** e só entra com corte em `2026-06-25` — com `2026-07-30` ela **não aparece** (verificado em 25/09). Com o corte em `2026-07-30`, use a **17787**.
+
+> **Não é preciso aprovar para provar a idempotência.** A checagem de "recebida" olha a movimentação **ativa** (`m.ativo = true AND m.subtipo = 'compra_nacional'`), não o status no OMIE — o item sai da fila assim que o recebimento é **enviado**. Dá para fazer os 4 passos sem passar pelo gestor e sem gravar ajuste no ERP; depois é só o gestor rejeitar, que a movimentação vai para `ativo = false` e a NF volta à fila.
 
 1. Abra a NF e receba **apenas o primeiro item**.
 2. Volte à lista: a NF **continua lá**, agora indicando 1 de 2 itens pendentes.
