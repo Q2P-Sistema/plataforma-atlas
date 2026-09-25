@@ -15,6 +15,15 @@ O que já foi validado com OMIE real — receber sem digitar, correlação memor
 | 5 — Unidade **incoerente** | ⚠️ Sem caso disponível em UAT — ver nota abaixo |
 | 6 — Idempotência | 🔁 Instrução estava errada; refeita abaixo |
 
+> **Correção de método (25/09).** Ao levantar as NFs candidatas eu chequei "já recebida" **só pela via da chave de acesso**, esquecendo as outras duas vias da regra (número no histórico manual e baixa externa aprovada). Por isso sugeri NFs que já estavam recebidas — a 71347 da APTA, por exemplo, tinha sido recebida pelo formulário manual em 23/09. Refeito com as três vias, a fila real tem hoje **apenas 2 NFs pendentes**:
+>
+> | NF | Fornecedor | Emissão | Item | Quantidade |
+> |---|---|---|---|---|
+> | **6936** | TRADECONNEX | 11/09 | POLIETILENO 641 PRIME | 30.000 kg |
+> | **6937** | TRADECONNEX | 11/09 | POLIETILENO 641 PRIME | 3.000 kg |
+>
+> As duas têm **um item só** — por isso o cenário 6 precisa de uma NF fora da janela (abaixo).
+
 **Cenário 5, parte incoerente**: as NFs 59311/59321 da Zaraplast não apareceram na fila com o corte em `2026-08-28` — e **isso está certo**: as duas já haviam sido recebidas pelo formulário manual, e a checagem de duas vias as retirou da fila. O acaso validou o **SC-008** ("nenhuma NF já recebida pelo manual reaparece como pendente"). Varrendo o espelho desde maio/2026, **todos** os itens com unidade incoerente já foram recebidos pelo manual — não há caso testável em UAT hoje. A regra está coberta por Vitest (`unidade-nf.test.ts`, caso da NF 58067 com os números reais) e fica pendente de observação quando aparecer uma NF nova nessa condição.
 
 > ⚠️ **UAT está com `OMIE_MODE=real`: todo recebimento aprovado grava ajuste de estoque no OMIE de verdade.** Por isso o roteiro prefere as NFs de menor volume. Se não quiser mexer no estoque, pare antes da aprovação do gestor — o que se quer provar nos cenários 2, 3 e 5 acontece **antes** dela.
@@ -69,24 +78,29 @@ Esperado: uma linha por produto; **Σ valor = 155.375,00** e **Σ quantidade_nf_
 
 > A instrução anterior ("abra uma NF já recebida") estava errada: a fila **só lista NF com item pendente**, então uma NF inteiramente recebida não aparece mesmo — e é esse o comportamento correto. O sumiço da fila já é metade da prova; a outra metade se faz numa NF de vários itens.
 
-**NF sugerida: 71347 — APTA**, com **3 itens** pendentes:
-- `EXCEED M1018.RA … LOTE M3370A` — 6.750 kg
-- `EXCEED M1018.RK … LOTE M3372A` — 5.750 kg
-- `EXCEED M1018.RK … LOTE N3399A` — 17.750 kg
+**Não há NF multi-item pendente na janela atual** — as duas que sobraram têm um item só. É preciso recuar `STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE` para `2026-07-30` e usar uma destas, ainda não recebidas por nenhuma via:
 
-1. Abra a NF e receba **apenas o primeiro item** (6.750 kg).
-2. Volte à lista: a NF **continua lá**, agora indicando 2 de 3 itens pendentes.
-3. Reabra a NF: o item recebido aparece como **"Já recebido"**, sem permitir nova entrada; os outros dois seguem recebíveis.
-4. Receba os outros dois. Agora sim a NF **desaparece** da lista.
+| NF | Fornecedor | Emissão | Itens pendentes | Valor |
+|---|---|---|---|---|
+| **17787** | INTERACAO BENEFICIAMENTO | 30/07 | Borras de Polietileno (10 TON) + Tubos de Polietileno (11 TON) | R$ 91.320,00 |
+| **37365** | DUTRAFER | 25/06 | BORRA DE PP (5.040 kg) + PROTETOR PEAD (1.720 kg) | R$ 23.316,00 |
+| **1389** | ECOPLAST | 31/07 | DESPERDÍCIOS E RESÍDUOS (6 TON) + SUCATA DE PLÁSTICO (3.492 kg) | R$ 5.526,80 |
 
-Isso prova de uma vez: idempotência **por item** (não por NF), a fila parcial do FR-030, e que os dois itens de descrição quase igual (`RK`, lotes diferentes) não se confundem — eles só diferem no final do texto.
+A **37365 (DUTRAFER)** é a mais indicada: menor volume, os dois itens em KG e descrições bem distintas.
+
+1. Abra a NF e receba **apenas o primeiro item**.
+2. Volte à lista: a NF **continua lá**, agora indicando 1 de 2 itens pendentes.
+3. Reabra: o item recebido aparece como **"Já recebido"**, sem permitir nova entrada; o outro segue recebível.
+4. Receba o segundo. Agora a NF **desaparece** da lista.
+
+Isso prova idempotência **por item** (não por NF) e a fila parcial do FR-030. Devolva a data de corte depois.
 
 **Confere no banco:**
 ```sql
 SELECT nf_item_descricao, produto_codigo_q2p, quantidade_kg
-FROM stockbridge.movimentacao WHERE nota_fiscal = '71347' AND ativo;
+FROM stockbridge.movimentacao WHERE nota_fiscal = '37365' AND ativo;
 ```
-Esperado: uma linha por item, com as três descrições distintas.
+Esperado: uma linha por item, com as descrições distintas.
 
 ---
 
@@ -136,3 +150,25 @@ Esperado: bloqueio por unidade não conversível, encaminhando ao formulário ma
 
 - Devolva `STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE` para `2026-09-11` (ou a data do go-live).
 - Anote na ACXEGDP-328 o que passou e o que não passou. Com os cinco fechados, a T059 fica completa e a feature pode ser promovida para `main`.
+
+
+---
+
+## Anexo — a consulta certa para levantar candidatas
+
+A checagem de "já recebida" tem **três** vias (research D21). Levantar candidatas olhando só uma delas produz falsos pendentes:
+
+```sql
+-- pendente = NENHUMA das três vias
+WHERE NOT (
+  -- 1. caminho novo: chave de acesso + descrição normalizada do item
+  EXISTS (SELECT 1 FROM stockbridge.movimentacao m WHERE m.ativo AND m.subtipo='compra_nacional'
+          AND m.nf_chave_acesso = h.c_chave_nfe AND m.nf_item_descricao_normalizada = <desc_norm>)
+  -- 2. histórico do formulário manual: número da NF, sem chave (por NF inteira)
+  OR EXISTS (SELECT 1 FROM stockbridge.movimentacao m WHERE m.ativo AND m.subtipo='compra_nacional'
+             AND m.nf_chave_acesso IS NULL AND ltrim(m.nota_fiscal,'0') = ltrim(h.n_nf,'0') AND m.empresa='q2p')
+  -- 3. baixa por recebimento externo aprovada
+  OR EXISTS (SELECT 1 FROM stockbridge.aprovacao a WHERE a.tipo_aprovacao='recebimento_externo'
+             AND a.status='aprovada' AND a.nf_chave_acesso = h.c_chave_nfe)
+)
+```
