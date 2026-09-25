@@ -4,6 +4,19 @@
 
 O que já foi validado com OMIE real — receber sem digitar, correlação memorizada com reuso, rejeição e re-recebimento — está registrado em `tasks.md` (T059) e não se repete aqui.
 
+## Resultado da execução (25/09/2026)
+
+| Cenário | Resultado |
+|---|---|
+| 2 — Divergência de peso | ✅ OK |
+| 3 — 1 item → N produtos | ✅ OK |
+| 8 — Recebimento externo | ✅ OK |
+| 5 — Unidade **não conversível** (NF 67305, `UN`) | ✅ OK |
+| 5 — Unidade **incoerente** | ⚠️ Sem caso disponível em UAT — ver nota abaixo |
+| 6 — Idempotência | 🔁 Instrução estava errada; refeita abaixo |
+
+**Cenário 5, parte incoerente**: as NFs 59311/59321 da Zaraplast não apareceram na fila com o corte em `2026-08-28` — e **isso está certo**: as duas já haviam sido recebidas pelo formulário manual, e a checagem de duas vias as retirou da fila. O acaso validou o **SC-008** ("nenhuma NF já recebida pelo manual reaparece como pendente"). Varrendo o espelho desde maio/2026, **todos** os itens com unidade incoerente já foram recebidos pelo manual — não há caso testável em UAT hoje. A regra está coberta por Vitest (`unidade-nf.test.ts`, caso da NF 58067 com os números reais) e fica pendente de observação quando aparecer uma NF nova nessa condição.
+
 > ⚠️ **UAT está com `OMIE_MODE=real`: todo recebimento aprovado grava ajuste de estoque no OMIE de verdade.** Por isso o roteiro prefere as NFs de menor volume. Se não quiser mexer no estoque, pare antes da aprovação do gestor — o que se quer provar nos cenários 2, 3 e 5 acontece **antes** dela.
 
 > Antes de começar: a stack precisa estar com a imagem `uat` mais recente (há quatro correções desde o último deploy) e `OMIE_MODE=real` no Portainer. Ctrl+Shift+R no navegador antes de reprovar qualquer tela.
@@ -52,12 +65,28 @@ Esperado: uma linha por produto; **Σ valor = 155.375,00** e **Σ quantidade_nf_
 
 ---
 
-## Cenário 6 — Idempotência (FR-013)
+## Cenário 6 — Idempotência (FR-013) · **instrução corrigida**
 
-1. Abra uma NF **já recebida e aprovada** — **36565**, **59697** ou **59704**. O item deve aparecer como **"Já recebido"**, sem permitir nova entrada.
-2. A NF não pode estar de volta na lista de notas pendentes.
+> A instrução anterior ("abra uma NF já recebida") estava errada: a fila **só lista NF com item pendente**, então uma NF inteiramente recebida não aparece mesmo — e é esse o comportamento correto. O sumiço da fila já é metade da prova; a outra metade se faz numa NF de vários itens.
 
-**Sobre a colisão de número** (duas NFs de fornecedores diferentes com o mesmo número): não é testável em UAT hoje. Os únicos pares no espelho são `5682`, `6936`, `6937` e `5624` — e em todos a contraparte é **PLASTFIX** ou a **ACXE intercompany**, os dois fornecedores excluídos da fila por decisão de escopo. A regra está coberta por teste automatizado (a identidade é a chave de acesso, não o número) e só dá para exercitar na tela quando aparecer um par elegível.
+**NF sugerida: 71347 — APTA**, com **3 itens** pendentes:
+- `EXCEED M1018.RA … LOTE M3370A` — 6.750 kg
+- `EXCEED M1018.RK … LOTE M3372A` — 5.750 kg
+- `EXCEED M1018.RK … LOTE N3399A` — 17.750 kg
+
+1. Abra a NF e receba **apenas o primeiro item** (6.750 kg).
+2. Volte à lista: a NF **continua lá**, agora indicando 2 de 3 itens pendentes.
+3. Reabra a NF: o item recebido aparece como **"Já recebido"**, sem permitir nova entrada; os outros dois seguem recebíveis.
+4. Receba os outros dois. Agora sim a NF **desaparece** da lista.
+
+Isso prova de uma vez: idempotência **por item** (não por NF), a fila parcial do FR-030, e que os dois itens de descrição quase igual (`RK`, lotes diferentes) não se confundem — eles só diferem no final do texto.
+
+**Confere no banco:**
+```sql
+SELECT nf_item_descricao, produto_codigo_q2p, quantidade_kg
+FROM stockbridge.movimentacao WHERE nota_fiscal = '71347' AND ativo;
+```
+Esperado: uma linha por item, com as três descrições distintas.
 
 ---
 
