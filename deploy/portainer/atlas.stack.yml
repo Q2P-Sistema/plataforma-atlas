@@ -14,7 +14,7 @@ version: "3.8"
 services:
   # ── ATLAS API ─────────────────────────────────────────────
   atlas_api:
-    image: plasticosq2p/atlas-api:${ATLAS_VERSION:?defina ATLAS_VERSION (ex. v1.1.8)}
+    image: plasticosq2p/atlas-api:${ATLAS_VERSION:?defina ATLAS_VERSION (ex. v1.1.12)}
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
     environment:
       NODE_ENV: production
@@ -61,19 +61,30 @@ services:
       STOCKBRIDGE_FISCAL_CUTOFF_DATE: ${STOCKBRIDGE_FISCAL_CUTOFF_DATE}
 
       # Feature 015 (ACXEGDP-328): recebimento nacional por NF.
-      # Data de corte FIXA (YYYY-MM-DD) = 7 dias antes da entrada em operacao. Sem ela
-      # a fila devolve 503 de proposito (nao ha default). Vazio equivale a ausente.
+      # Data de corte FIXA (YYYY-MM-DD). No go-live: MESMO valor do UAT — a operacao
+      # nacional ja roda la e e transplantada; outra data esconderia NF pendente ou
+      # re-apresentaria NF ja baixada. Sem ela a fila devolve 503 (nao ha default).
       STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE: ${STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE:-}
       # Baixa por "recebimento fora do Atlas" (aprovacao de gestor). Default ligado;
       # 'false' desliga sem migration quando o modulo estiver validado.
       STOCKBRIDGE_RECEBIMENTO_EXTERNO_ENABLED: ${STOCKBRIDGE_RECEBIMENTO_EXTERNO_ENABLED:-true}
+
+      # ACXEGDP-344: baixa do pedido de compra Q2P no OMIE (AlteraPedCompra) apos o
+      # recebimento de importacao — disparo do fluxo, cron horario e retry do painel.
+      # Default ligado. 'false' = kill switch sem redeploy do compose (as entradas
+      # ficam 'pendente' e sao processadas depois; nada se perde).
+      STOCKBRIDGE_BAIXA_PEDIDO_Q2P_ENABLED: ${STOCKBRIDGE_BAIXA_PEDIDO_Q2P_ENABLED:-true}
+      # Destinatarios dos e-mails operacionais. Vazio = default do codigo
+      # (comex_acxe@acxe-polimeros.com.br / flavio.endo@acxe-polimeros.com.br).
+      STOCKBRIDGE_COMEX_EMAIL: ${STOCKBRIDGE_COMEX_EMAIL:-}
+      STOCKBRIDGE_OPS_EMAIL: ${STOCKBRIDGE_OPS_EMAIL:-}
 
       # Shared secret n8n ↔ Atlas (saídas automáticas + mapa NF↔pedido).
       # Deve ser IDÊNTICO ao ATLAS_INTEGRATION_KEY da instância n8n.
       ATLAS_INTEGRATION_KEY: ${ATLAS_INTEGRATION_KEY}
 
       # ── Feature Flags ────────────────────────
-      # Go-live 2026-07-24: os 4 módulos validados no ensaio UAT entram ligados.
+      # Go-live: os 4 módulos validados no UAT entram ligados.
       MODULE_HEDGE_ENABLED: ${MODULE_HEDGE_ENABLED:-true}
       MODULE_STOCKBRIDGE_ENABLED: ${MODULE_STOCKBRIDGE_ENABLED:-true}
       MODULE_BREAKINGPOINT_ENABLED: ${MODULE_BREAKINGPOINT_ENABLED:-true}
@@ -119,16 +130,16 @@ services:
       start_period: 30s
 
     networks:
+      # network_swarm_public: ingress do Traefik E a rede onde está o Postgres de
+      # PROD (:5432) — a mesma da stack n8n (P2 do runbook, informado em 25/09).
+      # Se o /health mostrar postgres down, conferir com
+      # `docker network inspect network_swarm_public` qual serviço é o Postgres.
       - network_swarm_public
       - atlas_internal
-      # TODO(go-live): confirmar no Portainer a rede overlay que alcança o
-      # Postgres de PROD (:5432) — usar a MESMA rede que a stack do n8n usa
-      # para gravar no espelho. Ajustar o nome abaixo e em `networks:` no fim.
-      - network_prod_swarm_public
 
   # ── ATLAS WEB ─────────────────────────────────────────────
   atlas_web:
-    image: plasticosq2p/atlas-web:${ATLAS_VERSION:?defina ATLAS_VERSION (ex. v1.1.8)}
+    image: plasticosq2p/atlas-web:${ATLAS_VERSION:?defina ATLAS_VERSION (ex. v1.1.12)}
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
 
     deploy:
@@ -211,17 +222,14 @@ services:
         delay: 5s
 
 # ── REDES DOCKER ────────────────────────────────────────────
-# network_swarm_public = ingress público do Traefik (roteia atlas.q2p.com.br).
+# network_swarm_public = ingress público do Traefik (roteia atlas.q2p.com.br)
+#                        + Postgres de PROD (:5432).
 # atlas_internal       = rede privada da stack (API <-> Redis).
-# network_prod_swarm_public = rede que alcança o Postgres de PROD — CONFIRMAR
-#   o nome real no Portainer antes do deploy (ver TODO acima).
 networks:
   network_swarm_public:
     external: true
   atlas_internal:
     driver: overlay
-  network_prod_swarm_public:
-    external: true
 
 # ── VOLUMES ─────────────────────────────────────────────────
 volumes:

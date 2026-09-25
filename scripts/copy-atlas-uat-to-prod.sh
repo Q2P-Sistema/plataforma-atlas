@@ -7,7 +7,7 @@
 #   atlas, stockbridge, shared, hedge, forecast, breakingpoint
 #
 # Pre-requisitos:
-#   - PROD ja com as 46+ migrations aplicadas (scripts/apply-migrations-prod.sh)
+#   - PROD ja com as 52+ migrations aplicadas (scripts/apply-migrations-prod.sh)
 #   - UAT CONGELADO (stack uat-atlas em scale 0) — a validacao exige igualdade
 #     EXATA de contagens, o que so vale com a origem parada
 #
@@ -369,6 +369,9 @@ UNION ALL SELECT 'stockbridge.movimentacao_legado', count(*) FROM stockbridge.mo
 UNION ALL SELECT 'stockbridge.aprovacao',           count(*) FROM stockbridge.aprovacao
 UNION ALL SELECT 'stockbridge.conferencia_local_map', count(*) FROM stockbridge.conferencia_local_map
 UNION ALL SELECT 'stockbridge.nf_pedido_mapa',      count(*) FROM stockbridge.nf_pedido_mapa
+UNION ALL SELECT 'stockbridge.baixa_pedido_q2p',    count(*) FROM stockbridge.baixa_pedido_q2p
+UNION ALL SELECT 'stockbridge.correlacao_produto_fornecedor', count(*) FROM stockbridge.correlacao_produto_fornecedor
+UNION ALL SELECT 'stockbridge.fornecedor_exclusao', count(*) FROM stockbridge.fornecedor_exclusao
 UNION ALL SELECT 'shared.audit_log',                count(*) FROM shared.audit_log
 ORDER BY tabela;
 SQL

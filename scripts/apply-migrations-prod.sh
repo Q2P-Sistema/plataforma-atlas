@@ -98,7 +98,10 @@ FROM unnest(ARRAY[
   'tbl_movimentacaoEstoqueHistorico_Q2P',
   'tbl_posicaoEstoque_ACXE',
   'tbl_posicaoEstoque_Q2P',
-  'tbl_locaisEstoques_Q2P'
+  'tbl_locaisEstoques_Q2P',
+  'tbl_pedidosCompras_Q2P',
+  'tbl_nf_header_Q2P',
+  'tbl_nf_itens_Q2P'
 ]) AS t
 WHERE to_regclass(format('public.%I', t)) IS NULL;
 SQL
@@ -109,6 +112,12 @@ if [ -n "$RUNTIME_MISSING" ]; then
 else
   echo "  ok objetos de runtime presentes"
 fi
+
+# 0052 roda CREATE EXTENSION IF NOT EXISTS unaccent (vai para public). Em PROD
+# ela ja existia antes do Atlas (conferido 25/09/2026) -> no-op. Se faltar, o
+# usuario precisa de CREATE no banco. Informativo: a reversao total NAO a remove.
+UNACCENT=$(prod_psql -tAc "SELECT coalesce((SELECT extversion FROM pg_extension WHERE extname='unaccent'), 'ausente');")
+echo "  info extensao unaccent em PROD: $UNACCENT (0052 so cria se ausente)"
 
 if $PRECHECK_ONLY; then
   echo

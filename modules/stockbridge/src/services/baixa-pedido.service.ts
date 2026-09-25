@@ -83,6 +83,14 @@ export class BaixaPedidoNaoAplicavelError extends Error {
   }
 }
 
+/** A baixa está desligada por STOCKBRIDGE_BAIXA_PEDIDO_Q2P_ENABLED=false. */
+export class BaixaPedidoDesligadaError extends Error {
+  constructor() {
+    super('Baixa de pedido Q2P desligada por configuração (STOCKBRIDGE_BAIXA_PEDIDO_Q2P_ENABLED=false)');
+    this.name = 'BaixaPedidoDesligadaError';
+  }
+}
+
 // ── Alocador FIFO (puro) ───────────────────────────────────────────────────────
 
 export interface PedidoCandidato {
@@ -1225,21 +1233,30 @@ function anexarObsEncerramento(obsAtual: string | null, saldoAnterior: number, m
 // ── Disparo fire-and-forget (hooks do recebimento/aprovação/retry) ─────────────
 
 /**
+ * STOCKBRIDGE_BAIXA_PEDIDO_Q2P_ENABLED (default ligado). Vale para TODO caminho
+ * automático ou de painel que escreve no pedido do OMIE: disparo do fluxo, cron
+ * horário e retry do painel. Desligar é o que permite deixar um ambiente no ar
+ * (ex.: UAT após o go-live) sem ele alterar pedidos no OMIE real.
+ */
+export function baixaPedidoQ2pHabilitada(): boolean {
+  try {
+    return (
+      (getConfig() as { STOCKBRIDGE_BAIXA_PEDIDO_Q2P_ENABLED?: boolean })
+        .STOCKBRIDGE_BAIXA_PEDIDO_Q2P_ENABLED !== false
+    );
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Dispara a baixa fora do caminho crítico: o recebimento já está persistido e
  * o ajuste dual concluído; falha aqui vira 'falha' na movimentação + alerta,
  * nunca erro para o operador. Respeita STOCKBRIDGE_BAIXA_PEDIDO_Q2P_ENABLED
  * (default ligado) — desligada, a movimentação fica 'pendente' para o painel.
  */
 export function dispararBaixaPedidoQ2p(args: { movimentacaoId: string; origem?: OrigemBaixa }): void {
-  let habilitada = true;
-  try {
-    habilitada =
-      (getConfig() as { STOCKBRIDGE_BAIXA_PEDIDO_Q2P_ENABLED?: boolean })
-        .STOCKBRIDGE_BAIXA_PEDIDO_Q2P_ENABLED !== false;
-  } catch {
-    habilitada = true;
-  }
-  if (!habilitada) {
+  if (!baixaPedidoQ2pHabilitada()) {
     logger.info(
       { movimentacaoId: args.movimentacaoId },
       'Baixa de pedido Q2P desligada por configuração — fica pendente',
@@ -1304,6 +1321,10 @@ export const DIAS_ALERTA_AGUARDANDO_VINCULO = 3;
 export async function reprocessarBaixasAguardandoVinculo(
   opts: { enviarDigest?: boolean } = {},
 ): Promise<ResultadoReprocessamento> {
+  if (!baixaPedidoQ2pHabilitada()) {
+    logger.info('Baixa de pedido Q2P desligada por configuração — reprocessamento não roda');
+    return { avaliadas: 0, concluidas: 0, semSaldo: 0, falhas: 0, aindaAguardando: 0, alertadas: 0 };
+  }
   const pool = getPool();
   const res = await pool.query<{ id: string; nota_fiscal: string; created_at: string }>(
     `SELECT m.id, m.nota_fiscal, m.created_at::text AS created_at
@@ -1471,6 +1492,8 @@ export async function retentarBaixaPedidoQ2p(args: {
   ator: { userId: string; role: string };
   dryRun?: boolean;
 }): Promise<ResultadoBaixa> {
+  // Simulação (dryRun) não escreve no OMIE — continua permitida com a flag desligada.
+  if (!args.dryRun && !baixaPedidoQ2pHabilitada()) throw new BaixaPedidoDesligadaError();
   return processarBaixaPedidoQ2p({
     movimentacaoId: args.movimentacaoId,
     origem: 'retry',
