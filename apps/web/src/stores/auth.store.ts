@@ -88,11 +88,23 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const res = await fetch('/api/v1/auth/me', {
         credentials: 'include',
+        // UAT 25/09/2026: sem isto, uma resposta 200 de HTML (fallback de SPA
+        // do nginx numa janela de deploy) ficava no cache do navegador e o /me
+        // seguinte lia o cache em vez da rede — sessao valida sendo tratada
+        // como deslogada por ~1h30 apos todo redeploy.
+        cache: 'no-store',
       });
 
       if (!res.ok) {
         set({ user: null, csrfToken: null, isAuthenticated: false, isLoading: false });
         return;
+      }
+
+      // Resposta 200 que nao e JSON (ex.: o mesmo fallback de SPA acima) nao e
+      // "deslogado" -- e uma falha de infra. Tratar como sessao invalida
+      // escondia o problema real atras de um redirect silencioso pro login.
+      if (!res.headers.get('content-type')?.includes('application/json')) {
+        throw new Error('Resposta inesperada do servidor ao verificar sessão');
       }
 
       const body = (await res.json()) as any;
