@@ -544,6 +544,16 @@ Ou seja: o OMIE mapeia `v_prod` ← `<vItem>` (já com IPI) e `v_tot_item` = `v_
 
 **Lição**: D3 comparou as somas dos dois campos e escolheu o maior por um raciocínio plausível ("tem mais coisa dentro") sem uma referência externa. O que decidiu foi o `<vNF>` de um XML real. Para campos de valor de espelho OMIE com nomes ambíguos, a validação mínima é fechar contra o total de um documento fiscal conhecido.
 
+## D27. A NF nacional é recebida por inteiro — não há seleção parcial de itens
+
+**Decisão** (usuário, 25/09/2026): a tela continua exigindo **todos** os itens da NF num envio só. Não haverá caixa de seleção por item.
+
+**Como apareceu**: ao tentar executar o cenário de idempotência por item em UAT, o operador constatou que a tela não deixa receber só um dos dois itens da NF 17787 — o botão é "Dar entrada em N itens" e a validação cobra produto e estoque para cada um. O comportamento foi herdado do recebimento de importação (feature 013, "a NF é recebida por inteiro").
+
+**Alternativa considerada e recusada**: caixa de seleção por item, marcada por padrão, enviando só os marcados. O backend já aceitaria — ele trata cada item de forma independente e a NF continuaria na fila com o que sobrasse (FR-030). Recusada porque **forçar a conferência da NF inteira de uma vez é a proteção contra meia-entrada esquecida**: com seleção parcial, um item deixado para trás depende de alguém lembrar de voltar. O custo é o operador esperar a carga inteira quando ela chega fracionada.
+
+**Consequência para o recebimento parcial**: ele continua existindo no backend, mas **só por falha** — a escrita é best-effort por item e o re-POST completa o que não gravou. Não é uma escolha do operador. Por isso o FR-030 (item na fila enquanto restar > 1 kg) segue valendo, e a idempotência **por item** não é exercitável pela tela: fica coberta por Vitest (`recebimento-nacional-nf.test.ts`, incluindo retomada em duas levas).
+
 ## Resumo das decisões
 
 | # | Decisão | Impacto |
@@ -573,4 +583,5 @@ Ou seja: o OMIE mapeia `v_prod` ← `<vItem>` (já com IPI) e `v_tot_item` = `v_
 | D23 | Corte fixo de 7 dias no go-live (substitui os 30 de D2) | Fila de estreia com 2 NFs; 94% de cobertura do prazo real |
 | D24 | Unidade conferida comparando as duas leituras da linha | 14 bloqueados, 1.612 liberados; critério de preço absoluto refutado |
 | D26 | Valor do item é `v_prod`; `v_tot_item` soma o IPI duas vezes | Corrige valor exibido e custo unitário gravado (~5–10% a mais em NF com IPI); achado no 1º teste em UAT |
+| D27 | NF recebida por inteiro; sem seleção parcial de itens | Protege contra meia-entrada esquecida; parcial só por falha, e a idempotência por item fica coberta por teste |
 | D25 | Rateio e pendência ancorados na quantidade da NF | Evita dobrar o valor no estoque e prender item na fila |
