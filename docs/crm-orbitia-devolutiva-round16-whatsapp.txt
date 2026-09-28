@@ -1,0 +1,62 @@
+Devolutiva da revalidação do Round 15 — para envio
+Formatação WhatsApp: *texto* = negrito
+========================================================================
+
+Oi, pessoal! Revalidamos o Round 15 hoje (21/09), com hard-refresh e
+captura de payload nas sessões de Gestor e Diretor. Quase tudo passou,
+e nada do que ficou impede o início. *Estamos liberando o CRM para o
+uso dos vendedores a partir de amanhã (22/09), como está.*
+
+*PRIMEIRO, UM PEDIDO URGENTE*
+
+Podem apagar hoje dois pedidos de teste nossos, ambos do cliente
+CLIENTE TESTE (Danilo), pendentes de aprovação do Diretor:
+• *#16680* (criado hoje na revalidação)
+• *#16596* (de 15/09; não estava na lista de limpeza anterior)
+Nenhum foi ao OMIE. Conferem os vínculos antes de apagar, como da
+outra vez. Amanhã começa o uso pelos vendedores e a fila de aprovação
+precisa estar limpa.
+
+*CONFIRMADO FUNCIONANDO* ✅
+
+• *Logs de Erro:* 71 registros agrupados (antes 26.597), com contador
+"×N" e data da última ocorrência; "Carregar mais" traz 21 sem
+duplicatas; o filtro de período agora filtra (71 → 70 → 35 → 0). O
+alerta de exclusão parou de ser regravado: última gravação em 19/09
+15:32, e duas leituras com 5 min de intervalo idênticas.
+• *Alerta de exclusão na triangular:* #16479, #16366 e #16367 agora
+citam as duas pernas ("A perna de remessa (OMIE #19467) e a de
+faturamento (OMIE #19468) foram excluídas…") e com o número visível.
+• *Pedidos Futuros em alçada de Diretor:* como Gestor, os botões
+"Aprovar e agendar" e "Rejeitar" não existem mais na página e o card
+mostra "Aguardando aprovação do Diretor"; como Diretor, os botões
+seguem habilitados. Testado com pedido novo (#16680, ABS GP22, 100 kg
+a R$ 14,00, entrega 30/09): status pendente_aprovacao, nivel
+"diretor", sem número OMIE.
+• *Novo Pedido (perfil Gestor):* tag "↓ mínimo", aviso com o nível
+Diretor e botão "Enviar para Aprovação".
+• *Dropdown do concorrente:* rótulos com 2 casas e sem repetição;
+sem valor negativo; com mínimo cadastrado a última opção é o próprio
+mínimo (ABS GP22: 15,50 … 14,50).
+• *Resíduos:* "R$ R$" corrigido; "Por vendedor" (4) bate com o
+cabeçalho (4 perdas · setembro).
+
+*PRÓXIMA RODADA DE MELHORIAS* (não bloqueiam o início)
+
+• *Logs de Erro:* registros antigos já sanados (junho a agosto) e o
+texto antigo da mensagem de exclusão (com código de 10 dígitos)
+convivem com os atuais; mensagens longas aparecem cortadas ("Revisar
+man…") sem como expandir; não há como marcar um erro como resolvido.
+
+• *Dropdown do preço do concorrente:* nenhuma mudança necessária — o
+que vimos nas famílias REC e nos produtos sem mínimo vem de
+preços de lista/mínimo que vamos cadastrar do nosso lado. Sobre a
+mensagem que chegou cortada ("E de fato para registrar um valor de
+con…"): se sobrou algo além disso, nos avisem.
+
+*PARA AMANHÃ*
+
+Estaremos na Q2P acompanhando o uso. Pode acontecer de aparecerem
+ajustes finos; vamos reportando em pequenos lotes durante os dias.
+
+Qualquer dúvida sobre os testes, é só chamar.

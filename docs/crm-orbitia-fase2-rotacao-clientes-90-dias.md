@@ -1,3 +1,9 @@
+> **CANCELADA em 23/09/2026 (decisão do Flavio).** Não haverá saída automática do cliente da
+> carteira do vendedor nem fila de "sem vendedor ativo" criada pela regra dos 90 dias. O
+> tratamento passou para o menu Clientes do gestor (clientes sem dono e sem venda em 90 dias,
+> com edição do vendedor e gravação no OMIE), incorporado ao item #89 do relatório da
+> Rodada 17. O texto abaixo fica só como histórico.
+
 # Fase 2 — Rotação de clientes inativos (regra dos 90 dias)
 
 **Oficializada em 03/09/2026 pelo Flavio, após alinhamento interno com a gestão comercial.**
