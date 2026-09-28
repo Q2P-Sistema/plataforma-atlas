@@ -14,7 +14,7 @@ version: "3.8"
 services:
   # ── ATLAS API ─────────────────────────────────────────────
   atlas_api:
-    image: plasticosq2p/atlas-api:${ATLAS_VERSION:?defina ATLAS_VERSION (ex. v1.1.12)}
+    image: plasticosq2p/atlas-api:${ATLAS_VERSION:?defina ATLAS_VERSION (ex. v1.1.13)}
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
     environment:
       NODE_ENV: production
@@ -139,7 +139,7 @@ services:
 
   # ── ATLAS WEB ─────────────────────────────────────────────
   atlas_web:
-    image: plasticosq2p/atlas-web:${ATLAS_VERSION:?defina ATLAS_VERSION (ex. v1.1.12)}
+    image: plasticosq2p/atlas-web:${ATLAS_VERSION:?defina ATLAS_VERSION (ex. v1.1.13)}
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
 
     deploy:
