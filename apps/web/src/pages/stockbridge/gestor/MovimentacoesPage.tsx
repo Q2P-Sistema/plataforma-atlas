@@ -15,6 +15,8 @@ interface Movimentacao {
   notaFiscal: string;
   tipoMovimento: string;
   subtipo: string | null;
+  /** Entrada nacional recebida pela fila de NF (feature 015) — gravada como entrada_manual. */
+  recebidaPorNf: boolean;
   quantidadeKg: number;
   loteCodigo: string | null;
   observacoes: string | null;
@@ -55,6 +57,15 @@ const TIPO_COLOR: Record<string, string> = {
   regularizacao_fiscal: 'bg-violet-50 text-violet-700 border-violet-200',
   ajuste: 'bg-atlas-muted/20 text-atlas-muted border-atlas-border',
 };
+
+/**
+ * O recebimento nacional pela fila de NF grava `entrada_manual` (mesmo tipo do
+ * lancamento a mao, diferenciado pela chave da NF). Na tela ele e entrada por
+ * NF — rotulo e cor de "Entrada NF"; "Entrada manual" fica so para o manual.
+ */
+function tipoExibido(m: Movimentacao): string {
+  return m.tipoMovimento === 'entrada_manual' && m.recebidaPorNf ? 'entrada_nf' : m.tipoMovimento;
+}
 
 function useApiFetch() {
   const csrfToken = useAuthStore((s) => s.csrfToken);
@@ -235,17 +246,17 @@ export function MovimentacoesPage() {
                           <div className="text-atlas-ink font-medium">{m.produtoDescricao}</div>
                           <div>
                             <span
-                              className={`text-[10px] px-2 py-0.5 rounded border ${TIPO_COLOR[m.tipoMovimento] ?? 'bg-atlas-muted/20 text-atlas-muted border-atlas-border'}`}
+                              className={`text-[10px] px-2 py-0.5 rounded border ${TIPO_COLOR[tipoExibido(m)] ?? 'bg-atlas-muted/20 text-atlas-muted border-atlas-border'}`}
                             >
-                              {rotulo(TIPO_MOVIMENTO_LABEL, m.tipoMovimento)}{m.subtipo ? ` · ${rotulo(SUBTIPO_LABEL, m.subtipo)}` : ''}
+                              {rotulo(TIPO_MOVIMENTO_LABEL, tipoExibido(m))}{m.subtipo ? ` · ${rotulo(SUBTIPO_LABEL, m.subtipo)}` : ''}
                             </span>
                           </div>
                         </div>
                       ) : (
                         <span
-                          className={`text-[10px] px-2 py-0.5 rounded border ${TIPO_COLOR[m.tipoMovimento] ?? 'bg-atlas-muted/20 text-atlas-muted border-atlas-border'}`}
+                          className={`text-[10px] px-2 py-0.5 rounded border ${TIPO_COLOR[tipoExibido(m)] ?? 'bg-atlas-muted/20 text-atlas-muted border-atlas-border'}`}
                         >
-                          {rotulo(TIPO_MOVIMENTO_LABEL, m.tipoMovimento)}{m.subtipo ? ` · ${rotulo(SUBTIPO_LABEL, m.subtipo)}` : ''}
+                          {rotulo(TIPO_MOVIMENTO_LABEL, tipoExibido(m))}{m.subtipo ? ` · ${rotulo(SUBTIPO_LABEL, m.subtipo)}` : ''}
                         </span>
                       )}
                     </td>
