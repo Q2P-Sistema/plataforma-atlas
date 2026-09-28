@@ -99,27 +99,19 @@ algum dos deploys recentes (em 31/08 o campo funcionava — os pedidos
 teste. Consequência extra: a cota da API OMIE segue sem prova nova
 (última evidência de envio: 01/09).
 
-## 4. Tela de monitoramento do gestor — clientes 90+ dias sem compra, PRÉ-go-live (requisito novo, 03/09, versão final)
+## 4. REDEFINIDO (23/09) — Menu Clientes do gestor: sem dono e sem venda em 90 dias (incorporado ao #89)
 
-**A regra de ocultar da carteira NÃO volta** (versão final após
-alinhamento Flavio×Rogério, 03/09 à noite) — o cliente permanece
-sempre visível para o vendedor atribuído no cadastro. O que entra é
-só uma tela de monitoramento:
+Substitui a versão de 03/09 (tela só de visualização, troca manual no OMIE). Decisão do
+Flavio em 23/09, para **correção imediata**, dentro do item #89 do relatório da Rodada 17:
 
-1. **Tela do gestor** (só visualização): clientes sem compra há 90+
-   dias — cliente, **vendedor atual do cadastro**, data da última
-   compra, dias sem compra.
-2. **Ação manual no OMIE**: o gestor troca o vendedor no cadastro do
-   cliente; quando a sincronização refletir, o cliente some da
-   carteira do vendedor A e aparece na do B — pelo fluxo normal de
-   atribuição, sem lógica nova de carteira.
-3. O cliente **sai da lista quando voltar a comprar**; sem qualquer
-   lógica de prazo/reatribuição.
-
-Para a OrbitIA é uma listagem com filtro — esforço mínimo. (A versão
-completa — saída automática da carteira, reatribuição dentro do CRM
-com write-back e relatório de contexto — fica para a fase 2, já
-especificada internamente.)
+1. A regra de sair da carteira aos 90 dias **não volta** e a **Fase 2 está cancelada**:
+   nenhum cliente sai da carteira do vendedor por regra do sistema.
+2. **Menu "Clientes" (gestor e diretor)** com três telas: cadastro de todos os clientes;
+   **clientes sem dono** (lista com opção de definir o vendedor); **clientes sem venda nos
+   últimos 90 dias** (o cliente segue com o vendedor; o gestor avalia os motivos e decide se
+   mantém ou altera o vendedor).
+3. A troca de vendedor feita no CRM é **gravada no cadastro do OMIE**, para a sincronização
+   não desfazer.
 
 ## 5. Confirmar o expurgo dos pedidos #16368/#16381
 
@@ -156,24 +148,33 @@ cobriu também o #16368), para constar no registro do go-live.
 - Limpeza: atendimento #79 / perda #19 (ALFA). O pedido #16479 FICA —
   é o veículo do reenvio que valida o #42.
 
-## 7. PRÓXIMA VERSÃO (melhoria) — Consulta de cliente existente: "já tem cadastro? quem atende?"
+## 7. MANDATÓRIO, VERSÃO DESTA SEMANA — Busca restrita: "esse cliente já é atendido? por quem?" (#47, escopo redefinido e priorizado em 23/09)
 
-Requisito do Flavio (04/09), para a próxima rodada de melhorias:
+Requisito do Flavio (04/09), **redefinido em 23/09** para uma versão restrita e
+**promovido a Mandatório, para a versão desta semana** (mesma data).
+A visibilidade da lista completa de clientes pelo vendedor segue **bloqueada**;
+o objetivo é só o vendedor saber se o cliente já é atendido e por quem, antes de
+contatá-lo.
 
-Hoje, no OMIE, é possível consultar se um cliente já tem cadastro e se
-já é atendido por algum vendedor. O CRM precisa oferecer essa mesma
-consulta — antes de prospectar ou cadastrar, o usuário verifica se o
-cliente (por nome/CNPJ) já existe na base e **qual vendedor o atende
-hoje**.
+A busca percorre a **base inteira** e devolve ao vendedor **somente**:
 
-Contexto que conversa com itens já registrados: o bloqueio de CNPJ
-duplicado (Round 10) impede o cadastro em dobro, mas não responde "de
-quem é este cliente" — a consulta evita conflito de carteira e
-retrabalho antes mesmo da tentativa de cadastro. Relaciona-se também
-com o cadastro leve de prospecto (roadmap) e com o dropdown que não
-diferencia cadastros duplicados. Definir na especificação: quem pode
-consultar (vendedor vê o dono da carteira de cliente que não é seu?)
-e o que é exibido (só "existe + vendedor responsável" ou a ficha).
+- o **nome do cliente**; e
+- o **nome do vendedor que já o atende**.
+
+**Não pode devolver** telefone, e-mail, contato, endereço, CNPJ, limite de
+crédito, histórico, pedidos nem qualquer outro dado cadastral. Sem listagem
+navegável e sem exportação. Motivo: impedir que o vendedor extraia informação que
+permita levar a carteira da empresa.
+
+Pontos de segurança a especificar:
+
+1. Filtro **no backend**: a API não pode devolver os demais campos e a tela
+   esconder. Nossa validação será pela resposta da API.
+2. Busca por termo informado, com mínimo de caracteres; termo vazio ou curinga
+   não pode listar a base.
+3. Limite de resultados por consulta e limite de frequência por usuário, contra
+   varredura por tentativas sucessivas.
+4. Auditoria de quem consultou o quê.
 
 ## 8. Achado #50 (11/09, mandatório) — pedido EXCLUÍDO no OMIE segue "Enviado ao OMIE" no CRM
 
