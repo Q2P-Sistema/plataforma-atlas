@@ -1,7 +1,7 @@
 # Runbook — Go-live do Atlas em PRODUÇÃO (atlas.q2p.com.br)
 
 > Janela: **sexta-feira a definir (GMUD ACXEGDP-321), a partir das 17h30** (empresa
-> parada no fim de semana). Release: **v1.1.12** (imagens `plasticosq2p/atlas-{api,web}:v1.1.12`).
+> parada no fim de semana). Release: **v1.1.13** (imagens `plasticosq2p/atlas-{api,web}:v1.1.13`).
 >
 > Histórico: as janelas de **24/07** (hotfix `0bfc3da`) e de **31/07** (entrada da baixa
 > do pedido de compra Q2P, ACXEGDP-344) **não foram executadas** — nada foi aplicado em
@@ -20,12 +20,13 @@
 | Recebimento nacional a partir da NF do fornecedor (fila do espelho, correlação fornecedor×item, baixa por recebimento externo) | ACXEGDP-328 | migration 0052; env `STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE` (obrigatória) |
 | Remoção de códigos internos do OMIE das telas | ACXEGDP-313 | — |
 | Flag de baixa passa a valer também no cron e no retry do painel; cron movido de `:10` para `:20` (carga da FUP pelo n8n é em `:13`) | GMUD 321 | v1.1.12 — permite religar o UAT sem escrever no OMIE |
+| Movimentações: recebimento nacional pela NF deixa de aparecer como "Entrada manual" (PR #108) | ACXEGDP-328 | v1.1.13 — só código, sem migration nem env |
 
 ## Resumo da estratégia
 
 **Promoção de ambiente com transplante de estado** — não é deploy greenfield:
 
-1. Promoção `uat`→`main` → tag `v1.1.12` → imagens de produção no Docker Hub.
+1. Promoção `uat`→`main` → tag `v1.1.13` → imagens de produção no Docker Hub.
 2. Janela: freeze do UAT → backup manual do PROD → **52 migrations**
    (`scripts/apply-migrations-prod.sh`) → transplante dos 6 schemas Atlas
    (`scripts/copy-atlas-uat-to-prod.sh`, igualdade exata) → stack `atlas` no
@@ -49,7 +50,7 @@
 | P8 | Anotar NFs-testemunha no UAT: importação recebida (ex.: NF 5406, `sem_saldo`) + 1 importação pendente na fila; **nacional** recebida pela fila por NF + 1 nacional pendente | exec | ☐ |
 | P9 | `scripts/apply-migrations-prod.sh --precheck-only` — 16/16 tabelas + objetos de runtime (inclui `tbl_nf_header_Q2P`, `tbl_nf_itens_Q2P`, `tbl_pedidosCompras_Q2P`) + `unaccent` | exec | ☐ (refazer na semana) |
 | P10 | Ferramentas: psql/pg_dump/pg_restore ≥ 16 (servidor 16.14); ≥20 GB livres em `~/backups/atlas-golive/` | exec | ☐ |
-| P11 | Promover `uat`→`main` com a correção da flag/cron → conferir tag `v1.1.12` e os manifests `atlas-api:v1.1.12` / `atlas-web:v1.1.12` no Docker Hub | exec | ☐ |
+| P11 | Promover `uat`→`main` com a correção da flag/cron → conferir tag `v1.1.13` e os manifests `atlas-api:v1.1.13` / `atlas-web:v1.1.13` no Docker Hub | exec | ☐ |
 | P12 | Baixas de pedido abertas no UAT: `aguardando_vinculo`, `pendente`, `falha` = 0 no dia da janela (em 25/09: 0; 1 `sem_saldo` conhecido, NF 5406) — o que sobrar é transplantado e tratado em PROD | exec | ☐ |
 
 ## Janela de sexta — sequência
@@ -57,7 +58,7 @@
 ```bash
 export PROD_USER=<user> PGPASSWORD_PROD='<senha>' PGPASSWORD_UAT='<senha>'
 export BK=~/backups/atlas-golive && mkdir -p $BK
-cd <repo> && git checkout v1.1.12
+cd <repo> && git checkout v1.1.13
 ```
 
 1. **[17:30] Freeze do UAT** — aviso no canal; n8n: desativar `ACXE - Exporta dados
@@ -104,7 +105,7 @@ cd <repo> && git checkout v1.1.12
    FROM stockbridge.movimentacao_legado WHERE ativo=true;   -- 870 em 25/09
    ```
 7. **[~19:15] Deploy da stack `atlas`** no Portainer (`deploy/portainer/atlas.stack.yml`
-   + env preenchido; `ATLAS_VERSION=v1.1.12`). Healthchecks verdes.
+   + env preenchido; `ATLAS_VERSION=v1.1.13`). Healthchecks verdes.
    **Atenção — stack legada**: já existiu uma stack `atlas` antiga (imagens `:latest`,
    rede `network_dev_swarm_public`, env de DEV com `SEED_ADMIN_*`). Se ainda existir no
    Portainer, **substituir o compose inteiro e LIMPAR o env antigo** — não herdar

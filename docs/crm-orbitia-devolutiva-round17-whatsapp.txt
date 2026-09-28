@@ -1,0 +1,52 @@
+Mensagem de WhatsApp — envio do PDF crm-orbitia-devolutiva-round17.pdf
+Formatação WhatsApp: *texto* = negrito
+========================================================================
+
+Oi, pessoal! Segue o relatório com o que apareceu nos dias 22 e 23/09,
+com o time de vendas usando o CRM na Q2P.
+
+São 14 itens *Mandatórios* e 13 de *melhoria*. Cada item traz o
+comportamento observado, o critério esperado e a evidência.
+
+*O que precisamos primeiro*
+
+• *#83 — Carteira:* clientes de outros vendedores aparecem na Carteira
+do Rodrigo e do Cleber. No PDF estão os quatro clientes, com CNPJ e o
+vendedor que consta no OMIE.
+• *#89 — Carteira:* cliente novo só aparece para o vendedor depois de
+existir uma venda em nome dele (exemplo: CHARLIE, vendedor Leonardo, que
+no OMIE está vinculado ao Leonardo). Também pedimos, para gestor e
+diretor, um menu Clientes com o cadastro de todos os clientes, a lista de
+clientes sem dono (com opção de definir o vendedor) e a lista de clientes
+sem venda em 90 dias (o cliente continua com o vendedor; o gestor decide
+se mantém ou troca). A troca precisa ser gravada no OMIE.
+• *#47 — Busca "quem atende?":* é para a *versão desta semana*. O
+vendedor busca na base inteira e recebe só o nome do cliente e o nome
+do vendedor. A resposta da API não pode trazer nenhum outro campo. O
+desenho de segurança está detalhado no PDF.
+• *#74 — Crédito:* o disponível no CRM difere do OMIE (PISANI: R$
+1.855.192 no CRM contra R$ 4.855.191,87 no OMIE).
+
+*Também são Mandatórios*
+
+• #79 — busca de cliente em Novo Pedido apaga o texto digitado.
+• #80 — preço do concorrente não aceita valor abaixo do nosso mínimo.
+• #84 — data do próximo contato não é respeitada nem exibida.
+• #85 — histórico completo dos contatos do vendedor.
+• #86 — Agenda (já constava na especificação: F32, F9 e F36).
+• #87 e #88 — Ajuste de Preço: ver clientes e valores dos relatos sem
+sugestão, e editar a sugestão antes de aprovar.
+• #43(e) — gestor ver o detalhe das perdas e os preços dos concorrentes.
+• #73 — nome do contato comercial não aparece na ficha do cliente.
+• #68 — gestor cadastrar e editar clientes.
+
+*Perguntas*
+
+No final do PDF há quatro perguntas (regra da Carteira no #83 e #89,
+origem do crédito no #74, gravação dos agendamentos no #86/#84 e prazo
+do #47). Uma resposta
+por escrito nos ajuda a validar no mesmo dia da entrega.
+
+Para os Mandatórios, pedimos a previsão de correção de cada um.
+
+Qualquer dúvida sobre os testes, é só chamar.

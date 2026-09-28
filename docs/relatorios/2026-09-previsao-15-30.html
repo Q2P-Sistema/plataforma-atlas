@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Previsão — 15/09 a 30/09/2026</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f5f7;">
+<!-- ====== COPIE A PARTIR DAQUI (ou abra no navegador e copie o conteúdo renderizado) ====== -->
+<div style="max-width:760px;margin:0 auto;padding:24px;background:#ffffff;font-family:Arial,Helvetica,sans-serif;color:#172b4d;line-height:1.55;font-size:14px;">
+
+  <h1 style="font-size:22px;margin:0 0 4px;color:#172b4d;">Previsão de Atividades e Horas — 15/09 a 30/09/2026</h1>
+  <p style="margin:0 0 2px;"><strong>Responsável:</strong> Flavio Cicato Endo</p>
+  <p style="margin:0 0 2px;"><strong>Área:</strong> TI / Sistemas (Jira ACXEGDP)</p>
+  <p style="margin:0 0 2px;"><strong>Período previsto:</strong> 15–30/09/2026</p>
+  <p style="margin:0 0 16px;color:#6b778c;font-size:12px;"><em>Base: backlog aberto no Jira LiveMind + padrão histórico de horas dos últimos relatórios (apontamento Tempo). Gerada em 18/09, com o período já em curso (3 dias decorridos) — as estimativas cobrem a janela inteira, não só o restante.</em></p>
+
+  <div style="margin:0 0 16px;padding:12px 16px;background:#fffae6;border-left:4px solid #ff991f;border-radius:3px;">
+    <p style="margin:0 0 8px;color:#974f00;"><strong>Metodologia:</strong> isto é uma estimativa, não um compromisso fechado — trabalho reativo (incidentes, suporte pontual) historicamente ocupa fatia relevante do tempo e não é previsível item a item. Combina três sinais: (1) itens recorrentes com padrão estável, (2) itens com momentum (tocados nas últimas 1-3 semanas), (3) itens "dormentes" há meses sem toque — baixa probabilidade de avançar sem decisão explícita de priorizar.</p>
+    <p style="margin:0;color:#974f00;"><strong>Atendimentos e ocorrências não previstas:</strong> toda janela histórica teve uma fatia de horas em incidentes, suportes pontuais e pedidos que não existiam no Jira no início do período (ex.: ACXEGDP-341/342/343/346/352 em agosto, 361/363 em setembro — nenhum desses existia quando a janela anterior começou). Essa previsão cobre o que já está mapeado; o volume real de "não planejado" tende a se repetir, mas por definição não dá para prever qual ocorrência específica vai aparecer.</p>
+  </div>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Estimativa de horas totais: ~80–90h</h2>
+  <p style="margin:0 0 16px;color:#42526e;">Os dois últimos períodos com apontamento de horas fecharam em 88h37 (15–31/08) e 83h58 (01–14/09) — uma faixa bem estável. Não há sinal de queda ou pico de demanda à vista, então a mesma faixa é o cenário mais provável para 15–30/09 — com uma ressalva: a semana de deploy do MVP (abaixo) concentra dedicação presencial que historicamente não aparece 1:1 no apontamento do Jira.</p>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Deploy do MVP — semana de 22 a 24/09 (presencial na Q2P)</h2>
+  <div style="margin:0 0 16px;padding:12px 16px;background:#deebff;border-left:4px solid #0052cc;border-radius:3px;">
+    <p style="margin:0;color:#0747a6;">O evento mais relevante desta janela: a <strong>próxima semana será a semana de deploy do MVP</strong>. Flavio estará <strong>presencial na Q2P</strong> entre os dias <strong>22 e 24/09 (estimativa)</strong> para acompanhar o time durante o deploy. Isso concentra atenção e disponibilidade nesses três dias — é o item de maior prioridade da quinzena, ainda que não tenha uma chave Jira própria de horas previsível.</p>
+  </div>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Frentes com maior probabilidade de consumir tempo</h2>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">1. CRM (OrbitIA) — deve seguir como a maior fatia</h3>
+  <ul style="margin:0 0 8px;padding-left:20px;">
+    <li style="margin-bottom:5px;"><strong>ACXEGDP-325</strong> (semi-produção) somou 27h06 e depois 28h03 nos dois últimos períodos — o padrão mais estável de todos. Tendência: continuar nessa faixa.</li>
+    <li style="margin-bottom:5px;"><strong>ACXEGDP-377</strong> (Fase 2 — CRM autossuficiente, eliminar acesso ao OMIE) acabou de abrir em 14/09; tende a começar a consumir horas próprias nesta janela, possivelmente somando-se ao volume de 325 em vez de substituí-lo.</li>
+  </ul>
+  <p style="margin:0 0 12px;color:#42526e;font-size:13px;"><strong>Estimativa: 25–35h combinadas</strong> — provável maior consumidor isolado do período, como em todas as janelas anteriores desde julho.</p>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">2. Verificação diária do sistema e atendimentos do dia a dia</h3>
+  <p style="margin:0 0 12px;color:#42526e;"><strong>ACXEGDP-333</strong> é o guarda-chuva onde entra praticamente todo o <strong>trabalho não planejável do período</strong>: checagem diária de banco de dados, VPS e Cloudflare; verificação dos backups nos servidores S3; rotinas de backup do banco de dados e do sistema; verificação de todos os ~89 fluxos ativos do n8n; verificação de erros de fluxos e correção ou tratativa adequada quando algum webhook fica sem processar; leitura e acompanhamento de issues e e-mail; pequenos suportes ao time; pequenas correções pontuais; e manutenção geral de toda a infraestrutura. É por isso que ela é a rotina mais estável do levantamento (17h48 → 15h26 nos dois últimos períodos) — reúne o que sempre existe, mesmo quando o Jira não tem um ticket aberto para cada ocorrência específica. <strong>Estimativa: 14–18h</strong>, mas esse número tende a subir se houver algum incidente maior de infra na janela (ex.: os episódios de bloat de banco e backup zumbi vistos em julho/agosto entraram por aqui antes de virarem tickets próprios).</p>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">3. Fechamento do "Espelha PC COMEX" (Rev 4.0)</h3>
+  <p style="margin:0 0 12px;color:#42526e;">6 das 8 etapas já concluídas em 10/09; restam <strong>ACXEGDP-373</strong> (testes em UAT) e <strong>ACXEGDP-375</strong> (desligar dupla escrita MySQL pós-cutover), com <strong>ACXEGDP-368</strong> como card-mãe fechando por último. É o tipo de trabalho quase pronto que historicamente fecha na janela seguinte. <strong>Estimativa: 4–8h para encerrar.</strong></p>
+
+  <h3 style="font-size:14px;margin:18px 0 4px;color:#0747a6;">4. Cauda da Reforma Tributária e da venda triangular</h3>
+  <p style="margin:0 0 12px;color:#42526e;"><strong>ACXEGDP-355</strong> (bloco IBS/CBS), <strong>362</strong> (replicar porteiro), <strong>363</strong> (PV com sucata pula crédito), <strong>365</strong> (perna par triangular — aguardando o CRM) e <strong>367</strong> (validar CST/alíquota com o fiscal) são todos de 01–09/09, ainda quentes. Historicamente esse tipo de lote fecha em 1-2 janelas. <strong>Estimativa: 6–12h</strong>, exceto o 365 que depende de uma resposta externa do CRM (pode não sair do lugar se a resposta não chegar).</p>
+
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Itens de escopo adiado (não bloqueiam o MVP)</h2>
+  <div style="margin:0 0 12px;padding:12px 16px;background:#f4f5f7;border-left:4px solid #6b778c;border-radius:3px;">
+    <p style="margin:0 0 8px;color:#42526e;"><strong>CRM Batch 2 — achados críticos e o bloqueante</strong> (ACXEGDP-225, 226, 227 — Cadastro de Cliente, Novo Pedido, Configurações de Comissão) seguem parados desde 01/07, sem toque em 3 relatórios quinzenais. <strong>Decisão de escopo:</strong> esse lote será tratado na <strong>segunda fase de desenvolvimento</strong> do CRM — nada aqui bloqueia o MVP que vai a deploy nesta janela (22–24/09).</p>
+    <p style="margin:0;color:#42526e;">ACXEGDP-176 / 183 / 316 (hardening pré-deploy de julho) seguem "Tarefas pendentes" no Jira apesar do código já estar em produção há quase 2 meses — é só higiene de board, não risco técnico, mas continua pendente relatório após relatório.</p>
+  </div>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Itens que provavelmente não vão avançar (backlog dormente)</h2>
+  <p style="margin:0 0 8px;color:#42526e;">Sem nenhum toque registrado desde a criação (fevereiro a maio/2026) em nenhum dos relatórios desde junho — baixa probabilidade de movimento salvo decisão explícita de priorizar:</p>
+  <ul style="margin:0 0 8px;padding-left:20px;color:#42526e;">
+    <li style="margin-bottom:4px;">ACXEGDP-9/12/18/20 (Planejador de Compras / itemização Comex / DTA)</li>
+    <li style="margin-bottom:4px;">ACXEGDP-49 (aguardando resposta da OMIE sobre filtro de API)</li>
+    <li style="margin-bottom:4px;">ACXEGDP-62/88/108/110/116/122/124/125/131/138 (ajustes diversos de fluxo, documentação, infra)</li>
+    <li style="margin-bottom:4px;">ACXEGDP-150 (StockBridge inventário físico), ACXEGDP-157 (posição fiscal cockpit), ACXEGDP-200 (CRM pedidos ACXE pós-MVP), ACXEGDP-314 (Cockpit Executivo v2), ACXEGDP-322 (ativar saída automática), ACXEGDP-328 (recebimento nacional automático via NF — spec grande, decisões de escopo ainda em aberto)</li>
+  </ul>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;border-bottom:2px solid #dfe1e6;padding-bottom:4px;color:#172b4d;">Itens de prazo externo a vigiar</h2>
+  <p style="margin:0 0 8px;color:#42526e;">Podem puxar horas se o prazo se aproximar:</p>
+  <ul style="margin:0 0 8px;padding-left:20px;color:#42526e;">
+    <li style="margin-bottom:4px;"><strong>n8n 3.0</strong> (ACXEGDP-335/337/339) — release prevista para outubro/2026; ainda sem movimento desde 10/08, mas a proximidade do prazo pode forçar retomada nesta janela ou na seguinte.</li>
+    <li style="margin-bottom:4px;"><strong>Upgrade PostgreSQL do n8n</strong> (ACXEGDP-348) e <strong>endurecimento anti-zumbi dos 9 fluxos de staging</strong> (ACXEGDP-351) — pendências de infraestrutura sem prazo formal, mas relacionadas a incidentes já resolvidos (execution_data bloat).</li>
+  </ul>
+
+  <p style="margin:14px 0 0;font-size:12px;color:#6b778c;"><em>Gerado em 18/09/2026 a partir do Jira (livemind.atlassian.net) e do histórico de apontamento de horas dos relatórios de 15–31/08 e 01–14/09.</em></p>
+
+</div>
+<!-- ====== FIM ====== -->
+</body>
+</html>

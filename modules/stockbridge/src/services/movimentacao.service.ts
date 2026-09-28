@@ -19,6 +19,12 @@ export interface MovimentacaoListItem {
   notaFiscal: string;
   tipoMovimento: string;
   subtipo: string | null;
+  /**
+   * Feature 015: entrada nacional recebida pela fila de NF (tem chave de acesso).
+   * Grava o mesmo tipo `entrada_manual` do lancamento a mao — a tela usa este
+   * campo para nao rotular o recebimento pela NF como manual.
+   */
+  recebidaPorNf: boolean;
   quantidadeKg: number;
   loteCodigo: string | null;
   observacoes: string | null;
@@ -84,6 +90,7 @@ export async function listar(filtros: ListarFiltros): Promise<ListarResultado> {
     nota_fiscal: string;
     tipo_movimento: string;
     subtipo: string | null;
+    recebida_por_nf: boolean;
     quantidade_kg: string;
     observacoes: string | null;
     created_at: string;
@@ -115,6 +122,7 @@ export async function listar(filtros: ListarFiltros): Promise<ListarResultado> {
       m.nota_fiscal,
       m.tipo_movimento,
       m.subtipo,
+      (m.nf_chave_acesso IS NOT NULL) AS recebida_por_nf,
       m.quantidade_kg::text,
       m.observacoes,
       m.created_at::text,
@@ -174,6 +182,7 @@ export async function listar(filtros: ListarFiltros): Promise<ListarResultado> {
     notaFiscal: r.nota_fiscal,
     tipoMovimento: r.tipo_movimento,
     subtipo: r.subtipo ?? null,
+    recebidaPorNf: r.recebida_por_nf === true,
     quantidadeKg: Number(r.quantidade_kg),
     loteCodigo: r.lote_codigo ?? null,
     observacoes: r.observacoes ?? null,
