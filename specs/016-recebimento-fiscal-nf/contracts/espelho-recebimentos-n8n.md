@@ -86,7 +86,7 @@ Cron `0 23,53 * * * *` (minutos :23 e :53 — fora de :08/:38 do sync de NF, :13
 
 | Passagem | Parâmetros | Para quê |
 |---|---|---|
-| A — alterados | `dtAltDe = TO_CHAR(COALESCE(MAX(synced_at), now()-'3 days')::date - 2, 'DD/MM/YYYY')`, `dtAltAte = hoje`, `cExibirDetalhes: "S"`, `nRegistrosPorPagina: 100`, paginar por `nTotalPaginas` | conclusões, cancelamentos, mudanças de etapa |
+| A — alterados | `dtAltDe = TO_CHAR(COALESCE(MAX(synced_at), now()-'60 days')::date - 2, 'DD/MM/YYYY')` (primeira rodada, com a tabela vazia = carga dos últimos ~60 dias), `dtAltAte = hoje`, `cExibirDetalhes: "S"`, `nRegistrosPorPagina: 100`, paginar por `nTotalPaginas` | conclusões, cancelamentos, mudanças de etapa |
 | B — pendentes | `cEtapa: "40"`, `cExibirDetalhes: "S"`, `nRegistrosPorPagina: 100`, sem data | NF recém-chegada da SEFAZ (pode não ter `dAlt`); ~8 registros em 60 dias |
 
 Passagem A primeiro, B depois (B sobrescreve com o estado mais recente para as pendentes). Upsert de cabeçalho **antes** dos itens (FK). Reconciliação antes do upsert do cabeçalho:
@@ -96,7 +96,7 @@ DELETE FROM public."tbl_recebimentoNFe_Q2P" r USING (VALUES …) AS v(n_id_receb
  WHERE r.c_chave_nfe = v.c_chave_nfe AND r.n_id_receb <> v.n_id_receb;
 ```
 
-`ON CONFLICT (n_id_receb) DO UPDATE SET … , synced_at = now()`; itens `ON CONFLICT (n_id_receb, n_sequencia) DO UPDATE`. Dedupe defensivo de itens por `(n_id_receb, n_sequencia)` antes de montar o SQL.
+`ON CONFLICT (n_id_receb) DO UPDATE SET … , synced_at = now()`; itens `ON CONFLICT (n_id_receb, n_sequencia) DO UPDATE SET … , synced_at = now()`. **Sempre** atualizar `synced_at`, mesmo quando o conteúdo não mudou (sem `WHERE … IS DISTINCT FROM`): o health do Atlas (`GET /api/v1/stockbridge/health`, campo `recebimentoNfeEspelho`) mede a defasagem do espelho por `max(synced_at)` e marca `degraded` acima de 120 min — como a passagem A relê a janela de 2 dias a cada rodada, o `max(synced_at)` avança sozinho enquanto houver recebimento alterado nesse intervalo. Dedupe defensivo de itens por `(n_id_receb, n_sequencia)` antes de montar o SQL.
 
 Duração esperada: 2–4 chamadas OMIE, < 30 s sem o Wait do padrão antigo (não é necessário Wait fixo de 60 s aqui; se adotado por paridade, manter < 65 s — ACXEGDP-319).
 
@@ -113,5 +113,7 @@ Duração esperada: 2–4 chamadas OMIE, < 30 s sem o Wait do padrão antigo (n�
 
 - Primeira rodada: `SELECT c_etapa, c_recebido, c_cancelada, count(*) FROM public."tbl_recebimentoNFe_Q2P" GROUP BY 1,2,3` traz as 8 linhas na etapa 40 da sonda de 02/10/2026 (ou o estado atual) e as alteradas na janela.
 - Após concluir um fiscal pelo Atlas: na rodada seguinte, a linha da NF passa a `c_recebido = 'S'`, `c_etapa = '60'`, `c_usuario_rec = 'WEBSERVICE'`, itens com `c_ignorar_item = 'S'` e `c_nao_gerar_mov_estoque = 'S'`.
-- Nenhuma linha com `c_chave_nfe` nula; nenhuma chave duplicada.
+- Já na primeira rodada (janela de ~60 dias): a NF **6842** da Replas, concluída pelo Atlas via API em 02/10/2026 07:39, aparece com `c_recebido = 'S'`, `c_etapa = '60'`, `c_usuario_rec = 'WEBSERVICE'` e o item com `c_ignorar_item = 'S'`, `c_nao_gerar_mov_estoque = 'S'`, `c_descricao_produto = 'SUCATA PLASTICO'`, `c_cfop_entrada = '1.102'`, `v_total_item = 203400.00`; a **6580**, concluída pela tela, com `c_recebido = 'S'` e `c_usuario_rec = 'P000548700'`.
+- Duas rodadas seguidas: a segunda não duplica linha e atualiza `synced_at`.
+- Nenhuma linha com `c_chave_nfe` nula; nenhuma chave duplicada; nenhum item sem cabeçalho.
 - Spec do workflow no `backup-workflow-n8n` com: motivo (ACXEGDP-395), DDL, mapeamento, cron, trava, e a nota de que `dtAlt` pode não alcançar recém-criados (razão da passagem B).
