@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ACXEGDP-396: o recebimento nacional pela fila de NF grava tipo_aprovacao
 // 'entrada_manual' (mesmo do lançamento à mão). Os e-mails ao operador passam a
-// identificar a NF e os dados do item quando a aprovação tem chave de NF.
+// identificar a NF e os dados do item — pela fila (com chave de NF) e também no
+// formulário manual (NF digitada, sem fornecedor nem item).
 
 const { sendEmailMock, loggerMock, executeMock } = vi.hoisted(() => ({
   sendEmailMock: vi.fn().mockResolvedValue(undefined),
@@ -36,6 +37,7 @@ import {
 } from '../services/notificacao.service.js';
 
 const linhaNf6842 = {
+  por_nf: true,
   nota_fiscal: '6842',
   fornecedor: 'REPLAS COMERCIAL LTDA',
   item_nf: 'SUCATA PLASTICO',
@@ -74,13 +76,30 @@ describe('ACXEGDP-396 — e-mail de aprovação ao operador', () => {
     expect(html).toContain('[Local: SANTO ANDRÉ (NACIONAL)]');
   });
 
-  it('entrada manual sem NF (formulário à mão) continua "Entrada manual"', async () => {
-    executeMock.mockResolvedValue({ rows: [] });
+  it('formulário manual: continua "Entrada manual", agora com NF digitada, produto, quantidade e local', async () => {
+    executeMock.mockResolvedValue({
+      rows: [{ por_nf: false, nota_fiscal: '12345', fornecedor: null, item_nf: null, produto: 'PP H301', quantidade_kg: '1250.500', local: 'SANTO ANDRÉ (NACIONAL)' }],
+    });
 
     await enviarNotificacaoAprovacaoOperador({ operadorUserId: 'u1', aprovacaoId: 'a1', tipoAprovacao: 'entrada_manual' });
 
     const { subject, html } = ultimoEmail();
-    expect(subject).toBe('StockBridge — Lançamento aprovado (Entrada manual)');
+    expect(subject).toBe('StockBridge — Entrada manual aprovada — NF 12345');
+    expect(html).toContain('Entrada manual');
+    expect(html).not.toContain('Recebimento nacional (NF)');
+    expect(html).toContain('[NF: 12345]');
+    expect(html).toContain('[Produto: PP H301]');
+    expect(html).toContain('[Quantidade: 1.250,5 kg]');
+    expect(html).toContain('[Local: SANTO ANDRÉ (NACIONAL)]');
+  });
+
+  it('outro tipo de aprovação (sem contexto): assunto e corpo genéricos', async () => {
+    executeMock.mockResolvedValue({ rows: [] });
+
+    await enviarNotificacaoAprovacaoOperador({ operadorUserId: 'u1', aprovacaoId: 'a1', tipoAprovacao: 'saida_amostra' });
+
+    const { subject, html } = ultimoEmail();
+    expect(subject).toBe('StockBridge — Lançamento aprovado (Amostra/Brinde)');
     expect(html).not.toContain('[NF:');
   });
 
@@ -96,6 +115,18 @@ describe('ACXEGDP-396 — e-mail de aprovação ao operador', () => {
 });
 
 describe('ACXEGDP-396 — e-mail de rejeição ao operador', () => {
+  it('formulário manual rejeitado: assunto com a NF digitada', async () => {
+    executeMock.mockResolvedValue({
+      rows: [{ por_nf: false, nota_fiscal: '777', fornecedor: null, item_nf: null, produto: 'PP H301', quantidade_kg: '500', local: '11.2' }],
+    });
+
+    await enviarNotificacaoRejeicaoOperador({
+      operadorUserId: 'u1', aprovacaoId: 'ap2', loteId: 'mov2', motivo: 'NF errada', fluxo: 'recebimento', tipoAprovacao: 'entrada_manual',
+    });
+
+    expect(ultimoEmail().subject).toBe('StockBridge — Entrada manual rejeitada — NF 777');
+  });
+
   it('recebimento nacional por NF: assunto com NF, dados do item e link para a Fila de Recebimento', async () => {
     executeMock.mockResolvedValue({ rows: [linhaNf6842] });
 

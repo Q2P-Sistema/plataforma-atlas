@@ -595,16 +595,20 @@ export async function resolverEmailOperador(userId: string): Promise<string | nu
 }
 
 /**
- * ACXEGDP-396: contexto de negócio do recebimento nacional pela fila de NF
- * (feature 015). Ele grava `tipo_aprovacao = 'entrada_manual'`, o mesmo do
- * lançamento à mão, diferenciado pela chave da NF — sem isto os e-mails ao
- * operador diziam "Entrada manual" e não identificavam NF, produto nem
- * quantidade. `null` para tudo que não é recebimento nacional por NF (inclusive
- * a baixa por recebimento externo, que também tem chave) e em falha de leitura:
- * o e-mail cai no texto genérico, nunca deixa de sair.
+ * ACXEGDP-396: contexto de negócio de uma entrada nacional (`tipo_aprovacao =
+ * 'entrada_manual'`) para os e-mails ao operador — antes eles diziam só "Entrada
+ * manual" e não identificavam NF, produto nem quantidade.
+ *  - `porNf = true`: recebimento pela fila de NF (feature 015), que grava o mesmo
+ *    tipo do lançamento à mão e se diferencia pela chave da NF. Tem fornecedor
+ *    e item da NF.
+ *  - `porNf = false`: formulário manual. A NF é o número digitado (gravado na
+ *    movimentação); não há fornecedor nem item.
+ * `null` para outros tipos (inclusive a baixa por recebimento externo) e em
+ * falha de leitura: o e-mail cai no texto genérico, nunca deixa de sair.
  */
-export interface ContextoRecebimentoNacionalNf {
-  notaFiscal: string;
+export interface ContextoEntradaNacional {
+  porNf: boolean;
+  notaFiscal: string | null;
   fornecedor: string | null;
   itemNf: string | null;
   produto: string | null;
@@ -612,11 +616,10 @@ export interface ContextoRecebimentoNacionalNf {
   local: string | null;
 }
 
-export async function carregarContextoRecebimentoNacionalNf(
-  aprovacaoId: string,
-): Promise<ContextoRecebimentoNacionalNf | null> {
+export async function carregarContextoEntradaNacional(aprovacaoId: string): Promise<ContextoEntradaNacional | null> {
   try {
     const res = await getDb().execute<{
+      por_nf: boolean;
       nota_fiscal: string | null;
       fornecedor: string | null;
       item_nf: string | null;
@@ -624,13 +627,15 @@ export async function carregarContextoRecebimentoNacionalNf(
       quantidade_kg: string | null;
       local: string | null;
     }>(sql`
-      SELECT a.nota_fiscal,
+      SELECT (a.nf_chave_acesso IS NOT NULL) AS por_nf,
+             COALESCE(a.nota_fiscal, m.nota_fiscal) AS nota_fiscal,
              f.dest_razao AS fornecedor,
              a.nf_item_descricao AS item_nf,
              p.descricao AS produto,
              COALESCE(a.quantidade_recebida_kg, a.quantidade_prevista_kg)::text AS quantidade_kg,
              COALESCE(l.nome, a.galpao) AS local
       FROM stockbridge.aprovacao a
+      LEFT JOIN stockbridge.movimentacao m ON m.id = a.movimentacao_id
       LEFT JOIN public."tbl_produtos_Q2P" p ON p.codigo_produto = a.produto_codigo_q2p
       LEFT JOIN stockbridge.localidade l ON l.codigo = a.galpao
       LEFT JOIN LATERAL (
@@ -640,11 +645,11 @@ export async function carregarContextoRecebimentoNacionalNf(
       ) f ON true
       WHERE a.id = ${aprovacaoId}::uuid
         AND a.tipo_aprovacao = 'entrada_manual'
-        AND a.nf_chave_acesso IS NOT NULL
     `);
     const r = res.rows[0];
-    if (!r?.nota_fiscal) return null;
+    if (!r) return null;
     return {
+      porNf: r.por_nf === true,
       notaFiscal: r.nota_fiscal,
       fornecedor: r.fornecedor,
       itemNf: r.item_nf,
@@ -653,23 +658,34 @@ export async function carregarContextoRecebimentoNacionalNf(
       local: r.local,
     };
   } catch (err) {
-    logger.warn({ err: (err as Error).message, aprovacaoId }, 'Falha ao carregar contexto da NF nacional para o e-mail');
+    logger.warn({ err: (err as Error).message, aprovacaoId }, 'Falha ao carregar contexto da entrada nacional para o e-mail');
     return null;
   }
 }
 
-function assuntoNf(acao: 'aprovado' | 'rejeitado', nf: ContextoRecebimentoNacionalNf): string {
-  return `StockBridge — Recebimento ${acao} — NF ${nf.notaFiscal}${nf.fornecedor ? ` (${nf.fornecedor})` : ''}`;
+function tipoEntradaLabel(ctx: ContextoEntradaNacional): string {
+  return ctx.porNf ? 'Recebimento nacional (NF)' : 'Entrada manual';
 }
 
-function dadosNfHtml(nf: ContextoRecebimentoNacionalNf): string {
+/** Assunto com a NF; `null` quando o manual não tem número — o caller usa o genérico. */
+function assuntoEntrada(acao: 'aprovado' | 'rejeitado', ctx: ContextoEntradaNacional): string | null {
+  if (!ctx.notaFiscal) return null;
+  if (ctx.porNf) {
+    return `StockBridge — Recebimento ${acao} — NF ${ctx.notaFiscal}${ctx.fornecedor ? ` (${ctx.fornecedor})` : ''}`;
+  }
+  const verbo = acao === 'aprovado' ? 'aprovada' : 'rejeitada';
+  return `StockBridge — Entrada manual ${verbo} — NF ${ctx.notaFiscal}`;
+}
+
+function dadosEntradaHtml(ctx: ContextoEntradaNacional): string {
+  // emailDataList omite as linhas vazias (fornecedor e item não existem no manual).
   return emailDataList([
-    { label: 'NF', valor: nf.notaFiscal },
-    { label: 'Fornecedor', valor: nf.fornecedor ?? '' },
-    { label: 'Item da NF', valor: nf.itemNf ?? '' },
-    { label: 'Produto', valor: nf.produto ?? '' },
-    { label: 'Quantidade', valor: nf.quantidadeKg != null ? fmtKg(nf.quantidadeKg) : '' },
-    { label: 'Local', valor: nf.local ?? '' },
+    { label: 'NF', valor: ctx.notaFiscal ?? '' },
+    { label: 'Fornecedor', valor: ctx.fornecedor ?? '' },
+    { label: 'Item da NF', valor: ctx.itemNf ?? '' },
+    { label: 'Produto', valor: ctx.produto ?? '' },
+    { label: 'Quantidade', valor: ctx.quantidadeKg != null ? fmtKg(ctx.quantidadeKg) : '' },
+    { label: 'Local', valor: ctx.local ?? '' },
   ]);
 }
 
@@ -702,14 +718,14 @@ export async function enviarNotificacaoRejeicaoOperador(args: {
   const paginaLabel = args.fluxo === 'recebimento' ? 'Fila de Recebimento' : 'Saída Manual';
   const acaoLabel = args.fluxo === 'recebimento' ? 'Reenviar agora' : 'Lançar novamente';
   const link = `${config.APP_URL}${paginaPath}#rejeicao=${args.aprovacaoId}`;
-  const nf = await carregarContextoRecebimentoNacionalNf(args.aprovacaoId);
-  const tipoLabel = nf ? 'Recebimento nacional (NF)' : labelTipoAprovacao(args.tipoAprovacao);
+  const ctx = await carregarContextoEntradaNacional(args.aprovacaoId);
+  const tipoLabel = ctx ? tipoEntradaLabel(ctx) : labelTipoAprovacao(args.tipoAprovacao);
   // EML-12: tipo humanizado no assunto — o operador identifica de qual
   // lançamento se trata sem abrir o e-mail.
-  const subject = nf ? assuntoNf('rejeitado', nf) : `StockBridge — Lançamento rejeitado (${tipoLabel})`;
+  const subject = (ctx && assuntoEntrada('rejeitado', ctx)) ?? `StockBridge — Lançamento rejeitado (${tipoLabel})`;
   const corpoHtml = `
     <p>O gestor/diretor rejeitou um lançamento (${escapeHtml(tipoLabel)}) que você fez no StockBridge.</p>
-    ${nf ? dadosNfHtml(nf) : ''}
+    ${ctx ? dadosEntradaHtml(ctx) : ''}
     <p><strong>Motivo informado:</strong></p>
     <blockquote style="border-left:3px solid #dc2626;padding-left:12px;color:#555;margin:8px 0;">${escapeHtml(args.motivo)}</blockquote>
     <p>Corrija os dados e ${args.fluxo === 'recebimento' ? 'reenvie para nova aprovação' : 'lance novamente'}:</p>
@@ -746,10 +762,10 @@ export async function enviarNotificacaoAprovacaoOperador(args: {
     logger.warn({ args }, 'Operador sem email cadastrado — notificacao de aprovacao nao enviada');
     return;
   }
-  const nf = await carregarContextoRecebimentoNacionalNf(args.aprovacaoId);
-  const tipoLabel = nf ? 'Recebimento nacional (NF)' : labelTipoAprovacao(args.tipoAprovacao);
+  const ctx = await carregarContextoEntradaNacional(args.aprovacaoId);
+  const tipoLabel = ctx ? tipoEntradaLabel(ctx) : labelTipoAprovacao(args.tipoAprovacao);
   // EML-12: tipo humanizado no assunto.
-  const subject = nf ? assuntoNf('aprovado', nf) : `StockBridge — Lançamento aprovado (${tipoLabel})`;
+  const subject = (ctx && assuntoEntrada('aprovado', ctx)) ?? `StockBridge — Lançamento aprovado (${tipoLabel})`;
   const extraDivergencia =
     args.tipoAprovacao === 'recebimento_divergencia'
       ? '<p>O ajuste foi registrado automaticamente no OMIE (ACXE + Q2P) com a quantidade aprovada.</p>'
@@ -757,7 +773,7 @@ export async function enviarNotificacaoAprovacaoOperador(args: {
   const corpoHtml = `
     <p>Um lançamento que você fez no StockBridge foi aprovado pelo gestor/diretor.</p>
     <p><strong>Tipo:</strong> ${escapeHtml(tipoLabel)}</p>
-    ${nf ? dadosNfHtml(nf) : ''}
+    ${ctx ? dadosEntradaHtml(ctx) : ''}
     ${extraDivergencia}
     <p style="color:#6b7280;font-size:12px;margin-top:16px;">Ref. técnica — aprovação: ${escapeHtml(args.aprovacaoId)}</p>
   `;
