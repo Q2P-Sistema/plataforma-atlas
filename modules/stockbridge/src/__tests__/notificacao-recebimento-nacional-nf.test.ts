@@ -26,8 +26,9 @@ vi.mock('@atlas/core', () => ({
   }),
   escapeHtml: (v: unknown) => String(v ?? ''),
   emailActionBox: (html: string) => html,
+  // Como o real: omite as linhas sem valor.
   emailDataList: (linhas: Array<{ label: string; valor: string }>) =>
-    linhas.map((l) => `[${l.label}: ${l.valor}]`).join(''),
+    linhas.filter((l) => l.valor !== '').map((l) => `[${l.label}: ${l.valor}]`).join(''),
 }));
 vi.mock('@atlas/db', () => ({ users: {}, userModules: {} }));
 
@@ -76,7 +77,7 @@ describe('ACXEGDP-396 — e-mail de aprovação ao operador', () => {
     expect(html).toContain('[Local: SANTO ANDRÉ (NACIONAL)]');
   });
 
-  it('formulário manual: continua "Entrada manual", agora com NF digitada, produto, quantidade e local', async () => {
+  it('formulário manual: mesmo padrão da fila, com "manual" no começo do assunto', async () => {
     executeMock.mockResolvedValue({
       rows: [{ por_nf: false, nota_fiscal: '12345', fornecedor: null, item_nf: null, produto: 'PP H301', quantidade_kg: '1250.500', local: 'SANTO ANDRÉ (NACIONAL)' }],
     });
@@ -84,9 +85,10 @@ describe('ACXEGDP-396 — e-mail de aprovação ao operador', () => {
     await enviarNotificacaoAprovacaoOperador({ operadorUserId: 'u1', aprovacaoId: 'a1', tipoAprovacao: 'entrada_manual' });
 
     const { subject, html } = ultimoEmail();
-    expect(subject).toBe('StockBridge — Entrada manual aprovada — NF 12345');
-    expect(html).toContain('Entrada manual');
-    expect(html).not.toContain('Recebimento nacional (NF)');
+    expect(subject).toBe('StockBridge — Recebimento manual aprovado — NF 12345');
+    expect(html).toContain('Recebimento nacional (manual)');
+    expect(html).not.toContain('Entrada manual');
+    expect(html).not.toContain('[Item da NF:');
     expect(html).toContain('[NF: 12345]');
     expect(html).toContain('[Produto: PP H301]');
     expect(html).toContain('[Quantidade: 1.250,5 kg]');
@@ -124,7 +126,7 @@ describe('ACXEGDP-396 — e-mail de rejeição ao operador', () => {
       operadorUserId: 'u1', aprovacaoId: 'ap2', loteId: 'mov2', motivo: 'NF errada', fluxo: 'recebimento', tipoAprovacao: 'entrada_manual',
     });
 
-    expect(ultimoEmail().subject).toBe('StockBridge — Entrada manual rejeitada — NF 777');
+    expect(ultimoEmail().subject).toBe('StockBridge — Recebimento manual rejeitado — NF 777');
   });
 
   it('recebimento nacional por NF: assunto com NF, dados do item e link para a Fila de Recebimento', async () => {
