@@ -27,7 +27,8 @@ const logger = createLogger('stockbridge:fila-nacional');
  *      STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED ligada, e so para chaves que NAO
  *      existem em (a) nem tem ledger `recebimento_fiscal` concluido — entre a
  *      conclusao pelo Atlas e o proximo sync a mesma chave pode estar nas duas.
- *      Com a flag desligada a query e a da 015 (FR-020).
+ *      Com a flag desligada a query e a da 015 (FR-020), salvo a via 2 da
+ *      checagem "ja recebida", que passou a exigir lancamento a partir da emissao.
  *  Cada NF sai com `fiscal: 'pendente' | 'concluido'`. NF com dispensa ativa
  *  (stockbridge.nf_dispensa) e excluida das duas fontes (FR-021, D9).
  *
@@ -150,13 +151,27 @@ export function getDataCorteFilaNacional(): string {
   return v;
 }
 
-/** Acima disto o espelho de recebimentos (n8n, 2x/hora) e considerado defasado (gate 3 do Principio II). */
+/** Default da idade maxima do espelho de recebimentos (n8n, 2x/hora) — gate 3 do Principio II. */
 export const ESPELHO_RECEBIMENTOS_IDADE_MAX_MIN = 120;
+
+/** Limite configuravel (STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN): no UAT o espelho chega pela copia PROD->UAT e envelhece mais. */
+export function limiteIdadeEspelhoMin(): number {
+  const cfg = getConfig() as { STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN?: number };
+  const v = Number(cfg.STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN);
+  return Number.isFinite(v) && v > 0 ? v : ESPELHO_RECEBIMENTOS_IDADE_MAX_MIN;
+}
 
 export interface IdadeEspelhoRecebimentos {
   /** minutos desde o ultimo `synced_at`; null quando nao ha dado ou o banco falhou */
   idadeMin: number | null;
   status: 'ok' | 'degraded' | 'sem_dados' | 'indisponivel' | 'desligado';
+  /** limite usado (min) */
+  limiteMin?: number;
+}
+
+/** Status do health do modulo: com a flag ligada, espelho velho, vazio ou inacessivel e degradacao (ROT-6). */
+export function statusHealthModulo(e: IdadeEspelhoRecebimentos): 'ok' | 'degraded' {
+  return e.status === 'degraded' || e.status === 'sem_dados' || e.status === 'indisponivel' ? 'degraded' : 'ok';
 }
 
 /**
@@ -167,18 +182,19 @@ export interface IdadeEspelhoRecebimentos {
  */
 export async function idadeEspelhoRecebimentos(): Promise<IdadeEspelhoRecebimentos> {
   if (!recebimentoFiscalHabilitado()) return { idadeMin: null, status: 'desligado' };
+  const limiteMin = limiteIdadeEspelhoMin();
   try {
     const r = await getPool().query<{ idade_min: string | number | null }>(
       `SELECT (EXTRACT(EPOCH FROM (now() - MAX(synced_at))) / 60)::numeric(12,1) AS idade_min FROM public."tbl_recebimentoNFe_Q2P"`,
     );
     const v = r.rows[0]?.idade_min;
-    if (v == null) return { idadeMin: null, status: 'sem_dados' };
+    if (v == null) return { idadeMin: null, status: 'sem_dados', limiteMin };
     const idade = Number(v);
-    if (!Number.isFinite(idade)) return { idadeMin: null, status: 'sem_dados' };
-    return { idadeMin: idade, status: idade > ESPELHO_RECEBIMENTOS_IDADE_MAX_MIN ? 'degraded' : 'ok' };
+    if (!Number.isFinite(idade)) return { idadeMin: null, status: 'sem_dados', limiteMin };
+    return { idadeMin: idade, status: idade > limiteMin ? 'degraded' : 'ok', limiteMin };
   } catch (err) {
     logger.warn({ err: (err as Error).message }, 'Idade do espelho de recebimentos indisponível');
-    return { idadeMin: null, status: 'indisponivel' };
+    return { idadeMin: null, status: 'indisponivel', limiteMin };
   }
 }
 
@@ -250,7 +266,7 @@ function fonteRecebSql(): string {
                r.d_emissao                                          AS d_emi,
                r.n_id_receb::bigint                                 AS n_id_receb,
                NOT ${LEDGER_FISCAL_CONCLUIDO_SQL('r.c_chave_nfe')}  AS fiscal_pendente,
-               (r.c_cancelada = 'S')                                AS cancelada,
+               COALESCE(r.c_cancelada = 'S', false)                 AS cancelada,  -- nulo no ramo do ledger nao pode sumir com a NF
                false                                                AS deletada,
                ri.n_sequencia::bigint                               AS n_cod_item,
                ri.c_descricao_produto                               AS x_prod,
@@ -263,12 +279,19 @@ function fonteRecebSql(): string {
         WHERE r.d_emissao >= $2::date
           AND NOT EXISTS (SELECT 1 FROM public."tbl_nf_header_Q2P" h2 WHERE h2.c_chave_nfe = r.c_chave_nfe)
           AND (
-                (r.c_recebido = 'N' AND r.c_cancelada = 'N' AND r.c_etapa = '40')
+                (r.c_recebido = 'N' AND r.c_cancelada = 'N' AND r.c_etapa = '40'
+                 AND COALESCE(r.c_bloqueado, 'N') <> 'S' AND COALESCE(r.c_devolvido, 'N') <> 'S')
              OR ${LEDGER_FISCAL_CONCLUIDO_SQL('r.c_chave_nfe')}
           )`;
 }
 
-/** CTE `nf_unificada`: fonte (a) sozinha com a flag desligada (query da 015); (a) UNION ALL (b) com a flag ligada. */
+/**
+ * CTE `nf_unificada`: fonte (a) sozinha com a flag desligada; (a) UNION ALL (b)
+ * com a flag ligada. Com a flag desligada a query e a da 015, com UMA diferenca
+ * deliberada: a via 2 da checagem "ja recebida" exige lancamento manual a partir
+ * da emissao (colisao de numero entre fornecedores) — so faz NF reaparecer, nunca
+ * sumir; paridade conferida no UAT na revisao pre-UAT.
+ */
 function nfUnificadaSql(flag: boolean, canceladaExiste: boolean, nfValida: string): string {
   const a = fonteNfSql(canceladaExiste, nfValida);
   return flag ? `${a}
@@ -428,8 +451,8 @@ export async function getFilaNacional(params: { q?: string | null; fornecedor?: 
       // Sync parado deixa a fonte "fiscal pendente" incompleta sem nenhum erro —
       // o warn e o unico sinal alem do health (T051).
       const idade = await idadeEspelhoRecebimentos();
-      if (idade.status === 'degraded' || idade.status === 'sem_dados') {
-        logger.warn({ idadeMin: idade.idadeMin, status: idade.status, limiteMin: ESPELHO_RECEBIMENTOS_IDADE_MAX_MIN }, 'Espelho de recebimentos de NF-e defasado — NFs com fiscal pendente podem estar faltando na fila');
+      if (statusHealthModulo(idade) === 'degraded') {
+        logger.warn({ idadeMin: idade.idadeMin, status: idade.status, limiteMin: idade.limiteMin }, 'Espelho de recebimentos de NF-e defasado — NFs com fiscal pendente podem estar faltando na fila');
       }
     }
     return res.rows.map((r) => ({

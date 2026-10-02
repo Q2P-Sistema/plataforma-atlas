@@ -34,6 +34,7 @@ import {
   RecebimentoFiscalSemFornecedorError,
   RecebimentoFiscalNfCanceladaError,
   RecebimentoFiscalEtapaInesperadaError,
+  segundosAteNovaTentativa,
   listarLedgerFiscal,
 } from '../services/recebimento-fiscal.service.js';
 import {
@@ -414,7 +415,10 @@ router.post(
         return;
       }
       if (err instanceof RecebimentoFiscalAguardeError) {
-        res.status(409).json({ data: null, error: { code: 'RECEBIMENTO_FISCAL_AGUARDE', userMessage: err.message, message: `aguardar ${err.segundos}s apos falha com escrita no OMIE` } });
+        res.status(409).json({
+          data: null,
+          error: { code: 'RECEBIMENTO_FISCAL_AGUARDE', userMessage: err.message, message: `aguardar ${err.segundos}s apos falha com escrita no OMIE`, retryAfterSeconds: segundosAteNovaTentativa(err) },
+        });
         return;
       }
       if (err instanceof RecebimentoFiscalEtapaInesperadaError) {
@@ -431,7 +435,11 @@ router.post(
       }
       if (err instanceof RecebimentoFiscalError) {
         logger.error({ err, chave: parsed.data.nf_chave_acesso, passo: err.passo }, 'Recebimento fiscal falhou no OMIE — nada gravado');
-        res.status(502).json({ data: null, error: { code: 'RECEBIMENTO_FISCAL_FAIL', userMessage: err.message, message: `fiscal falhou no passo ${err.passo}` } });
+        // retryAfterSeconds: 70 quando a falha foi DEPOIS de uma escrita (cache do OMIE), 0 na consulta.
+        res.status(502).json({
+          data: null,
+          error: { code: 'RECEBIMENTO_FISCAL_FAIL', userMessage: err.message, message: `fiscal falhou no passo ${err.passo}`, retryAfterSeconds: segundosAteNovaTentativa(err) },
+        });
         return;
       }
       logger.error({ err, chave: parsed.data.nf_chave_acesso }, 'Erro inesperado em recebimento nacional por NF');

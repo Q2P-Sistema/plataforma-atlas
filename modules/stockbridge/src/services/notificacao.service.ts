@@ -454,6 +454,45 @@ export async function enviarAlertaNfDispensada(args: {
 }
 
 /**
+ * Feature 016 (revisão pré-UAT, ROT-6): o espelho de recebimentos de NF-e (fonte
+ * "fiscal pendente" da fila nacional) está sem atualização além do limite, vazio
+ * ou inacessível. Vai para STOCKBRIDGE_OPS_EMAIL — quem cuida do n8n e da cópia.
+ */
+export async function enviarAlertaEspelhoRecebimentosDefasado(args: {
+  status: 'degraded' | 'sem_dados' | 'indisponivel';
+  idadeMin: number | null;
+  limiteMin: number;
+}): Promise<void> {
+  const to = getOpsEmail();
+  const config = getConfig();
+  const situacao =
+    args.status === 'sem_dados'
+      ? 'O espelho de recebimentos de NF-e está vazio.'
+      : args.status === 'indisponivel'
+        ? 'O espelho de recebimentos de NF-e não pôde ser lido (tabela ausente ou erro de banco).'
+        : `O espelho de recebimentos de NF-e não é atualizado há ${Math.round(args.idadeMin ?? 0)} minutos (limite: ${args.limiteMin} minutos).`;
+  const subject = 'StockBridge — Espelho de recebimentos de NF-e sem atualização';
+  const corpoHtml = `
+    <p>${escapeHtml(situacao)}</p>
+    <p>Enquanto isso, notas de compra nacional que chegaram da SEFAZ com o recebimento fiscal pendente podem não aparecer na fila de recebimento do StockBridge.</p>
+    ${emailActionBox('<ol style="margin:0;padding-left:18px;"><li>Confira no n8n o workflow "Q2P - Exporta Recebimentos NF-e": se está ativo e se as últimas execuções terminaram sem erro.</li><li>No UAT, confira também a cópia do espelho de produção para o UAT.</li></ol>', 'O que verificar')}
+  `;
+  const { html, text } = buildEmailLayout({
+    titulo: 'Espelho de recebimentos de NF-e sem atualização',
+    variante: 'alerta',
+    corpoHtml,
+    ctaLabel: 'Abrir o StockBridge',
+    ctaUrl: `${config.APP_URL}/stockbridge/fila`,
+  });
+  try {
+    await sendEmail({ to, subject, html, text });
+    logger.info({ status: args.status, idadeMin: args.idadeMin }, 'Alerta de espelho de recebimentos defasado enviado');
+  } catch (err) {
+    logger.error({ err }, 'Falha ao enviar alerta de espelho de recebimentos defasado');
+  }
+}
+
+/**
  * Feature 016 (revisão pré-UAT, ROT-4): a dispensa foi DESFEITA pelo gestor. O
  * fiscal foi avisado da dispensa e pode ter agido no OMIE (recusa, cancelamento,
  * estorno) — avisa que a nota voltou à fila e será recebida pelo Atlas.

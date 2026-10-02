@@ -1,6 +1,7 @@
 import { getPool, createLogger } from '@atlas/core';
 import { getDetalheNfNacional, recebimentoFiscalHabilitado, itemNfPendente, type DetalheNfNacional, type SituacaoFiscal } from './fila-nacional.service.js';
 import { enviarAlertaNfDispensada, enviarAlertaDispensaRevertida } from './notificacao.service.js';
+import { LOCK_FISCAL_ORFAO_MIN } from './recebimento-fiscal.service.js';
 import type { Perfil } from '../types.js';
 
 const logger = createLogger('stockbridge:nf-dispensa');
@@ -138,10 +139,15 @@ export async function dispensarNf(input: DispensarNfInput): Promise<DispensarNfR
   const ativa = await dispensaAtiva(input.nfChaveAcesso);
   if (ativa) throw new NfJaDispensadaError(ativa.nota_fiscal);
 
-  // Recebimento com o fiscal em curso (ledger em_andamento): espera terminar.
+  // Recebimento com o fiscal em curso (ledger em_andamento RECENTE): espera terminar.
+  // Linha orfa (processo morreu, mais velha que o limite do lock) nao bloqueia a
+  // dispensa — senao a unica saida seria receber a NF, o contrario do que o gestor quer.
   const emCurso = await getPool().query<{ nota_fiscal: string }>(
-    `SELECT nota_fiscal FROM stockbridge.recebimento_fiscal WHERE nf_chave_acesso = $1 AND status = 'em_andamento' LIMIT 1`,
-    [input.nfChaveAcesso],
+    `SELECT nota_fiscal FROM stockbridge.recebimento_fiscal
+      WHERE nf_chave_acesso = $1 AND status = 'em_andamento'
+        AND iniciado_em > now() - make_interval(mins => $2)
+      LIMIT 1`,
+    [input.nfChaveAcesso, LOCK_FISCAL_ORFAO_MIN],
   );
   if (emCurso.rows[0]) throw new NfEmRecebimentoFiscalError(emCurso.rows[0].nota_fiscal);
 

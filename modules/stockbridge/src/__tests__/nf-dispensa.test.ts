@@ -47,6 +47,7 @@ import {
   MotivoDispensaObrigatorioError,
   NfEmRecebimentoFiscalError,
 } from '../services/nf-dispensa.service.js';
+import { LOCK_FISCAL_ORFAO_MIN } from '../services/recebimento-fiscal.service.js';
 import { converterItemNfParaKg } from '../services/unidade-nf.js';
 import type { DetalheNfNacional, ItemNfNacional } from '../services/fila-nacional.service.js';
 
@@ -84,7 +85,7 @@ let listaRows: Record<string, unknown>[] = [];
 
 function responder(sql: string) {
   if (sql.includes('SELECT id, nota_fiscal FROM stockbridge.nf_dispensa')) return { rows: dispensaAtivaRows };
-  if (sql.includes("FROM stockbridge.recebimento_fiscal WHERE nf_chave_acesso = $1 AND status = 'em_andamento'")) return { rows: ledgerEmCurso };
+  if (sql.includes('FROM stockbridge.recebimento_fiscal') && sql.includes("status = 'em_andamento'")) return { rows: ledgerEmCurso };
   if (sql.includes('INSERT INTO stockbridge.nf_dispensa')) {
     if (insertFalha) {
       const e = insertFalha;
@@ -137,6 +138,13 @@ describe('dispensarNf — guardas', () => {
     await expect(dispensarNf({ nfChaveAcesso: CHAVE, motivo: '   ', ...gestor })).rejects.toBeInstanceOf(MotivoDispensaObrigatorioError);
     await expect(dispensarNf({ nfChaveAcesso: CHAVE, motivo: '', ...gestor })).rejects.toThrow('Informe o motivo da dispensa');
     expect(insertParams()).toBeUndefined();
+  });
+
+  it('so ledger em_andamento RECENTE bloqueia: a consulta limita pela janela do lock orfao (linha orfa nao trava a dispensa)', async () => {
+    await dispensarNf({ nfChaveAcesso: CHAVE, motivo: 'x', ...gestor });
+    const q = poolQuerySpy.mock.calls.find((c) => String(c[0]).includes("status = 'em_andamento'"))!;
+    expect(String(q[0])).toContain('iniciado_em > now() - make_interval(mins => $2)');
+    expect(q[1]).toEqual([CHAVE, LOCK_FISCAL_ORFAO_MIN]);
   });
 
   it('recebimento com fiscal em curso (ledger em_andamento): NfEmRecebimentoFiscalError, sem gravar nem avisar (ROT-3)', async () => {

@@ -82,6 +82,9 @@ services:
       # Destinatarios do aviso "NF dispensada da fila" (lista separada por virgula).
       # Vazio = default do codigo (NFe ACXE, Mauricio Yared, Gustavo Dreer).
       STOCKBRIDGE_FISCAL_EMAILS: ${STOCKBRIDGE_FISCAL_EMAILS:-}
+      # Idade maxima (min) do espelho de recebimentos de NF-e antes de degradar o health
+      # e alertar STOCKBRIDGE_OPS_EMAIL (cron 5,35). PROD: 120 (n8n a cada 30 min).
+      STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN: ${STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN:-120}
       # Destinatarios dos e-mails operacionais. Vazio = default do codigo
       # (comex_acxe@acxe-polimeros.com.br / flavio.endo@acxe-polimeros.com.br).
       STOCKBRIDGE_COMEX_EMAIL: ${STOCKBRIDGE_COMEX_EMAIL:-}

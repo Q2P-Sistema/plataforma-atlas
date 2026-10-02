@@ -10,6 +10,7 @@ const { sendEmailMock, loggerMock, configMock } = vi.hoisted(() => ({
   loggerMock: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
   configMock: {
     APP_URL: 'https://atlas.local',
+    STOCKBRIDGE_OPS_EMAIL: 'ops@q2p.local',
     STOCKBRIDGE_FISCAL_EMAILS: ['nfe@acxe-polimeros.com.br', 'mauricio@acxe-polimeros.com.br', 'gustavo.dreer@acxe-polimeros.com.br'] as string[],
   },
 }));
@@ -30,7 +31,7 @@ vi.mock('@atlas/core', () => ({
 }));
 vi.mock('@atlas/db', () => ({ users: {}, userModules: {} }));
 
-import { enviarAlertaNfDispensada, enviarAlertaDispensaRevertida, getFiscalEmails } from '../services/notificacao.service.js';
+import { enviarAlertaNfDispensada, enviarAlertaDispensaRevertida, enviarAlertaEspelhoRecebimentosDefasado, getFiscalEmails } from '../services/notificacao.service.js';
 
 const base = {
   notaFiscal: '6842',
@@ -154,5 +155,30 @@ describe('enviarAlertaDispensaRevertida (revisao pre-UAT, ROT-4)', () => {
     configMock.STOCKBRIDGE_FISCAL_EMAILS = [];
     await enviarAlertaDispensaRevertida(rev);
     expect(sendEmailMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('enviarAlertaEspelhoRecebimentosDefasado (revisao pre-UAT, ROT-6)', () => {
+  it('vai para STOCKBRIDGE_OPS_EMAIL com a idade, o limite, o impacto na fila e o que verificar (n8n e copia do UAT)', async () => {
+    await enviarAlertaEspelhoRecebimentosDefasado({ status: 'degraded', idadeMin: 185.4, limiteMin: 120 });
+    const enviados = emails();
+    expect(enviados).toHaveLength(1);
+    expect(enviados[0]!.to).toBe('ops@q2p.local');
+    expect(enviados[0]!.subject).toBe('StockBridge — Espelho de recebimentos de NF-e sem atualização');
+    const { html } = enviados[0]!;
+    expect(html).toContain('[alerta:Espelho de recebimentos de NF-e sem atualização]');
+    expect(html).toContain('não é atualizado há 185 minutos (limite: 120 minutos)');
+    expect(html).toContain('podem não aparecer na fila de recebimento');
+    expect(html).toContain('Q2P - Exporta Recebimentos NF-e');
+    expect(html).toContain('cópia do espelho de produção para o UAT');
+  });
+
+  it('vazio e inacessivel tem texto proprio; falha de envio nao propaga', async () => {
+    await enviarAlertaEspelhoRecebimentosDefasado({ status: 'sem_dados', idadeMin: null, limiteMin: 120 });
+    expect(emails().at(-1)!.html).toContain('está vazio');
+    await enviarAlertaEspelhoRecebimentosDefasado({ status: 'indisponivel', idadeMin: null, limiteMin: 120 });
+    expect(emails().at(-1)!.html).toContain('não pôde ser lido');
+    sendEmailMock.mockRejectedValueOnce(new Error('smtp down'));
+    await expect(enviarAlertaEspelhoRecebimentosDefasado({ status: 'degraded', idadeMin: 300, limiteMin: 120 })).resolves.toBeUndefined();
   });
 });

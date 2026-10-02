@@ -59,22 +59,33 @@ export function useApiFetch() {
       ...(opts.headers as Record<string, string>),
     };
     if (csrfToken) headers['x-csrf-token'] = csrfToken;
-    type Corpo = { data: unknown; error: { code?: string; userMessage?: string; message?: string } | null; meta?: Record<string, unknown> };
-    const falhar = (msg: string, status: number, code?: string): never => {
-      const err = new Error(msg) as Error & { code?: string; status?: number };
+    type Corpo = {
+      data: unknown;
+      error: { code?: string; userMessage?: string; message?: string; retryAfterSeconds?: number } | null;
+      meta?: Record<string, unknown>;
+    };
+    const falhar = (msg: string, status: number, code?: string, retryAfterSeconds?: number): never => {
+      const err = new Error(msg) as Error & { code?: string; status?: number; retryAfterSeconds?: number };
       err.code = code;
       err.status = status;
+      err.retryAfterSeconds = retryAfterSeconds;
       throw err;
     };
+    const semResposta = 'Não foi possível falar com o servidor. Verifique a conexão e tente novamente em instantes.';
     let res: Response;
     try {
       res = await fetch(url, { credentials: 'include', ...opts, headers });
     } catch {
-      return falhar('Não foi possível falar com o servidor. Verifique a conexão e tente novamente em instantes.', 0);
+      return falhar(semResposta, 0);
     }
-    // Corpo pode vir vazio ou em HTML (proxy em redeploy, timeout): ler como texto
-    // e parsear com cuidado, para nao mostrar "Unexpected token" ao operador.
-    const texto = await res.text();
+    // Corpo pode vir vazio ou em HTML (proxy em redeploy, fallback de SPA, timeout):
+    // ler como texto e parsear com cuidado, para nao mostrar "Unexpected token".
+    let texto: string;
+    try {
+      texto = await res.text();
+    } catch {
+      return falhar(semResposta, 0);
+    }
     let body: Corpo | null = null;
     if (texto) {
       try {
@@ -86,14 +97,14 @@ export function useApiFetch() {
     // Prefere userMessage (pt-BR, sem codigo OMIE) quando a rota o fornece.
     // `code`/`status` vao no erro para a UI decidir a acao (feature 016: 409 em
     // andamento -> recarregar a nota; 502 fiscal -> tentar de novo).
+    const respostaInvalida = `O servidor não respondeu corretamente (HTTP ${res.status}). Tente novamente em instantes.`;
     if (!res.ok) {
-      return falhar(
-        body?.error?.userMessage ?? body?.error?.message ?? `O servidor não respondeu corretamente (HTTP ${res.status}). Tente novamente em instantes.`,
-        res.status,
-        body?.error?.code,
-      );
+      return falhar(body?.error?.userMessage ?? body?.error?.message ?? respostaInvalida, res.status, body?.error?.code, body?.error?.retryAfterSeconds);
     }
-    return body ?? { data: null, error: null };
+    // 2xx sem JSON (ex.: HTML do fallback de SPA numa janela de deploy) NAO e sucesso:
+    // nenhuma rota usada por este hook responde corpo vazio (revisao pre-UAT, R1).
+    if (body === null) return falhar(respostaInvalida, res.status);
+    return body;
   };
 }
 
@@ -222,8 +233,19 @@ export function RecebimentoNacionalForm() {
   const todosItensComPeso = pesos.every((p) => p > 0);
   const valorTotalNum = Number(valorTotalNfBrl.replace(',', '.'));
 
+  // Feature 016: com o recebimento fiscal pelo Atlas ligado, o formulario manual NAO
+  // conclui o fiscal no OMIE — avisa (a flag vem do cache da fila, ja carregada na aba).
+  const filaCache = queryClient.getQueryData<{ fiscalHabilitado?: boolean }>(['sb', 'rec-nacional', 'fila']);
+  const avisoFiscal = filaCache?.fiscalHabilitado === true;
+
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      {avisoFiscal && (
+        <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-sm text-amber-900 dark:text-amber-200">
+          O formulário manual não conclui o recebimento fiscal no OMIE. Use-o só para nota que não está na fila de compra nacional e, nesse caso,
+          avise o fiscal para concluir o recebimento no OMIE.
+        </div>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3 p-4 bg-atlas-card border border-atlas-border rounded-lg">
         <div className="md:col-span-1">
           <label className="block text-xs font-medium text-atlas-muted mb-1">

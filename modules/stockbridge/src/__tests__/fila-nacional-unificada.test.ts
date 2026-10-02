@@ -30,6 +30,9 @@ vi.mock('../services/correlacao-produto.service.js', () => ({
 import {
   getFilaNacional,
   getDetalheNfNacional,
+  statusHealthModulo,
+  limiteIdadeEspelhoMin,
+  idadeEspelhoRecebimentos,
   NfNacionalDispensadaError,
   FilaNacionalIncompletaError,
   FORNECEDOR_NAO_IDENTIFICADO,
@@ -127,6 +130,9 @@ describe('getFilaNacional — flag DESLIGADA (comportamento da 015, FR-020)', ()
     expect(sql).toContain('HAVING COUNT(*) FILTER (WHERE pendente) > 0');
     expect(sql).toContain('ORDER BY d_emi ASC, n_nf ASC');
     expect(params).toEqual([Array.from(CFOPS_RECEBIMENTO_NACIONAL), '2026-09-11']);
+    // diferenca DELIBERADA em relacao a 015, tambem com a flag desligada: a via 2
+    // (so o numero da NF) exige lancamento manual a partir da emissao (FILA-2)
+    expect(sql).toContain('AND m.created_at >= (u.d_emi)::date');
   });
 
   it('coluna fiscal e constante: toda NF sai como "concluido" e sem data do Atlas', async () => {
@@ -158,10 +164,13 @@ describe('getFilaNacional — flag LIGADA (duas fontes, research D8)', () => {
     expect(sql).toContain('public."tbl_recebimentoNFe_itens_Q2P" ri ON ri.n_id_receb = r.n_id_receb');
     // fonte (b): fiscal pendente ELEGIVEL explicito (etapa 40, 'N' explicitos — FILA-7/FISC-5)
     // OU ja concluido pelo Atlas e ainda fora do espelho de NF (janela entre syncs — FILA-1)
-    expect(sql).toContain("(r.c_recebido = 'N' AND r.c_cancelada = 'N' AND r.c_etapa = '40')");
+    expect(sql).toContain("(r.c_recebido = 'N' AND r.c_cancelada = 'N' AND r.c_etapa = '40'");
+    // bloqueado/devolvido no OMIE nao e "fiscal pendente" (o POST recusaria com 422)
+    expect(sql).toContain("COALESCE(r.c_bloqueado, 'N') <> 'S' AND COALESCE(r.c_devolvido, 'N') <> 'S'");
     expect(sql).toMatch(/OR EXISTS \(SELECT 1 FROM stockbridge\.recebimento_fiscal rf\s+WHERE rf\.nf_chave_acesso = r\.c_chave_nfe AND rf\.status IN \('concluido', 'ja_concluido'\)\)/);
     expect(sql).not.toContain("COALESCE(r.c_recebido, 'N')");
-    expect(sql).toContain("(r.c_cancelada = 'S')                                AS cancelada");
+    // c_cancelada nulo (ramo do ledger) nao pode descartar a NF da fila enquanto o detalhe a mostra
+    expect(sql).toContain("COALESCE(r.c_cancelada = 'S', false)                 AS cancelada");
     // precedencia: chave que ja esta no espelho de NF nao entra pela fonte (b)
     expect(sql).toContain('NOT EXISTS (SELECT 1 FROM public."tbl_nf_header_Q2P" h2 WHERE h2.c_chave_nfe = r.c_chave_nfe)');
     // corte de data nas duas fontes
@@ -287,6 +296,13 @@ describe('getDetalheNfNacional — feature 016', () => {
     expect(d.itens[0]!.quantidadeNfKg).toBe(18000);
   });
 
+  it('detalhe ordena os itens pelo codigo NUMERICO (ORDER BY u.n_cod_item sobre bigint)', async () => {
+    detalheRows = [linhaDetalhe()];
+    await getDetalheNfNacional(CHAVE);
+    expect(sqlDetalhe().sql).toContain('ORDER BY u.n_cod_item');
+    expect(sqlDetalhe().sql).toContain('i.n_cod_item::bigint');
+  });
+
   it('flag ligada: NF so na fonte (b) sai com fiscal pendente, nIdReceb numerico e dispensavel', async () => {
     config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
     detalheRows = [linhaDetalhe()];
@@ -328,5 +344,31 @@ describe('getDetalheNfNacional — feature 016', () => {
     expect(d.valorTotalBrl).toBe(203400);
     expect(d.valorNotaBrl).toBe(210000);
     expect(d.linhasForaDoRecorte).toBe(1);
+  });
+});
+
+describe('health do espelho de recebimentos (revisao pre-UAT, ROT-6)', () => {
+  it('statusHealthModulo: degraded para espelho velho, vazio ou inacessivel; ok para ok/desligado', () => {
+    expect(statusHealthModulo({ idadeMin: 300, status: 'degraded' })).toBe('degraded');
+    expect(statusHealthModulo({ idadeMin: null, status: 'sem_dados' })).toBe('degraded');
+    expect(statusHealthModulo({ idadeMin: null, status: 'indisponivel' })).toBe('degraded');
+    expect(statusHealthModulo({ idadeMin: 10, status: 'ok' })).toBe('ok');
+    expect(statusHealthModulo({ idadeMin: null, status: 'desligado' })).toBe('ok');
+  });
+
+  it('limite configuravel (STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN, default 120) decide ok x degraded', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    expect(limiteIdadeEspelhoMin()).toBe(120);
+    poolQuerySpy.mockImplementation(() => Promise.resolve({ rows: [{ idade_min: '200.0' }] }));
+    expect(await idadeEspelhoRecebimentos()).toEqual({ idadeMin: 200, status: 'degraded', limiteMin: 120 });
+    config.STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN = 360;
+    expect(await idadeEspelhoRecebimentos()).toEqual({ idadeMin: 200, status: 'ok', limiteMin: 360 });
+    delete config.STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN;
+    poolQuerySpy.mockImplementation(() => Promise.resolve({ rows: [{ idade_min: null }] }));
+    expect((await idadeEspelhoRecebimentos()).status).toBe('sem_dados');
+    poolQuerySpy.mockImplementation(() => Promise.reject(Object.assign(new Error('relation does not exist'), { code: '42P01' })));
+    expect((await idadeEspelhoRecebimentos()).status).toBe('indisponivel');
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = false;
+    expect(await idadeEspelhoRecebimentos()).toEqual({ idadeMin: null, status: 'desligado' });
   });
 });

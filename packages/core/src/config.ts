@@ -87,6 +87,10 @@ const envSchema = z.object({
   // ou cancelamento; conta a pagar a estornar ou manter). Lista separada por
   // virgula; cada endereco e validado. Vazia/ausente = lista padrao abaixo (o
   // parse trata string vazia como ausente — linha `${VAR:-}` da stack cai aqui).
+  // Feature 016 (revisao pre-UAT): idade maxima (min) do espelho de recebimentos de
+  // NF-e antes de o health marcar degraded e o cron alertar STOCKBRIDGE_OPS_EMAIL.
+  // PROD: 120 (n8n a cada 30 min). UAT: maior — o espelho chega pela copia PROD->UAT.
+  STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN: z.coerce.number().int().min(10).max(10080).default(120),
   STOCKBRIDGE_FISCAL_EMAILS: z
     .string()
     .default('nfe@acxe-polimeros.com.br,mauricio@acxe-polimeros.com.br,gustavo.dreer@acxe-polimeros.com.br')

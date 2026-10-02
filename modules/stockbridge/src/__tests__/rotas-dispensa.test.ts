@@ -312,6 +312,15 @@ describe('fila e POST por-nf — extensoes da feature 016 (T024)', () => {
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe('RECEBIMENTO_FISCAL_AGUARDE');
     expect(res.body.error.userMessage).toContain('40 segundos');
+    expect(res.body.error.retryAfterSeconds).toBe(40);
+
+    // a tela usa retryAfterSeconds: 70 depois de falha com escrita, 0 quando falhou so a consulta
+    svc.processarRecebimentoNacionalPorNf.mockRejectedValueOnce(new RecebimentoFiscalError('concluir', '6842', 'REPLAS COMERCIAL LTDA'));
+    res = await request(app).post(`${BASE}/por-nf`).send(body);
+    expect(res.body.error.retryAfterSeconds).toBe(70);
+    svc.processarRecebimentoNacionalPorNf.mockRejectedValueOnce(new RecebimentoFiscalError('consultar', '6842', 'REPLAS COMERCIAL LTDA'));
+    res = await request(app).post(`${BASE}/por-nf`).send(body);
+    expect(res.body.error.retryAfterSeconds).toBe(0);
 
     svc.processarRecebimentoNacionalPorNf.mockRejectedValueOnce(new RecebimentoFiscalEtapaInesperadaError('6842', 'bloqueado'));
     res = await request(app).post(`${BASE}/por-nf`).send(body);
@@ -333,6 +342,10 @@ describe('fila e POST por-nf — extensoes da feature 016 (T024)', () => {
     roleAtual = 'operador';
     svc.getFilaNacional.mockRejectedValueOnce(new FilaNacionalIncompletaError());
     let res = await request(app).get(`${BASE}/fila`);
+    expect(res.status).toBe(503);
+    expect(res.body.error.code).toBe('FILA_NACIONAL_NAO_CONFIGURADA');
+    svc.getDetalheNfNacional.mockRejectedValueOnce(new FilaNacionalIncompletaError());
+    res = await request(app).get(`${BASE}/fila/${CHAVE}`);
     expect(res.status).toBe(503);
     expect(res.body.error.code).toBe('FILA_NACIONAL_NAO_CONFIGURADA');
     const pgErr = Object.assign(new Error('relation "stockbridge.recebimento_fiscal" does not exist'), { code: '42P01' });

@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express';
-import { idadeEspelhoRecebimentos } from '../services/fila-nacional.service.js';
+import { idadeEspelhoRecebimentos, statusHealthModulo } from '../services/fila-nacional.service.js';
 import { requireAuth, requireModule, csrfProtection } from '@atlas/auth';
 import { createLogger } from '@atlas/core';
 import filaRouter from './fila.routes.js';
@@ -44,7 +44,7 @@ router.get('/api/v1/stockbridge/health', async (_req: Request, res: Response) =>
   const recebimentoNfeEspelho = await idadeEspelhoRecebimentos();
   // Com a flag ligada, espelho vazio ('sem_dados') ou inacessivel ('indisponivel')
   // tambem e degradacao: a fonte "fiscal pendente" esta cega (revisao pre-UAT, ROT-6).
-  const status = ['degraded', 'sem_dados', 'indisponivel'].includes(recebimentoNfeEspelho.status) ? 'degraded' : 'ok';
+  const status = statusHealthModulo(recebimentoNfeEspelho);
   res.json({
     data: { status, module: 'stockbridge', recebimentoNfeEspelhoIdadeMin: recebimentoNfeEspelho.idadeMin, recebimentoNfeEspelho },
     error: null,

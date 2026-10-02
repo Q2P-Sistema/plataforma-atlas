@@ -61,6 +61,15 @@ export const LOCK_FISCAL_ORFAO_MIN = 15;
 /** Espera minima entre uma falha COM escrita no OMIE e a proxima tentativa da mesma NF (cache de ~1 min). */
 export const ESPERA_APOS_FALHA_SEG = 70;
 
+/** Passos cuja falha deixa escrita possivelmente feita no OMIE — so eles impoem a espera. */
+export const PASSOS_COM_ESCRITA: readonly PassoFiscal[] = Object.freeze(['editar', 'ignorar', 'concluir']);
+
+/** Quantos segundos a tela deve esperar antes de oferecer nova tentativa apos esta falha (0 = pode tentar ja). */
+export function segundosAteNovaTentativa(err: RecebimentoFiscalError | RecebimentoFiscalAguardeError): number {
+  if (err instanceof RecebimentoFiscalAguardeError) return err.segundos;
+  return PASSOS_COM_ESCRITA.includes(err.passo) ? ESPERA_APOS_FALHA_SEG : 0;
+}
+
 const CNPJ_FISCAL = 'q2p' as const;
 
 // ── Erros (mensagens em pt-BR, com NF + fornecedor, sem codigo OMIE — ACXEGDP-313) ──
@@ -97,7 +106,7 @@ export class RecebimentoFiscalAguardeError extends Error {
   constructor(public readonly notaFiscal: string, public readonly segundos: number) {
     super(
       `A tentativa anterior do recebimento fiscal da NF ${notaFiscal} falhou há instantes. ` +
-        `Aguarde cerca de ${segundos} segundos e tente de novo — o OMIE leva até 1 minuto para mostrar a última alteração.`,
+        `Aguarde cerca de ${segundos} ${segundos === 1 ? 'segundo' : 'segundos'} e tente de novo — o OMIE leva até 1 minuto para mostrar a última alteração.`,
     );
     this.name = 'RecebimentoFiscalAguardeError';
   }
@@ -186,7 +195,9 @@ async function adquirirLedger(
 ): Promise<{ ledger: Ledger; jaConcluido: { concluidoEm: string } | null }> {
   const pool = getPool();
 
-  if (tentativa === 0) {
+  // Espera apos falha com escrita — em TODA tentativa, inclusive na recursao abaixo:
+  // o caso "a outra requisicao acabou de fechar em falha" e justamente o que ela cobre.
+  {
     const recente = await pool.query<{ segundos: number | string }>(
       `SELECT CEIL(EXTRACT(EPOCH FROM (finalizado_em + make_interval(secs => $2) - now())))::int AS segundos
          FROM stockbridge.recebimento_fiscal

@@ -4,7 +4,7 @@ import { getDb, getPool, createLogger } from '@atlas/core';
 import { movimentacao, aprovacao } from '@atlas/db';
 import { converterParaKg } from './motor.service.js';
 import { enviarAlertaRecebimentoNacionalLote } from './notificacao.service.js';
-import { getDetalheNfNacional, recebimentoFiscalHabilitado, type DetalheNfNacional, type ItemNfNacional } from './fila-nacional.service.js';
+import { getDetalheNfNacional, recebimentoFiscalHabilitado, NfNacionalDispensadaError, type DetalheNfNacional, type ItemNfNacional } from './fila-nacional.service.js';
 import { concluirRecebimentoFiscal, RecebimentoFiscalSemFornecedorError } from './recebimento-fiscal.service.js';
 import { normalizarDescricaoNf } from './descricao-nf.js';
 import { registrarUsoCorrelacao } from './correlacao-produto.service.js';
@@ -857,6 +857,9 @@ export async function processarRecebimentoNacionalPorNf(
   // Fiscal pendente + algo a gravar + flag ligada -> EDITAR -> IGNORAR -> Concluir.
   // Falha aqui propaga (RecebimentoFiscalError & cia.) sem nenhum INSERT (FR-008,
   // FR-012); `ja_concluido` e `concluido` seguem para o portao 2 (FR-011, FR-014).
+  // Feature 016 (revisao pre-UAT, ROT-3): o gestor pode ter dispensado a NF depois
+  // que este POST leu o detalhe — confere de novo antes de escrever no OMIE/estoque.
+  if (recebimentoFiscalHabilitado()) await garantirNaoDispensada(detalhe);
   const fiscal = await executarFiscalSeNecessario(detalhe, input.userId);
 
   // ── Portao 2: escrita por produto, uma transacao cada ──────────────────
@@ -970,6 +973,19 @@ export async function processarRecebimentoNacionalPorNf(
     'Recebimento nacional por NF processado',
   );
   return montarResultado(detalhe, resultados, fiscal);
+}
+
+async function garantirNaoDispensada(detalhe: DetalheNfNacional): Promise<void> {
+  const r = await getPool().query<{ dispensado_em: string }>(
+    `SELECT dispensado_em::text AS dispensado_em FROM stockbridge.nf_dispensa
+      WHERE nf_chave_acesso = $1 AND revertido_em IS NULL LIMIT 1`,
+    [detalhe.nfChaveAcesso],
+  );
+  const d = r.rows[0];
+  if (!d) return;
+  const quando = new Date(d.dispensado_em);
+  const data = Number.isNaN(quando.getTime()) ? d.dispensado_em : quando.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  throw new NfNacionalDispensadaError(detalhe.notaFiscal, data);
 }
 
 /** Desfecho fiscal quando o Atlas NAO age: flag desligada (015) ou nada a fazer. */

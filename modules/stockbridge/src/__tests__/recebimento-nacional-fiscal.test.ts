@@ -85,6 +85,7 @@ vi.mock('../services/recebimento-fiscal.service.js', async () => {
 
 import { processarRecebimentoNacionalPorNf } from '../services/recebimento-nacional.service.js';
 import { RecebimentoFiscalError, RecebimentoFiscalEmAndamentoError, RecebimentoFiscalSemFornecedorError } from '../services/recebimento-fiscal.service.js';
+import { NfNacionalDispensadaError } from '../services/fila-nacional.service.js';
 import { converterItemNfParaKg } from '../services/unidade-nf.js';
 import type { DetalheNfNacional, ItemNfNacional } from '../services/fila-nacional.service.js';
 
@@ -257,6 +258,21 @@ describe('processarRecebimentoNacionalPorNf — passo fiscal (research D10)', ()
     const r = await processarRecebimentoNacionalPorNf(base());
     expect(r.fiscal.status).toBe('nao_aplicavel');
     expect(movs()).toHaveLength(1);
+  });
+
+  it('NF dispensada pelo gestor DEPOIS de este POST ler o detalhe: 404 NF_DISPENSADA antes do fiscal, zero INSERT (ROT-3)', async () => {
+    poolQuerySpy.mockImplementation((sql: string, params?: unknown[]) =>
+      Promise.resolve(String(sql).includes('FROM stockbridge.nf_dispensa') ? { rows: [{ dispensado_em: '2026-10-02 12:00:00+00' }] } : poolPadrao(sql, params)),
+    );
+    await expect(processarRecebimentoNacionalPorNf(base())).rejects.toBeInstanceOf(NfNacionalDispensadaError);
+    expect(fiscalSpy).not.toHaveBeenCalled();
+    expect(inserts).toHaveLength(0);
+  });
+
+  it('flag desligada: a dispensa nao e consultada (comportamento da 015)', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = false;
+    await processarRecebimentoNacionalPorNf(base());
+    expect(poolQuerySpy.mock.calls.some((c) => String(c[0]).includes('stockbridge.nf_dispensa'))).toBe(false);
   });
 
   it('nIdReceb nulo no detalhe e repassado como null (o service do fiscal resolve pela consulta)', async () => {

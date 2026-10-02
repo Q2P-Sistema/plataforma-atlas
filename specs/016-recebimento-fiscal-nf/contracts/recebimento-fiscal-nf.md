@@ -2,7 +2,9 @@
 
 **Feature**: `016-recebimento-fiscal-nf`
 
-Mesmo prefixo protegido da feature 015 (`requireAuth` + `csrfProtection` + `requireModule('stockbridge')`), envelope `{ data, error }`, identidade da NF pela **chave de acesso** (44 dígitos). As rotas da 015 continuam valendo; esta feature **estende** três delas e **adiciona** quatro.
+Mesmo prefixo protegido da feature 015 (`requireAuth` + `csrfProtection` + `requireModule('stockbridge')`), envelope `{ data, error }`, identidade da NF pela **chave de acesso** (44 dígitos). As rotas da 015 continuam valendo; esta feature **estende** quatro delas (fila, detalhe, POST por-nf e a baixa por recebimento externo — §8) e **adiciona** quatro.
+
+Com a flag ligada e alguma tabela da 0053 ausente (migration pendente), **todas** as rotas desta feature respondem `503 FILA_NACIONAL_NAO_CONFIGURADA` — nunca lista vazia nem 500.
 
 Flag `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED` (default `false`). Desligada: fila/detalhe/POST comportam-se exatamente como na 015 e as rotas novas respondem `403 RECEBIMENTO_FISCAL_DESABILITADO`.
 
@@ -76,12 +78,13 @@ Corpo **inalterado** (`.strict()`). Comportamento novo, nesta ordem:
 
 | HTTP | code | Quando | userMessage |
 |---|---|---|---|
-| 502 | `RECEBIMENTO_FISCAL_FAIL` | fault/timeout em EDITAR, IGNORAR ou Concluir e a reconsulta não mostrou concluído | "Não foi possível concluir o recebimento fiscal da NF 6842 (REPLAS COMERCIAL LTDA) no OMIE. Nada foi registrado no estoque — tente novamente em 1 minuto. Se persistir, avise o fiscal." (fornecedor nulo → "(Fornecedor não identificado no OMIE)") |
+| 502 | `RECEBIMENTO_FISCAL_FAIL` | fault/timeout na `ConsultarRecebimento` inicial, ou em EDITAR, IGNORAR ou Concluir sem que a reconsulta mostre concluído. `error.retryAfterSeconds`: 70 quando a falha foi depois de uma escrita (cache do OMIE), 0 quando foi na consulta | "Não foi possível concluir o recebimento fiscal da NF 6842 (REPLAS COMERCIAL LTDA) no OMIE. Nada foi registrado no estoque — tente novamente em 1 minuto. Se persistir, avise o fiscal." (fornecedor nulo → "(Fornecedor não identificado no OMIE)") |
 | 409 | `RECEBIMENTO_FISCAL_EM_ANDAMENTO` | outra confirmação da mesma NF está em curso (ledger `em_andamento` há menos de 15 min) | "O recebimento fiscal da NF 6842 já está sendo concluído. Aguarde alguns segundos e recarregue a nota." |
-| 409 | `RECEBIMENTO_FISCAL_AGUARDE` | falha com escrita no OMIE (passo editar/ignorar/concluir) há menos de 70 s — a 1ª consulta da nova tentativa cairia no cache de ~1 min | "A tentativa anterior do recebimento fiscal da NF 6842 falhou há instantes. Aguarde cerca de N segundos e tente de novo — …" |
+| 409 | `RECEBIMENTO_FISCAL_AGUARDE` | falha com escrita no OMIE (passo editar/ignorar/concluir) há menos de 70 s — a 1ª consulta da nova tentativa cairia no cache de ~1 min. `error.retryAfterSeconds` = segundos restantes | "A tentativa anterior do recebimento fiscal da NF 6842 falhou há instantes. Aguarde cerca de N segundos e tente de novo — …" |
 | 422 | `RECEBIMENTO_FISCAL_SEM_FORNECEDOR` | NF sem fornecedor cadastrado no OMIE: sem CNPJ no espelho, `nIdFornecedor` 0/nulo ou sem CNPJ na consulta, ou fault que fale em fornecedor | "A NF 6842 está sem fornecedor cadastrado no OMIE. Peça ao fiscal para cadastrar o fornecedor e tente de novo." |
 | 422 | `RECEBIMENTO_FISCAL_ETAPA_INESPERADA` | recebimento fora da etapa 40, bloqueado ou devolvido no OMIE (a receita só foi validada a partir da 40) | "O recebimento da NF 6842 não está na etapa "Faturado pelo fornecedor" no OMIE…" / "…está bloqueado no OMIE…" / "…consta como devolvida no OMIE…" |
 | 422 | `NF_CANCELADA` | a consulta mostra o recebimento cancelado | "A NF 6842 consta como cancelada no OMIE…" |
+| 404 | `NF_DISPENSADA` | o gestor dispensou a NF depois que a tela leu o detalhe (conferido de novo antes de escrever) | "A NF 6842 foi dispensada da fila pelo gestor em …" |
 
 Invariantes: (5) repetir o POST não conclui o fiscal duas vezes (ledger) nem grava estoque em dobro (índice da 015); (6) falha no fiscal ⇒ zero `INSERT`; (7) `ja_concluido` ⇒ segue para o portão 2 normalmente.
 
@@ -126,6 +129,14 @@ Qualquer NF da fila (fiscal pendente **ou** já feito) com ao menos um item pend
 **200**: lista do ledger (`notaFiscal`, `fornecedorNome`, `status`, `passoFalha`, `confirmadoPor {id, nome}`, `iniciadoEm`, `finalizadoEm`). `erro_omie_*` **não** sai desta rota (fica no banco e no log — ACXEGDP-313).
 
 ---
+
+## 8. `POST /api/v1/stockbridge/recebimento/nacional/recebimento-externo` (feature 015) — estendida
+
+Com a flag ligada, NF com fiscal pendente **não** recebe baixa por recebimento externo: `409 BAIXA_EXTERNA_FISCAL_PENDENTE` ("A NF <n> ainda está com o recebimento fiscal pendente no OMIE, então não cabe baixa por recebimento externo. Receba pela fila (o fiscal é concluído junto) ou peça ao gestor para dispensar a nota."). A tela não oferece o link nesse caso.
+
+## 9. Health e alerta do espelho
+
+`GET /api/v1/stockbridge/health` → `data.status = "degraded"` quando, com a flag ligada, o espelho de recebimentos está vazio, inacessível ou com idade acima de `STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN` (default 120; UAT 360). `data.recebimentoNfeEspelho = { idadeMin, status, limiteMin }`. Um cron (`5,35 * * * *`, horário de Brasília) manda e-mail a `STOCKBRIDGE_OPS_EMAIL` na primeira detecção e a cada 6 h enquanto durar.
 
 ## Invariantes gerais
 

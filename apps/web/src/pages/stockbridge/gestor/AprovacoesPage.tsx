@@ -467,10 +467,11 @@ function NfsDispensadasSection({
 
   const desabilitada = (err: unknown) => (err as { status?: number } | null)?.status === 403;
 
-  const { data: dispensas, isLoading, error } = useQuery<NfDispensada[]>({
-    queryKey: ['stockbridge', 'aprovacoes', 'nfs-dispensadas', incluirDesfeitas],
-    queryFn: async () =>
-      (await apiFetch(`/api/v1/stockbridge/recebimento/nacional/dispensas${incluirDesfeitas ? '?incluirRevertidas=true' : ''}`)).data as NfDispensada[],
+  // Uma query so, ja com o historico: o filtro "incluir desfeitas" e local (sem
+  // trocar de chave nem desmontar a secao ao marcar).
+  const { data: todas, isLoading, error } = useQuery<NfDispensada[]>({
+    queryKey: ['stockbridge', 'aprovacoes', 'nfs-dispensadas'],
+    queryFn: async () => (await apiFetch('/api/v1/stockbridge/recebimento/nacional/dispensas?incluirRevertidas=true')).data as NfDispensada[],
     refetchInterval: (q) => (desabilitada(q.state.error) ? false : 60_000),
     retry: false,
   });
@@ -494,23 +495,29 @@ function NfsDispensadasSection({
   };
 
   // Flag desligada (403) ou primeira carga sem dados: a secao nao existe para o
-  // usuario. Erro de refetch com dados ja carregados mantem a lista.
-  if (isLoading || desabilitada(error) || !dispensas) return null;
-  const ativas = dispensas.filter((d) => !d.revertidoEm);
-  if (dispensas.length === 0 && !incluirDesfeitas) return null;
+  // usuario. Erro de refetch com dados ja carregados mantem a lista. Sem nenhum
+  // registro (nem historico), tambem nao aparece.
+  if (isLoading || desabilitada(error) || !todas || todas.length === 0) return null;
+  const ativas = todas.filter((d) => !d.revertidoEm);
+  const dispensas = incluirDesfeitas ? todas : ativas;
 
   return (
     <>
-      <details className="mt-8 group" open={incluirDesfeitas || undefined}>
+      <details className="mt-8 group">
         <summary className="cursor-pointer text-sm font-serif text-atlas-ink select-none">
           NFs dispensadas da fila de recebimento
           <span className="ml-2 text-xs font-sans text-atlas-muted">
             {ativas.length} {ativas.length === 1 ? 'nota' : 'notas'} · fora da fila por decisão do gestor, sem alteração no OMIE
           </span>
         </summary>
-        <label className="mt-3 inline-flex items-center gap-2 text-xs text-atlas-muted">
-          <input type="checkbox" checked={incluirDesfeitas} onChange={(e) => setIncluirDesfeitas(e.target.checked)} />
-          Incluir dispensas desfeitas
+        <label className="mt-3 inline-flex items-center gap-2 text-xs text-atlas-muted cursor-pointer">
+          <input
+            type="checkbox"
+            checked={incluirDesfeitas}
+            onChange={(e) => setIncluirDesfeitas(e.target.checked)}
+            className="rounded border-atlas-border"
+          />
+          Incluir dispensas desfeitas ({todas.length - ativas.length})
         </label>
         {error != null && (
           <div role="alert" className="mt-2 text-xs text-red-700 dark:text-red-400">
@@ -518,9 +525,9 @@ function NfsDispensadasSection({
           </div>
         )}
         <div className="mt-3 flex flex-col gap-2">
-          {dispensas.length === 0 && <div className="text-xs text-atlas-muted">Nenhuma dispensa registrada.</div>}
+          {dispensas.length === 0 && <div className="text-xs text-atlas-muted">Nenhuma NF dispensada no momento.</div>}
           {dispensas.map((d) => (
-            <div key={d.id} className={`bg-atlas-card border border-atlas-border rounded-lg p-3 flex items-center gap-4 flex-wrap ${d.revertidoEm ? 'opacity-70' : ''}`}>
+            <div key={d.id} className={`border rounded-lg p-3 flex items-center gap-4 flex-wrap ${d.revertidoEm ? 'bg-atlas-bg/60 border-dashed border-atlas-border' : 'bg-atlas-card border-atlas-border'}`}>
               <div className="flex-1 min-w-[16rem]">
                 <div className="text-sm text-atlas-ink flex items-baseline gap-2 flex-wrap">
                   <span className="font-mono">NF {d.notaFiscal}</span>

@@ -14,13 +14,16 @@ pnpm dev                             # apps/api + apps/web
 A 0053 é aplicada com `psql` (o repo não usa o runner do drizzle-kit). Em dev, num banco local; **no UAT vivo, só o arquivo da 0053** — `scripts/apply-migrations-uat.sh` reaplica todas as migrations e não serve num banco em uso:
 
 ```bash
-read -rsp 'Senha do postgres do UAT: ' PGPASSWORD; echo; export PGPASSWORD
-psql -h db.manager01.q2p.com.br -p 5437 -U postgres -d acxe_q2p -1 -v ON_ERROR_STOP=1 \
-  -f packages/db/migrations/0053_stockbridge_recebimento_fiscal_nf.sql
-unset PGPASSWORD
+# o psql pede a senha (funciona em bash e zsh); lock_timeout evita ficar preso atrás de transação longa
+PGOPTIONS='-c lock_timeout=5s' psql -h db.manager01.q2p.com.br -p 5437 -U postgres -d acxe_q2p \
+  -1 -q -v ON_ERROR_STOP=1 -f packages/db/migrations/0053_stockbridge_recebimento_fiscal_nf.sql
 ```
 
-Saída esperada: só `NOTICE: trigger ... does not exist, skipping`. A migration é idempotente (pode rodar de novo).
+Saída esperada: nenhum `ERROR`; na 1ª execução, só `NOTICE: trigger ... does not exist, skipping`. A migration é idempotente (pode rodar de novo). Depois, conferir (somente leitura): `SELECT to_regclass('stockbridge.recebimento_fiscal'), to_regclass('stockbridge.nf_dispensa'), to_regclass('public."tbl_recebimentoNFe_Q2P"')` sem nulos e `trg_audit_sb_recebimento_fiscal`/`trg_audit_sb_nf_dispensa` em `pg_trigger`.
+
+⚠️ O teste de integração `auditoria-recebimento-fiscal.test.ts` (`ATLAS_DB_INTEGRATION=1`) faz INSERT/UPDATE/DELETE de verdade: rode só contra banco descartável, **nunca** contra o UAT.
+
+**E-mails ao fiscal no UAT**: o UAT roda como produção (SendGrid ligado). Durante a validação, ponha `STOCKBRIDGE_FISCAL_EMAILS=<sua caixa>` na stack — os cenários 4 (dispensa e desfazer) mandam avisos ao fiscal. Vazio = lista padrão (fiscal real). **Alerta do espelho**: no UAT o espelho chega pela cópia PROD→UAT, mais lenta que o n8n — use `STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN=360` (PROD: 120, o default).
 
 **Ordem do deploy no UAT** (revisão pré-UAT): (1) DDL do espelho no PROD (DBeaver, bloco do contrato do espelho, literal); (2) 0053 no UAT; (3) workflow n8n testado e ativado; (4) imagem nova com a flag **desligada** e as duas variáveis novas acrescentadas ao YAML da stack (a stack lista cada variável — só preencher o env não basta); conferir `OMIE_MODE=real` antes do redeploy; (5) snapshot da fila; (6) flag ligada e conferência do snapshot (SC-006).
 
@@ -28,7 +31,7 @@ Saída esperada: só `NOTICE: trigger ... does not exist, skipping`. A migration
 
 **Espelho**: o workflow n8n "Q2P - Exporta Recebimentos NF-e" precisa estar ativo (contrato `contracts/espelho-recebimentos-n8n.md`) e, no UAT, a cópia `scripts/sync-omie-public-prod-to-uat.sh` precisa já incluir as tabelas (acontece sozinho quando existem em PROD e UAT). Sem espelho, a fila mostra só "fiscal já feito" — e isto é o Cenário 5.
 
-> ⚠️ Toda NF usada nos cenários 1–3 sofre **escrita fiscal real no OMIE** (conta a pagar incluída). Combinar com o fiscal qual NF usar; a volta é `ReverterRecebimento` pela tela do OMIE.
+> ⚠️ Toda NF usada nos cenários 1–3 sofre **escrita fiscal real no OMIE** (conta a pagar incluída). Use NFs que vão **mesmo** ser recebidas, combinadas com o fiscal. Reverter no OMIE (`ReverterRecebimento`) um fiscal concluído pelo Atlas deixa o Atlas mostrando "fiscal já feito" para sempre (ledger terminal — research, "Limitações conhecidas"): o fiscal precisa reconcluir no portal. Não use a reversão como "volta" de teste.
 
 ---
 

@@ -46,6 +46,7 @@ import {
   RecebimentoFiscalEtapaInesperadaError,
   LOCK_FISCAL_ORFAO_MIN,
   ESPERA_APOS_FALHA_SEG,
+  segundosAteNovaTentativa,
 } from '../services/recebimento-fiscal.service.js';
 
 const CHAVE = '35261014555032000753550010000068421827355174';
@@ -117,6 +118,8 @@ let linhaViva: Record<string, unknown> | null = null;
 let retomadaOk = false;
 /** Segundos restantes da espera apos falha (null = sem falha recente). */
 let esperaSegundos: number | null = null;
+/** Sequencia de respostas da espera, consumida chamada a chamada (tem prioridade sobre esperaSegundos). */
+let esperaFila: Array<number | null> = [];
 /** O UPDATE de fechamento acha a linha (false = lock perdido)? */
 let fechamentoAcha = true;
 /** O UPDATE de fechamento lanca (banco fora)? */
@@ -126,7 +129,8 @@ let ledgerRows: Record<string, unknown>[] = [];
 function responderLedger(sql: string, params?: unknown[]) {
   if (sql.includes("status = 'falha'") && sql.includes('make_interval(secs')) {
     ordem.push('ledger:espera?');
-    return { rows: esperaSegundos != null ? [{ segundos: esperaSegundos }] : [] };
+    const seg = esperaFila.length > 0 ? esperaFila.shift()! : esperaSegundos;
+    return { rows: seg != null ? [{ segundos: seg }] : [] };
   }
   if (sql.includes('INSERT INTO stockbridge.recebimento_fiscal')) {
     ordem.push('ledger:insert');
@@ -162,6 +166,7 @@ beforeEach(() => {
   linhaViva = null;
   retomadaOk = false;
   esperaSegundos = null;
+  esperaFila = [];
   fechamentoAcha = true;
   fechamentoLanca = false;
   ledgerRows = [];
@@ -338,6 +343,24 @@ describe('concluirRecebimentoFiscal — lock e espera (research D6, revisao pre-
     const sel = poolQuerySpy.mock.calls[0]!;
     expect(String(sel[0])).toContain("passo_falha IN ('editar', 'ignorar', 'concluir')");
     expect(sel[1]).toEqual([CHAVE, ESPERA_APOS_FALHA_SEG]);
+  });
+
+  it('a espera tambem vale na recursao: a outra requisicao fechou em falha entre o INSERT e o SELECT -> Aguarde, sem OMIE (verificacao pos-correcao)', async () => {
+    insertFalha = Object.assign(new Error('duplicate key'), { code: '23505', constraint: 'recebimento_fiscal_nf_viva_uq' });
+    linhaViva = null; // a linha viva sumiu: a outra requisicao fechou em 'falha'
+    esperaFila = [null, 55]; // 1a checagem vazia (a outra ainda nao tinha fechado); na recursao, falha recente
+    await expect(concluirRecebimentoFiscal(input())).rejects.toBeInstanceOf(RecebimentoFiscalAguardeError);
+    expect(ordem.filter((o) => o === 'ledger:espera?')).toHaveLength(2);
+    expect(consultarSpy).not.toHaveBeenCalled();
+  });
+
+  it('segundosAteNovaTentativa: 70 s depois de falha com escrita, 0 na consulta, o restante no Aguarde; mensagem no singular para 1 s', () => {
+    expect(segundosAteNovaTentativa(new RecebimentoFiscalError('concluir', '6842', null))).toBe(ESPERA_APOS_FALHA_SEG);
+    expect(segundosAteNovaTentativa(new RecebimentoFiscalError('editar', '6842', null))).toBe(ESPERA_APOS_FALHA_SEG);
+    expect(segundosAteNovaTentativa(new RecebimentoFiscalError('consultar', '6842', null))).toBe(0);
+    expect(segundosAteNovaTentativa(new RecebimentoFiscalAguardeError('6842', 12))).toBe(12);
+    expect(new RecebimentoFiscalAguardeError('6842', 1).message).toContain('1 segundo e');
+    expect(new RecebimentoFiscalAguardeError('6842', 2).message).toContain('2 segundos');
   });
 
   it('lock perdido para uma retomada: o desfecho desta requisicao nao sobrescreve o ledger (warn) e o resultado segue', async () => {
