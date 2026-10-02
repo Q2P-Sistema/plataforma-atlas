@@ -1,6 +1,6 @@
 # plataforma-atlas Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-09-17
+Auto-generated from all feature plans. Last updated: 2026-10-02
 
 ## Active Technologies
 - TypeScript 5.5+ (strict mode) / Node.js 20 LTS + Express 4 (API), React 18 + Vite (frontend), Drizzle ORM (queries), decimal.js (aritmetica financeira), recharts (graficos), Zod (validacao) (002-hedge-engine)
@@ -24,6 +24,8 @@ Auto-generated from all feature plans. Last updated: 2026-09-17
 - Nenhum novo. Leitura **ao vivo** da API OMIE via `produtos/nfconsultar/` (chamada já existente no fluxo); nenhuma escrita em banco além do recebimento normal já existente. Sem migration. (012-validacao-busca-nf)
 - TypeScript 5.5+ strict, Node.js 20 LTS + Express 4 (rotas de fila/detalhe/recebimento nacional por NF), Drizzle ORM (tabela de correlação + migration) e raw SQL via `getPool()` (query da fila sobre o espelho), decimal.js (valor do item), Zod (validação), React 18 + TanStack Query + Tailwind (aba "Compra nacional" da `FilaOmiePage`). Sem dependência nova. (015-recebimento-nacional-nf)
 - PostgreSQL 16 — **leitura** de `public."tbl_nf_header_Q2P"`, `public."tbl_nf_itens_Q2P"`, `public."tbl_produtos_Q2P"`, `stockbridge.localidade`, `stockbridge.localidade_correlacao`, `stockbridge.fornecedor_exclusao`; **escrita** em `stockbridge.movimentacao`, `stockbridge.aprovacao` (fluxo já existente) e na nova `stockbridge.correlacao_produto_fornecedor`. (015-recebimento-nacional-nf)
+- TypeScript 5.5+ strict, Node.js 20 LTS + Express 4 (rotas estendidas + 4 novas), Drizzle ORM (2 tabelas novas no schema + migration), raw SQL via `getPool()` (fila unificada sobre os dois espelhos), `@atlas/integration-omie` (3 funções novas em `produtos/recebimentonfe/`), Zod (validação), React 18 + TanStack Query + Tailwind (`RecebimentoNacionalNfPanel`, `AprovacoesPage`). Sem dependência nova. n8n (workflow novo de sync — fora deste repo, contrato em `contracts/espelho-recebimentos-n8n.md`). (016-recebimento-fiscal-nf)
+- PostgreSQL 16 — **leitura** de `public."tbl_recebimentoNFe_Q2P"`/`"_itens_Q2P"` (novas, escritas pelo n8n), `public."tbl_nf_header_Q2P"`/`"tbl_nf_itens_Q2P"`, `stockbridge.fornecedor_exclusao`, `stockbridge.movimentacao`, `stockbridge.aprovacao`; **escrita** nas novas `stockbridge.recebimento_fiscal` e `stockbridge.nf_dispensa` (ambas com trigger de auditoria) e, pelo fluxo já existente, em `movimentacao`/`aprovacao`. **Escrita no OMIE**: `AlterarRecebimento` ×2 e `ConcluirRecebimento` (exceção nova ao Princípio II, documentada). (016-recebimento-fiscal-nf)
 
 - TypeScript 5.5+ (strict mode, ES2022, bundler resolution) / Node.js 20 LTS + Express 4.x (backend), React 18 (frontend), Vite 5 (build), Drizzle ORM (query builder + migrations), shadcn/ui + Tailwind CSS (design system), Zustand (client state), TanStack Query (server state), Zod (validação runtime), Pino (logs estruturados), argon2 (hash senhas), otplib (TOTP 2FA) (001-atlas-infra-base)
 
@@ -44,9 +46,9 @@ npm test && npm run lint
 TypeScript 5.5+ (strict mode, ES2022, bundler resolution) / Node.js 20 LTS: Follow standard conventions
 
 ## Recent Changes
+- 016-recebimento-fiscal-nf: Added TypeScript 5.5+ strict, Node.js 20 LTS + Express 4 (rotas estendidas + 4 novas), Drizzle ORM (2 tabelas novas no schema + migration), raw SQL via `getPool()` (fila unificada sobre os dois espelhos), `@atlas/integration-omie` (3 funções novas em `produtos/recebimentonfe/`), Zod (validação), React 18 + TanStack Query + Tailwind (`RecebimentoNacionalNfPanel`, `AprovacoesPage`). Sem dependência nova. n8n (workflow novo de sync — fora deste repo, contrato em `contracts/espelho-recebimentos-n8n.md`).
 - 015-recebimento-nacional-nf: Added TypeScript 5.5+ strict, Node.js 20 LTS + Express 4 (rotas de fila/detalhe/recebimento nacional por NF), Drizzle ORM (tabela de correlação + migration) e raw SQL via `getPool()` (query da fila sobre o espelho), decimal.js (valor do item), Zod (validação), React 18 + TanStack Query + Tailwind (aba "Compra nacional" da `FilaOmiePage`). Sem dependência nova.
 - 012-validacao-busca-nf: Added TypeScript 5.5+ strict, Node.js 20 LTS + Express 4 (rota de recebimento), `@atlas/integrations-omie` (cliente `consultarNF`), `@atlas/core` (`createLogger`, `sendEmail`, `getAdminEmail`), Zod (validação de entrada já existente), React 18 + TanStack Query (exibição da mensagem). Sem novas dependências.
-- 011-conferencia-estoque: Added TypeScript 5.5+ (strict), Node.js 20 LTS + Backend — Express 4, Drizzle ORM (tabela de config + migration), raw SQL via `getPool()` (@atlas/core) para a agregação, Zod (validação). Frontend — React 18 + Vite, TanStack Query, Tailwind (componentes hand-rolled), lucide-react, `@atlas/ui` (`ShellLayout`, `SidebarSubItem`)
 
 
 <!-- MANUAL ADDITIONS START -->
