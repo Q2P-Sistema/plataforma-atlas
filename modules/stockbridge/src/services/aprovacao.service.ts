@@ -803,7 +803,8 @@ export async function rejeitar(input: RejeitarInput): Promise<{ id: string }> {
     aprovacaoId: input.id,
     loteId: resultado.loteId,
     motivo: input.motivo,
-    fluxo: resultado.temLote ? 'recebimento' : 'saida_manual',
+    // Entrada nacional (sem lote) é refeita na Fila de Recebimento, não na Saída Manual.
+    fluxo: resultado.temLote || resultado.tipoAprovacao === 'entrada_manual' ? 'recebimento' : 'saida_manual',
     tipoAprovacao: resultado.tipoAprovacao,
   });
 
