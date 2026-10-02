@@ -664,17 +664,18 @@ export async function carregarContextoEntradaNacional(aprovacaoId: string): Prom
 }
 
 function tipoEntradaLabel(ctx: ContextoEntradaNacional): string {
-  return ctx.porNf ? 'Recebimento nacional (NF)' : 'Entrada manual';
+  return ctx.porNf ? 'Recebimento nacional (NF)' : 'Recebimento nacional (manual)';
 }
 
-/** Assunto com a NF; `null` quando o manual não tem número — o caller usa o genérico. */
+/**
+ * Mesmo padrão para as duas origens; o manual leva "manual" no começo (o fim de
+ * assuntos longos é cortado na caixa de entrada). `null` quando o manual não tem
+ * número — o caller usa o genérico.
+ */
 function assuntoEntrada(acao: 'aprovado' | 'rejeitado', ctx: ContextoEntradaNacional): string | null {
   if (!ctx.notaFiscal) return null;
-  if (ctx.porNf) {
-    return `StockBridge — Recebimento ${acao} — NF ${ctx.notaFiscal}${ctx.fornecedor ? ` (${ctx.fornecedor})` : ''}`;
-  }
-  const verbo = acao === 'aprovado' ? 'aprovada' : 'rejeitada';
-  return `StockBridge — Entrada manual ${verbo} — NF ${ctx.notaFiscal}`;
+  const origem = ctx.porNf ? 'Recebimento' : 'Recebimento manual';
+  return `StockBridge — ${origem} ${acao} — NF ${ctx.notaFiscal}${ctx.fornecedor ? ` (${ctx.fornecedor})` : ''}`;
 }
 
 function dadosEntradaHtml(ctx: ContextoEntradaNacional): string {
