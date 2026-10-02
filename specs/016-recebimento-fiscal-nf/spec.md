@@ -88,7 +88,7 @@ O mesmo clique passa a fazer duas gravações no OMIE (fiscal e estoque), e qual
 - **NF mista** (item de compra + item fora do recorte, ex.: consumo): o fiscal é concluído para a NF inteira e **todos** os itens são tratados do mesmo modo (ignorados, sem movimento de estoque, com conta a pagar) — é o que o "Ignorar" da tela faz; o Atlas só recebe fisicamente os itens do recorte, e os demais seguem como hoje (fora da fila).
 - **Itens todos bloqueados por unidade** (nenhum produto pode ser gravado): o Atlas **não** conclui o fiscal — nada será recebido por ele. A NF continua na fila como "fiscal pendente" com o bloqueio visível; a saída é corrigir a unidade no OMIE, receber pelo formulário manual (com o fiscal concluído pelo fiscal no OMIE) ou dispensar.
 - **Fornecedor não cadastrado no OMIE** (a NF chegou da SEFAZ sem contraparte reconhecida): a fila mostra "Fornecedor não identificado no OMIE"; ao confirmar, a conclusão fiscal é recusada pelo OMIE e o operador recebe a orientação de pedir ao fiscal o cadastro do fornecedor. Nada é gravado.
-- **Fiscal concluído no OMIE com vínculo de produto** (o erro da NF 6495) continua possível se alguém fizer no OMIE por engano; nesse caso a NF aparece como "fiscal já feito". Esta feature não corrige a descrição alterada — isso é tratado em ACXEGDP-394.
+- **Fiscal concluído no OMIE com vínculo de produto** (o erro da NF 6495) continua possível se alguém fizer no OMIE por engano; nesse caso a NF aparece como "fiscal já feito". Esta feature não corrige a descrição alterada; se acontecer, a correção é pontual (ACXEGDP-394, encerrada em 02/10/2026 como erro operacional isolado, não padrão).
 - **Espelho de NFs pendentes desatualizado**: uma NF concluída no OMIE ainda pode aparecer como "fiscal pendente" até a próxima atualização; o clique trata como no caso acima (verifica antes de concluir).
 - **Baixa por recebimento externo**: continua disponível para NFs com fiscal já feito cuja mercadoria **entrou** fora do Atlas. Uma NF com fiscal pendente não tem por que receber baixa externa (se a mercadoria entrou fora do Atlas, o fiscal foi feito fora também). Mercadoria que **nunca vai chegar** não é caso de baixa externa — é caso de dispensa.
 - **NF que nunca será recebida fisicamente** (emitida errada pelo fornecedor, mercadoria não veio, compra recusada), com fiscal pendente **ou** já feito: o gestor a dispensa da fila com motivo; o Atlas não faz nada no OMIE — cancelar, recusar, devolver ou estornar a conta a pagar continua com o fiscal, no OMIE. Se a dispensa for desfeita, a NF volta à fila como estava.
@@ -175,11 +175,11 @@ O mesmo clique passa a fazer duas gravações no OMIE (fiscal e estoque), e qual
 - **Monitoramento da cópia local**: a defasagem do espelho de recebimentos (idade do último sync) MUST ser visível e alertar quando passar de 2 horas — hoje a fila degrada em silêncio quando o sync para.
 - **Cópia local dos recebimentos pendentes do OMIE**: fluxo novo no n8n que lista as NFs aguardando recebimento fiscal da Q2P e as grava no banco, com a cadência de atualização da fila.
 - **Feature 015 (ACXEGDP-328)**: fila, detalhe, correlação de produtos, divergência e recebimento físico, que esta feature estende.
-- **ACXEGDP-394**: correção estrutural da identidade do item quando a descrição muda; complementar, não bloqueante.
+- **ACXEGDP-394**: encerrada em 02/10/2026. O caso da NF 6495 foi erro operacional isolado; não haverá correção estrutural da identidade do item.
 
 ## Out of Scope
 
 - Alterar o recebimento físico do Atlas.
 - Recebimento de importação e ACXE.
 - Reverter no OMIE NFs que já tiveram o fiscal concluído.
-- Corrigir NFs cuja descrição foi alterada por recebimento feito no OMIE (ACXEGDP-394).
+- Corrigir NFs cuja descrição foi alterada por recebimento feito no OMIE (caso isolado, correção pontual; ACXEGDP-394 encerrada).
