@@ -31,6 +31,7 @@ Manter as chamadas diretas a API OMIE que existem hoje no legado:
 - `produtos/nfconsultar/` → `ConsultarNF` (leitura de NF por numero)
 - `estoque/ajuste/` → `IncluirAjusteEstoque` (escrita — ajuste tipo TRF/ENT com motivo INI/TRF)
 - `produtos/pedidocompra/` → `AlteraPedCompra` (escrita — reduzir saldo do pedido apos recebimento)
+- `produtos/recebimentonfe/` → `ConsultarRecebimento` (leitura — UMA chamada imediatamente antes da escrita, para saber se o fiscal ja foi concluido no OMIE; a fila le do espelho `tbl_recebimentoNFe_Q2P`, nunca daqui), `AlterarRecebimento` e `ConcluirRecebimento` (escrita — concluir o recebimento FISCAL da NF nacional sem movimentar estoque: EDITAR com `cNaoGerarMovEstoque=S` → IGNORAR → Concluir etapa 60). Feature 016 / ACXEGDP-395, atras da flag `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED` (default desligada). Justificativa: a NF so chega ao `ListarNF` depois que o recebimento e concluido no OMIE, e o recebimento fisico feito a mao no portal (vinculo de produto) poluia a descricao do item (NF 6495, ACXEGDP-394). Ver `specs/016-recebimento-fiscal-nf/research.md` D1–D3, D11.
 
 ### Rationale
 - O sync n8n → Postgres e incremental por `dDtAlt` e tem delay de minutos. NF recem-emitida pode nao estar disponivel no BD.

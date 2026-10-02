@@ -44,6 +44,18 @@ interface BaixaExterna {
   aprovadoEm: string | null;
 }
 
+/** NF dispensada da fila de recebimento nacional pelo gestor (feature 016, FR-021..025) — reversivel. */
+interface NfDispensada {
+  id: string;
+  nfChaveAcesso: string;
+  notaFiscal: string;
+  fornecedorNome: string | null;
+  situacaoFiscalNaDispensa: 'pendente' | 'concluido';
+  motivo: string;
+  dispensadoPor: { id: string; nome: string | null };
+  dispensadoEm: string;
+}
+
 const TIPO_LABEL: Record<string, string> = {
   recebimento_divergencia: 'Recebimento com divergência',
   entrada_manual: 'Entrada manual',
@@ -273,6 +285,7 @@ export function AprovacoesPage() {
       </div>
 
       <BaixasExternasSection apiFetch={apiFetch} onFeedback={setFeedback} />
+      <NfsDispensadasSection apiFetch={apiFetch} onFeedback={setFeedback} />
 
       {rejeitando && (
         <Modal open title="Rejeitar pendência" onClose={() => setRejeitando(null)}>
@@ -419,6 +432,123 @@ function BaixasExternasSection({
                 className={`px-5 py-2 rounded text-sm font-medium ${motivo.trim() ? 'bg-atlas-btn-bg text-atlas-btn-text hover:opacity-90' : 'bg-atlas-muted/20 text-atlas-muted cursor-not-allowed'}`}
               >
                 {reverterMut.isPending ? 'Enviando…' : 'Confirmar reversão'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </details>
+  );
+}
+
+/**
+ * Feature 016 (ACXEGDP-395): NFs que o gestor dispensou da fila de recebimento
+ * nacional. Some inteira quando a flag esta desligada (a rota devolve 403) ou
+ * quando nao ha dispensa ativa. "Desfazer" devolve a NF a fila, com motivo.
+ */
+function NfsDispensadasSection({
+  apiFetch,
+  onFeedback,
+}: {
+  apiFetch: ReturnType<typeof useApiFetch>;
+  onFeedback: (f: { tipo: 'sucesso' | 'erro'; texto: string }) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [desfazendo, setDesfazendo] = useState<NfDispensada | null>(null);
+  const [motivo, setMotivo] = useState('');
+
+  const { data: dispensas = [], isLoading, isError } = useQuery<NfDispensada[]>({
+    queryKey: ['stockbridge', 'aprovacoes', 'nfs-dispensadas'],
+    queryFn: async () => (await apiFetch('/api/v1/stockbridge/recebimento/nacional/dispensas')).data as NfDispensada[],
+    refetchInterval: 60_000,
+    retry: false,
+  });
+
+  const desfazerMut = useMutation({
+    mutationFn: async (args: { d: NfDispensada; motivo: string }) =>
+      apiFetch(`/api/v1/stockbridge/recebimento/nacional/dispensas/${args.d.id}/reverter`, { method: 'POST', body: JSON.stringify({ motivo: args.motivo }) }).then(() => args.d),
+    onSuccess: (d) => {
+      setDesfazendo(null);
+      setMotivo('');
+      onFeedback({ tipo: 'sucesso', texto: `✓ Dispensa desfeita: NF ${d.notaFiscal} voltou à fila de recebimento.` });
+      queryClient.invalidateQueries({ queryKey: ['stockbridge'] });
+      queryClient.invalidateQueries({ queryKey: ['sb', 'rec-nacional'] });
+    },
+    onError: (err) => onFeedback({ tipo: 'erro', texto: `Erro ao desfazer a dispensa: ${(err as Error).message}` }),
+  });
+
+  // 403 (flag desligada) ou qualquer falha: a secao nao existe para o usuario.
+  if (isLoading || isError || dispensas.length === 0) return null;
+
+  return (
+    <details className="mt-8 group">
+      <summary className="cursor-pointer text-sm font-serif text-atlas-ink select-none">
+        NFs dispensadas da fila de recebimento
+        <span className="ml-2 text-xs font-sans text-atlas-muted">
+          {dispensas.length} {dispensas.length === 1 ? 'nota' : 'notas'} · fora da fila por decisão do gestor, sem alteração no OMIE
+        </span>
+      </summary>
+      <div className="mt-3 flex flex-col gap-2">
+        {dispensas.map((d) => (
+          <div key={d.id} className="bg-atlas-card border border-atlas-border rounded-lg p-3 flex items-center gap-4 flex-wrap">
+            <div className="flex-1 min-w-[16rem]">
+              <div className="text-sm text-atlas-ink flex items-baseline gap-2 flex-wrap">
+                <span className="font-mono">NF {d.notaFiscal}</span>
+                <span className="truncate" title={d.fornecedorNome ?? ''}>{d.fornecedorNome ?? 'Fornecedor não identificado no OMIE'}</span>
+                {d.situacaoFiscalNaDispensa === 'concluido' ? (
+                  <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
+                    havia conta a pagar no OMIE
+                  </span>
+                ) : (
+                  <span className="text-xs px-1.5 py-0.5 rounded border border-atlas-border text-atlas-muted">fiscal pendente no OMIE</span>
+                )}
+              </div>
+              <div className="text-xs text-atlas-muted italic mt-0.5">"{d.motivo}"</div>
+              <div className="text-[11px] text-atlas-muted mt-0.5">
+                dispensada por {d.dispensadoPor.nome ?? '—'} em {new Date(d.dispensadoEm).toLocaleString('pt-BR')}
+              </div>
+            </div>
+            <button
+              onClick={() => setDesfazendo(d)}
+              disabled={desfazerMut.isPending}
+              className="px-3 py-1.5 border border-atlas-border text-atlas-ink rounded text-xs font-medium hover:bg-atlas-bg/60 whitespace-nowrap"
+            >
+              Desfazer
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {desfazendo && (
+        <Modal open title="Desfazer dispensa" onClose={() => { setDesfazendo(null); setMotivo(''); }}>
+          <div className="space-y-3">
+            <p className="text-sm text-atlas-muted">
+              A NF <strong>{desfazendo.notaFiscal}</strong> volta à fila de recebimento nacional, na situação fiscal em que estiver no OMIE. Nada é movimentado no estoque.
+            </p>
+            <div>
+              <label className="block text-xs font-semibold text-atlas-muted mb-1">Motivo *</label>
+              <textarea
+                value={motivo}
+                onChange={(e) => setMotivo(e.target.value)}
+                rows={3}
+                autoFocus
+                placeholder="Ex.: a carga chegou afinal"
+                className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg text-atlas-ink placeholder:text-atlas-muted rounded text-sm"
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => { setDesfazendo(null); setMotivo(''); }}
+                className="px-4 py-2 border border-atlas-border bg-atlas-card text-atlas-ink hover:bg-atlas-bg/60 rounded text-sm"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => desfazerMut.mutate({ d: desfazendo, motivo })}
+                disabled={!motivo.trim() || desfazerMut.isPending}
+                className={`px-5 py-2 rounded text-sm font-medium ${motivo.trim() ? 'bg-atlas-btn-bg text-atlas-btn-text hover:opacity-90' : 'bg-atlas-muted/20 text-atlas-muted cursor-not-allowed'}`}
+              >
+                {desfazerMut.isPending ? 'Enviando…' : 'Confirmar'}
               </button>
             </div>
           </div>

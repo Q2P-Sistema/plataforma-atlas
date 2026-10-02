@@ -62,7 +62,14 @@ export function useApiFetch() {
     const res = await fetch(url, { credentials: 'include', ...opts, headers });
     const body = (await res.json()) as { data: unknown; error: { code?: string; userMessage?: string; message?: string } | null };
     // Prefere userMessage (pt-BR, sem codigo OMIE) quando a rota o fornece.
-    if (!res.ok) throw new Error(body.error?.userMessage ?? body.error?.message ?? 'Erro');
+    // `code`/`status` vao no erro para a UI decidir a acao (feature 016: 409 em
+    // andamento -> recarregar a nota; 502 fiscal -> tentar de novo).
+    if (!res.ok) {
+      const err = new Error(body.error?.userMessage ?? body.error?.message ?? 'Erro') as Error & { code?: string; status?: number };
+      err.code = body.error?.code;
+      err.status = res.status;
+      throw err;
+    }
     return body;
   };
 }

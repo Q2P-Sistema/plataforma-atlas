@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '@atlas/ui';
+import { useAuthStore } from '../../../stores/auth.store.js';
 import { ProdutoCombobox, useApiFetch, type Localidade } from './RecebimentoNacionalForm.js';
 
 /**
@@ -34,6 +35,18 @@ interface FilaNacionalItem {
   itensTotal: number;
   itensPendentes: number;
   valorTotalBrl: number;
+  /** feature 016: 'pendente' = a nota chegou da SEFAZ e o fiscal ainda nao foi concluido no OMIE */
+  fiscal: SituacaoFiscal;
+  /** quando o Atlas concluiu o fiscal — null se foi no OMIE/portal */
+  fiscalConcluidoPeloAtlasEm: string | null;
+}
+
+type SituacaoFiscal = 'pendente' | 'concluido';
+
+/** GET /fila devolve a lista em `data` e a flag da feature 016 em `meta`. */
+interface FilaResposta {
+  fila: FilaNacionalItem[];
+  fiscalHabilitado: boolean;
 }
 
 type Bloqueio = 'unidade_nao_conversivel' | 'unidade_incoerente' | 'sem_correlacao' | null;
@@ -80,6 +93,13 @@ interface DetalheNf {
   linhasForaDoRecorte: number;
   /** flag STOCKBRIDGE_RECEBIMENTO_EXTERNO_ENABLED — a acao de baixa some quando false */
   recebimentoExternoHabilitado?: boolean;
+  /** feature 016: situacao do recebimento fiscal no OMIE */
+  fiscal: SituacaoFiscal;
+  nIdReceb: number | null;
+  /** gestor pode dispensar a nota da fila (flag ligada, sem dispensa ativa, item pendente) */
+  dispensavel: boolean;
+  /** flag STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED — selo/banner fiscal somem quando false */
+  recebimentoFiscalHabilitado?: boolean;
 }
 
 type StatusProduto = 'aguardando_aprovacao' | 'ja_recebido' | 'bloqueado_unidade' | 'bloqueado_unidade_incoerente' | 'falha';
@@ -88,6 +108,8 @@ interface ResultadoPorNf {
   notaFiscal: string;
   produtos: Array<{ indice: number; produto: string; descricaoFornecedor: string; status: StatusProduto; quantidadeKg: number; mensagemErro?: string }>;
   resumo: { enviadosParaAprovacao: number; jaRecebidos: number; bloqueados: number; falhas: number };
+  /** feature 016: o que o Atlas fez com o recebimento FISCAL neste envio */
+  fiscal?: { status: 'concluido' | 'ja_concluido' | 'nao_aplicavel' | 'desligado'; concluidoEm: string | null; mensagem: string };
 }
 
 interface ResultadoBaixa {
@@ -187,10 +209,15 @@ function FilaSection({ onSelecionar, onAbrirManual }: { onSelecionar: (chave: st
   const apiFetch = useApiFetch();
   const [filtro, setFiltro] = useState('');
 
-  const { data: fila = [], isLoading, error } = useQuery<FilaNacionalItem[], Error>({
+  const { data, isLoading, error } = useQuery<FilaResposta, Error>({
     queryKey: ['sb', 'rec-nacional', 'fila'],
-    queryFn: async () => (await apiFetch('/api/v1/stockbridge/recebimento/nacional/fila')).data as FilaNacionalItem[],
+    queryFn: async () => {
+      const body = (await apiFetch('/api/v1/stockbridge/recebimento/nacional/fila')) as { data: unknown; meta?: { recebimentoFiscalHabilitado?: boolean } };
+      return { fila: body.data as FilaNacionalItem[], fiscalHabilitado: body.meta?.recebimentoFiscalHabilitado === true };
+    },
   });
+  const fila = data?.fila ?? [];
+  const fiscalHabilitado = data?.fiscalHabilitado ?? false;
 
   const f = filtro.trim().toLowerCase();
   const filtrada = f
@@ -228,7 +255,14 @@ function FilaSection({ onSelecionar, onAbrirManual }: { onSelecionar: (chave: st
         </div>
       </div>
       <p className="text-xs text-atlas-muted mb-4">
-        A lista vem das notas de compra já registradas no OMIE. Escolha a nota, confira os itens e dê entrada — quantidade e valor vêm do documento.
+        {fiscalHabilitado ? (
+          <>
+            A lista traz as notas de compra que chegaram ao OMIE. As marcadas como <strong className="text-atlas-ink font-medium">fiscal pendente</strong> terão o
+            recebimento fiscal concluído ao confirmar; as demais já tiveram o fiscal feito e recebem só o estoque. Quantidade e valor vêm do documento.
+          </>
+        ) : (
+          'A lista vem das notas de compra já registradas no OMIE. Escolha a nota, confira os itens e dê entrada — quantidade e valor vêm do documento.'
+        )}
       </p>
 
       {isLoading && <div className="p-6 text-sm text-atlas-muted">Carregando notas…</div>}
@@ -271,6 +305,26 @@ function FilaSection({ onSelecionar, onAbrirManual }: { onSelecionar: (chave: st
                     ) : (
                       <span className="text-xs text-atlas-muted">{x.itensTotal} {x.itensTotal === 1 ? 'item' : 'itens'}</span>
                     )}
+                    {fiscalHabilitado &&
+                      (x.fiscal === 'pendente' ? (
+                        <span
+                          className="text-xs font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
+                          title="A nota chegou da SEFAZ e o recebimento fiscal ainda não foi concluído no OMIE — o Atlas conclui ao dar entrada."
+                        >
+                          Fiscal pendente
+                        </span>
+                      ) : (
+                        <span
+                          className="text-xs px-1.5 py-0.5 rounded border border-atlas-border text-atlas-muted"
+                          title={
+                            x.fiscalConcluidoPeloAtlasEm
+                              ? `Recebimento fiscal concluído pelo Atlas em ${fmtData(x.fiscalConcluidoPeloAtlasEm)}`
+                              : 'Recebimento fiscal já concluído no OMIE'
+                          }
+                        >
+                          Fiscal já feito
+                        </span>
+                      ))}
                   </div>
                   <div className="text-xs text-atlas-muted mt-0.5">
                     <span className={agingClass(x.diasDesdeEmissao)}>
@@ -309,7 +363,12 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
   const [form, setForm] = useState<Record<number, ItemForm>>({});
   const [resultado, setResultado] = useState<ResultadoPorNf | null>(null);
   const [erroEnvio, setErroEnvio] = useState<string | null>(null);
+  /** codigo do erro da API (feature 016: 409 em andamento -> recarregar; 502 fiscal -> tentar de novo) */
+  const [erroCodigo, setErroCodigo] = useState<string | null>(null);
   const [pedidoBaixa, setPedidoBaixa] = useState<PedidoBaixa | null>(null);
+  const [dispensando, setDispensando] = useState(false);
+  const [motivoDispensa, setMotivoDispensa] = useState('');
+  const role = useAuthStore((s) => s.user?.role);
   const [motivoBaixa, setMotivoBaixa] = useState('');
   const [avisoBaixa, setAvisoBaixa] = useState<string | null>(null);
 
@@ -329,6 +388,10 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
   const recebiveis = useMemo(() => (nf?.itens ?? []).filter(itemRecebivel), [nf]);
   const baixaveis = useMemo(() => (nf?.itens ?? []).filter(itemBaixavel), [nf]);
   const baixaHabilitada = nf?.recebimentoExternoHabilitado !== false;
+  /** feature 016: o fiscal sera concluido no OMIE neste mesmo clique */
+  const fiscalPendente = nf?.recebimentoFiscalHabilitado === true && nf.fiscal === 'pendente';
+  /** feature 016 (Historia 4): gestor/diretor pode tirar da fila uma NF que nunca sera recebida */
+  const podeDispensar = (role === 'gestor' || role === 'diretor') && nf?.recebimentoFiscalHabilitado === true && nf.dispensavel === true && !resultado;
 
   /** Peso que ainda entra por este envio: conferido (ou da NF) menos o que ja foi gravado. */
   function alvoKg(it: ItemNf, fi: ItemForm): number {
@@ -420,7 +483,28 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
       queryClient.invalidateQueries({ queryKey: ['sb', 'rec-nacional', 'detalhe', chave] });
       queryClient.invalidateQueries({ queryKey: ['stockbridge'] });
     },
-    onError: (e) => setErroEnvio(e.message),
+    onError: (e) => {
+      setErroEnvio(e.message);
+      setErroCodigo((e as Error & { code?: string }).code ?? null);
+    },
+  });
+
+  const dispensarMut = useMutation<{ notaFiscal: string }, Error>({
+    mutationFn: async () => {
+      const r = await apiFetch('/api/v1/stockbridge/recebimento/nacional/dispensar', {
+        method: 'POST',
+        body: JSON.stringify({ nf_chave_acesso: chave, motivo: motivoDispensa.trim() }),
+      });
+      return r.data as { notaFiscal: string };
+    },
+    onSuccess: () => {
+      setDispensando(false);
+      setMotivoDispensa('');
+      queryClient.invalidateQueries({ queryKey: ['sb', 'rec-nacional', 'fila'] });
+      queryClient.invalidateQueries({ queryKey: ['sb', 'rec-nacional', 'detalhe', chave] });
+      queryClient.invalidateQueries({ queryKey: ['stockbridge'] });
+      onVoltar();
+    },
   });
 
   const baixaMut = useMutation<ResultadoBaixa, Error, PedidoBaixa>({
@@ -455,6 +539,7 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
       return;
     }
     setErroEnvio(null);
+    setErroCodigo(null);
     enviarMut.mutate();
   }
 
@@ -494,11 +579,26 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
               <div className="text-[11px] uppercase tracking-wide text-atlas-muted">CFOP</div>
               <div className="text-sm font-mono text-atlas-ink">{nf.cfop}</div>
             </div>
+            {nf.recebimentoFiscalHabilitado && (
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-atlas-muted">Recebimento fiscal</div>
+                <div className={`text-sm ${nf.fiscal === 'pendente' ? 'text-amber-700 dark:text-amber-400' : 'text-atlas-muted'}`}>
+                  {nf.fiscal === 'pendente' ? 'Pendente no OMIE' : 'Concluído no OMIE'}
+                </div>
+              </div>
+            )}
             <div className="ml-auto text-right">
               <div className="text-[11px] uppercase tracking-wide text-atlas-muted">Valor da nota</div>
               <div className="font-serif text-lg text-atlas-ink">{fmtBrl(nf.valorTotalBrl)}</div>
             </div>
           </div>
+
+          {fiscalPendente && !resultado && (
+            <div className="mb-3 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-sm text-amber-900 dark:text-amber-200">
+              O recebimento fiscal desta nota será concluído no OMIE ao confirmar — a conta a pagar é gerada e nenhum estoque é movimentado por ele.
+              O estoque continua entrando pela aprovação do gestor.
+            </div>
+          )}
 
           {nf.linhasForaDoRecorte > 0 && (
             <div className="mb-3 text-xs text-atlas-muted">
@@ -535,6 +635,17 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
                 {resultado.resumo.bloqueados > 0 && ` · ${resultado.resumo.bloqueados} ${resultado.resumo.bloqueados === 1 ? 'bloqueado' : 'bloqueados'}`}
                 {resultado.resumo.falhas > 0 && ` · ${resultado.resumo.falhas} ${resultado.resumo.falhas === 1 ? 'falha' : 'falhas'}`}
               </div>
+              {resultado.fiscal && resultado.fiscal.status !== 'desligado' && (
+                <div className={`text-xs mb-2 ${resultado.fiscal.status === 'concluido' ? 'text-green-700 dark:text-green-400' : 'text-atlas-muted'}`}>
+                  {resultado.fiscal.mensagem}
+                </div>
+              )}
+              {(resultado.fiscal?.status === 'concluido' || resultado.fiscal?.status === 'ja_concluido') && resultado.resumo.falhas > 0 && (
+                <div className="mb-2 p-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-xs text-amber-900 dark:text-amber-200">
+                  O recebimento fiscal foi concluído no OMIE, mas {resultado.resumo.falhas === 1 ? 'um item não foi registrado' : `${resultado.resumo.falhas} itens não foram registrados`} no estoque —
+                  a nota continua na fila como fiscal já feito. Volte à lista e refaça a entrada dos itens com falha.
+                </div>
+              )}
               <ul className="text-xs space-y-1">
                 {resultado.produtos.map((p, i) => (
                   <li key={i} className="flex gap-2">
@@ -552,8 +663,31 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
           )}
 
           {erroEnvio && (
-            <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-sm text-red-800 dark:text-red-300">
-              {erroEnvio}
+            <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-sm text-red-800 dark:text-red-300 flex items-start gap-3 flex-wrap">
+              <span className="flex-1">{erroEnvio}</span>
+              {erroCodigo === 'RECEBIMENTO_FISCAL_EM_ANDAMENTO' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setErroEnvio(null);
+                    setErroCodigo(null);
+                    queryClient.invalidateQueries({ queryKey: ['sb', 'rec-nacional', 'detalhe', chave] });
+                  }}
+                  className="px-3 py-1 border border-red-300 dark:border-red-700 rounded text-xs font-medium hover:bg-red-100 dark:hover:bg-red-900/40 whitespace-nowrap"
+                >
+                  Recarregar nota
+                </button>
+              )}
+              {erroCodigo === 'RECEBIMENTO_FISCAL_FAIL' && (
+                <button
+                  type="button"
+                  onClick={handleEnviar}
+                  disabled={enviarMut.isPending}
+                  className="px-3 py-1 border border-red-300 dark:border-red-700 rounded text-xs font-medium hover:bg-red-100 dark:hover:bg-red-900/40 whitespace-nowrap disabled:opacity-50"
+                >
+                  Tentar novamente
+                </button>
+              )}
             </div>
           )}
 
@@ -561,11 +695,20 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
             <div className="mt-4 flex items-center justify-between gap-4 flex-wrap">
               <div className="text-xs text-atlas-muted">
                 Cada item vira uma aprovação do gestor. O ajuste no OMIE acontece na aprovação.
+                {fiscalPendente && ' O recebimento fiscal é concluído no OMIE agora, ao confirmar.'}
                 {baixaHabilitada && baixaveis.length > 0 && (
                   <>
                     {' '}
                     <button type="button" onClick={() => setPedidoBaixa({ modo: 'todos' })} className="underline hover:text-atlas-ink">
                       {baixaveis.length === 1 ? 'O item já foi recebido fora do Atlas?' : 'Todos os itens já foram recebidos fora do Atlas?'}
+                    </button>
+                  </>
+                )}
+                {podeDispensar && (
+                  <>
+                    {' '}
+                    <button type="button" onClick={() => setDispensando(true)} className="underline hover:text-atlas-ink">
+                      Esta nota não será recebida? Dispensar da fila
                     </button>
                   </>
                 )}
@@ -576,9 +719,61 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
                 disabled={enviarMut.isPending || recebiveis.length === 0}
                 className="px-5 py-2 bg-atlas-btn-bg text-atlas-btn-text rounded text-sm font-medium hover:opacity-90 disabled:opacity-50"
               >
-                {enviarMut.isPending ? 'Enviando…' : `Dar entrada em ${recebiveis.length} ${recebiveis.length === 1 ? 'item' : 'itens'} →`}
+                {enviarMut.isPending
+                  ? 'Enviando…'
+                  : `${fiscalPendente ? 'Concluir fiscal e dar entrada' : 'Dar entrada'} em ${recebiveis.length} ${recebiveis.length === 1 ? 'item' : 'itens'} →`}
               </button>
             </div>
+          )}
+
+          {dispensando && (
+            <Modal open title="Dispensar NF da fila" onClose={() => { setDispensando(false); setMotivoDispensa(''); }}>
+              <div className="space-y-3">
+                <p className="text-sm text-atlas-muted">
+                  A NF <strong className="text-atlas-ink">{nf.notaFiscal}</strong> ({nf.fornecedorNome}) sai da fila de recebimento para todos os operadores e não será
+                  recebida no estoque pelo Atlas. Isso <strong className="text-atlas-ink">não altera nada no OMIE</strong> — cancelar, recusar ou devolver a NF continua com o
+                  fiscal, que será avisado por e-mail. A dispensa pode ser desfeita em Aprovações.
+                </p>
+                {nf.fiscal === 'concluido' && (
+                  <p className="text-sm text-amber-800 dark:text-amber-300">
+                    O recebimento fiscal desta nota já foi concluído no OMIE: há conta a pagar a estornar ou manter — o aviso ao fiscal diz isso.
+                  </p>
+                )}
+                <div>
+                  <label className="block text-xs font-semibold text-atlas-muted mb-1">Por que esta nota não será recebida? *</label>
+                  <textarea
+                    value={motivoDispensa}
+                    onChange={(e) => setMotivoDispensa(e.target.value)}
+                    rows={3}
+                    autoFocus
+                    placeholder="Ex.: carga nunca chegou; fornecedor vai cancelar a nota"
+                    className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg text-atlas-ink placeholder:text-atlas-muted rounded text-sm"
+                  />
+                </div>
+                {dispensarMut.isError && (
+                  <div className="p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-xs text-red-800 dark:text-red-300">
+                    {dispensarMut.error.message}
+                  </div>
+                )}
+                <div className="flex gap-2 justify-end">
+                  <button
+                    type="button"
+                    onClick={() => { setDispensando(false); setMotivoDispensa(''); }}
+                    className="px-4 py-2 border border-atlas-border bg-atlas-card text-atlas-ink hover:bg-atlas-bg/60 rounded text-sm"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => dispensarMut.mutate()}
+                    disabled={!motivoDispensa.trim() || dispensarMut.isPending}
+                    className={`px-5 py-2 rounded text-sm font-medium ${motivoDispensa.trim() ? 'bg-atlas-btn-bg text-atlas-btn-text hover:opacity-90' : 'bg-atlas-muted/20 text-atlas-muted cursor-not-allowed'}`}
+                  >
+                    {dispensarMut.isPending ? 'Enviando…' : 'Dispensar da fila'}
+                  </button>
+                </div>
+              </div>
+            </Modal>
           )}
 
           {pedidoBaixa && (

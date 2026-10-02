@@ -100,6 +100,20 @@ function getComexEmail(): string {
 }
 
 /**
+ * Destinatários do fiscal (feature 016, FR-026) — `STOCKBRIDGE_FISCAL_EMAILS`
+ * (lista separada por vírgula; o schema de config já valida cada endereço e
+ * aplica o default NFe ACXE + Mauricio Yared + Gustavo Dreer). Lista vazia é
+ * configuração explícita de "não avisar" — o chamador loga e não envia.
+ */
+export function getFiscalEmails(): string[] {
+  const cfg = getConfig() as { STOCKBRIDGE_FISCAL_EMAILS?: string[] | string };
+  const v = cfg.STOCKBRIDGE_FISCAL_EMAILS;
+  if (Array.isArray(v)) return v.filter((e) => typeof e === 'string' && e.trim().length > 0);
+  if (typeof v === 'string') return v.split(',').map((e) => e.trim()).filter(Boolean);
+  return [];
+}
+
+/**
  * Resolve emails dos usuarios ATIVOS com perfil compativel + acesso ao modulo.
  *  - nivel='gestor':  so gestor (diretor *pode* aprovar tudo, mas nao quer email
  *    de cada saida do dia a dia — so e notificado quando a pendencia exige
@@ -370,6 +384,69 @@ export async function enviarAlertaRecebimentoNacionalLote(args: {
     }
   } catch (err) {
     logger.error({ err, notaFiscal: args.notaFiscal }, 'Falha ao enviar digest de recebimento nacional');
+  }
+}
+
+/**
+ * Feature 016 (FR-026, ACXEGDP-395): aviso ao FISCAL quando o gestor dispensa uma
+ * NF da fila de recebimento nacional. A dispensa não toca no OMIE — o que fica
+ * pendente lá é do fiscal: com o recebimento fiscal ainda PENDENTE, a nota segue
+ * na caixa "Recebimento de NF-e" aguardando manifestação/cancelamento; com o
+ * fiscal já CONCLUÍDO, existe conta a pagar a estornar ou manter. Um e-mail por
+ * destinatário (não vaza a lista no To). Sem código OMIE (ACXEGDP-313).
+ */
+export async function enviarAlertaNfDispensada(args: {
+  notaFiscal: string;
+  fornecedorNome: string | null;
+  situacaoFiscalNaDispensa: 'pendente' | 'concluido';
+  valorNfBrl: number;
+  motivo: string;
+  dispensadoPorNome: string | null;
+  dispensadoEm?: string;
+}): Promise<void> {
+  const destinatarios = getFiscalEmails();
+  if (destinatarios.length === 0) {
+    logger.warn({ notaFiscal: args.notaFiscal }, 'STOCKBRIDGE_FISCAL_EMAILS vazio — fiscal não avisado da dispensa');
+    return;
+  }
+  const config = getConfig();
+  const fornecedor = args.fornecedorNome && args.fornecedorNome.trim() ? args.fornecedorNome.trim() : 'Fornecedor não identificado no OMIE';
+  const subject = `StockBridge — NF ${args.notaFiscal} (${fornecedor}) dispensada da fila`;
+  const valor = args.valorNfBrl.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const quando = args.dispensadoEm ? new Date(args.dispensadoEm) : new Date();
+  const quandoFmt = Number.isNaN(quando.getTime()) ? '' : quando.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  const pendenciaOmie =
+    args.situacaoFiscalNaDispensa === 'pendente'
+      ? 'O recebimento fiscal desta nota NÃO foi concluído: ela continua na caixa de Recebimento de NF-e do OMIE (etapa "Faturado pelo fornecedor") aguardando manifestação ou cancelamento. Nenhuma conta a pagar foi gerada.'
+      : `O recebimento fiscal desta nota JÁ foi concluído no OMIE: há conta a pagar de ${valor} a estornar ou manter, conforme o acerto com o fornecedor.`;
+  const corpoHtml = `
+    <p>O gestor dispensou a <strong>NF ${escapeHtml(args.notaFiscal)}</strong> de <strong>${escapeHtml(fornecedor)}</strong> da fila de recebimento nacional do StockBridge: ela não será recebida no estoque pelo Atlas.</p>
+    ${emailDataList([
+      { label: 'Nota fiscal', valor: args.notaFiscal },
+      { label: 'Fornecedor', valor: fornecedor },
+      { label: 'Valor da nota', valor: valor },
+      { label: 'Recebimento fiscal no OMIE', valor: args.situacaoFiscalNaDispensa === 'pendente' ? 'Pendente (não concluído)' : 'Concluído' },
+      { label: 'Motivo da dispensa', valor: args.motivo },
+      { label: 'Dispensada por', valor: args.dispensadoPorNome ?? '' },
+      { label: 'Quando', valor: quandoFmt },
+    ])}
+    ${emailActionBox(`<p style="margin:0;">${escapeHtml(pendenciaOmie)}</p><p style="margin:8px 0 0;">A dispensa não alterou nada no OMIE — cancelar, recusar, devolver ou estornar a nota continua com o fiscal.</p>`, 'Pendência no OMIE')}
+  `;
+  const { html, text } = buildEmailLayout({
+    titulo: 'NF dispensada da fila de recebimento',
+    variante: 'alerta',
+    corpoHtml,
+    ctaLabel: 'Abrir aprovações do StockBridge',
+    ctaUrl: `${config.APP_URL}/stockbridge/aprovacoes`,
+  });
+  try {
+    const results = await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html, text })));
+    const falhas = logFalhasEnvio(results, destinatarios, { notaFiscal: args.notaFiscal, tipo: 'nf_dispensada' });
+    if (falhas < destinatarios.length) {
+      logger.info({ notaFiscal: args.notaFiscal, enviados: destinatarios.length - falhas, falhas }, 'Aviso de NF dispensada enviado ao fiscal');
+    }
+  } catch (err) {
+    logger.error({ err, notaFiscal: args.notaFiscal }, 'Falha ao enviar aviso de NF dispensada ao fiscal');
   }
 }
 

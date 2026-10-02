@@ -70,6 +70,35 @@ const envSchema = z.object({
     .enum(['true', 'false', '1', '0', ''])
     .default('true')
     .transform((v) => v !== 'false' && v !== '0'),
+  // Feature 016 (ACXEGDP-395): o Atlas conclui o recebimento FISCAL da NF
+  // nacional no OMIE (EDITAR -> IGNORAR -> ConcluirRecebimento, sem movimentar
+  // estoque) no clique do operador. A flag gate TRES coisas: a fonte "fiscal
+  // pendente" da fila (espelho tbl_recebimentoNFe_Q2P), a escrita no OMIE no
+  // POST por-nf e as rotas de dispensa de NF. Default DESLIGADO (research D12):
+  // escreve em documento fiscal e muda o processo da equipe (ninguem mais
+  // conclui recebimento de compra nacional no portal) — liga-se por ambiente,
+  // UAT primeiro; desligada, tudo volta ao comportamento da feature 015.
+  STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED: z
+    .enum(['true', 'false', '1', '0', ''])
+    .default('false')
+    .transform((v) => v === 'true' || v === '1'),
+  // Feature 016 (FR-026): destinatarios do e-mail "NF dispensada da fila" ao
+  // fiscal, com a pendencia que fica no OMIE (etapa 40 aguardando manifestacao
+  // ou cancelamento; conta a pagar a estornar ou manter). Lista separada por
+  // virgula; cada endereco e validado. Vazia = nenhum envio (warn no log).
+  STOCKBRIDGE_FISCAL_EMAILS: z
+    .string()
+    .default('nfe@acxe-polimeros.com.br,mauricio@acxe-polimeros.com.br,gustavo.dreer@acxe-polimeros.com.br')
+    .transform((v, ctx) => {
+      const lista = v.split(',').map((e) => e.trim()).filter((e) => e.length > 0);
+      for (const email of lista) {
+        if (!z.string().email().safeParse(email).success) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `e-mail invalido em STOCKBRIDGE_FISCAL_EMAILS: "${email}"` });
+          return z.NEVER;
+        }
+      }
+      return lista;
+    }),
   // ACXEGDP-344: baixa automatica do pedido de compra Q2P (AlteraPedCompra)
   // apos recebimento de importacao. Default LIGADO. 'false' desliga o disparo no
   // fluxo — as movimentacoes ficam 'pendente' e podem ser processadas depois

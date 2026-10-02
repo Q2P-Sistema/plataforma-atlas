@@ -68,7 +68,7 @@ async function sqlDaFila(params: Parameters<typeof getFilaNacional>[0] = {}): Pr
 describe('getFilaNacional — exclusoes obrigatorias (T026)', () => {
   it('filtra CFOP do recorte, COM PONTO, via parametro (research D6)', async () => {
     const { sql, params } = await sqlDaFila();
-    expect(sql).toContain('i.cfop = ANY($1::text[])');
+    expect(sql).toContain('u.cfop = ANY($1::text[])'); // feature 016: alias da fonte unificada (CTE nf_unificada)
     expect(params[0]).toEqual(['1.101', '1.102', '2.101', '2.102']);
     expect(CFOPS_RECEBIMENTO_NACIONAL).toEqual(['1.101', '1.102', '2.101', '2.102']);
     expect(sql).not.toMatch(/'1102'|'2102'/);
@@ -92,7 +92,7 @@ describe('getFilaNacional — exclusoes obrigatorias (T026)', () => {
     expect(sql).toContain('NOT EXISTS');
     expect(sql).toContain('stockbridge.fornecedor_exclusao fe');
     expect(sql).toContain('fe.reincluido_em IS NULL');
-    expect(sql).toContain('fe.fornecedor_cnpj = h.dest_cnpj_cpf');
+    expect(sql).toContain('fe.fornecedor_cnpj = u.dest_cnpj_cpf');
   });
 
   it('corte temporal FIXO por parametro, vindo da config (research D23)', async () => {
@@ -106,15 +106,15 @@ describe('getFilaNacional — exclusoes obrigatorias (T026)', () => {
     const { sql } = await sqlDaFila();
     expect(sql).toContain('GROUP BY c_chave_nfe, n_nf, dest_razao, dest_cnpj_cpf, d_emi, desc_norm');
     expect(sql).toContain('HAVING COUNT(*) FILTER (WHERE pendente) > 0');
-    expect(sql).toContain('unaccent(i.x_prod)');
+    expect(sql).toContain('unaccent(u.x_prod)');
   });
 
   it('FR-030 (T050a): item PARCIALMENTE atribuido (restante > 1 kg do lado da NF) continua pendente', async () => {
     const { sql } = await sqlDaFila();
     // fator SQL espelha a tabela KG/TON/TL (unidade fora da tabela -> NULL -> regra simples)
-    expect(sql).toContain("CASE upper(btrim(i.u_com)) WHEN 'KG' THEN 1 WHEN 'TON' THEN 1000 WHEN 'TL' THEN 1000 END");
+    expect(sql).toContain("CASE upper(btrim(u.u_com)) WHEN 'KG' THEN 1 WHEN 'TON' THEN 1000 WHEN 'TL' THEN 1000 END");
     expect(sql).toContain('SUM(m.quantidade_nf_kg)');
-    expect(sql).toContain('m.nf_item_descricao_normalizada = upper(regexp_replace(btrim(unaccent(i.x_prod))');
+    expect(sql).toContain('m.nf_item_descricao_normalizada = upper(regexp_replace(btrim(unaccent(u.x_prod))');
     expect(sql).toMatch(/NOT recebido\s+OR \(nf_kg IS NOT NULL AND nf_atribuida > 0 AND nf_atribuida < nf_kg - 1\)/);
     // legado (match por numero, sem parcela): nf_atribuida = 0 -> NAO reentra pela regra do restante
     expect(sql).toContain("m.subtipo = 'compra_nacional'");
@@ -122,15 +122,20 @@ describe('getFilaNacional — exclusoes obrigatorias (T026)', () => {
 
   it('nunca usa n_id_receb (universal em NF de entrada — research D1)', async () => {
     const { sql } = await sqlDaFila();
-    expect(sql).not.toContain('n_id_receb');
+    // Feature 016: `h.n_id_receb` passa a ser SELECIONADO (identidade do recebimento
+    // fiscal no OMIE, usado so para concluir o fiscal) — mas continua fora de
+    // qualquer filtro/pendencia: nunca comparado, nunca testado contra NULL.
+    expect(sql).not.toMatch(/n_id_receb\s*[<>=!]/);
+    expect(sql).not.toMatch(/n_id_receb\s+IS\s+(NOT\s+)?NULL/i);
+    expect(sql).not.toMatch(/WHERE[^;]*n_id_receb/);
   });
 
   it('checagem de "recebida" em duas vias + baixa externa (itemNacionalRecebidoSql)', async () => {
     const { sql } = await sqlDaFila();
     expect(sql).toContain("m.subtipo = 'compra_nacional'");
-    expect(sql).toContain('m.nf_chave_acesso = h.c_chave_nfe');
+    expect(sql).toContain('m.nf_chave_acesso = u.c_chave_nfe');
     expect(sql).toContain('m.nf_chave_acesso IS NULL');
-    expect(sql).toContain("ltrim(m.nota_fiscal, '0') = ltrim(h.n_nf, '0')");
+    expect(sql).toContain("ltrim(m.nota_fiscal, '0') = ltrim(u.n_nf, '0')");
     expect(sql).toContain("a.tipo_aprovacao = 'recebimento_externo'");
   });
 
@@ -184,6 +189,8 @@ describe('getFilaNacional — configuracao e degrade (T013/T014)', () => {
       nfChaveAcesso: CHAVE, notaFiscal: '66724', fornecedorNome: 'ISOFORMA PLASTICOS INDUSTRIAIS LTDA',
       fornecedorCnpj: '68.176.072/0001-28', dtEmissao: '2026-08-06', diasDesdeEmissao: 42,
       itensTotal: 1, itensPendentes: 1, valorTotalBrl: 156604,
+      // feature 016 (flag desligada): colunas novas constantes
+      fiscal: 'concluido', fiscalConcluidoPeloAtlasEm: null,
     });
   });
 });

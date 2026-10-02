@@ -1,8 +1,9 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { createLogger } from '@atlas/core';
-import { requireOperador } from '../middleware/role.js';
+import { requireOperador, requireGestor } from '../middleware/role.js';
 import { requireArmazemVinculado } from '../middleware/armazem-vinculado.js';
+import type { Perfil } from '../types.js';
 import {
   listarLocalidadesNacional,
   buscarProdutosNacional,
@@ -16,12 +17,30 @@ import {
 import {
   getFilaNacional,
   getDetalheNfNacional,
+  recebimentoFiscalHabilitado,
   DataCorteNaoConfiguradaError,
   NfNacionalNaoEncontradaError,
   NfNacionalCanceladaError,
   FornecedorExcluidoError,
 } from '../services/fila-nacional.service.js';
 import { definirConjuntoCorrelacao } from '../services/correlacao-produto.service.js';
+import {
+  RecebimentoFiscalError,
+  RecebimentoFiscalEmAndamentoError,
+  RecebimentoFiscalSemFornecedorError,
+  RecebimentoFiscalNfCanceladaError,
+  listarLedgerFiscal,
+} from '../services/recebimento-fiscal.service.js';
+import {
+  dispensarNf,
+  listarDispensas,
+  reverterDispensa,
+  RecebimentoFiscalDesabilitadoError,
+  NfNaoDispensavelError,
+  NfJaDispensadaError,
+  DispensaNaoEncontradaError,
+  DispensaNaoPermitidaError,
+} from '../services/nf-dispensa.service.js';
 import {
   solicitarRecebimentoExterno,
   recebimentoExternoHabilitado,
@@ -243,7 +262,8 @@ router.get(
     }
     try {
       const data = await getFilaNacional({ q: parsed.data.q ?? null, fornecedor: parsed.data.fornecedor ?? null });
-      res.json({ data, error: null });
+      // Feature 016: a UI so mostra o selo fiscal quando a flag esta ligada — vai em `meta`, a lista segue em `data`.
+      res.json({ data, error: null, meta: { recebimentoFiscalHabilitado: recebimentoFiscalHabilitado() } });
     } catch (err) {
       if (responderErroFilaNacional(res, err)) return;
       logger.error({ err }, 'Erro ao listar fila nacional');
@@ -268,7 +288,8 @@ router.get(
       const data = await getDetalheNfNacional(parsed.data);
       // A UI esconde a acao de baixa externa quando a flag esta desligada (T070);
       // a flag e configuracao de ambiente, e a tela precisa saber sem tentar o POST.
-      res.json({ data: { ...data, recebimentoExternoHabilitado: recebimentoExternoHabilitado() }, error: null });
+      // Feature 016: a UI mostra o selo/banner fiscal e o botao de dispensa so com a flag ligada.
+      res.json({ data: { ...data, recebimentoExternoHabilitado: recebimentoExternoHabilitado(), recebimentoFiscalHabilitado: recebimentoFiscalHabilitado() }, error: null });
     } catch (err) {
       if (responderErroFilaNacional(res, err)) return;
       logger.error({ err, chave: parsed.data }, 'Erro ao detalhar NF nacional');
@@ -364,6 +385,25 @@ router.post(
       }
       if (err instanceof NfNacionalJaProcessadaError) {
         res.status(409).json({ data: null, error: { code: 'NF_JA_PROCESSADA', userMessage: err.message, message: err.message } });
+        return;
+      }
+      // Feature 016 — falhas do recebimento FISCAL (contrato §3): nada foi gravado.
+      // O detalhe tecnico (passo, fault OMIE) fica no ledger e no log, nunca na UI.
+      if (err instanceof RecebimentoFiscalEmAndamentoError) {
+        res.status(409).json({ data: null, error: { code: 'RECEBIMENTO_FISCAL_EM_ANDAMENTO', userMessage: err.message, message: err.message } });
+        return;
+      }
+      if (err instanceof RecebimentoFiscalSemFornecedorError) {
+        res.status(422).json({ data: null, error: { code: 'RECEBIMENTO_FISCAL_SEM_FORNECEDOR', userMessage: err.message, message: err.message } });
+        return;
+      }
+      if (err instanceof RecebimentoFiscalNfCanceladaError) {
+        res.status(422).json({ data: null, error: { code: 'NF_CANCELADA', userMessage: err.message, message: err.message } });
+        return;
+      }
+      if (err instanceof RecebimentoFiscalError) {
+        logger.error({ err, chave: parsed.data.nf_chave_acesso, passo: err.passo }, 'Recebimento fiscal falhou no OMIE — nada gravado');
+        res.status(502).json({ data: null, error: { code: 'RECEBIMENTO_FISCAL_FAIL', userMessage: err.message, message: `fiscal falhou no passo ${err.passo}` } });
         return;
       }
       logger.error({ err, chave: parsed.data.nf_chave_acesso }, 'Erro inesperado em recebimento nacional por NF');
@@ -521,6 +561,176 @@ router.post(
       }
       logger.error({ err, chave: parsed.data.nf_chave_acesso }, 'Erro ao solicitar baixa por recebimento externo');
       res.status(500).json({ data: null, error: { code: 'RECEBIMENTO_EXTERNO_FAIL', message: (err as Error).message } });
+    }
+  },
+);
+
+// ── Feature 016 (ACXEGDP-395): dispensa de NF pelo gestor + rastreabilidade do fiscal ──
+
+const DispensarSchema = z
+  .object({
+    nf_chave_acesso: z.string().regex(/^\d{44}$/, 'chave de acesso deve ter 44 dígitos'),
+    motivo: z.string().min(1).max(1000),
+  })
+  .strict();
+
+const ReverterDispensaSchema = z.object({ motivo: z.string().min(1).max(1000) }).strict();
+
+const DispensasQuerySchema = z.object({
+  incluirRevertidas: z.enum(['true', 'false']).optional(),
+});
+
+const LedgerFiscalQuerySchema = z.object({
+  status: z.enum(['em_andamento', 'concluido', 'ja_concluido', 'falha']).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+
+function responderErroDispensa(res: Response, err: unknown): boolean {
+  if (responderErroFilaNacional(res, err)) return true;
+  if (err instanceof RecebimentoFiscalDesabilitadoError) {
+    res.status(403).json({ data: null, error: { code: 'RECEBIMENTO_FISCAL_DESABILITADO', userMessage: err.message, message: err.message } });
+    return true;
+  }
+  if (err instanceof DispensaNaoPermitidaError) {
+    res.status(403).json({ data: null, error: { code: 'FORBIDDEN', userMessage: err.message, message: err.message } });
+    return true;
+  }
+  if (err instanceof MotivoObrigatorioError) {
+    res.status(400).json({ data: null, error: { code: 'MOTIVO_OBRIGATORIO', userMessage: err.message, message: err.message } });
+    return true;
+  }
+  if (err instanceof NfJaDispensadaError) {
+    res.status(409).json({ data: null, error: { code: 'NF_JA_DISPENSADA', userMessage: err.message, message: err.message } });
+    return true;
+  }
+  if (err instanceof NfNaoDispensavelError) {
+    res.status(422).json({ data: null, error: { code: 'NF_NAO_DISPENSAVEL', userMessage: err.message, message: err.message } });
+    return true;
+  }
+  if (err instanceof DispensaNaoEncontradaError) {
+    res.status(404).json({ data: null, error: { code: 'DISPENSA_NAO_ENCONTRADA', userMessage: err.message, message: err.message } });
+    return true;
+  }
+  return false;
+}
+
+// POST /api/v1/stockbridge/recebimento/nacional/dispensar — gestor+ (contrato §4).
+// Com a flag desligada responde 403 ANTES de validar o corpo (a acao nao existe).
+router.post(
+  '/api/v1/stockbridge/recebimento/nacional/dispensar',
+  requireGestor,
+  async (req: Request, res: Response) => {
+    if (!recebimentoFiscalHabilitado()) {
+      const err = new RecebimentoFiscalDesabilitadoError();
+      res.status(403).json({ data: null, error: { code: 'RECEBIMENTO_FISCAL_DESABILITADO', userMessage: err.message, message: err.message } });
+      return;
+    }
+    const parsed = DispensarSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        data: null,
+        error: { code: 'INVALID_INPUT', userMessage: USER_MSG_INVALID, message: parsed.error.issues.map((i) => i.message).join('; ') },
+      });
+      return;
+    }
+    const user = (req as Request & { user?: { id: string; role: Perfil } }).user;
+    if (!user) {
+      res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessão sem usuário' } });
+      return;
+    }
+    try {
+      const result = await dispensarNf({ nfChaveAcesso: parsed.data.nf_chave_acesso, motivo: parsed.data.motivo, userId: user.id, perfilUsuario: user.role });
+      res.status(201).json({ data: result, error: null });
+    } catch (err) {
+      if (responderErroDispensa(res, err)) return;
+      logger.error({ err, chave: parsed.data.nf_chave_acesso }, 'Erro ao dispensar NF da fila');
+      res.status(500).json({ data: null, error: { code: 'NF_DISPENSA_FAIL', message: (err as Error).message } });
+    }
+  },
+);
+
+// GET /api/v1/stockbridge/recebimento/nacional/dispensas — gestor+ (contrato §5)
+router.get(
+  '/api/v1/stockbridge/recebimento/nacional/dispensas',
+  requireGestor,
+  async (req: Request, res: Response) => {
+    if (!recebimentoFiscalHabilitado()) {
+      const err = new RecebimentoFiscalDesabilitadoError();
+      res.status(403).json({ data: null, error: { code: 'RECEBIMENTO_FISCAL_DESABILITADO', userMessage: err.message, message: err.message } });
+      return;
+    }
+    const parsed = DispensasQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ data: null, error: { code: 'INVALID_QUERY', userMessage: USER_MSG_INVALID, message: parsed.error.issues.map((i) => i.message).join('; ') } });
+      return;
+    }
+    try {
+      const data = await listarDispensas({ incluirRevertidas: parsed.data.incluirRevertidas === 'true' });
+      res.json({ data, error: null });
+    } catch (err) {
+      if (responderErroDispensa(res, err)) return;
+      logger.error({ err }, 'Erro ao listar dispensas de NF');
+      res.status(500).json({ data: null, error: { code: 'NF_DISPENSA_LIST_FAIL', message: (err as Error).message } });
+    }
+  },
+);
+
+// POST /api/v1/stockbridge/recebimento/nacional/dispensas/:id/reverter — gestor+ (contrato §6)
+router.post(
+  '/api/v1/stockbridge/recebimento/nacional/dispensas/:id/reverter',
+  requireGestor,
+  async (req: Request, res: Response) => {
+    if (!recebimentoFiscalHabilitado()) {
+      const err = new RecebimentoFiscalDesabilitadoError();
+      res.status(403).json({ data: null, error: { code: 'RECEBIMENTO_FISCAL_DESABILITADO', userMessage: err.message, message: err.message } });
+      return;
+    }
+    const id = String(req.params.id ?? '');
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+      res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', userMessage: USER_MSG_INVALID, message: 'id inválido' } });
+      return;
+    }
+    const parsed = ReverterDispensaSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        data: null,
+        error: { code: 'INVALID_INPUT', userMessage: USER_MSG_INVALID, message: parsed.error.issues.map((i) => i.message).join('; ') },
+      });
+      return;
+    }
+    const user = (req as Request & { user?: { id: string; role: Perfil } }).user;
+    if (!user) {
+      res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessão sem usuário' } });
+      return;
+    }
+    try {
+      const result = await reverterDispensa({ id, motivo: parsed.data.motivo, userId: user.id, perfilUsuario: user.role });
+      res.json({ data: result, error: null });
+    } catch (err) {
+      if (responderErroDispensa(res, err)) return;
+      logger.error({ err, id }, 'Erro ao reverter dispensa de NF');
+      res.status(500).json({ data: null, error: { code: 'NF_DISPENSA_REVERTER_FAIL', message: (err as Error).message } });
+    }
+  },
+);
+
+// GET /api/v1/stockbridge/recebimento/nacional/fiscal — ledger do recebimento fiscal, gestor+ (contrato §7).
+// `erro_omie_*` nao sai daqui (fica no banco e no log — ACXEGDP-313).
+router.get(
+  '/api/v1/stockbridge/recebimento/nacional/fiscal',
+  requireGestor,
+  async (req: Request, res: Response) => {
+    const parsed = LedgerFiscalQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ data: null, error: { code: 'INVALID_QUERY', userMessage: USER_MSG_INVALID, message: parsed.error.issues.map((i) => i.message).join('; ') } });
+      return;
+    }
+    try {
+      const data = await listarLedgerFiscal({ status: parsed.data.status ?? null, limit: parsed.data.limit ?? 100 });
+      res.json({ data, error: null });
+    } catch (err) {
+      logger.error({ err }, 'Erro ao listar ledger do recebimento fiscal');
+      res.status(500).json({ data: null, error: { code: 'LEDGER_FISCAL_FAIL', message: (err as Error).message } });
     }
   },
 );

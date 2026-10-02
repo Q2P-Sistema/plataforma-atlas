@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { idadeEspelhoRecebimentos } from '../services/fila-nacional.service.js';
 import { requireAuth, requireModule, csrfProtection } from '@atlas/auth';
 import { createLogger } from '@atlas/core';
 import filaRouter from './fila.routes.js';
@@ -36,9 +37,16 @@ router.use(nfPedidoMapaRouter);
 // Todas as demais rotas exigem sessão autenticada + acesso ao módulo
 router.use('/api/v1/stockbridge', requireAuth, csrfProtection, requireModule('stockbridge'));
 
-// Health check
-router.get('/api/v1/stockbridge/health', (_req: Request, res: Response) => {
-  res.json({ data: { status: 'ok', module: 'stockbridge' }, error: null });
+// Health check. Feature 016 (T051): expoe a defasagem do espelho de recebimentos
+// de NF-e (fonte "fiscal pendente" da fila nacional) — `degraded` acima de 120 min
+// com a flag ligada; 'desligado' quando a feature esta off.
+router.get('/api/v1/stockbridge/health', async (_req: Request, res: Response) => {
+  const recebimentoNfeEspelho = await idadeEspelhoRecebimentos();
+  const status = recebimentoNfeEspelho.status === 'degraded' ? 'degraded' : 'ok';
+  res.json({
+    data: { status, module: 'stockbridge', recebimentoNfeEspelhoIdadeMin: recebimentoNfeEspelho.idadeMin, recebimentoNfeEspelho },
+    error: null,
+  });
 });
 
 // US1 — Recebimento de NF com conferencia fisica
