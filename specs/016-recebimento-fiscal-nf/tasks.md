@@ -154,6 +154,25 @@ Monorepo modular: `modules/stockbridge/src/` (backend), `apps/web/src/` (fronten
 
 ---
 
+## Phase 8: Revisão pré-UAT (02/10/2026)
+
+Revisão multiagente (6 dimensões, cada achado verificado por um cético) antes do PR para o UAT: 54 achados, 46 confirmados, 7 plausíveis, 1 refutado. Correções:
+
+- [X] T057 Fornecedor não cadastrado chega do OMIE como `nIdFornecedor: 0` (NF 1257): parser normaliza 0 → null e lê `cBloqueado`/`cDevolvido`; `infoCadastro.cRecebido` ausente recusa a estrutura; serviço recusa sem fornecedor/CNPJ antes de escrever e `executarFiscalSeNecessario` recusa NF sem CNPJ no espelho sem abrir o ledger (`packages/integrations/omie/src/stockbridge/recebimento-nfe.ts`, `modules/stockbridge/src/services/recebimento-fiscal.service.ts`, `recebimento-nacional.service.ts`)
+- [X] T058 Só conclui recebimento na etapa 40, não bloqueado nem devolvido (`422 RECEBIMENTO_FISCAL_ETAPA_INESPERADA`); fonte (b) exige `c_recebido='N'`, `c_cancelada='N'` e `c_etapa='40'` explícitos (`fila-nacional.service.ts`)
+- [X] T059 Espera de 70 s após falha com escrita (`409 RECEBIMENTO_FISCAL_AGUARDE`, cache de ~1 min) + passos já feitos pulados + órfão de 15 min com token de dono no fechamento + log do erro OMIE antes de gravar o ledger (`recebimento-fiscal.service.ts`)
+- [X] T060 NF concluída pelo Atlas fica na fila como "fiscal já feito" pelo ledger na janela entre o sync de recebimentos e o de NF (FR-013); ordem numérica dos itens; `fiscalConcluidoPeloAtlasEm` só para ledger `concluido`; `valorNotaBrl` (NF inteira) no detalhe (`fila-nacional.service.ts`)
+- [X] T061 Via 2 da checagem "já recebida" (número da NF) exige `created_at >= emissão` — colisão de número entre fornecedores escondia NF com fiscal pendente (`fiscal-recebida-sql.ts`)
+- [X] T062 Tabela da 0053 ausente com a flag ligada → `503 FILA_NACIONAL_NAO_CONFIGURADA` na fila, no detalhe, no POST e no ledger, nunca fila vazia; health `degraded` com espelho vazio ou inacessível (`fila-nacional.service.ts`, rotas, `stockbridge.routes.ts`)
+- [X] T063 Baixa externa recusada para NF com fiscal pendente (`409 BAIXA_EXTERNA_FISCAL_PENDENTE`) e link escondido na tela (`recebimento-externo.service.ts`, painel)
+- [X] T064 Dispensa: motivo com mensagem própria e `400 MOTIVO_OBRIGATORIO` (inclusive vazio/ausente), `409 NF_EM_RECEBIMENTO` com fiscal em curso, valor da NF inteira no aviso, texto que diz que a situação vem do espelho, aviso ao fiscal também na reversão; `GET …/fiscal` com 403 pela flag; `404 NF_DISPENSADA` no detalhe (`nf-dispensa.service.ts`, `notificacao.service.ts`, rotas)
+- [X] T065 UI: banner/botão só prometem o fiscal quando há o que receber; NF sem fornecedor com aviso e botão desabilitado; "Tentar novamente" com contagem após falha e também para erro de proxy/rede; `useApiFetch` sem `SyntaxError` em corpo não-JSON; modal de dispensa e de desfazer com erro dentro, reset, `maxLength`, `htmlFor`, `role="alert"`; seção "NFs dispensadas" mantém a lista em erro de refetch, para o polling no 403 e mostra as desfeitas (FR-024); copy da fila sobre a latência do espelho e o formulário manual
+- [X] T066 Stacks: `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED`/`STOCKBRIDGE_FISCAL_EMAILS` no `deploy/portainer/atlas.stack.yml` e nos `.env.example` (no UAT, acrescentar no YAML pelo Portainer); quickstart com a aplicação da 0053 por arquivo e a ordem do deploy; contratos, research (D2 corrigida, limitações) e CLAUDE.md atualizados
+- [X] T067 Mock OMIE: `nIdReceb` sintético distinto por chave (concluir uma NF no mock não conclui outra)
+- [ ] T068 Alerta ativo de espelho defasado (cron com e-mail para `STOCKBRIDGE_OPS_EMAIL` quando a idade passar de 120 min) — evolução registrada em research "Limitações conhecidas"
+
+---
+
 ## Dependencies & Execution Order
 
 - **Phase 1 → Phase 2 → histórias**. T003 (workflow n8n) corre em paralelo com tudo; só bloqueia a validação em UAT (T027 em UAT, T032, T041, T050, T055). Em dev, o espelho é populado por linhas de teste.

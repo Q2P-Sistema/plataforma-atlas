@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '@atlas/ui';
 import { useAuthStore } from '../../../stores/auth.store.js';
@@ -259,6 +259,8 @@ function FilaSection({ onSelecionar, onAbrirManual }: { onSelecionar: (chave: st
           <>
             A lista traz as notas de compra que chegaram ao OMIE. As marcadas como <strong className="text-atlas-ink font-medium">fiscal pendente</strong> terão o
             recebimento fiscal concluído ao confirmar; as demais já tiveram o fiscal feito e recebem só o estoque. Quantidade e valor vêm do documento.
+            Notas recém-chegadas da SEFAZ aparecem após a próxima atualização do espelho do OMIE. O formulário manual não conclui o recebimento fiscal:
+            use-o só para nota que não está nesta lista e, nesse caso, avise o fiscal.
           </>
         ) : (
           'A lista vem das notas de compra já registradas no OMIE. Escolha a nota, confira os itens e dê entrada — quantidade e valor vêm do documento.'
@@ -275,7 +277,9 @@ function FilaSection({ onSelecionar, onAbrirManual }: { onSelecionar: (chave: st
 
       {!isLoading && error == null && fila.length === 0 && (
         <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-atlas-border rounded-lg">
-          Nenhuma nota nacional aguardando recebimento. Se a nota ainda não aparece aqui, registre pelo formulário manual.
+          {fiscalHabilitado
+            ? 'Nenhuma nota nacional aguardando recebimento. Notas recém-chegadas da SEFAZ aparecem após a próxima atualização do espelho do OMIE.'
+            : 'Nenhuma nota nacional aguardando recebimento. Se a nota ainda não aparece aqui, registre pelo formulário manual.'}
         </div>
       )}
 
@@ -367,8 +371,24 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
   const [erroCodigo, setErroCodigo] = useState<string | null>(null);
   const [pedidoBaixa, setPedidoBaixa] = useState<PedidoBaixa | null>(null);
   const [dispensando, setDispensando] = useState(false);
+  /** feature 016: apos falha do fiscal, o servidor recusa nova tentativa por ~1 min (cache do OMIE) — a UI espera junto */
+  const [retryLiberaEm, setRetryLiberaEm] = useState<number | null>(null);
+  const [agora, setAgora] = useState(() => Date.now());
   const [motivoDispensa, setMotivoDispensa] = useState('');
   const role = useAuthStore((s) => s.user?.role);
+
+  useEffect(() => {
+    if (retryLiberaEm == null) return;
+    const t = setInterval(() => {
+      const n = Date.now();
+      setAgora(n);
+      if (n >= retryLiberaEm) {
+        setRetryLiberaEm(null);
+        clearInterval(t);
+      }
+    }, 1000);
+    return () => clearInterval(t);
+  }, [retryLiberaEm]);
   const [motivoBaixa, setMotivoBaixa] = useState('');
   const [avisoBaixa, setAvisoBaixa] = useState<string | null>(null);
 
@@ -388,8 +408,15 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
   const recebiveis = useMemo(() => (nf?.itens ?? []).filter(itemRecebivel), [nf]);
   const baixaveis = useMemo(() => (nf?.itens ?? []).filter(itemBaixavel), [nf]);
   const baixaHabilitada = nf?.recebimentoExternoHabilitado !== false;
-  /** feature 016: o fiscal sera concluido no OMIE neste mesmo clique */
+  /** feature 016: a NF esta com o recebimento fiscal pendente no OMIE */
   const fiscalPendente = nf?.recebimentoFiscalHabilitado === true && nf.fiscal === 'pendente';
+  /** fornecedor nao cadastrado no OMIE: o fiscal nao pode ser concluido ate o fiscal cadastrar */
+  const fiscalSemFornecedor = fiscalPendente && !nf?.fornecedorCnpj;
+  /** o fiscal sera concluido no OMIE neste clique (ha o que receber e fornecedor cadastrado) */
+  const fiscalNoClique = fiscalPendente && !fiscalSemFornecedor && recebiveis.length > 0;
+  /** baixa externa nao cabe em NF com fiscal pendente (tiraria a nota da fila com o fiscal parado) */
+  const baixaPermitida = baixaHabilitada && !fiscalPendente;
+  const retryRestanteSeg = retryLiberaEm != null ? Math.max(0, Math.ceil((retryLiberaEm - agora) / 1000)) : 0;
   /** feature 016 (Historia 4): gestor/diretor pode tirar da fila uma NF que nunca sera recebida */
   const podeDispensar = (role === 'gestor' || role === 'diretor') && nf?.recebimentoFiscalHabilitado === true && nf.dispensavel === true && !resultado;
 
@@ -484,8 +511,17 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
       queryClient.invalidateQueries({ queryKey: ['stockbridge'] });
     },
     onError: (e) => {
+      const { code, status } = e as Error & { code?: string; status?: number };
       setErroEnvio(e.message);
-      setErroCodigo((e as Error & { code?: string }).code ?? null);
+      // Proxy/rede sem corpo da API (502/503/504 ou conexao caida): o fiscal pode ter
+      // passado — repetir e seguro (o ledger devolve ja_concluido ou 409).
+      setErroCodigo(code ?? (status === 0 || status === 502 || status === 503 || status === 504 ? 'FALHA_DE_REDE' : null));
+      if (code === 'RECEBIMENTO_FISCAL_FAIL' || code === 'RECEBIMENTO_FISCAL_AGUARDE') {
+        const seg = Number(/(\d+)\s*segundos/.exec(e.message)?.[1] ?? 65);
+        const n = Date.now();
+        setAgora(n);
+        setRetryLiberaEm(n + Math.max(1, seg) * 1000);
+      }
     },
   });
 
@@ -536,6 +572,7 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
     const msg = validar();
     if (msg) {
       setErroEnvio(msg);
+      setErroCodigo(null);
       return;
     }
     setErroEnvio(null);
@@ -553,10 +590,15 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
 
       {!isLoading && error != null && (
         <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-sm text-red-800 dark:text-red-300">
-          {error.message}{' '}
-          <button type="button" onClick={onAbrirManual} className="underline">
-            Registrar manualmente
-          </button>
+          {error.message}
+          {(error as Error & { code?: string }).code !== 'NF_DISPENSADA' && (
+            <>
+              {' '}
+              <button type="button" onClick={onAbrirManual} className="underline">
+                Registrar manualmente
+              </button>
+            </>
+          )}
         </div>
       )}
 
@@ -595,8 +637,11 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
 
           {fiscalPendente && !resultado && (
             <div className="mb-3 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-sm text-amber-900 dark:text-amber-200">
-              O recebimento fiscal desta nota será concluído no OMIE ao confirmar — a conta a pagar é gerada e nenhum estoque é movimentado por ele.
-              O estoque continua entrando pela aprovação do gestor.
+              {fiscalSemFornecedor
+                ? 'Esta nota está sem fornecedor cadastrado no OMIE, então o recebimento fiscal não pode ser concluído. Peça ao fiscal para cadastrar o fornecedor; a nota pode ser recebida depois da próxima atualização do espelho do OMIE.'
+                : recebiveis.length === 0
+                  ? 'Nenhum item desta nota pode ser recebido por aqui, e o recebimento fiscal continua pendente no OMIE. Confira a unidade com o fiscal ou peça ao gestor para dispensar a nota.'
+                  : 'O recebimento fiscal desta nota será concluído no OMIE ao confirmar — a conta a pagar é gerada e nenhum estoque é movimentado por ele. O estoque continua entrando pela aprovação do gestor.'}
             </div>
           )}
 
@@ -622,7 +667,7 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
                 localidades={localidades}
                 alvoKg={alvoKg(it, getForm(it))}
                 onChange={(patch) => setItem(it, patch)}
-                onSolicitarBaixa={baixaHabilitada && itemBaixavel(it) && !resultado ? () => setPedidoBaixa({ modo: 'item', item: it }) : undefined}
+                onSolicitarBaixa={baixaPermitida && itemBaixavel(it) && !resultado ? () => setPedidoBaixa({ modo: 'item', item: it }) : undefined}
               />
             ))}
           </div>
@@ -663,7 +708,7 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
           )}
 
           {erroEnvio && (
-            <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-sm text-red-800 dark:text-red-300 flex items-start gap-3 flex-wrap">
+            <div role="alert" className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-sm text-red-800 dark:text-red-300 flex items-start gap-3 flex-wrap">
               <span className="flex-1">{erroEnvio}</span>
               {erroCodigo === 'RECEBIMENTO_FISCAL_EM_ANDAMENTO' && (
                 <button
@@ -678,14 +723,14 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
                   Recarregar nota
                 </button>
               )}
-              {erroCodigo === 'RECEBIMENTO_FISCAL_FAIL' && (
+              {(erroCodigo === 'RECEBIMENTO_FISCAL_FAIL' || erroCodigo === 'RECEBIMENTO_FISCAL_AGUARDE' || erroCodigo === 'FALHA_DE_REDE') && (
                 <button
                   type="button"
                   onClick={handleEnviar}
-                  disabled={enviarMut.isPending}
+                  disabled={enviarMut.isPending || retryRestanteSeg > 0}
                   className="px-3 py-1 border border-red-300 dark:border-red-700 rounded text-xs font-medium hover:bg-red-100 dark:hover:bg-red-900/40 whitespace-nowrap disabled:opacity-50"
                 >
-                  Tentar novamente
+                  {retryRestanteSeg > 0 ? `Tentar novamente em ${retryRestanteSeg} s` : 'Tentar novamente'}
                 </button>
               )}
             </div>
@@ -695,8 +740,8 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
             <div className="mt-4 flex items-center justify-between gap-4 flex-wrap">
               <div className="text-xs text-atlas-muted">
                 Cada item vira uma aprovação do gestor. O ajuste no OMIE acontece na aprovação.
-                {fiscalPendente && ' O recebimento fiscal é concluído no OMIE agora, ao confirmar.'}
-                {baixaHabilitada && baixaveis.length > 0 && (
+                {fiscalNoClique && ' O recebimento fiscal é concluído no OMIE agora, ao confirmar.'}
+                {baixaPermitida && baixaveis.length > 0 && (
                   <>
                     {' '}
                     <button type="button" onClick={() => setPedidoBaixa({ modo: 'todos' })} className="underline hover:text-atlas-ink">
@@ -707,7 +752,7 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
                 {podeDispensar && (
                   <>
                     {' '}
-                    <button type="button" onClick={() => setDispensando(true)} className="underline hover:text-atlas-ink">
+                    <button type="button" onClick={() => { dispensarMut.reset(); setDispensando(true); }} className="underline hover:text-atlas-ink">
                       Esta nota não será recebida? Dispensar da fila
                     </button>
                   </>
@@ -716,18 +761,18 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
               <button
                 type="button"
                 onClick={handleEnviar}
-                disabled={enviarMut.isPending || recebiveis.length === 0}
+                disabled={enviarMut.isPending || recebiveis.length === 0 || fiscalSemFornecedor}
                 className="px-5 py-2 bg-atlas-btn-bg text-atlas-btn-text rounded text-sm font-medium hover:opacity-90 disabled:opacity-50"
               >
                 {enviarMut.isPending
                   ? 'Enviando…'
-                  : `${fiscalPendente ? 'Concluir fiscal e dar entrada' : 'Dar entrada'} em ${recebiveis.length} ${recebiveis.length === 1 ? 'item' : 'itens'} →`}
+                  : `${fiscalNoClique ? 'Concluir fiscal e dar entrada' : 'Dar entrada'} em ${recebiveis.length} ${recebiveis.length === 1 ? 'item' : 'itens'} →`}
               </button>
             </div>
           )}
 
           {dispensando && (
-            <Modal open title="Dispensar NF da fila" onClose={() => { setDispensando(false); setMotivoDispensa(''); }}>
+            <Modal open title="Dispensar NF da fila" onClose={() => { setDispensando(false); setMotivoDispensa(''); dispensarMut.reset(); }}>
               <div className="space-y-3">
                 <p className="text-sm text-atlas-muted">
                   A NF <strong className="text-atlas-ink">{nf.notaFiscal}</strong> ({nf.fornecedorNome}) sai da fila de recebimento para todos os operadores e não será
@@ -740,25 +785,27 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
                   </p>
                 )}
                 <div>
-                  <label className="block text-xs font-semibold text-atlas-muted mb-1">Por que esta nota não será recebida? *</label>
+                  <label htmlFor="motivo-dispensa-nf" className="block text-xs font-semibold text-atlas-muted mb-1">Por que esta nota não será recebida? *</label>
                   <textarea
+                    id="motivo-dispensa-nf"
                     value={motivoDispensa}
                     onChange={(e) => setMotivoDispensa(e.target.value)}
                     rows={3}
+                    maxLength={1000}
                     autoFocus
                     placeholder="Ex.: carga nunca chegou; fornecedor vai cancelar a nota"
                     className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg text-atlas-ink placeholder:text-atlas-muted rounded text-sm"
                   />
                 </div>
                 {dispensarMut.isError && (
-                  <div className="p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-xs text-red-800 dark:text-red-300">
+                  <div role="alert" className="p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-xs text-red-800 dark:text-red-300">
                     {dispensarMut.error.message}
                   </div>
                 )}
                 <div className="flex gap-2 justify-end">
                   <button
                     type="button"
-                    onClick={() => { setDispensando(false); setMotivoDispensa(''); }}
+                    onClick={() => { setDispensando(false); setMotivoDispensa(''); dispensarMut.reset(); }}
                     className="px-4 py-2 border border-atlas-border bg-atlas-card text-atlas-ink hover:bg-atlas-bg/60 rounded text-sm"
                   >
                     Cancelar

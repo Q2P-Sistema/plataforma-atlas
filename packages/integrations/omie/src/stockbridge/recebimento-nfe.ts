@@ -60,12 +60,20 @@ export interface RecebimentoNfeConsultado {
   cNumeroNFe: string;
   cEtapa: string;
   dEmissaoNFe: string | null; // dd/MM/yyyy
+  /**
+   * null quando o recebimento NAO tem fornecedor cadastrado no OMIE. O OMIE real
+   * devolve `nIdFornecedor: 0` nesse caso (NF 1257, sonda de 02/10/2026) — o
+   * parser normaliza 0 para null.
+   */
   nIdFornecedor: number | null;
   cCNPJ_CPF: string | null;
   cRazaoSocial: string | null;
   nValorNFe: number | null;
   cRecebido: SimNao;
   cCancelada: SimNao;
+  /** infoCadastro.cBloqueado / cDevolvido — o Atlas nao conclui recebimento bloqueado ou devolvido. */
+  cBloqueado: SimNao | null;
+  cDevolvido: SimNao | null;
   cUsuarioRec: string | null;
   dRec: string | null;
   hRec: string | null;
@@ -128,6 +136,14 @@ export function parseRecebimentoNfeConsultado(raw: RawRecebimento): RecebimentoN
   if (nIdReceb == null || !cChaveNFe) {
     throw new Error('ConsultarRecebimento devolveu bloco sem nIdReceb/cChaveNFe — estrutura invalida');
   }
+  // Sem infoCadastro.cRecebido nao da para saber se o fiscal ja foi concluido —
+  // assumir 'N' faria o Atlas escrever num recebimento possivelmente concluido
+  // ou cancelado. Falha fechado (revisao pre-UAT, FISC-5).
+  const cRecebido = simNao(i.cRecebido);
+  if (cRecebido == null) {
+    throw new Error('ConsultarRecebimento devolveu bloco sem infoCadastro.cRecebido — estrutura invalida');
+  }
+  const nIdFornecedor = num(c.nIdFornecedor);
   const itens: ItemRecebimentoNfe[] = (raw.itensRecebimento ?? []).map((it) => {
     const ic = it.itensCabec ?? {};
     const aj = it.itensAjustes ?? {};
@@ -157,12 +173,14 @@ export function parseRecebimentoNfeConsultado(raw: RawRecebimento): RecebimentoN
     cNumeroNFe: str(c.cNumeroNFe) ?? '',
     cEtapa: str(c.cEtapa) ?? '',
     dEmissaoNFe: str(c.dEmissaoNFe),
-    nIdFornecedor: num(c.nIdFornecedor),
+    nIdFornecedor: nIdFornecedor != null && nIdFornecedor > 0 ? nIdFornecedor : null,
     cCNPJ_CPF: str(c.cCNPJ_CPF),
     cRazaoSocial: str(c.cRazaoSocial),
     nValorNFe: num(c.nValorNFe),
-    cRecebido: simNao(i.cRecebido) ?? 'N',
+    cRecebido,
     cCancelada: simNao(i.cCancelada) ?? 'N',
+    cBloqueado: simNao(i.cBloqueado),
+    cDevolvido: simNao(i.cDevolvido),
     cUsuarioRec: str(i.cUsuarioRec),
     dRec: str(i.dRec),
     hRec: str(i.hRec),

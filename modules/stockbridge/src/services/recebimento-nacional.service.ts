@@ -5,7 +5,7 @@ import { movimentacao, aprovacao } from '@atlas/db';
 import { converterParaKg } from './motor.service.js';
 import { enviarAlertaRecebimentoNacionalLote } from './notificacao.service.js';
 import { getDetalheNfNacional, recebimentoFiscalHabilitado, type DetalheNfNacional, type ItemNfNacional } from './fila-nacional.service.js';
-import { concluirRecebimentoFiscal } from './recebimento-fiscal.service.js';
+import { concluirRecebimentoFiscal, RecebimentoFiscalSemFornecedorError } from './recebimento-fiscal.service.js';
 import { normalizarDescricaoNf } from './descricao-nf.js';
 import { registrarUsoCorrelacao } from './correlacao-produto.service.js';
 import type { UnidadeMedida, SubtipoMovimento } from '../types.js';
@@ -993,6 +993,9 @@ async function executarFiscalSeNecessario(detalhe: DetalheNfNacional, userId: st
   if (!recebimentoFiscalHabilitado() || detalhe.fiscal !== 'pendente') {
     return fiscalSemAcao(`O recebimento fiscal da NF ${detalhe.notaFiscal} já estava concluído no OMIE.`);
   }
+  // Fornecedor nao cadastrado no OMIE: o espelho ja sabe (sem CNPJ). Recusa aqui,
+  // sem abrir o ledger nem consultar o OMIE (revisao pre-UAT, FISC-1/NF 1257).
+  if (!detalhe.fornecedorCnpj) throw new RecebimentoFiscalSemFornecedorError(detalhe.notaFiscal);
   const r = await concluirRecebimentoFiscal({
     nfChaveAcesso: detalhe.nfChaveAcesso,
     nIdReceb: detalhe.nIdReceb,

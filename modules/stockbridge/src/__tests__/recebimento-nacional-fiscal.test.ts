@@ -84,7 +84,7 @@ vi.mock('../services/recebimento-fiscal.service.js', async () => {
 });
 
 import { processarRecebimentoNacionalPorNf } from '../services/recebimento-nacional.service.js';
-import { RecebimentoFiscalError, RecebimentoFiscalEmAndamentoError } from '../services/recebimento-fiscal.service.js';
+import { RecebimentoFiscalError, RecebimentoFiscalEmAndamentoError, RecebimentoFiscalSemFornecedorError } from '../services/recebimento-fiscal.service.js';
 import { converterItemNfParaKg } from '../services/unidade-nf.js';
 import type { DetalheNfNacional, ItemNfNacional } from '../services/fila-nacional.service.js';
 
@@ -116,7 +116,7 @@ function detalhe(itens: ItemNfNacional[], over: Partial<DetalheNfNacional> = {})
     nfChaveAcesso: CHAVE, notaFiscal: '6842', fornecedorNome: FORNECEDOR, fornecedorCnpj: '14.555.032/0007-53',
     dtEmissao: '2026-10-01', diasDesdeEmissao: 1, cfop: '1.102',
     valorTotalBrl: itens.reduce((s, i) => s + i.valorTotalItemBrl, 0), itens, linhasForaDoRecorte: 0,
-    fiscal: 'pendente', nIdReceb: N_ID_RECEB, dispensavel: true,
+    fiscal: 'pendente', nIdReceb: N_ID_RECEB, dispensavel: true, valorNotaBrl: itens.reduce((s, i) => s + i.valorTotalItemBrl, 0),
     ...over,
   };
 }
@@ -242,6 +242,21 @@ describe('processarRecebimentoNacionalPorNf — passo fiscal (research D10)', ()
     });
     await expect(processarRecebimentoNacionalPorNf(base())).rejects.toBeInstanceOf(RecebimentoFiscalEmAndamentoError);
     expect(inserts).toHaveLength(0);
+  });
+
+  it('NF fiscal pendente SEM CNPJ de fornecedor no espelho (fornecedor nao cadastrado no OMIE, ex.: NF 1257): recusa ANTES do fiscal — nem ledger nem OMIE, zero INSERT', async () => {
+    detalheMock.mockResolvedValue(detalhe([item()], { fornecedorCnpj: '', fornecedorNome: 'Fornecedor não identificado no OMIE', notaFiscal: '1257' }));
+    await expect(processarRecebimentoNacionalPorNf(base())).rejects.toBeInstanceOf(RecebimentoFiscalSemFornecedorError);
+    await expect(processarRecebimentoNacionalPorNf(base())).rejects.toThrow('NF 1257');
+    expect(fiscalSpy).not.toHaveBeenCalled();
+    expect(inserts).toHaveLength(0);
+  });
+
+  it('NF com fiscal ja feito e sem CNPJ nao e barrada pela guarda (o fiscal nao roda)', async () => {
+    detalheMock.mockResolvedValue(detalhe([item()], { fiscal: 'concluido', fornecedorCnpj: '' }));
+    const r = await processarRecebimentoNacionalPorNf(base());
+    expect(r.fiscal.status).toBe('nao_aplicavel');
+    expect(movs()).toHaveLength(1);
   });
 
   it('nIdReceb nulo no detalhe e repassado como null (o service do fiscal resolve pela consulta)', async () => {

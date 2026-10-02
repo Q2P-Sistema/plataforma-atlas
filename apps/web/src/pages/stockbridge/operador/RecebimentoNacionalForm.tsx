@@ -59,18 +59,41 @@ export function useApiFetch() {
       ...(opts.headers as Record<string, string>),
     };
     if (csrfToken) headers['x-csrf-token'] = csrfToken;
-    const res = await fetch(url, { credentials: 'include', ...opts, headers });
-    const body = (await res.json()) as { data: unknown; error: { code?: string; userMessage?: string; message?: string } | null };
+    type Corpo = { data: unknown; error: { code?: string; userMessage?: string; message?: string } | null; meta?: Record<string, unknown> };
+    const falhar = (msg: string, status: number, code?: string): never => {
+      const err = new Error(msg) as Error & { code?: string; status?: number };
+      err.code = code;
+      err.status = status;
+      throw err;
+    };
+    let res: Response;
+    try {
+      res = await fetch(url, { credentials: 'include', ...opts, headers });
+    } catch {
+      return falhar('Não foi possível falar com o servidor. Verifique a conexão e tente novamente em instantes.', 0);
+    }
+    // Corpo pode vir vazio ou em HTML (proxy em redeploy, timeout): ler como texto
+    // e parsear com cuidado, para nao mostrar "Unexpected token" ao operador.
+    const texto = await res.text();
+    let body: Corpo | null = null;
+    if (texto) {
+      try {
+        body = JSON.parse(texto) as Corpo;
+      } catch {
+        body = null;
+      }
+    }
     // Prefere userMessage (pt-BR, sem codigo OMIE) quando a rota o fornece.
     // `code`/`status` vao no erro para a UI decidir a acao (feature 016: 409 em
     // andamento -> recarregar a nota; 502 fiscal -> tentar de novo).
     if (!res.ok) {
-      const err = new Error(body.error?.userMessage ?? body.error?.message ?? 'Erro') as Error & { code?: string; status?: number };
-      err.code = body.error?.code;
-      err.status = res.status;
-      throw err;
+      return falhar(
+        body?.error?.userMessage ?? body?.error?.message ?? `O servidor não respondeu corretamente (HTTP ${res.status}). Tente novamente em instantes.`,
+        res.status,
+        body?.error?.code,
+      );
     }
-    return body;
+    return body ?? { data: null, error: null };
   };
 }
 

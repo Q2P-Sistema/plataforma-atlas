@@ -59,12 +59,16 @@ vi.mock('../services/notificacao.service.js', () => ({
 }));
 
 const detalheMock = vi.fn();
+/** feature 016: flag do recebimento fiscal (a baixa externa e recusada para NF "fiscal pendente") */
+let flagFiscal = false;
 vi.mock('../services/fila-nacional.service.js', () => ({
   getDetalheNfNacional: (c: string) => detalheMock(c),
+  recebimentoFiscalHabilitado: () => flagFiscal,
 }));
 
 import {
   solicitarRecebimentoExterno,
+  BaixaExternaFiscalPendenteError,
   listarBaixasExternasAprovadas,
   reverterRecebimentoExterno,
   recebimentoExternoHabilitado,
@@ -91,8 +95,8 @@ function item(o: Partial<ItemNfNacional> & { indice?: number; descricao?: string
     ...o,
   } as ItemNfNacional;
 }
-function detalhe(itens: ItemNfNacional[]) {
-  return { nfChaveAcesso: CHAVE, notaFiscal: '66724', fornecedorNome: 'ISOFORMA PLASTICOS INDUSTRIAIS LTDA', fornecedorCnpj: '68.176.072/0001-28', itens };
+function detalhe(itens: ItemNfNacional[], fiscal: 'pendente' | 'concluido' = 'concluido') {
+  return { nfChaveAcesso: CHAVE, notaFiscal: '66724', fornecedorNome: 'ISOFORMA PLASTICOS INDUSTRIAIS LTDA', fornecedorCnpj: '68.176.072/0001-28', itens, fiscal };
 }
 
 const inserts = () => ops.filter((o) => o.op === 'insert');
@@ -103,6 +107,7 @@ beforeEach(() => {
   selectQueue = [];
   updateReturning = [];
   flag = true;
+  flagFiscal = false;
   poolQuerySpy.mockReset();
   poolQuerySpy.mockResolvedValue({ rows: [] }); // sem solicitacao pendente previa
   notificacaoSpy.mockClear();
@@ -195,6 +200,38 @@ describe('solicitarRecebimentoExterno (T065/T066)', () => {
     const [sql, params] = poolQuerySpy.mock.calls[0]!;
     expect(String(sql)).toContain("tipo_aprovacao = 'recebimento_externo' AND status = 'pendente'");
     expect(params).toEqual([CHAVE, 'SUCATA PSAI MOIDO MESCLADO GROSSO']);
+  });
+});
+
+describe('feature 016 — NF com recebimento fiscal PENDENTE nao recebe baixa externa (revisao pre-UAT, ROT-5)', () => {
+  it('flag ligada + fiscal pendente: BaixaExternaFiscalPendenteError, nenhuma aprovacao, mensagem aponta fila e dispensa', async () => {
+    flagFiscal = true;
+    detalheMock.mockResolvedValue(detalhe([item({ indice: 0 })], 'pendente'));
+    let erro: unknown;
+    try {
+      await solicitarRecebimentoExterno({ nfChaveAcesso: CHAVE, motivo: MOTIVO, userId: USER });
+    } catch (e) {
+      erro = e;
+    }
+    expect(erro).toBeInstanceOf(BaixaExternaFiscalPendenteError);
+    expect((erro as Error).message).toContain('NF 66724');
+    expect((erro as Error).message).toContain('dispensar');
+    expect(inserts()).toHaveLength(0);
+    expect(notificacaoSpy).not.toHaveBeenCalled();
+  });
+
+  it('flag ligada + fiscal ja feito: baixa externa segue normal', async () => {
+    flagFiscal = true;
+    detalheMock.mockResolvedValue(detalhe([item({ indice: 0 })], 'concluido'));
+    const r = await solicitarRecebimentoExterno({ nfChaveAcesso: CHAVE, motivo: MOTIVO, userId: USER });
+    expect(r.aprovacoesCriadas).toBe(1);
+  });
+
+  it('flag desligada: o campo fiscal nem e considerado (comportamento da 015)', async () => {
+    flagFiscal = false;
+    detalheMock.mockResolvedValue(detalhe([item({ indice: 0 })], 'pendente'));
+    const r = await solicitarRecebimentoExterno({ nfChaveAcesso: CHAVE, motivo: MOTIVO, userId: USER });
+    expect(r.aprovacoesCriadas).toBe(1);
   });
 });
 

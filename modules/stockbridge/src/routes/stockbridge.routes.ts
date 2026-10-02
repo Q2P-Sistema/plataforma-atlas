@@ -42,7 +42,9 @@ router.use('/api/v1/stockbridge', requireAuth, csrfProtection, requireModule('st
 // com a flag ligada; 'desligado' quando a feature esta off.
 router.get('/api/v1/stockbridge/health', async (_req: Request, res: Response) => {
   const recebimentoNfeEspelho = await idadeEspelhoRecebimentos();
-  const status = recebimentoNfeEspelho.status === 'degraded' ? 'degraded' : 'ok';
+  // Com a flag ligada, espelho vazio ('sem_dados') ou inacessivel ('indisponivel')
+  // tambem e degradacao: a fonte "fiscal pendente" esta cega (revisao pre-UAT, ROT-6).
+  const status = ['degraded', 'sem_dados', 'indisponivel'].includes(recebimentoNfeEspelho.status) ? 'degraded' : 'ok';
   res.json({
     data: { status, module: 'stockbridge', recebimentoNfeEspelhoIdadeMin: recebimentoNfeEspelho.idadeMin, recebimentoNfeEspelho },
     error: null,

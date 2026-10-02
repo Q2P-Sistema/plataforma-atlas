@@ -30,7 +30,8 @@ vi.mock('../services/correlacao-produto.service.js', () => ({
 import {
   getFilaNacional,
   getDetalheNfNacional,
-  NfNacionalNaoEncontradaError,
+  NfNacionalDispensadaError,
+  FilaNacionalIncompletaError,
   FORNECEDOR_NAO_IDENTIFICADO,
   CFOPS_RECEBIMENTO_NACIONAL,
 } from '../services/fila-nacional.service.js';
@@ -155,8 +156,12 @@ describe('getFilaNacional — flag LIGADA (duas fontes, research D8)', () => {
     expect(sql).toContain('UNION ALL');
     expect(sql).toContain('public."tbl_recebimentoNFe_Q2P" r');
     expect(sql).toContain('public."tbl_recebimentoNFe_itens_Q2P" ri ON ri.n_id_receb = r.n_id_receb');
-    // so fiscal pendente entra pela fonte (b)
-    expect(sql).toContain("COALESCE(r.c_recebido, 'N') = 'N'");
+    // fonte (b): fiscal pendente ELEGIVEL explicito (etapa 40, 'N' explicitos — FILA-7/FISC-5)
+    // OU ja concluido pelo Atlas e ainda fora do espelho de NF (janela entre syncs — FILA-1)
+    expect(sql).toContain("(r.c_recebido = 'N' AND r.c_cancelada = 'N' AND r.c_etapa = '40')");
+    expect(sql).toMatch(/OR EXISTS \(SELECT 1 FROM stockbridge\.recebimento_fiscal rf\s+WHERE rf\.nf_chave_acesso = r\.c_chave_nfe AND rf\.status IN \('concluido', 'ja_concluido'\)\)/);
+    expect(sql).not.toContain("COALESCE(r.c_recebido, 'N')");
+    expect(sql).toContain("(r.c_cancelada = 'S')                                AS cancelada");
     // precedencia: chave que ja esta no espelho de NF nao entra pela fonte (b)
     expect(sql).toContain('NOT EXISTS (SELECT 1 FROM public."tbl_nf_header_Q2P" h2 WHERE h2.c_chave_nfe = r.c_chave_nfe)');
     // corte de data nas duas fontes
@@ -172,7 +177,7 @@ describe('getFilaNacional — flag LIGADA (duas fontes, research D8)', () => {
       'r.c_razao_social AS dest_razao',
       'r.c_cnpj_cpf AS dest_cnpj_cpf',
       'r.d_emissao',
-      'ri.n_sequencia::text',
+      'ri.n_sequencia::bigint',
       'ri.c_descricao_produto',
       'ri.c_cfop_entrada',
       'ri.n_qtde_nfe',
@@ -193,6 +198,40 @@ describe('getFilaNacional — flag LIGADA (duas fontes, research D8)', () => {
     expect(sql).toContain("CASE WHEN bool_or(fiscal_pendente) THEN 'pendente' ELSE 'concluido' END AS fiscal");
     // data da conclusao pelo Atlas vem do ledger
     expect(sql).toContain('SELECT MAX(rf.finalizado_em) FROM stockbridge.recebimento_fiscal rf');
+    // "concluido pelo Atlas" so conta o ledger 'concluido' — 'ja_concluido' e fiscal feito no portal (SPEC016-8)
+    expect(sql).toContain("WHERE rf.nf_chave_acesso = c_chave_nfe AND rf.status = 'concluido')::text");
+  });
+
+  it('via 2 da checagem "ja recebida" (so o numero da NF) exige lancamento a partir da emissao (colisao de numero entre fornecedores — FILA-2)', async () => {
+    await getFilaNacional();
+    const { sql } = sqlFila();
+    expect(sql).toContain("AND ltrim(m.nota_fiscal, '0') = ltrim(u.n_nf, '0')\n                AND m.created_at >= (u.d_emi)::date)");
+  });
+
+  it('itens em ordem NUMERICA nas duas fontes (n_cod_item bigint — FILA-6)', async () => {
+    await getFilaNacional();
+    const { sql } = sqlFila();
+    expect(sql).toContain('i.n_cod_item::bigint');
+    expect(sql).toContain('ri.n_sequencia::bigint');
+  });
+
+  it('tabela da 0053 ausente (42P01 — flag ligada antes da migration): erro VISIVEL, nunca fila vazia em silencio (MIG-3)', async () => {
+    poolQuerySpy.mockImplementation((sql: string, params?: unknown[]) => {
+      chamadas.push({ sql, params });
+      if (sql.includes('information_schema')) return Promise.resolve({ rows: [{ ok: true }] });
+      if (sql.includes('WITH nf_unificada')) return Promise.reject(Object.assign(new Error('relation "stockbridge.recebimento_fiscal" does not exist'), { code: '42P01' }));
+      return Promise.resolve({ rows: [] });
+    });
+    await expect(getFilaNacional()).rejects.toBeInstanceOf(FilaNacionalIncompletaError);
+    await expect(getDetalheNfNacional(CHAVE)).rejects.toBeInstanceOf(FilaNacionalIncompletaError);
+  });
+
+  it('outro erro de banco continua degradando a fila para [] (informativa)', async () => {
+    poolQuerySpy.mockImplementation((sql: string) => {
+      if (sql.includes('information_schema')) return Promise.resolve({ rows: [{ ok: true }] });
+      return Promise.reject(Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }));
+    });
+    await expect(getFilaNacional()).resolves.toEqual([]);
   });
 
   it('exclui NF com dispensa ATIVA sobre a fonte unificada (vale para as duas fontes)', async () => {
@@ -278,7 +317,16 @@ describe('getDetalheNfNacional — feature 016', () => {
 
     dispensaRows = [{ dispensado_em: '2026-10-02 09:00:00+00' }];
     detalheRows = [linhaDetalhe()];
-    await expect(getDetalheNfNacional(CHAVE)).rejects.toThrow(NfNacionalNaoEncontradaError);
-    await expect(getDetalheNfNacional(CHAVE)).rejects.toThrow(/NF 6842 foi dispensada da fila pelo gestor em \d{2}\/\d{2}\/\d{4}/);
+    await expect(getDetalheNfNacional(CHAVE)).rejects.toBeInstanceOf(NfNacionalDispensadaError);
+    await expect(getDetalheNfNacional(CHAVE)).rejects.toThrow(/NF 6842 foi dispensada da fila pelo gestor em 02\/10\/2026.*desfazer a dispensa em Aprovações/);
+  });
+
+  it('valorNotaBrl soma TODAS as linhas (inclusive fora do recorte); valorTotalBrl so as do recorte (SPEC016-7)', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    detalheRows = [linhaDetalhe(), linhaDetalhe({ n_cod_item: '2', x_prod: 'EMBALAGEM', desc_norm: 'EMBALAGEM', cfop: '1.556', valor_item: 6600, q_com: 10, u_com: 'UN' })];
+    const d = await getDetalheNfNacional(CHAVE);
+    expect(d.valorTotalBrl).toBe(203400);
+    expect(d.valorNotaBrl).toBe(210000);
+    expect(d.linhasForaDoRecorte).toBe(1);
   });
 });

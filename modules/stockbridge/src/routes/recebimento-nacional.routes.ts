@@ -20,15 +20,20 @@ import {
   recebimentoFiscalHabilitado,
   DataCorteNaoConfiguradaError,
   NfNacionalNaoEncontradaError,
+  NfNacionalDispensadaError,
   NfNacionalCanceladaError,
   FornecedorExcluidoError,
+  FilaNacionalIncompletaError,
+  ehTabelaAusente,
 } from '../services/fila-nacional.service.js';
 import { definirConjuntoCorrelacao } from '../services/correlacao-produto.service.js';
 import {
   RecebimentoFiscalError,
   RecebimentoFiscalEmAndamentoError,
+  RecebimentoFiscalAguardeError,
   RecebimentoFiscalSemFornecedorError,
   RecebimentoFiscalNfCanceladaError,
+  RecebimentoFiscalEtapaInesperadaError,
   listarLedgerFiscal,
 } from '../services/recebimento-fiscal.service.js';
 import {
@@ -40,6 +45,8 @@ import {
   NfJaDispensadaError,
   DispensaNaoEncontradaError,
   DispensaNaoPermitidaError,
+  MotivoDispensaObrigatorioError,
+  NfEmRecebimentoFiscalError,
 } from '../services/nf-dispensa.service.js';
 import {
   solicitarRecebimentoExterno,
@@ -49,6 +56,7 @@ import {
   ItemJaRecebidoError,
   NenhumItemPendenteError,
   ItemNaoCorrespondeError,
+  BaixaExternaFiscalPendenteError,
 } from '../services/recebimento-externo.service.js';
 
 const logger = createLogger('stockbridge:recebimento-nacional');
@@ -227,6 +235,18 @@ function responderErroFilaNacional(res: Response, err: unknown): boolean {
     res.status(503).json({ data: null, error: { code: 'FILA_NACIONAL_NAO_CONFIGURADA', userMessage: err.message, message: err.message } });
     return true;
   }
+  // Feature 016 (revisao pre-UAT, MIG-3): tabela ausente (42P01 — migration
+  // pendente) e erro de ambiente visivel, nunca 500 generico nem fila vazia.
+  if (err instanceof FilaNacionalIncompletaError || ehTabelaAusente(err)) {
+    const msg = err instanceof FilaNacionalIncompletaError ? err.message : new FilaNacionalIncompletaError().message;
+    logger.error({ err }, 'Recebimento nacional: tabela inexistente (migration pendente?)');
+    res.status(503).json({ data: null, error: { code: 'FILA_NACIONAL_NAO_CONFIGURADA', userMessage: msg, message: (err as Error).message } });
+    return true;
+  }
+  if (err instanceof NfNacionalDispensadaError) {
+    res.status(404).json({ data: null, error: { code: 'NF_DISPENSADA', userMessage: err.message, message: err.message } });
+    return true;
+  }
   if (err instanceof NfNacionalNaoEncontradaError) {
     res.status(404).json({ data: null, error: { code: 'NF_NAO_ENCONTRADA', userMessage: err.message, message: err.message } });
     return true;
@@ -393,6 +413,14 @@ router.post(
         res.status(409).json({ data: null, error: { code: 'RECEBIMENTO_FISCAL_EM_ANDAMENTO', userMessage: err.message, message: err.message } });
         return;
       }
+      if (err instanceof RecebimentoFiscalAguardeError) {
+        res.status(409).json({ data: null, error: { code: 'RECEBIMENTO_FISCAL_AGUARDE', userMessage: err.message, message: `aguardar ${err.segundos}s apos falha com escrita no OMIE` } });
+        return;
+      }
+      if (err instanceof RecebimentoFiscalEtapaInesperadaError) {
+        res.status(422).json({ data: null, error: { code: 'RECEBIMENTO_FISCAL_ETAPA_INESPERADA', userMessage: err.message, message: `recebimento fora da etapa esperada (${err.motivo})` } });
+        return;
+      }
       if (err instanceof RecebimentoFiscalSemFornecedorError) {
         res.status(422).json({ data: null, error: { code: 'RECEBIMENTO_FISCAL_SEM_FORNECEDOR', userMessage: err.message, message: err.message } });
         return;
@@ -543,6 +571,10 @@ router.post(
         res.status(403).json({ data: null, error: { code: 'RECEBIMENTO_EXTERNO_DESABILITADO', userMessage: err.message, message: err.message } });
         return;
       }
+      if (err instanceof BaixaExternaFiscalPendenteError) {
+        res.status(409).json({ data: null, error: { code: 'BAIXA_EXTERNA_FISCAL_PENDENTE', userMessage: err.message, message: err.message } });
+        return;
+      }
       if (err instanceof MotivoObrigatorioError) {
         res.status(400).json({ data: null, error: { code: 'MOTIVO_OBRIGATORIO', userMessage: err.message, message: err.message } });
         return;
@@ -567,14 +599,16 @@ router.post(
 
 // ── Feature 016 (ACXEGDP-395): dispensa de NF pelo gestor + rastreabilidade do fiscal ──
 
+// Motivo vazio ou ausente passa pelo schema de proposito: o service responde
+// 400 MOTIVO_OBRIGATORIO com a mensagem da dispensa (contrato §4/§6, ROT-8).
 const DispensarSchema = z
   .object({
     nf_chave_acesso: z.string().regex(/^\d{44}$/, 'chave de acesso deve ter 44 dígitos'),
-    motivo: z.string().min(1).max(1000),
+    motivo: z.string().max(1000).optional(),
   })
   .strict();
 
-const ReverterDispensaSchema = z.object({ motivo: z.string().min(1).max(1000) }).strict();
+const ReverterDispensaSchema = z.object({ motivo: z.string().max(1000).optional() }).strict();
 
 const DispensasQuerySchema = z.object({
   incluirRevertidas: z.enum(['true', 'false']).optional(),
@@ -595,8 +629,12 @@ function responderErroDispensa(res: Response, err: unknown): boolean {
     res.status(403).json({ data: null, error: { code: 'FORBIDDEN', userMessage: err.message, message: err.message } });
     return true;
   }
-  if (err instanceof MotivoObrigatorioError) {
+  if (err instanceof MotivoDispensaObrigatorioError) {
     res.status(400).json({ data: null, error: { code: 'MOTIVO_OBRIGATORIO', userMessage: err.message, message: err.message } });
+    return true;
+  }
+  if (err instanceof NfEmRecebimentoFiscalError) {
+    res.status(409).json({ data: null, error: { code: 'NF_EM_RECEBIMENTO', userMessage: err.message, message: err.message } });
     return true;
   }
   if (err instanceof NfJaDispensadaError) {
@@ -639,7 +677,7 @@ router.post(
       return;
     }
     try {
-      const result = await dispensarNf({ nfChaveAcesso: parsed.data.nf_chave_acesso, motivo: parsed.data.motivo, userId: user.id, perfilUsuario: user.role });
+      const result = await dispensarNf({ nfChaveAcesso: parsed.data.nf_chave_acesso, motivo: parsed.data.motivo ?? '', userId: user.id, perfilUsuario: user.role });
       res.status(201).json({ data: result, error: null });
     } catch (err) {
       if (responderErroDispensa(res, err)) return;
@@ -704,7 +742,7 @@ router.post(
       return;
     }
     try {
-      const result = await reverterDispensa({ id, motivo: parsed.data.motivo, userId: user.id, perfilUsuario: user.role });
+      const result = await reverterDispensa({ id, motivo: parsed.data.motivo ?? '', userId: user.id, perfilUsuario: user.role });
       res.json({ data: result, error: null });
     } catch (err) {
       if (responderErroDispensa(res, err)) return;
@@ -720,6 +758,12 @@ router.get(
   '/api/v1/stockbridge/recebimento/nacional/fiscal',
   requireGestor,
   async (req: Request, res: Response) => {
+    // Rotas novas da 016 respondem 403 com a flag desligada (contrato, ROT-7).
+    if (!recebimentoFiscalHabilitado()) {
+      const err = new RecebimentoFiscalDesabilitadoError();
+      res.status(403).json({ data: null, error: { code: 'RECEBIMENTO_FISCAL_DESABILITADO', userMessage: err.message, message: err.message } });
+      return;
+    }
     const parsed = LedgerFiscalQuerySchema.safeParse(req.query);
     if (!parsed.success) {
       res.status(400).json({ data: null, error: { code: 'INVALID_QUERY', userMessage: USER_MSG_INVALID, message: parsed.error.issues.map((i) => i.message).join('; ') } });
@@ -729,6 +773,7 @@ router.get(
       const data = await listarLedgerFiscal({ status: parsed.data.status ?? null, limit: parsed.data.limit ?? 100 });
       res.json({ data, error: null });
     } catch (err) {
+      if (responderErroFilaNacional(res, err)) return;
       logger.error({ err }, 'Erro ao listar ledger do recebimento fiscal');
       res.status(500).json({ data: null, error: { code: 'LEDGER_FISCAL_FAIL', message: (err as Error).message } });
     }

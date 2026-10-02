@@ -85,7 +85,8 @@ const envSchema = z.object({
   // Feature 016 (FR-026): destinatarios do e-mail "NF dispensada da fila" ao
   // fiscal, com a pendencia que fica no OMIE (etapa 40 aguardando manifestacao
   // ou cancelamento; conta a pagar a estornar ou manter). Lista separada por
-  // virgula; cada endereco e validado. Vazia = nenhum envio (warn no log).
+  // virgula; cada endereco e validado. Vazia/ausente = lista padrao abaixo (o
+  // parse trata string vazia como ausente — linha `${VAR:-}` da stack cai aqui).
   STOCKBRIDGE_FISCAL_EMAILS: z
     .string()
     .default('nfe@acxe-polimeros.com.br,mauricio@acxe-polimeros.com.br,gustavo.dreer@acxe-polimeros.com.br')

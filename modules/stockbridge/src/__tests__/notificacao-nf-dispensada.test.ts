@@ -30,7 +30,7 @@ vi.mock('@atlas/core', () => ({
 }));
 vi.mock('@atlas/db', () => ({ users: {}, userModules: {} }));
 
-import { enviarAlertaNfDispensada, getFiscalEmails } from '../services/notificacao.service.js';
+import { enviarAlertaNfDispensada, enviarAlertaDispensaRevertida, getFiscalEmails } from '../services/notificacao.service.js';
 
 const base = {
   notaFiscal: '6842',
@@ -80,7 +80,10 @@ describe('enviarAlertaNfDispensada', () => {
     expect(html).toContain('[alerta:NF dispensada da fila de recebimento]');
     expect(html).toContain('[Pendência no OMIE]');
     expect(html).toContain('aguardando manifestação ou cancelamento');
-    expect(html).toContain('Nenhuma conta a pagar foi gerada');
+    expect(html).toContain('sem conta a pagar gerada pelo recebimento');
+    // a situacao vem do espelho no momento da dispensa: o texto pede conferencia no OMIE (ROT-9)
+    expect(html).toContain('Pelo espelho do OMIE no momento da dispensa');
+    expect(html).toContain('Confira no OMIE antes de agir');
     expect(html).toContain('[Recebimento fiscal no OMIE: Pendente (não concluído)]');
     expect(html).toContain('[Motivo da dispensa: Carga nunca chegou; fornecedor vai cancelar a nota]');
     expect(html).toContain('[Dispensada por: Flavio Endo]');
@@ -118,5 +121,38 @@ describe('enviarAlertaNfDispensada', () => {
     await expect(enviarAlertaNfDispensada(base)).resolves.toBeUndefined();
     expect(sendEmailMock).toHaveBeenCalledTimes(3);
     expect(loggerMock.error).toHaveBeenCalled();
+  });
+});
+
+describe('enviarAlertaDispensaRevertida (revisao pre-UAT, ROT-4)', () => {
+  const rev = {
+    notaFiscal: '6842',
+    fornecedorNome: 'REPLAS COMERCIAL LTDA',
+    situacaoFiscalNaDispensa: 'pendente' as const,
+    motivoReversao: 'A carga chegou afinal',
+    revertidoPorNome: 'Flavio Endo',
+    revertidoEm: '2026-10-03T12:00:00.000Z',
+  };
+
+  it('1 e-mail por destinatario, assunto com NF e fornecedor, corpo com motivo/quem e o pedido de avisar o gestor se ja agiu no OMIE', async () => {
+    await enviarAlertaDispensaRevertida(rev);
+    const enviados = emails();
+    expect(enviados).toHaveLength(3);
+    for (const e of enviados) expect(e.subject).toBe('StockBridge — Dispensa desfeita: NF 6842 (REPLAS COMERCIAL LTDA) voltou à fila');
+    const { html } = enviados[0]!;
+    expect(html).toContain('[info:Dispensa de NF desfeita]');
+    expect(html).toContain('[Motivo da reversão: A carga chegou afinal]');
+    expect(html).toContain('[Desfeita por: Flavio Endo]');
+    expect(html).toContain('também concluirá o recebimento fiscal no OMIE');
+    expect(html).toContain('avise o gestor');
+  });
+
+  it('dispensa de NF com fiscal ja feito: nao promete concluir o fiscal; lista vazia nao envia', async () => {
+    await enviarAlertaDispensaRevertida({ ...rev, situacaoFiscalNaDispensa: 'concluido' });
+    expect(emails()[0]!.html).not.toContain('também concluirá o recebimento fiscal');
+    sendEmailMock.mockClear();
+    configMock.STOCKBRIDGE_FISCAL_EMAILS = [];
+    await enviarAlertaDispensaRevertida(rev);
+    expect(sendEmailMock).not.toHaveBeenCalled();
   });
 });

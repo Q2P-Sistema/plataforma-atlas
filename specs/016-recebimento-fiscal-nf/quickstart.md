@@ -8,9 +8,21 @@
 
 ```bash
 pnpm install
-pnpm --filter @atlas/db migrate      # aplica a 0053 (espelho + ledger + dispensa)
 pnpm dev                             # apps/api + apps/web
 ```
+
+A 0053 é aplicada com `psql` (o repo não usa o runner do drizzle-kit). Em dev, num banco local; **no UAT vivo, só o arquivo da 0053** — `scripts/apply-migrations-uat.sh` reaplica todas as migrations e não serve num banco em uso:
+
+```bash
+read -rsp 'Senha do postgres do UAT: ' PGPASSWORD; echo; export PGPASSWORD
+psql -h db.manager01.q2p.com.br -p 5437 -U postgres -d acxe_q2p -1 -v ON_ERROR_STOP=1 \
+  -f packages/db/migrations/0053_stockbridge_recebimento_fiscal_nf.sql
+unset PGPASSWORD
+```
+
+Saída esperada: só `NOTICE: trigger ... does not exist, skipping`. A migration é idempotente (pode rodar de novo).
+
+**Ordem do deploy no UAT** (revisão pré-UAT): (1) DDL do espelho no PROD (DBeaver, bloco do contrato do espelho, literal); (2) 0053 no UAT; (3) workflow n8n testado e ativado; (4) imagem nova com a flag **desligada** e as duas variáveis novas acrescentadas ao YAML da stack (a stack lista cada variável — só preencher o env não basta); conferir `OMIE_MODE=real` antes do redeploy; (5) snapshot da fila; (6) flag ligada e conferência do snapshot (SC-006).
 
 `.env`: `MODULE_STOCKBRIDGE_ENABLED=true`, `STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE=<data>`, **`STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED=true`** (default é `false`); `STOCKBRIDGE_FISCAL_EMAILS` opcional (default: NFe ACXE, Mauricio Yared, Gustavo Dreer — em dev, aponte para a sua caixa para não disparar ao fiscal real). Em dev, `OMIE_MODE=mock`: o mock tem recebimentos na etapa 40 injetáveis por teste (`__injectMockRecebimentoNfe`). Em UAT, `OMIE_MODE=real` (atenção ao redeploy que reverte para mock — memória `uat-omie-mode-reverte-no-redeploy`).
 
@@ -40,9 +52,9 @@ No OMIE (sonda `ConsultarRecebimento` ou tela): `cEtapa 60`, `cRecebido S`, `cUs
 
 ## Cenário 2 — Falhas e repetições (História 3, P2)
 
-a. **Duplo clique**: dispare o POST duas vezes em sequência. Esperado: uma resposta `201` e uma `409 RECEBIMENTO_FISCAL_EM_ANDAMENTO`; **uma** linha `concluido` no ledger; nenhuma movimentação em dobro.
+a. **Duplo clique**: dispare dois POSTs concorrentes. Aceitos: `409 RECEBIMENTO_FISCAL_EM_ANDAMENTO` (o segundo caiu durante as chamadas ao OMIE), `409 NF_JA_PROCESSADA` (caiu depois da gravação) ou `201` com `fiscal.status = "ja_concluido"` e produtos `ja_recebido` — desde que haja **uma** linha `concluido` no ledger e nenhuma movimentação em dobro.
 
-b. **Fiscal falhando** (UAT com `OMIE_MODE=real`): troque temporariamente `OMIE_Q2P_SECRET` por um valor inválido e confirme uma NF pendente. Esperado: `502 RECEBIMENTO_FISCAL_FAIL`, mensagem com NF e fornecedor, **zero** `INSERT` em `movimentacao`/`aprovacao`, linha `falha` no ledger com `passo_falha='editar'` e `erro_omie_*` preenchidos. Restaure o secret; repita: `201`.
+b. **Fiscal falhando** (UAT com `OMIE_MODE=real`): troque temporariamente `OMIE_Q2P_SECRET` por um valor inválido e confirme uma NF pendente. Esperado: `502 RECEBIMENTO_FISCAL_FAIL`, mensagem com NF e fornecedor, **zero** `INSERT` em `movimentacao`/`aprovacao`, linha `falha` no ledger com `passo_falha='consultar'` (a primeira chamada a falhar é a `ConsultarRecebimento`) e `erro_omie_*` preenchidos. Restaure o secret; repita: `201`. Falha **depois** de uma escrita (EDITAR/IGNORAR/Concluir) faz a próxima tentativa responder `409 RECEBIMENTO_FISCAL_AGUARDE` por até 70 s — a tela mostra "Tentar novamente em N s".
 
 c. **Fiscal ok, físico falhou**: em dev/mock, force falha no `INSERT` (ex.: mock de `db.transaction`) após o fiscal. Esperado: ledger `concluido`, nenhuma movimentação; a NF volta à fila como **"Fiscal já feito"** (pelo ledger, antes mesmo do sync); novo POST → `fiscal.status = "nao_aplicavel"` e produtos gravados.
 
@@ -66,12 +78,17 @@ SELECT operation, table_name, count(*) FROM shared.audit_log WHERE table_name IN
 
 ## Cenário 5 — Flag desligada / sem espelho (FR-020, História 2)
 
-`STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED=false` (ou espelho vazio): a fila lista exatamente as NFs da 015 (todas "Fiscal já feito", sem selo de pendente), o POST devolve `fiscal.status = "desligado"` e não toca o OMIE; `POST …/dispensar` → `403`. Compare a lista com um snapshot tirado antes de ligar a flag (SC-006).
+- **Flag desligada** (`STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED=false`): a fila lista exatamente as NFs da 015, sem selo; o POST devolve `fiscal.status = "desligado"` e não toca o OMIE; `POST …/dispensar`, `GET …/dispensas` e `GET …/fiscal` → `403`.
+- **Flag ligada, espelho vazio**: a fila lista as mesmas NFs, agora com o selo "Fiscal já feito"; o POST devolve `fiscal.status = "nao_aplicavel"`; a dispensa funciona; o health do módulo fica `degraded` (`recebimentoNfeEspelho.status = "sem_dados"`).
+
+Compare a lista com um snapshot tirado antes de ligar a flag (SC-006).
 
 ## Cenário 6 — Edge cases rápidos
 
 - NF pendente **cancelada** no OMIE depois de aparecer: após o sync, some da fila; se já aberta, o POST devolve `422 NF_CANCELADA`.
-- NF pendente **sem fornecedor cadastrado**: aparece como "Fornecedor não identificado no OMIE"; o POST devolve `422 RECEBIMENTO_FISCAL_SEM_FORNECEDOR` (confirmar o fault real — research pendente 3).
+- NF pendente **sem fornecedor cadastrado** (caso real: NF 1257, chave `31261038467346000258550010000012571279398231`): aparece como "Fornecedor não identificado no OMIE", a tela avisa e o botão de confirmar fica desabilitado; um POST direto devolve `422 RECEBIMENTO_FISCAL_SEM_FORNECEDOR` sem abrir ledger nem chamar o OMIE. O OMIE manda `nIdFornecedor: 0` (não nulo) nesse caso.
+- NF pendente em **outra etapa, bloqueada ou devolvida**: não aparece como pendente; se o estado mudar com a nota aberta, o POST devolve `422 RECEBIMENTO_FISCAL_ETAPA_INESPERADA` sem escrever no OMIE.
+- **Baixa por recebimento externo** em NF com fiscal pendente: o link não aparece; um POST direto devolve `409 BAIXA_EXTERNA_FISCAL_PENDENTE`.
 - Itens **todos bloqueados por unidade**: o POST não dispara o fiscal (`nao_aplicavel`), a NF segue "Fiscal pendente".
 
 ## Testes automatizados

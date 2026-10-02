@@ -120,7 +120,7 @@ function detalhe(itens: ItemNfNacional[]): DetalheNfNacional {
     dtEmissao: '2026-08-06', diasDesdeEmissao: 42, cfop: '1.102',
     valorTotalBrl: itens.reduce((s, i) => s + i.valorTotalItemBrl, 0), itens, linhasForaDoRecorte: 0,
     // feature 016: a fixture da 015 representa NF com fiscal ja feito (fonte do espelho de NF)
-    fiscal: 'concluido', nIdReceb: null, dispensavel: false,
+    fiscal: 'concluido', nIdReceb: null, dispensavel: false, valorNotaBrl: itens.reduce((s, i) => s + i.valorTotalItemBrl, 0),
   };
 }
 

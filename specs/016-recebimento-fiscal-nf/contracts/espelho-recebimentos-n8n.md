@@ -8,7 +8,7 @@ Este documento é o contrato entre o Atlas (leitor) e o n8n (escritor). Serve ta
 
 ## 1. Tabelas (DDL canônica — a mesma da migration Atlas `0053`)
 
-Escritas **só** pelo n8n. Lidas pelo Atlas via `getPool()`. Dono: `postgres` (mesmo das demais `tbl_*_Q2P`). No PROD, enquanto o Atlas não roda migrations (go-live pendente), criar com esta DDL via DBeaver, como `tbl_sync_debounce`.
+Escritas **só** pelo n8n. Lidas pelo Atlas via `getPool()`. Dono: `postgres` (mesmo das demais `tbl_*_Q2P`). No PROD, enquanto o Atlas não roda migrations (go-live pendente), criar com esta DDL via DBeaver, como `tbl_sync_debounce` — **copiando o bloco literalmente**. Nunca evoluir colunas de um lado só (PROD × UAT): a cópia `sync-omie-public-prod-to-uat.sh` tira do reload a tabela com drift, e com a FK itens→cabeçalho o `TRUNCATE` único aborta o sync inteiro quando só uma das duas tem drift (revisão pré-UAT, MIG-2).
 
 ```sql
 CREATE TABLE IF NOT EXISTS public."tbl_recebimentoNFe_Q2P" (
@@ -102,7 +102,7 @@ Duração esperada: 2–4 chamadas OMIE, < 30 s sem o Wait do padrão antigo (n�
 
 ## 4. O que o Atlas assume
 
-1. `c_recebido = 'N' AND c_cancelada = 'N'` ⇔ fiscal pendente.
+1. `c_recebido = 'N' AND c_cancelada = 'N' AND c_etapa = '40'`, os três **explícitos** (nulo não conta) ⇔ fiscal pendente elegível. Recebimento em outra etapa, bloqueado ou devolvido não aparece como pendente (a receita da API só foi validada a partir da etapa 40).
 2. `c_chave_nfe` única e preenchida (44 dígitos) em toda linha.
 3. `v_total_item` = valor do item com tributos uma vez (equivale a `v_prod` do espelho de NF — não há campo com IPI em dobro nesta fonte).
 4. `c_cfop_entrada` é o CFOP de entrada (recorte 1.101/1.102/2.101/2.102); `c_cfop` é o do fornecedor e **não** é usado.

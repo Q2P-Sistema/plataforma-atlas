@@ -29,7 +29,9 @@ Cada item ganha a situação fiscal. A fonte "fiscal pendente" só entra com a f
 } ], "error": null }
 ```
 
-Invariantes: (1) uma chave aparece uma única vez; (2) chave com dispensa ativa não aparece; (3) `fiscal: "concluido"` sempre que a NF existe no espelho de NF **ou** há ledger `concluido`/`ja_concluido`; (4) ordenação por emissão, desempate pelo número — igual à 015.
+Invariantes: (1) uma chave aparece uma única vez; (2) chave com dispensa ativa não aparece; (3) `fiscal: "concluido"` sempre que a NF existe no espelho de NF **ou** há ledger `concluido`/`ja_concluido` — e a NF concluída pelo Atlas continua na fila (fonte do espelho de recebimentos) até o espelho de NF trazê-la, sem sumir na janela entre os dois syncs (revisão pré-UAT); (4) ordenação por emissão, desempate pelo número — igual à 015; (5) "fiscal pendente" = `c_recebido = 'N'`, `c_cancelada = 'N'` e `c_etapa = '40'` explícitos no espelho; (6) `fiscalConcluidoPeloAtlasEm` só para ledger `concluido` (`ja_concluido` = feito no portal).
+
+`meta.recebimentoFiscalHabilitado` acompanha a lista (a UI só mostra o selo com a flag ligada). Tabela da 0053 ausente com a flag ligada (migration pendente) → `503 FILA_NACIONAL_NAO_CONFIGURADA`, nunca lista vazia.
 
 ## 2. `GET /api/v1/stockbridge/recebimento/nacional/fila/:chaveAcesso` — estendida
 
@@ -40,20 +42,23 @@ Invariantes: (1) uma chave aparece uma única vez; (2) chave com dispensa ativa 
   "fiscal": "pendente",
   "nIdReceb": 8510564869,
   "recebimentoFiscalHabilitado": true,
-  "dispensavel": true
+  "dispensavel": true,
+  "valorNotaBrl": 203400.00
 }, "error": null }
 ```
 
+`valorNotaBrl` soma **todas** as linhas da NF (inclusive fora do recorte) — é a base da conta a pagar no OMIE, usada no aviso de dispensa; `valorTotalBrl` continua sendo só o recorte.
+
 Itens de NF com fiscal pendente vêm do espelho de recebimentos (`v_total_item` como valor do item — research D7). `linhasForaDoRecorte` conta os itens com `c_cfop_entrada` fora do recorte.
 
-**Erros** (além dos da 015): `404 NF_NAO_ENCONTRADA` também quando a NF só existe com dispensa ativa (mensagem: "A NF <n> foi dispensada da fila pelo gestor em <data>. Para recebê-la, peça a reversão da dispensa.").
+**Erros** (além dos da 015): `404 NF_DISPENSADA` quando a NF tem dispensa ativa (mensagem: "A NF <n> foi dispensada da fila pelo gestor em <data>. Para recebê-la, peça ao gestor para desfazer a dispensa em Aprovações." — a UI não oferece o formulário manual nesse caso); `503 FILA_NACIONAL_NAO_CONFIGURADA` quando falta tabela (migration pendente).
 
 ## 3. `POST /api/v1/stockbridge/recebimento/nacional/por-nf` — estendida
 
 Corpo **inalterado** (`.strict()`). Comportamento novo, nesta ordem:
 
 1. Portão 1 (validação tudo-ou-nada) — igual à 015.
-2. **Fiscal**: se `fiscal === "pendente"` e há ao menos um produto a gravar e a flag está ligada → `EDITAR` → `IGNORAR` → `Concluir` no OMIE, com lock no ledger.
+2. **Fiscal**: se `fiscal === "pendente"` e há ao menos um produto a gravar e a flag está ligada → (NF sem CNPJ de fornecedor no espelho → `422 RECEBIMENTO_FISCAL_SEM_FORNECEDOR` sem abrir o ledger) → lock no ledger → `ConsultarRecebimento` → recusas antes de escrever (cancelada, sem fornecedor — `nIdFornecedor` 0/nulo ou sem CNPJ —, devolvida, bloqueada, etapa ≠ 40) → `EDITAR` só nos itens sem os ajustes e não ignorados → `IGNORAR` só nos não ignorados → `Concluir`.
 3. Portão 2 (gravação por produto) — igual à 015.
 
 **201** (acrescido):
@@ -71,9 +76,12 @@ Corpo **inalterado** (`.strict()`). Comportamento novo, nesta ordem:
 
 | HTTP | code | Quando | userMessage |
 |---|---|---|---|
-| 502 | `RECEBIMENTO_FISCAL_FAIL` | fault/timeout em EDITAR, IGNORAR ou Concluir e a reconsulta não mostrou concluído | "Não foi possível concluir o recebimento fiscal da NF 6842 (REPLAS COMERCIAL LTDA) no OMIE. Nada foi registrado — tente novamente em instantes. Se persistir, avise o fiscal." (fornecedor nulo → "(fornecedor não identificado no OMIE)") |
-| 409 | `RECEBIMENTO_FISCAL_EM_ANDAMENTO` | outra confirmação da mesma NF está em curso (ledger `em_andamento` < 5 min) | "O recebimento fiscal da NF 6842 já está sendo concluído. Aguarde alguns segundos e recarregue a nota." |
-| 422 | `RECEBIMENTO_FISCAL_SEM_FORNECEDOR` | NF sem fornecedor cadastrado no OMIE (fault específico — research D8) | "A NF 6842 está sem fornecedor cadastrado no OMIE. Peça ao fiscal para cadastrar o fornecedor e tente de novo." |
+| 502 | `RECEBIMENTO_FISCAL_FAIL` | fault/timeout em EDITAR, IGNORAR ou Concluir e a reconsulta não mostrou concluído | "Não foi possível concluir o recebimento fiscal da NF 6842 (REPLAS COMERCIAL LTDA) no OMIE. Nada foi registrado no estoque — tente novamente em 1 minuto. Se persistir, avise o fiscal." (fornecedor nulo → "(Fornecedor não identificado no OMIE)") |
+| 409 | `RECEBIMENTO_FISCAL_EM_ANDAMENTO` | outra confirmação da mesma NF está em curso (ledger `em_andamento` há menos de 15 min) | "O recebimento fiscal da NF 6842 já está sendo concluído. Aguarde alguns segundos e recarregue a nota." |
+| 409 | `RECEBIMENTO_FISCAL_AGUARDE` | falha com escrita no OMIE (passo editar/ignorar/concluir) há menos de 70 s — a 1ª consulta da nova tentativa cairia no cache de ~1 min | "A tentativa anterior do recebimento fiscal da NF 6842 falhou há instantes. Aguarde cerca de N segundos e tente de novo — …" |
+| 422 | `RECEBIMENTO_FISCAL_SEM_FORNECEDOR` | NF sem fornecedor cadastrado no OMIE: sem CNPJ no espelho, `nIdFornecedor` 0/nulo ou sem CNPJ na consulta, ou fault que fale em fornecedor | "A NF 6842 está sem fornecedor cadastrado no OMIE. Peça ao fiscal para cadastrar o fornecedor e tente de novo." |
+| 422 | `RECEBIMENTO_FISCAL_ETAPA_INESPERADA` | recebimento fora da etapa 40, bloqueado ou devolvido no OMIE (a receita só foi validada a partir da 40) | "O recebimento da NF 6842 não está na etapa "Faturado pelo fornecedor" no OMIE…" / "…está bloqueado no OMIE…" / "…consta como devolvida no OMIE…" |
+| 422 | `NF_CANCELADA` | a consulta mostra o recebimento cancelado | "A NF 6842 consta como cancelada no OMIE…" |
 
 Invariantes: (5) repetir o POST não conclui o fiscal duas vezes (ledger) nem grava estoque em dobro (índice da 015); (6) falha no fiscal ⇒ zero `INSERT`; (7) `ja_concluido` ⇒ segue para o portão 2 normalmente.
 
@@ -85,7 +93,7 @@ Qualquer NF da fila (fiscal pendente **ou** já feito) com ao menos um item pend
 
 **201**: `{ "data": { "id": "<uuid>", "notaFiscal": "1394", "fornecedorNome": "ECOPLAST …", "situacaoFiscalNaDispensa": "pendente", "dispensadoEm": "…" }, "error": null }`
 
-**Erros**: `400 MOTIVO_OBRIGATORIO`; `404 NF_NAO_ENCONTRADA`; `409 NF_JA_DISPENSADA`; `422 NF_NAO_DISPENSAVEL` ("A NF <n> já foi recebida no Atlas — não há o que dispensar." — só quando nenhum item está pendente); `403 RECEBIMENTO_FISCAL_DESABILITADO`.
+**Erros**: `400 MOTIVO_OBRIGATORIO` (motivo vazio, em branco ou ausente — mensagem própria da dispensa); `404 NF_NAO_ENCONTRADA`; `409 NF_JA_DISPENSADA`; `409 NF_EM_RECEBIMENTO` (recebimento com o fiscal em curso — ledger `em_andamento`); `422 NF_NAO_DISPENSAVEL` ("A NF <n> já foi recebida no Atlas — não há o que dispensar." — só quando nenhum item está pendente); `403 RECEBIMENTO_FISCAL_DESABILITADO`. O aviso ao fiscal usa `valorNotaBrl` (NF inteira) e diz que a situação vem do espelho no momento da dispensa.
 
 ## 5. `GET /api/v1/stockbridge/recebimento/nacional/dispensas` — nova
 
@@ -107,13 +115,13 @@ Qualquer NF da fila (fiscal pendente **ou** já feito) com ao menos um item pend
 
 **Role**: `requireGestor`. **Body**: `{ "motivo": "<1..1000>" }`.
 
-**200**: `{ "data": { "id": "…", "notaFiscal": "1394" }, "error": null }`. A NF volta à fila na situação fiscal em que estiver.
+**200**: `{ "data": { "id": "…", "notaFiscal": "1394" }, "error": null }`. A NF volta à fila na situação fiscal em que estiver, e o fiscal recebe o aviso "Dispensa desfeita" (pode ter agido no OMIE por causa do primeiro aviso).
 
 **Erros**: `404 DISPENSA_NAO_ENCONTRADA` (inexistente ou já revertida); `400 MOTIVO_OBRIGATORIO`.
 
 ## 7. `GET /api/v1/stockbridge/recebimento/nacional/fiscal` — nova (rastreabilidade)
 
-**Role**: `requireGestor`. **Query**: `{ status?: 'concluido'|'ja_concluido'|'falha'|'em_andamento', limit?: 1..200 }`.
+**Role**: `requireGestor`; `403 RECEBIMENTO_FISCAL_DESABILITADO` com a flag desligada. **Query**: `{ status?: 'concluido'|'ja_concluido'|'falha'|'em_andamento', limit?: 1..200 }`.
 
 **200**: lista do ledger (`notaFiscal`, `fornecedorNome`, `status`, `passoFalha`, `confirmadoPor {id, nome}`, `iniciadoEm`, `finalizadoEm`). `erro_omie_*` **não** sai desta rota (fica no banco e no log — ACXEGDP-313).
 

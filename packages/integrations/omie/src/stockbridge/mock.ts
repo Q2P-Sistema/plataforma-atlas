@@ -324,10 +324,21 @@ function faultRecebimento(cnpj: OmieCnpj, method: string, code: string, msg: str
  * "SUCATA PLASTICO" 18.000 KG a R$ 11,30 (a NF 6842 real), que passa a existir
  * no estado do mock para o ciclo seguir.
  */
+/**
+ * nIdReceb sintetico estavel por chave de acesso — duas chaves diferentes nunca
+ * caem no mesmo recebimento (antes, toda chave desconhecida virava 77000001 e
+ * concluir uma NF no mock concluia outra — revisao pre-UAT, FISC-9).
+ */
+function nIdRecebSinteticoPorChave(chave: string): number {
+  let h = 0;
+  for (let k = 0; k < chave.length; k++) h = (h * 31 + chave.charCodeAt(k)) % 999_983;
+  return 77_000_000 + h;
+}
+
 export function mockConsultarRecebimentoNfe(cnpj: OmieCnpj, ref: RecebimentoNfeRef): RecebimentoNfeConsultado {
   const found = acharRecebimentoMock(cnpj, ref);
   if (found) return structuredClone(found.rec);
-  const nIdReceb = 'nIdReceb' in ref ? ref.nIdReceb : 77_000_001;
+  const nIdReceb = 'nIdReceb' in ref ? ref.nIdReceb : nIdRecebSinteticoPorChave(ref.cChaveNfe);
   const rec: RecebimentoNfeConsultado = {
     nIdReceb,
     cChaveNFe: 'cChaveNfe' in ref ? ref.cChaveNfe : `MOCK-CHAVE-RECEB-${cnpj}-${nIdReceb}`.padEnd(44, '0').slice(0, 44),
@@ -340,6 +351,8 @@ export function mockConsultarRecebimentoNfe(cnpj: OmieCnpj, ref: RecebimentoNfeR
     nValorNFe: 203_400,
     cRecebido: 'N',
     cCancelada: 'N',
+    cBloqueado: 'N',
+    cDevolvido: 'N',
     cUsuarioRec: null,
     dRec: null,
     hRec: null,

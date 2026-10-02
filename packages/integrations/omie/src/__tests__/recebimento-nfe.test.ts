@@ -119,6 +119,16 @@ describe('OMIE recebimento de NF-e — mock mode (ACXEGDP-395)', () => {
     ).rejects.toBeInstanceOf(OmieApiError);
   });
 
+  it('chaves diferentes sem fixture viram recebimentos DIFERENTES no mock (concluir uma nao conclui a outra)', async () => {
+    const a = await consultarRecebimentoNfe('q2p', { cChaveNfe: '1'.repeat(44) });
+    const b = await consultarRecebimentoNfe('q2p', { cChaveNfe: '2'.repeat(44) });
+    expect(a.nIdReceb).not.toBe(b.nIdReceb);
+    await concluirRecebimentoNfe('q2p', { nIdReceb: a.nIdReceb });
+    expect((await consultarRecebimentoNfe('q2p', { cChaveNfe: '2'.repeat(44) })).cRecebido).toBe('N');
+    // estavel: a mesma chave volta ao mesmo id
+    expect((await consultarRecebimentoNfe('q2p', { cChaveNfe: '1'.repeat(44) })).nIdReceb).toBe(a.nIdReceb);
+  });
+
   it('__injectMockRecebimentoNfe substitui o estado; __resetMockState limpa', async () => {
     const rec = await consultarRecebimentoNfe('q2p', { nIdReceb: 900 });
     __injectMockRecebimentoNfe('q2p', { ...rec, cRecebido: 'S', cEtapa: '60' });
@@ -157,14 +167,37 @@ describe('parseRecebimentoNfeConsultado — forma real do OMIE (NF 6842, 02/10/2
     expect(() => parseRecebimentoNfeConsultado({ cabec: { cEtapa: '40' } })).toThrow(/estrutura invalida/);
   });
 
-  it('fornecedor ausente (nao cadastrado no OMIE) vira null, nao string vazia', () => {
+  it('fornecedor nao cadastrado — forma REAL do OMIE (NF 1257, sonda 02/10/2026): nIdFornecedor 0 vira null, sem CNPJ/razao', () => {
+    // Bloco devolvido pela ListarRecebimentos (exec 444213 da sonda YN2YubdFHpvheA99):
+    // o OMIE manda nIdFornecedor: 0 — NAO omite o campo nem manda null.
     const rec = parseRecebimentoNfeConsultado({
-      cabec: { nIdReceb: 1, cChaveNFe: '3'.repeat(44), cNumeroNFe: '000001257', cEtapa: '40' },
-      infoCadastro: { cRecebido: 'N', cCancelada: 'N' },
-      itensRecebimento: [],
+      cabec: {
+        cChaveNFe: '31261038467346000258550010000012571279398231', cEtapa: '40', cNumeroNFe: '000001257',
+        dEmissaoNFe: '01/10/2026', nIdFornecedor: 0, nIdReceb: 8510558859, nValorNFe: 34050,
+      },
+      infoCadastro: { cRecebido: 'N', cCancelada: 'N', cFaturado: 'S' },
+      itensRecebimento: [{ itensCabec: { nSequencia: 1, cDescricaoProduto: 'APARA', nQtdeNFe: 1500, cUnidadeNfe: 'KG', vTotalItem: 34050 }, itensAjustes: { cCFOPEntrada: '2.102' } }],
     });
+    expect(rec.nIdFornecedor).toBeNull();
     expect(rec.cRazaoSocial).toBeNull();
     expect(rec.cCNPJ_CPF).toBeNull();
-    expect(rec.itens).toEqual([]);
+    expect(rec.cBloqueado).toBeNull();
+    expect(rec.itens[0]).toMatchObject({ cCFOPEntrada: '2.102', vTotalItem: 34050 });
+  });
+
+  it('nIdFornecedor positivo e preservado; cBloqueado/cDevolvido sao lidos do infoCadastro', () => {
+    const rec = parseRecebimentoNfeConsultado({
+      cabec: { nIdReceb: 2, cChaveNFe: '4'.repeat(44), nIdFornecedor: 8498397152 },
+      infoCadastro: { cRecebido: 'N', cCancelada: 'N', cBloqueado: 'S', cDevolvido: 'N' },
+      itensRecebimento: [],
+    });
+    expect(rec.nIdFornecedor).toBe(8498397152);
+    expect(rec.cBloqueado).toBe('S');
+    expect(rec.cDevolvido).toBe('N');
+  });
+
+  it('sem infoCadastro.cRecebido a estrutura e recusada (falha fechado — nao assume "nao recebido")', () => {
+    expect(() => parseRecebimentoNfeConsultado({ cabec: { nIdReceb: 3, cChaveNFe: '5'.repeat(44) } })).toThrow(/infoCadastro\.cRecebido/);
+    expect(() => parseRecebimentoNfeConsultado({ cabec: { nIdReceb: 3, cChaveNFe: '5'.repeat(44) }, infoCadastro: { cCancelada: 'N' } })).toThrow(/estrutura invalida/);
   });
 });

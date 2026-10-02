@@ -90,6 +90,37 @@ export class NfNacionalNaoEncontradaError extends Error {
   }
 }
 
+/** NF com dispensa ATIVA pelo gestor (feature 016, FR-021): some da fila; o detalhe explica (contrato §2). */
+export class NfNacionalDispensadaError extends Error {
+  constructor(public readonly notaFiscal: string, public readonly dispensadoEm: string) {
+    super(`A NF ${notaFiscal} foi dispensada da fila pelo gestor em ${dispensadoEm}. Para recebê-la, peça ao gestor para desfazer a dispensa em Aprovações.`);
+    this.name = 'NfNacionalDispensadaError';
+  }
+}
+
+/**
+ * Tabela que a fila le nao existe (42P01) — ex.: flag ligada antes de aplicar a
+ * migration 0053. E erro de AMBIENTE, como a data de corte ausente: precisa ser
+ * visivel (503), nunca uma fila vazia em silencio (revisao pre-UAT, MIG-3).
+ */
+export class FilaNacionalIncompletaError extends Error {
+  constructor() {
+    super('A fila de recebimento nacional está com a configuração incompleta neste ambiente (falta uma atualização do banco de dados). Avise o administrador.');
+    this.name = 'FilaNacionalIncompletaError';
+  }
+}
+
+/** Erro do Postgres "relation does not exist" (42P01), percorrendo `cause`. */
+export function ehTabelaAusente(err: unknown): boolean {
+  let e: unknown = err;
+  for (let i = 0; i < 4 && e && typeof e === 'object'; i++) {
+    const o = e as { code?: unknown; cause?: unknown };
+    if (o.code === '42P01') return true;
+    e = o.cause;
+  }
+  return false;
+}
+
 export class NfNacionalCanceladaError extends Error {
   constructor(public readonly notaFiscal: string) {
     super(`A NF ${notaFiscal} está cancelada ou foi excluída no OMIE e não pode ser recebida.`);
@@ -191,7 +222,7 @@ function fonteNfSql(canceladaExiste: boolean, nfValida: string): string {
                false                                                AS fiscal_pendente,
                ${canceladaExiste ? 'COALESCE(h.cancelada, false)' : 'false'} AS cancelada,
                COALESCE(h.deletada, false)                          AS deletada,
-               i.n_cod_item::text                                   AS n_cod_item,
+               i.n_cod_item::bigint                                 AS n_cod_item,  -- ordem NUMERICA dos itens (FILA-6)
                i.x_prod, i.cfop, i.q_com, i.u_com,
                i.v_prod                                             AS valor_item  -- D26: NAO v_tot_item (IPI em dobro)
         FROM public."tbl_nf_header_Q2P" h
@@ -202,10 +233,16 @@ function fonteNfSql(canceladaExiste: boolean, nfValida: string): string {
 }
 
 /**
- * Fonte (b): espelho de recebimentos — fiscal PENDENTE (c_recebido = 'N').
+ * Fonte (b): espelho de recebimentos — fiscal PENDENTE.
  * Precedencia da fonte (a): chave que ja existe no espelho de NF nao entra por
- * aqui (D8, FR-005). `fiscal_pendente` consulta o ledger para a NF que o Atlas
- * acabou de concluir ja sair como "fiscal ja feito" antes do proximo sync.
+ * aqui (D8, FR-005). Entram:
+ *  - recebimentos com fiscal pendente ELEGIVEL: `c_recebido = 'N'`, `c_cancelada = 'N'`
+ *    e `c_etapa = '40'` explicitos (contrato §4; nulo nao conta — FILA-7; e a receita
+ *    so foi validada a partir da etapa 40 — FISC-5);
+ *  - recebimentos que o ATLAS concluiu (ledger `concluido`/`ja_concluido`) e que o
+ *    espelho de NF ainda nao trouxe: sem isso a NF sumia da fila e do detalhe na
+ *    janela entre o sync de recebimentos (:23/:53) e o de NF (:08/:38) — FR-013,
+ *    revisao pre-UAT (FILA-1). Saem como "fiscal ja feito" pelo ledger.
  */
 function fonteRecebSql(): string {
   return `
@@ -213,9 +250,9 @@ function fonteRecebSql(): string {
                r.d_emissao                                          AS d_emi,
                r.n_id_receb::bigint                                 AS n_id_receb,
                NOT ${LEDGER_FISCAL_CONCLUIDO_SQL('r.c_chave_nfe')}  AS fiscal_pendente,
-               (COALESCE(r.c_cancelada, 'N') = 'S')                 AS cancelada,
+               (r.c_cancelada = 'S')                                AS cancelada,
                false                                                AS deletada,
-               ri.n_sequencia::text                                 AS n_cod_item,
+               ri.n_sequencia::bigint                               AS n_cod_item,
                ri.c_descricao_produto                               AS x_prod,
                ri.c_cfop_entrada                                    AS cfop,       -- CFOP de ENTRADA (o c_cfop e o do fornecedor)
                ri.n_qtde_nfe                                        AS q_com,
@@ -223,9 +260,12 @@ function fonteRecebSql(): string {
                ri.v_total_item                                      AS valor_item  -- = v_prod (research D7 da 016)
         FROM public."tbl_recebimentoNFe_Q2P" r
         JOIN public."tbl_recebimentoNFe_itens_Q2P" ri ON ri.n_id_receb = r.n_id_receb
-        WHERE COALESCE(r.c_recebido, 'N') = 'N'
-          AND r.d_emissao >= $2::date
-          AND NOT EXISTS (SELECT 1 FROM public."tbl_nf_header_Q2P" h2 WHERE h2.c_chave_nfe = r.c_chave_nfe)`;
+        WHERE r.d_emissao >= $2::date
+          AND NOT EXISTS (SELECT 1 FROM public."tbl_nf_header_Q2P" h2 WHERE h2.c_chave_nfe = r.c_chave_nfe)
+          AND (
+                (r.c_recebido = 'N' AND r.c_cancelada = 'N' AND r.c_etapa = '40')
+             OR ${LEDGER_FISCAL_CONCLUIDO_SQL('r.c_chave_nfe')}
+          )`;
 }
 
 /** CTE `nf_unificada`: fonte (a) sozinha com a flag desligada (query da 015); (a) UNION ALL (b) com a flag ligada. */
@@ -242,6 +282,7 @@ function recebidoSql(alias = 'u'): string {
     chaveExpr: `${alias}.c_chave_nfe`,
     descricaoNormalizadaExpr: normalizarDescricaoSql(`${alias}.x_prod`),
     nfNumeroExpr: `${alias}.n_nf`,
+    dataEmissaoExpr: `${alias}.d_emi`,
   });
 }
 
@@ -308,8 +349,9 @@ export async function getFilaNacional(params: { q?: string | null; fornecedor?: 
   // Com a flag ligada, a NF concluida pelo Atlas sai como "fiscal ja feito" com a
   // data do ledger; desligada, a coluna e constante (comportamento da 015).
   const fiscalConcluidoEmSql = flag
-    ? `(SELECT MAX(rf.finalizado_em) FROM stockbridge.recebimento_fiscal rf
-            WHERE rf.nf_chave_acesso = c_chave_nfe AND rf.status IN ('concluido', 'ja_concluido'))::text`
+    ? // so 'concluido': 'ja_concluido' significa fiscal feito no portal, nao pelo Atlas (SPEC016-8)
+      `(SELECT MAX(rf.finalizado_em) FROM stockbridge.recebimento_fiscal rf
+            WHERE rf.nf_chave_acesso = c_chave_nfe AND rf.status = 'concluido')::text`
     : 'NULL::text';
 
   interface Row {
@@ -404,6 +446,12 @@ export async function getFilaNacional(params: { q?: string | null; fornecedor?: 
       fiscalConcluidoPeloAtlasEm: r.fiscal_concluido_em ? new Date(r.fiscal_concluido_em).toISOString() : null,
     }));
   } catch (err) {
+    // Tabela ausente (42P01) e erro de AMBIENTE: precisa ser visivel (503), nao
+    // uma fila vazia (MIG-3) — ex.: flag ligada antes da migration 0053.
+    if (ehTabelaAusente(err)) {
+      logger.error({ err: (err as Error).message, flag }, 'Fila nacional referencia tabela inexistente — migration pendente?');
+      throw new FilaNacionalIncompletaError();
+    }
     // Fila e informativa — falha de banco nao pode derrubar a tela de recebimento
     // (o formulario manual continua). Loga e devolve vazio. Sync parado fica
     // indistinguivel de "nada pendente" so no dado; o log e o sinal.
@@ -466,7 +514,10 @@ export interface DetalheNfNacional {
   diasDesdeEmissao: number;
   /** CFOPs presentes nas linhas elegiveis (o CFOP e do ITEM, nao do cabecalho) */
   cfop: string;
+  /** soma dos itens do RECORTE (compra de mercadoria) — o que o Atlas recebe */
   valorTotalBrl: number;
+  /** soma de TODAS as linhas da NF, inclusive fora do recorte — base da conta a pagar no OMIE (e-mail de dispensa, SPEC016-7) */
+  valorNotaBrl: number;
   itens: ItemNfNacional[];
   /** linhas da NF fora do recorte de CFOP (ex.: item de consumo numa NF mista) — nao recebiveis por aqui */
   linhasForaDoRecorte: number;
@@ -501,7 +552,7 @@ interface LinhaRow {
   fornecedor_excluido: boolean;
   fiscal_pendente: boolean;
   n_id_receb: string | number | null;
-  n_cod_item: string;
+  n_cod_item: string | number;
   x_prod: string;
   desc_norm: string;
   cfop: string;
@@ -535,7 +586,7 @@ export async function getDetalheNfNacional(chaveAcesso: string): Promise<Detalhe
   const canceladaExiste = await colunaCanceladaExiste(pool, 'tbl_nf_header_Q2P');
   const descNorm = normalizarDescricaoSql('u.x_prod');
 
-  const res = await pool.query<LinhaRow>(
+  const consulta = pool.query<LinhaRow>(
     `
     WITH nf_unificada AS (${nfUnificadaSql(flag, canceladaExiste, '')}
     )
@@ -579,6 +630,16 @@ export async function getDetalheNfNacional(chaveAcesso: string): Promise<Detalhe
     `,
     [chave, dataCorte],
   );
+  let res: Awaited<typeof consulta>;
+  try {
+    res = await consulta;
+  } catch (err) {
+    if (ehTabelaAusente(err)) {
+      logger.error({ err: (err as Error).message, flag }, 'Detalhe da NF nacional referencia tabela inexistente — migration pendente?');
+      throw new FilaNacionalIncompletaError();
+    }
+    throw err;
+  }
 
   if (res.rows.length === 0) {
     throw new NfNacionalNaoEncontradaError(chave, 'ainda não foi sincronizada ou é anterior à data de corte');
@@ -599,12 +660,8 @@ export async function getDetalheNfNacional(chaveAcesso: string): Promise<Detalhe
     if (d.rows.length > 0) {
       dispensaAtiva = true;
       const quando = new Date(d.rows[0]!.dispensado_em);
-      const data = Number.isNaN(quando.getTime()) ? d.rows[0]!.dispensado_em : quando.toLocaleDateString('pt-BR');
-      throw new NfNacionalNaoEncontradaError(
-        chave,
-        undefined,
-        `A NF ${cab.nota_fiscal} foi dispensada da fila pelo gestor em ${data}. Para recebê-la, peça a reversão da dispensa.`,
-      );
+      const data = Number.isNaN(quando.getTime()) ? d.rows[0]!.dispensado_em : quando.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+      throw new NfNacionalDispensadaError(cab.nota_fiscal, data);
     }
   }
 
@@ -714,6 +771,7 @@ export async function getDetalheNfNacional(chaveAcesso: string): Promise<Detalhe
     diasDesdeEmissao: Number(cab.dias_desde_emissao),
     cfop: Array.from(new Set(elegiveis.map((r) => r.cfop))).join(', '),
     valorTotalBrl: elegiveis.reduce((s, l) => s + Number(l.valor_item), 0),
+    valorNotaBrl: res.rows.reduce((s, l) => s + Number(l.valor_item), 0),
     itens,
     linhasForaDoRecorte: res.rows.length - elegiveis.length,
     fiscal,

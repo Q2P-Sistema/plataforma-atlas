@@ -1,7 +1,7 @@
 import { and, desc, eq } from 'drizzle-orm';
 import { getDb, getPool, getConfig, createLogger } from '@atlas/core';
 import { aprovacao } from '@atlas/db';
-import { getDetalheNfNacional, type DetalheNfNacional } from './fila-nacional.service.js';
+import { getDetalheNfNacional, recebimentoFiscalHabilitado, type DetalheNfNacional } from './fila-nacional.service.js';
 import { normalizarDescricaoNf } from './descricao-nf.js';
 import { enviarAlertaRecebimentoNacionalLote } from './notificacao.service.js';
 import type { Perfil } from '../types.js';
@@ -63,6 +63,22 @@ export class NenhumItemPendenteError extends Error {
   }
 }
 
+/**
+ * Feature 016 (revisao pre-UAT, ROT-5/UI-2): NF com recebimento FISCAL pendente no
+ * OMIE nao recebe baixa externa — a baixa tiraria a NF da fila com o recebimento
+ * parado na etapa 40 e ninguem seria avisado. Os caminhos sao receber pela fila
+ * (o fiscal e concluido junto) ou a dispensa pelo gestor (que avisa o fiscal).
+ */
+export class BaixaExternaFiscalPendenteError extends Error {
+  constructor(public readonly notaFiscal: string) {
+    super(
+      `A NF ${notaFiscal} ainda está com o recebimento fiscal pendente no OMIE, então não cabe baixa por recebimento externo. ` +
+        'Receba pela fila (o fiscal é concluído junto) ou peça ao gestor para dispensar a nota.',
+    );
+    this.name = 'BaixaExternaFiscalPendenteError';
+  }
+}
+
 export class RecebimentoExternoNaoEncontradoError extends Error {
   constructor(public readonly id: string) {
     super('Baixa externa não encontrada.');
@@ -103,6 +119,7 @@ export async function solicitarRecebimentoExterno(input: SolicitarRecebimentoExt
   if (motivo.length === 0) throw new MotivoObrigatorioError();
 
   const detalhe: DetalheNfNacional = await getDetalheNfNacional(input.nfChaveAcesso);
+  if (recebimentoFiscalHabilitado() && detalhe.fiscal === 'pendente') throw new BaixaExternaFiscalPendenteError(detalhe.notaFiscal);
 
   const pendentes = detalhe.itens.filter((it) => !(it.jaRecebido && (it.quantidadeNfJaAtribuidaKg === 0 || (it.quantidadeRestanteKg ?? 0) <= 1)) && !it.baixadoComoExterno);
   let alvos = pendentes;

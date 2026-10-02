@@ -97,7 +97,7 @@ function item(): ItemNfNacional {
 const detalhe = (): DetalheNfNacional => ({
   nfChaveAcesso: CHAVE, notaFiscal: '6842', fornecedorNome: 'REPLAS COMERCIAL LTDA', fornecedorCnpj: '14.555.032/0007-53',
   dtEmissao: '2026-10-01', diasDesdeEmissao: 1, cfop: '1.102', valorTotalBrl: 203400, itens: [item()], linhasForaDoRecorte: 0,
-  fiscal: 'pendente', nIdReceb: 8510564869, dispensavel: false,
+  fiscal: 'pendente', nIdReceb: 8510564869, dispensavel: false, valorNotaBrl: 203400,
 });
 
 function poolPadrao(sql: string, params?: unknown[]) {

@@ -1,7 +1,6 @@
 import { getPool, createLogger } from '@atlas/core';
 import { getDetalheNfNacional, recebimentoFiscalHabilitado, itemNfPendente, type DetalheNfNacional, type SituacaoFiscal } from './fila-nacional.service.js';
-import { MotivoObrigatorioError } from './recebimento-externo.service.js';
-import { enviarAlertaNfDispensada } from './notificacao.service.js';
+import { enviarAlertaNfDispensada, enviarAlertaDispensaRevertida } from './notificacao.service.js';
 import type { Perfil } from '../types.js';
 
 const logger = createLogger('stockbridge:nf-dispensa');
@@ -35,6 +34,22 @@ export class DispensaNaoPermitidaError extends Error {
   constructor() {
     super('Só gestor ou diretor pode dispensar uma NF da fila ou desfazer uma dispensa.');
     this.name = 'DispensaNaoPermitidaError';
+  }
+}
+
+/** Motivo vazio — mensagem propria da dispensa/reversao (antes reusava a da baixa externa — ROT-8). */
+export class MotivoDispensaObrigatorioError extends Error {
+  constructor(public readonly acao: 'dispensar' | 'reverter') {
+    super(acao === 'dispensar' ? 'Informe o motivo da dispensa: por que esta nota não será recebida.' : 'Informe o motivo para desfazer a dispensa.');
+    this.name = 'MotivoDispensaObrigatorioError';
+  }
+}
+
+/** O recebimento (com o fiscal) desta NF esta em curso agora — dispensar no meio daria aviso errado ao fiscal (ROT-3). */
+export class NfEmRecebimentoFiscalError extends Error {
+  constructor(public readonly notaFiscal: string) {
+    super(`A NF ${notaFiscal} está sendo recebida neste momento. Aguarde alguns segundos e recarregue a nota antes de dispensá-la.`);
+    this.name = 'NfEmRecebimentoFiscalError';
   }
 }
 
@@ -116,12 +131,19 @@ export async function dispensarNf(input: DispensarNfInput): Promise<DispensarNfR
   exigirFlag();
   exigirGestor(input.perfilUsuario);
   const motivo = input.motivo?.trim() ?? '';
-  if (motivo.length === 0) throw new MotivoObrigatorioError();
+  if (motivo.length === 0) throw new MotivoDispensaObrigatorioError('dispensar');
 
   // Antes do detalhe: a NF ja dispensada nao aparece no detalhe (que lancaria
-  // "nao encontrada — foi dispensada em ..."); aqui a resposta certa e 409.
+  // NfNacionalDispensadaError); aqui a resposta certa e 409.
   const ativa = await dispensaAtiva(input.nfChaveAcesso);
   if (ativa) throw new NfJaDispensadaError(ativa.nota_fiscal);
+
+  // Recebimento com o fiscal em curso (ledger em_andamento): espera terminar.
+  const emCurso = await getPool().query<{ nota_fiscal: string }>(
+    `SELECT nota_fiscal FROM stockbridge.recebimento_fiscal WHERE nf_chave_acesso = $1 AND status = 'em_andamento' LIMIT 1`,
+    [input.nfChaveAcesso],
+  );
+  if (emCurso.rows[0]) throw new NfEmRecebimentoFiscalError(emCurso.rows[0].nota_fiscal);
 
   const detalhe: DetalheNfNacional = await getDetalheNfNacional(input.nfChaveAcesso);
   if (!detalhe.itens.some(itemNfPendente)) throw new NfNaoDispensavelError(detalhe.notaFiscal);
@@ -165,7 +187,7 @@ export async function dispensarNf(input: DispensarNfInput): Promise<DispensarNfR
       notaFiscal: detalhe.notaFiscal,
       fornecedorNome: detalhe.fornecedorNome,
       situacaoFiscalNaDispensa: detalhe.fiscal,
-      valorNfBrl: detalhe.valorTotalBrl,
+      valorNfBrl: detalhe.valorNotaBrl,
       motivo,
       dispensadoPorNome: nome,
       dispensadoEm,
@@ -250,17 +272,31 @@ export async function reverterDispensa(input: ReverterDispensaInput): Promise<{ 
   exigirFlag();
   exigirGestor(input.perfilUsuario);
   const motivo = input.motivo?.trim() ?? '';
-  if (motivo.length === 0) throw new MotivoObrigatorioError();
+  if (motivo.length === 0) throw new MotivoDispensaObrigatorioError('reverter');
 
-  const r = await getPool().query<{ id: string; nota_fiscal: string }>(
+  const r = await getPool().query<{ id: string; nota_fiscal: string; fornecedor_nome: string | null; situacao_fiscal_na_dispensa: SituacaoFiscal; revertido_em: string }>(
     `UPDATE stockbridge.nf_dispensa
         SET revertido_por = $2, revertido_em = now(), motivo_reversao = $3
       WHERE id = $1 AND revertido_em IS NULL
-      RETURNING id, nota_fiscal`,
+      RETURNING id, nota_fiscal, fornecedor_nome, situacao_fiscal_na_dispensa, revertido_em::text AS revertido_em`,
     [input.id, input.userId, motivo],
   );
   const row = r.rows[0];
   if (!row) throw new DispensaNaoEncontradaError(input.id);
   logger.info({ id: row.id, nf: row.nota_fiscal, userId: input.userId }, 'Dispensa de NF revertida — a NF volta à fila');
+
+  // O fiscal foi avisado da dispensa e pode ter agido no OMIE — avisar que voltou (ROT-4). Best-effort.
+  void (async () => {
+    const nome = await nomeUsuario(input.userId);
+    await enviarAlertaDispensaRevertida({
+      notaFiscal: row.nota_fiscal,
+      fornecedorNome: row.fornecedor_nome,
+      situacaoFiscalNaDispensa: row.situacao_fiscal_na_dispensa,
+      motivoReversao: motivo,
+      revertidoPorNome: nome,
+      revertidoEm: new Date(row.revertido_em).toISOString(),
+    });
+  })().catch((err) => logger.error({ err, nf: row.nota_fiscal }, 'Falha ao avisar o fiscal da reversão da dispensa (a reversão foi gravada)'));
+
   return { id: row.id, notaFiscal: row.nota_fiscal };
 }

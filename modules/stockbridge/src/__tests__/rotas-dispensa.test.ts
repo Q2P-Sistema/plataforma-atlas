@@ -93,10 +93,15 @@ vi.mock('../services/nf-dispensa.service.js', async () => {
 });
 
 import router from '../routes/recebimento-nacional.routes.js';
-import { NfJaDispensadaError, NfNaoDispensavelError, DispensaNaoEncontradaError } from '../services/nf-dispensa.service.js';
-import { MotivoObrigatorioError } from '../services/recebimento-externo.service.js';
-import { NfNacionalNaoEncontradaError } from '../services/fila-nacional.service.js';
-import { RecebimentoFiscalError, RecebimentoFiscalEmAndamentoError, RecebimentoFiscalSemFornecedorError } from '../services/recebimento-fiscal.service.js';
+import { NfJaDispensadaError, NfNaoDispensavelError, DispensaNaoEncontradaError, MotivoDispensaObrigatorioError, NfEmRecebimentoFiscalError } from '../services/nf-dispensa.service.js';
+import { NfNacionalNaoEncontradaError, NfNacionalDispensadaError, FilaNacionalIncompletaError } from '../services/fila-nacional.service.js';
+import {
+  RecebimentoFiscalError,
+  RecebimentoFiscalEmAndamentoError,
+  RecebimentoFiscalAguardeError,
+  RecebimentoFiscalSemFornecedorError,
+  RecebimentoFiscalEtapaInesperadaError,
+} from '../services/recebimento-fiscal.service.js';
 
 const CHAVE = '35261014555032000753550010000068421827355174';
 const ID = '11111111-1111-4111-8111-111111111111';
@@ -151,11 +156,33 @@ describe('POST /dispensar (contrato §4)', () => {
     expect(svc.dispensarNf).not.toHaveBeenCalled();
   });
 
-  it('corpo com campo extra -> 400 (.strict()); chave invalida -> 400; motivo vazio -> 400', async () => {
+  it('corpo com campo extra -> 400 (.strict()); chave invalida -> 400; motivo acima de 1000 -> 400', async () => {
     expect((await request(app).post(`${BASE}/dispensar`).send({ nf_chave_acesso: CHAVE, motivo: 'x', extra: 1 })).status).toBe(400);
     expect((await request(app).post(`${BASE}/dispensar`).send({ nf_chave_acesso: '123', motivo: 'x' })).status).toBe(400);
-    expect((await request(app).post(`${BASE}/dispensar`).send({ nf_chave_acesso: CHAVE, motivo: '' })).status).toBe(400);
+    expect((await request(app).post(`${BASE}/dispensar`).send({ nf_chave_acesso: CHAVE, motivo: 'x'.repeat(1001) })).status).toBe(400);
     expect(svc.dispensarNf).not.toHaveBeenCalled();
+  });
+
+  it('motivo vazio ou ausente chega ao service e volta 400 MOTIVO_OBRIGATORIO com a mensagem da dispensa (contrato §4/§6)', async () => {
+    svc.dispensarNf.mockRejectedValue(new MotivoDispensaObrigatorioError('dispensar'));
+    for (const body of [{ nf_chave_acesso: CHAVE, motivo: '' }, { nf_chave_acesso: CHAVE }]) {
+      const res = await request(app).post(`${BASE}/dispensar`).send(body);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatchObject({ code: 'MOTIVO_OBRIGATORIO', userMessage: 'Informe o motivo da dispensa: por que esta nota não será recebida.' });
+    }
+    expect(svc.dispensarNf).toHaveBeenLastCalledWith(expect.objectContaining({ motivo: '' }));
+    svc.reverterDispensa.mockRejectedValue(new MotivoDispensaObrigatorioError('reverter'));
+    const rev = await request(app).post(`${BASE}/dispensas/${ID}/reverter`).send({});
+    expect(rev.status).toBe(400);
+    expect(rev.body.error.code).toBe('MOTIVO_OBRIGATORIO');
+    expect(rev.body.error.userMessage).toBe('Informe o motivo para desfazer a dispensa.');
+  });
+
+  it('NF sendo recebida agora (ledger em_andamento): 409 NF_EM_RECEBIMENTO', async () => {
+    svc.dispensarNf.mockRejectedValueOnce(new NfEmRecebimentoFiscalError('6842'));
+    const res = await request(app).post(`${BASE}/dispensar`).send({ nf_chave_acesso: CHAVE, motivo: 'x' });
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('NF_EM_RECEBIMENTO');
   });
 
   it('mapeia erros de dominio: 409 NF_JA_DISPENSADA, 422 NF_NAO_DISPENSAVEL, 404 NF_NAO_ENCONTRADA, 400 MOTIVO_OBRIGATORIO', async () => {
@@ -174,7 +201,7 @@ describe('POST /dispensar (contrato §4)', () => {
     expect(res.status).toBe(404);
     expect(res.body.error.code).toBe('NF_NAO_ENCONTRADA');
 
-    svc.dispensarNf.mockRejectedValueOnce(new MotivoObrigatorioError());
+    svc.dispensarNf.mockRejectedValueOnce(new MotivoDispensaObrigatorioError('dispensar'));
     res = await request(app).post(`${BASE}/dispensar`).send({ nf_chave_acesso: CHAVE, motivo: '   ' });
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('MOTIVO_OBRIGATORIO');
@@ -216,6 +243,14 @@ describe('GET /dispensas (contrato §5) e POST /dispensas/:id/reverter (§6)', (
 });
 
 describe('GET /fiscal — ledger (contrato §7)', () => {
+  it('flag desligada: 403 RECEBIMENTO_FISCAL_DESABILITADO (como as demais rotas novas — ROT-7)', async () => {
+    flagFiscal = false;
+    const res = await request(app).get(`${BASE}/fiscal`);
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('RECEBIMENTO_FISCAL_DESABILITADO');
+    expect(svc.listarLedgerFiscal).not.toHaveBeenCalled();
+  });
+
   it('gestor: 200 com status/limit repassados; limit fora de 1..200 -> 400; status desconhecido -> 400', async () => {
     const res = await request(app).get(`${BASE}/fiscal?status=falha&limit=50`);
     expect(res.status).toBe(200);
@@ -271,5 +306,43 @@ describe('fila e POST por-nf — extensoes da feature 016 (T024)', () => {
     expect(res.status).toBe(422);
     expect(res.body.error.code).toBe('RECEBIMENTO_FISCAL_SEM_FORNECEDOR');
     expect(res.body.error.userMessage).toContain('sem fornecedor cadastrado');
+
+    svc.processarRecebimentoNacionalPorNf.mockRejectedValueOnce(new RecebimentoFiscalAguardeError('6842', 40));
+    res = await request(app).post(`${BASE}/por-nf`).send(body);
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('RECEBIMENTO_FISCAL_AGUARDE');
+    expect(res.body.error.userMessage).toContain('40 segundos');
+
+    svc.processarRecebimentoNacionalPorNf.mockRejectedValueOnce(new RecebimentoFiscalEtapaInesperadaError('6842', 'bloqueado'));
+    res = await request(app).post(`${BASE}/por-nf`).send(body);
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('RECEBIMENTO_FISCAL_ETAPA_INESPERADA');
+    expect(res.body.error.userMessage).toContain('bloqueado no OMIE');
+  });
+
+  it('detalhe de NF dispensada: 404 NF_DISPENSADA (a UI nao oferece o formulario manual nesse caso)', async () => {
+    roleAtual = 'operador';
+    svc.getDetalheNfNacional.mockRejectedValueOnce(new NfNacionalDispensadaError('6842', '02/10/2026'));
+    const res = await request(app).get(`${BASE}/fila/${CHAVE}`);
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('NF_DISPENSADA');
+    expect(res.body.error.userMessage).toContain('desfazer a dispensa');
+  });
+
+  it('tabela ausente (migration pendente): 503 FILA_NACIONAL_NAO_CONFIGURADA na fila, no detalhe, no POST e no ledger — nunca fila vazia nem 500', async () => {
+    roleAtual = 'operador';
+    svc.getFilaNacional.mockRejectedValueOnce(new FilaNacionalIncompletaError());
+    let res = await request(app).get(`${BASE}/fila`);
+    expect(res.status).toBe(503);
+    expect(res.body.error.code).toBe('FILA_NACIONAL_NAO_CONFIGURADA');
+    const pgErr = Object.assign(new Error('relation "stockbridge.recebimento_fiscal" does not exist'), { code: '42P01' });
+    svc.processarRecebimentoNacionalPorNf.mockRejectedValueOnce(pgErr);
+    res = await request(app).post(`${BASE}/por-nf`).send({ nf_chave_acesso: CHAVE, itens: [{ indice: 0, descricao_fornecedor: 'X', produtos: [{ produto_codigo_q2p: 1, quantidade_kg: 1, localidade_id: LOC }] }] });
+    expect(res.status).toBe(503);
+    expect(res.body.error.code).toBe('FILA_NACIONAL_NAO_CONFIGURADA');
+    roleAtual = 'gestor';
+    svc.listarLedgerFiscal.mockRejectedValueOnce(pgErr);
+    res = await request(app).get(`${BASE}/fiscal`);
+    expect(res.status).toBe(503);
   });
 });

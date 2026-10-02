@@ -23,8 +23,10 @@ vi.mock('../services/correlacao-produto.service.js', () => ({
 }));
 
 const emailSpy = vi.fn().mockResolvedValue(undefined);
+const emailRevertidaSpy = vi.fn().mockResolvedValue(undefined);
 vi.mock('../services/notificacao.service.js', () => ({
   enviarAlertaNfDispensada: (a: unknown) => emailSpy(a),
+  enviarAlertaDispensaRevertida: (a: unknown) => emailRevertidaSpy(a),
 }));
 
 const detalheMock = vi.fn();
@@ -42,8 +44,9 @@ import {
   NfNaoDispensavelError,
   NfJaDispensadaError,
   DispensaNaoEncontradaError,
+  MotivoDispensaObrigatorioError,
+  NfEmRecebimentoFiscalError,
 } from '../services/nf-dispensa.service.js';
-import { MotivoObrigatorioError } from '../services/recebimento-externo.service.js';
 import { converterItemNfParaKg } from '../services/unidade-nf.js';
 import type { DetalheNfNacional, ItemNfNacional } from '../services/fila-nacional.service.js';
 
@@ -67,16 +70,21 @@ const detalhe = (over: Partial<DetalheNfNacional> = {}): DetalheNfNacional => ({
   nfChaveAcesso: CHAVE, notaFiscal: '6842', fornecedorNome: 'REPLAS COMERCIAL LTDA', fornecedorCnpj: '14.555.032/0007-53',
   dtEmissao: '2026-10-01', diasDesdeEmissao: 1, cfop: '1.102', valorTotalBrl: 203400, itens: [item()], linhasForaDoRecorte: 0,
   fiscal: 'pendente', nIdReceb: 8510564869, dispensavel: true,
+  // NF mista: a conta a pagar do OMIE e da NF inteira (inclusive item fora do recorte)
+  valorNotaBrl: 210000,
   ...over,
 });
 
 let dispensaAtivaRows: Array<{ id: string; nota_fiscal: string }> = [];
 let insertFalha: unknown = null;
-let reverterRows: Array<{ id: string; nota_fiscal: string }> = [];
+let reverterRows: Array<Record<string, unknown>> = [];
+/** ledger com recebimento (fiscal) em curso para a chave */
+let ledgerEmCurso: Array<{ nota_fiscal: string }> = [];
 let listaRows: Record<string, unknown>[] = [];
 
 function responder(sql: string) {
   if (sql.includes('SELECT id, nota_fiscal FROM stockbridge.nf_dispensa')) return { rows: dispensaAtivaRows };
+  if (sql.includes("FROM stockbridge.recebimento_fiscal WHERE nf_chave_acesso = $1 AND status = 'em_andamento'")) return { rows: ledgerEmCurso };
   if (sql.includes('INSERT INTO stockbridge.nf_dispensa')) {
     if (insertFalha) {
       const e = insertFalha;
@@ -98,11 +106,14 @@ beforeEach(() => {
   dispensaAtivaRows = [];
   insertFalha = null;
   reverterRows = [];
+  ledgerEmCurso = [];
   listaRows = [];
   poolQuerySpy.mockReset();
   poolQuerySpy.mockImplementation(async (sql: string) => responder(sql));
   emailSpy.mockReset();
   emailSpy.mockResolvedValue(undefined);
+  emailRevertidaSpy.mockReset();
+  emailRevertidaSpy.mockResolvedValue(undefined);
   detalheMock.mockReset();
   detalheMock.mockResolvedValue(detalhe());
 });
@@ -122,9 +133,18 @@ describe('dispensarNf — guardas', () => {
     expect(insertParams()).toBeUndefined();
   });
 
-  it('motivo vazio/espacos: MotivoObrigatorioError', async () => {
-    await expect(dispensarNf({ nfChaveAcesso: CHAVE, motivo: '   ', ...gestor })).rejects.toBeInstanceOf(MotivoObrigatorioError);
+  it('motivo vazio/espacos: MotivoDispensaObrigatorioError com mensagem PROPRIA da dispensa (nao a da baixa externa)', async () => {
+    await expect(dispensarNf({ nfChaveAcesso: CHAVE, motivo: '   ', ...gestor })).rejects.toBeInstanceOf(MotivoDispensaObrigatorioError);
+    await expect(dispensarNf({ nfChaveAcesso: CHAVE, motivo: '', ...gestor })).rejects.toThrow('Informe o motivo da dispensa');
     expect(insertParams()).toBeUndefined();
+  });
+
+  it('recebimento com fiscal em curso (ledger em_andamento): NfEmRecebimentoFiscalError, sem gravar nem avisar (ROT-3)', async () => {
+    ledgerEmCurso = [{ nota_fiscal: '6842' }];
+    await expect(dispensarNf({ nfChaveAcesso: CHAVE, motivo: 'x', ...gestor })).rejects.toBeInstanceOf(NfEmRecebimentoFiscalError);
+    expect(insertParams()).toBeUndefined();
+    expect(detalheMock).not.toHaveBeenCalled();
+    expect(emailSpy).not.toHaveBeenCalled();
   });
 
   it('NF sem item pendente (toda recebida): NfNaoDispensavelError com a mensagem do contrato', async () => {
@@ -190,7 +210,7 @@ describe('dispensarNf — aviso ao fiscal (FR-026, best-effort)', () => {
       notaFiscal: '6842',
       fornecedorNome: 'REPLAS COMERCIAL LTDA',
       situacaoFiscalNaDispensa: 'pendente',
-      valorNfBrl: 203400,
+      valorNfBrl: 210000, // valor da NF inteira (valorNotaBrl), nao so do recorte (SPEC016-7)
       motivo: 'Carga nunca chegou',
       dispensadoPorNome: 'Gestor Teste',
       dispensadoEm: new Date('2026-10-02 10:00:00+00').toISOString(),
@@ -206,14 +226,30 @@ describe('dispensarNf — aviso ao fiscal (FR-026, best-effort)', () => {
 });
 
 describe('reverterDispensa', () => {
-  it('gestor desfaz com motivo: UPDATE so em linha ATIVA (revertido_em IS NULL)', async () => {
-    reverterRows = [{ id: ID, nota_fiscal: '6842' }];
+  it('gestor desfaz com motivo: UPDATE so em linha ATIVA (revertido_em IS NULL) e o fiscal e avisado (ROT-4)', async () => {
+    reverterRows = [{ id: ID, nota_fiscal: '6842', fornecedor_nome: 'REPLAS COMERCIAL LTDA', situacao_fiscal_na_dispensa: 'pendente', revertido_em: '2026-10-03 09:00:00+00' }];
     const r = await reverterDispensa({ id: ID, motivo: 'lancada na nota errada', ...gestor });
     expect(r).toEqual({ id: ID, notaFiscal: '6842' });
     const upd = poolQuerySpy.mock.calls.find((c) => String(c[0]).includes('UPDATE stockbridge.nf_dispensa'))!;
     expect(String(upd[0])).toContain('WHERE id = $1 AND revertido_em IS NULL');
     expect(String(upd[0])).not.toMatch(/DELETE/i);
     expect(upd[1]).toEqual([ID, USER, 'lancada na nota errada']);
+    await vi.waitFor(() => expect(emailRevertidaSpy).toHaveBeenCalledTimes(1));
+    expect(emailRevertidaSpy.mock.calls[0]![0]).toEqual({
+      notaFiscal: '6842',
+      fornecedorNome: 'REPLAS COMERCIAL LTDA',
+      situacaoFiscalNaDispensa: 'pendente',
+      motivoReversao: 'lancada na nota errada',
+      revertidoPorNome: 'Gestor Teste',
+      revertidoEm: new Date('2026-10-03 09:00:00+00').toISOString(),
+    });
+  });
+
+  it('falha no aviso de reversao nao desfaz nada nem propaga', async () => {
+    reverterRows = [{ id: ID, nota_fiscal: '6842', fornecedor_nome: null, situacao_fiscal_na_dispensa: 'concluido', revertido_em: '2026-10-03 09:00:00+00' }];
+    emailRevertidaSpy.mockRejectedValue(new Error('smtp down'));
+    await expect(reverterDispensa({ id: ID, motivo: 'x', ...gestor })).resolves.toEqual({ id: ID, notaFiscal: '6842' });
+    await vi.waitFor(() => expect(emailRevertidaSpy).toHaveBeenCalledTimes(1));
   });
 
   it('inexistente ou ja revertida: DispensaNaoEncontradaError', async () => {
@@ -222,7 +258,8 @@ describe('reverterDispensa', () => {
   });
 
   it('exige motivo, gestor e flag', async () => {
-    await expect(reverterDispensa({ id: ID, motivo: '', ...gestor })).rejects.toBeInstanceOf(MotivoObrigatorioError);
+    await expect(reverterDispensa({ id: ID, motivo: '', ...gestor })).rejects.toBeInstanceOf(MotivoDispensaObrigatorioError);
+    await expect(reverterDispensa({ id: ID, motivo: '  ', ...gestor })).rejects.toThrow('Informe o motivo para desfazer a dispensa');
     await expect(reverterDispensa({ id: ID, motivo: 'x', userId: USER, perfilUsuario: 'operador' })).rejects.toBeInstanceOf(DispensaNaoPermitidaError);
     config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = false;
     await expect(reverterDispensa({ id: ID, motivo: 'x', ...gestor })).rejects.toBeInstanceOf(RecebimentoFiscalDesabilitadoError);
