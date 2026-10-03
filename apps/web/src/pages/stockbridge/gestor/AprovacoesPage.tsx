@@ -44,6 +44,21 @@ interface BaixaExterna {
   aprovadoEm: string | null;
 }
 
+/** NF dispensada da fila de recebimento nacional pelo gestor (feature 016, FR-021..025) — reversivel. */
+interface NfDispensada {
+  id: string;
+  nfChaveAcesso: string;
+  notaFiscal: string;
+  fornecedorNome: string | null;
+  situacaoFiscalNaDispensa: 'pendente' | 'concluido';
+  motivo: string;
+  dispensadoPor: { id: string; nome: string | null };
+  dispensadoEm: string;
+  revertidoPor: { id: string; nome: string | null } | null;
+  revertidoEm: string | null;
+  motivoReversao: string | null;
+}
+
 const TIPO_LABEL: Record<string, string> = {
   recebimento_divergencia: 'Recebimento com divergência',
   entrada_manual: 'Entrada manual',
@@ -78,7 +93,9 @@ function useApiFetch() {
       }
     }
     if (!res.ok) {
-      throw new Error(body.error?.message ?? `HTTP ${res.status} sem resposta — o servidor pode ter reiniciado, tente novamente`);
+      const err = new Error(body.error?.message ?? `HTTP ${res.status} sem resposta — o servidor pode ter reiniciado, tente novamente`) as Error & { status?: number };
+      err.status = res.status;
+      throw err;
     }
     return body;
   };
@@ -273,6 +290,7 @@ export function AprovacoesPage() {
       </div>
 
       <BaixasExternasSection apiFetch={apiFetch} onFeedback={setFeedback} />
+      <NfsDispensadasSection apiFetch={apiFetch} onFeedback={setFeedback} />
 
       {rejeitando && (
         <Modal open title="Rejeitar pendência" onClose={() => setRejeitando(null)}>
@@ -425,6 +443,178 @@ function BaixasExternasSection({
         </Modal>
       )}
     </details>
+  );
+}
+
+/**
+ * Feature 016 (ACXEGDP-395): NFs que o gestor dispensou da fila de recebimento
+ * nacional (FR-021..FR-025). "Desfazer" devolve a NF a fila, com motivo; o
+ * filtro "incluir desfeitas" mostra o historico das reversoes (FR-024).
+ * Com a flag desligada a rota devolve 403: a secao nao aparece e o polling para.
+ * Falha momentanea de refetch mantem a lista (e o modal aberto) na tela.
+ */
+function NfsDispensadasSection({
+  apiFetch,
+  onFeedback,
+}: {
+  apiFetch: ReturnType<typeof useApiFetch>;
+  onFeedback: (f: { tipo: 'sucesso' | 'erro'; texto: string }) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [desfazendo, setDesfazendo] = useState<NfDispensada | null>(null);
+  const [motivo, setMotivo] = useState('');
+  const [incluirDesfeitas, setIncluirDesfeitas] = useState(false);
+
+  const desabilitada = (err: unknown) => (err as { status?: number } | null)?.status === 403;
+
+  // Uma query so, ja com o historico: o filtro "incluir desfeitas" e local (sem
+  // trocar de chave nem desmontar a secao ao marcar).
+  const { data: todas, isLoading, error } = useQuery<NfDispensada[]>({
+    queryKey: ['stockbridge', 'aprovacoes', 'nfs-dispensadas'],
+    queryFn: async () => (await apiFetch('/api/v1/stockbridge/recebimento/nacional/dispensas?incluirRevertidas=true')).data as NfDispensada[],
+    refetchInterval: (q) => (desabilitada(q.state.error) ? false : 60_000),
+    retry: false,
+  });
+
+  const desfazerMut = useMutation({
+    mutationFn: async (args: { d: NfDispensada; motivo: string }) =>
+      apiFetch(`/api/v1/stockbridge/recebimento/nacional/dispensas/${args.d.id}/reverter`, { method: 'POST', body: JSON.stringify({ motivo: args.motivo }) }).then(() => args.d),
+    onSuccess: (d) => {
+      setDesfazendo(null);
+      setMotivo('');
+      onFeedback({ tipo: 'sucesso', texto: `✓ Dispensa desfeita: NF ${d.notaFiscal} voltou à fila de recebimento.` });
+      queryClient.invalidateQueries({ queryKey: ['stockbridge'] });
+      queryClient.invalidateQueries({ queryKey: ['sb', 'rec-nacional'] });
+    },
+  });
+
+  const fecharModal = () => {
+    setDesfazendo(null);
+    setMotivo('');
+    desfazerMut.reset();
+  };
+
+  // Flag desligada (403) ou primeira carga sem dados: a secao nao existe para o
+  // usuario. Erro de refetch com dados ja carregados mantem a lista. Sem nenhum
+  // registro (nem historico), tambem nao aparece.
+  if (isLoading || desabilitada(error) || !todas || todas.length === 0) return null;
+  const ativas = todas.filter((d) => !d.revertidoEm);
+  const dispensas = incluirDesfeitas ? todas : ativas;
+
+  return (
+    <>
+      <details className="mt-8 group">
+        <summary className="cursor-pointer text-sm font-serif text-atlas-ink select-none">
+          NFs dispensadas da fila de recebimento
+          <span className="ml-2 text-xs font-sans text-atlas-muted">
+            {ativas.length} {ativas.length === 1 ? 'nota' : 'notas'} · fora da fila por decisão do gestor, sem alteração no OMIE
+          </span>
+        </summary>
+        <label className="mt-3 inline-flex items-center gap-2 text-xs text-atlas-muted cursor-pointer">
+          <input
+            type="checkbox"
+            checked={incluirDesfeitas}
+            onChange={(e) => setIncluirDesfeitas(e.target.checked)}
+            className="rounded border-atlas-border"
+          />
+          Incluir dispensas desfeitas ({todas.length - ativas.length})
+        </label>
+        {error != null && (
+          <div role="alert" className="mt-2 text-xs text-red-700 dark:text-red-400">
+            Não foi possível atualizar a lista agora; os dados abaixo podem estar desatualizados.
+          </div>
+        )}
+        <div className="mt-3 flex flex-col gap-2">
+          {dispensas.length === 0 && <div className="text-xs text-atlas-muted">Nenhuma NF dispensada no momento.</div>}
+          {dispensas.map((d) => (
+            <div key={d.id} className={`border rounded-lg p-3 flex items-center gap-4 flex-wrap ${d.revertidoEm ? 'bg-atlas-bg/60 border-dashed border-atlas-border' : 'bg-atlas-card border-atlas-border'}`}>
+              <div className="flex-1 min-w-[16rem]">
+                <div className="text-sm text-atlas-ink flex items-baseline gap-2 flex-wrap">
+                  <span className="font-mono">NF {d.notaFiscal}</span>
+                  <span className="truncate" title={d.fornecedorNome ?? ''}>{d.fornecedorNome ?? 'Fornecedor não identificado no OMIE'}</span>
+                  {d.situacaoFiscalNaDispensa === 'concluido' ? (
+                    <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
+                      havia conta a pagar no OMIE
+                    </span>
+                  ) : (
+                    <span className="text-xs px-1.5 py-0.5 rounded border border-atlas-border text-atlas-muted">fiscal pendente no OMIE</span>
+                  )}
+                  {d.revertidoEm && (
+                    <span className="text-xs px-1.5 py-0.5 rounded border border-atlas-border text-atlas-muted">desfeita</span>
+                  )}
+                </div>
+                <div className="text-xs text-atlas-muted italic mt-0.5">"{d.motivo}"</div>
+                <div className="text-[11px] text-atlas-muted mt-0.5">
+                  dispensada por {d.dispensadoPor.nome ?? '—'} em {new Date(d.dispensadoEm).toLocaleString('pt-BR')}
+                </div>
+                {d.revertidoEm && (
+                  <div className="text-[11px] text-atlas-muted mt-0.5">
+                    desfeita por {d.revertidoPor?.nome ?? '—'} em {new Date(d.revertidoEm).toLocaleString('pt-BR')}
+                    {d.motivoReversao ? ` — "${d.motivoReversao}"` : ''}
+                  </div>
+                )}
+              </div>
+              {!d.revertidoEm && (
+                <button
+                  type="button"
+                  onClick={() => { desfazerMut.reset(); setDesfazendo(d); }}
+                  disabled={desfazerMut.isPending}
+                  className="px-3 py-1.5 border border-atlas-border text-atlas-ink rounded text-xs font-medium hover:bg-atlas-bg/60 whitespace-nowrap"
+                >
+                  Desfazer
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </details>
+
+      {desfazendo && (
+        <Modal open title="Desfazer dispensa" onClose={fecharModal}>
+          <div className="space-y-3">
+            <p className="text-sm text-atlas-muted">
+              A NF <strong>{desfazendo.notaFiscal}</strong> volta à fila de recebimento nacional, na situação fiscal em que estiver no OMIE. Nada é movimentado no
+              estoque, e o fiscal é avisado por e-mail.
+            </p>
+            <div>
+              <label htmlFor="motivo-desfazer-dispensa" className="block text-xs font-semibold text-atlas-muted mb-1">Motivo *</label>
+              <textarea
+                id="motivo-desfazer-dispensa"
+                value={motivo}
+                onChange={(e) => setMotivo(e.target.value)}
+                rows={3}
+                maxLength={1000}
+                autoFocus
+                placeholder="Ex.: a carga chegou afinal"
+                className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg text-atlas-ink placeholder:text-atlas-muted rounded text-sm"
+              />
+            </div>
+            {desfazerMut.isError && (
+              <div role="alert" className="p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-xs text-red-800 dark:text-red-300">
+                {(desfazerMut.error as Error).message}
+              </div>
+            )}
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={fecharModal}
+                className="px-4 py-2 border border-atlas-border bg-atlas-card text-atlas-ink hover:bg-atlas-bg/60 rounded text-sm"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => desfazerMut.mutate({ d: desfazendo, motivo })}
+                disabled={!motivo.trim() || desfazerMut.isPending}
+                className={`px-5 py-2 rounded text-sm font-medium ${motivo.trim() ? 'bg-atlas-btn-bg text-atlas-btn-text hover:opacity-90' : 'bg-atlas-muted/20 text-atlas-muted cursor-not-allowed'}`}
+              >
+                {desfazerMut.isPending ? 'Enviando…' : 'Confirmar'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
   );
 }
 

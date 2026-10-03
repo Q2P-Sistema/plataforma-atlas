@@ -31,9 +31,12 @@
    (`scripts/apply-migrations-prod.sh`) → transplante dos 6 schemas Atlas
    (`scripts/copy-atlas-uat-to-prod.sh`, igualdade exata) → stack `atlas` no
    Portainer → smoke test só-leitura → switch n8n → UAT religado **com a baixa desligada**.
-3. `public.*` de PROD é **intocável** (espelho vivo do n8n). Exceção controlada: a 0052
+3. `public.*` de PROD é **intocável** (espelho vivo do n8n). Exceções controladas: a 0052
    roda `CREATE EXTENSION IF NOT EXISTS unaccent`, que **já existe em PROD** (1.1,
-   conferido 25/09) → no-op.
+   conferido 25/09) → no-op; a 0053 (feature 016) tem `CREATE TABLE IF NOT EXISTS` de
+   `public."tbl_recebimentoNFe_Q2P"`/`_itens_Q2P` — no PROD essas tabelas são criadas
+   **antes**, à mão (DBeaver), para o n8n gravar o espelho → no-op também. Conferir com
+   `to_regclass` antes da janela; se não existirem, a 0053 as cria vazias e o n8n passa a gravar.
 
 ## Pré-tarefas (semana da janela)
 

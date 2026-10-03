@@ -11,6 +11,14 @@ import type {
   ListarAjusteEstoqueResponse,
   AjusteEstoqueListado,
 } from './listar-ajuste-estoque.js';
+import type {
+  RecebimentoNfeConsultado,
+  RecebimentoNfeRef,
+  AlterarRecebimentoNfeItensInput,
+  ConcluirRecebimentoNfeInput,
+  RecebimentoNfeStatusResponse,
+} from './recebimento-nfe.js';
+import { OmieApiError } from '../client.js';
 
 /**
  * Implementacao mock da API OMIE para dev sem credenciais (OMIE_MODE=mock).
@@ -32,6 +40,7 @@ const ajustesRegistrados: MockAjusteRegistrado[] = [];
 export function __resetMockState(): void {
   ajustesRegistrados.length = 0;
   pedidosRegistrados.length = 0;
+  recebimentosRegistrados.length = 0;
   mockIdSeq = 1_000_000;
 }
 
@@ -266,4 +275,168 @@ export function mockAlterarPedidoCompra(
     descricao: `Pedido ${input.cCodIntPed ?? input.nCodPed} alterado (mock) em ${cnpj}`,
     codigoPedido: found?.pedido.nCodPed ?? input.nCodPed ?? 99_999,
   };
+}
+
+// ── Recebimento de NF-e (feature 016, ACXEGDP-395) ────────────────────────────
+
+interface MockRecebimentoRegistrado {
+  cnpj: OmieCnpj;
+  rec: RecebimentoNfeConsultado;
+}
+
+/**
+ * Recebimentos de NF-e em memoria: ConsultarRecebimento le daqui, AlterarRecebimento
+ * aplica cAcao/ajustes nos itens e ConcluirRecebimento move 40 -> 60 — o ciclo
+ * consultar -> EDITAR -> IGNORAR -> concluir -> consultar e verificavel sem OMIE.
+ * Faults reproduzem os do OMIE real (erro 151 ao juntar IGNORAR + ajustes;
+ * recusa de alterar/concluir recebimento ja concluido).
+ */
+const recebimentosRegistrados: MockRecebimentoRegistrado[] = [];
+
+/** Injeta (ou substitui) um recebimento no mock. */
+export function __injectMockRecebimentoNfe(cnpj: OmieCnpj, rec: RecebimentoNfeConsultado): void {
+  const idx = recebimentosRegistrados.findIndex((r) => r.cnpj === cnpj && r.rec.nIdReceb === rec.nIdReceb);
+  const entry = { cnpj, rec: structuredClone(rec) };
+  if (idx >= 0) recebimentosRegistrados[idx] = entry;
+  else recebimentosRegistrados.push(entry);
+}
+
+/** Snapshot (copia) de um recebimento registrado — para asserts em teste. */
+export function __getMockRecebimentoNfe(cnpj: OmieCnpj, nIdReceb: number): RecebimentoNfeConsultado | null {
+  const found = recebimentosRegistrados.find((r) => r.cnpj === cnpj && r.rec.nIdReceb === nIdReceb);
+  return found ? structuredClone(found.rec) : null;
+}
+
+function acharRecebimentoMock(cnpj: OmieCnpj, ref: RecebimentoNfeRef): MockRecebimentoRegistrado | undefined {
+  return recebimentosRegistrados.find(
+    (r) =>
+      r.cnpj === cnpj &&
+      (('nIdReceb' in ref && r.rec.nIdReceb === ref.nIdReceb) || ('cChaveNfe' in ref && r.rec.cChaveNFe === ref.cChaveNfe)),
+  );
+}
+
+function faultRecebimento(cnpj: OmieCnpj, method: string, code: string, msg: string): OmieApiError {
+  return new OmieApiError(cnpj, 'produtos/recebimentonfe/', method, 500, code, `OMIE ${cnpj} 500: ${msg}`);
+}
+
+/**
+ * Sem fixture: recebimento sintetico na etapa 40 (fiscal pendente), 1 item
+ * "SUCATA PLASTICO" 18.000 KG a R$ 11,30 (a NF 6842 real), que passa a existir
+ * no estado do mock para o ciclo seguir.
+ */
+/**
+ * nIdReceb sintetico estavel por chave de acesso — duas chaves diferentes nunca
+ * caem no mesmo recebimento (antes, toda chave desconhecida virava 77000001 e
+ * concluir uma NF no mock concluia outra — revisao pre-UAT, FISC-9).
+ */
+function nIdRecebSinteticoPorChave(chave: string): number {
+  let h = 0;
+  for (let k = 0; k < chave.length; k++) h = (h * 31 + chave.charCodeAt(k)) % 999_983;
+  return 77_000_000 + h;
+}
+
+export function mockConsultarRecebimentoNfe(cnpj: OmieCnpj, ref: RecebimentoNfeRef): RecebimentoNfeConsultado {
+  const found = acharRecebimentoMock(cnpj, ref);
+  if (found) return structuredClone(found.rec);
+  const nIdReceb = 'nIdReceb' in ref ? ref.nIdReceb : nIdRecebSinteticoPorChave(ref.cChaveNfe);
+  const rec: RecebimentoNfeConsultado = {
+    nIdReceb,
+    cChaveNFe: 'cChaveNfe' in ref ? ref.cChaveNfe : `MOCK-CHAVE-RECEB-${cnpj}-${nIdReceb}`.padEnd(44, '0').slice(0, 44),
+    cNumeroNFe: String(nIdReceb % 1_000_000).padStart(9, '0'),
+    cEtapa: '40',
+    dEmissaoNFe: '01/10/2026',
+    nIdFornecedor: 8_498_397_152,
+    cCNPJ_CPF: '14.555.032/0007-53',
+    cRazaoSocial: 'REPLAS COMERCIAL LTDA',
+    nValorNFe: 203_400,
+    cRecebido: 'N',
+    cCancelada: 'N',
+    cBloqueado: 'N',
+    cDevolvido: 'N',
+    cUsuarioRec: null,
+    dRec: null,
+    hRec: null,
+    itens: [
+      {
+        nSequencia: 1,
+        cDescricaoProduto: 'SUCATA PLASTICO',
+        cCodigoProduto: 'SUCPLA',
+        cNCM: '3915.90.00',
+        cCFOP: '5.102',
+        cCFOPEntrada: '1.102',
+        nQtdeNFe: 18_000,
+        cUnidadeNfe: 'KG',
+        nPrecoUnit: 11.3,
+        vTotalItem: 203_400,
+        cIgnorarItem: 'N',
+        cAssociarExistente: 'N',
+        cAdicionarNovo: 'S',
+        nIdItem: 0,
+        nIdProduto: 0,
+        cNaoGerarMovEstoque: 'N',
+        cNaoGerarFinanceiro: 'N',
+      },
+    ],
+  };
+  recebimentosRegistrados.push({ cnpj, rec });
+  return structuredClone(rec);
+}
+
+export function mockAlterarRecebimentoNfeItens(
+  cnpj: OmieCnpj,
+  input: AlterarRecebimentoNfeItensInput,
+): RecebimentoNfeStatusResponse {
+  const found = acharRecebimentoMock(cnpj, { nIdReceb: input.nIdReceb });
+  if (!found) {
+    throw faultRecebimento(cnpj, 'AlterarRecebimento', 'SOAP-ENV:Client-5001', `ERROR: Recebimento [${input.nIdReceb}] nao cadastrado! (mock)`);
+  }
+  if (found.rec.cRecebido === 'S') {
+    throw faultRecebimento(cnpj, 'AlterarRecebimento', 'SOAP-ENV:Client-5002', 'ERROR: O recebimento ja esta concluido e nao pode ser alterado! (mock)');
+  }
+  for (const it of input.itens) {
+    if (it.cAcao !== 'EDITAR' && it.itensAjustes !== undefined) {
+      throw faultRecebimento(
+        cnpj,
+        'AlterarRecebimento',
+        'SOAP-ENV:Client-151',
+        `ERROR: Quando a tag [cAcao] é diferente de 'EDITAR' as tag [itensInfoAdicEditar], [itensCustoEstoque], [itensAtualPreco] ou [itensAjustes] não devem ser informadas - tag [nSequencia=${it.nSequencia}]!`,
+      );
+    }
+    const item = found.rec.itens.find((x) => x.nSequencia === it.nSequencia);
+    if (!item) {
+      throw faultRecebimento(cnpj, 'AlterarRecebimento', 'SOAP-ENV:Client-5003', `ERROR: Item [nSequencia=${it.nSequencia}] nao encontrado no recebimento! (mock)`);
+    }
+    if (it.cAcao === 'EDITAR') {
+      if (it.itensAjustes?.cNaoGerarMovEstoque) item.cNaoGerarMovEstoque = it.itensAjustes.cNaoGerarMovEstoque;
+      if (it.itensAjustes?.cNaoGerarFinanceiro) item.cNaoGerarFinanceiro = it.itensAjustes.cNaoGerarFinanceiro;
+    } else {
+      item.cIgnorarItem = 'S';
+      item.cAssociarExistente = 'N';
+      item.nIdProduto = 0;
+    }
+  }
+  return { nIdReceb: found.rec.nIdReceb, cCodStatus: '0', cDescStatus: 'Recebimento alterado com sucesso!' };
+}
+
+export function mockConcluirRecebimentoNfe(
+  cnpj: OmieCnpj,
+  input: ConcluirRecebimentoNfeInput,
+): RecebimentoNfeStatusResponse {
+  const found = acharRecebimentoMock(cnpj, { nIdReceb: input.nIdReceb });
+  if (!found) {
+    throw faultRecebimento(cnpj, 'ConcluirRecebimento', 'SOAP-ENV:Client-5001', `ERROR: Recebimento [${input.nIdReceb}] nao cadastrado! (mock)`);
+  }
+  if (found.rec.cRecebido === 'S') {
+    throw faultRecebimento(cnpj, 'ConcluirRecebimento', 'SOAP-ENV:Client-5004', 'ERROR: O recebimento ja foi concluido! (mock)');
+  }
+  found.rec.cEtapa = input.cEtapa ?? '60';
+  found.rec.cRecebido = 'S';
+  found.rec.cUsuarioRec = 'WEBSERVICE';
+  const now = new Date();
+  found.rec.dRec = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
+  found.rec.hRec = now.toTimeString().slice(0, 8);
+  for (const it of found.rec.itens) {
+    if (it.nIdItem === 0 || it.nIdItem == null) it.nIdItem = Number(nextMockId());
+  }
+  return { nIdReceb: found.rec.nIdReceb, cCodStatus: '0', cDescStatus: 'Recebimento concluído com sucesso!' };
 }

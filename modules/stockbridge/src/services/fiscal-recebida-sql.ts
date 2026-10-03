@@ -88,7 +88,18 @@ export function itemNacionalRecebidoSql(args: {
   chaveExpr: string;
   descricaoNormalizadaExpr: string;
   nfNumeroExpr: string;
+  /**
+   * Data de emissao da NF. Quando informada, a via 2 (so o NUMERO da NF, para o
+   * historico do formulario manual) exige `m.created_at >= emissao`: um lancamento
+   * manual anterior a emissao e de OUTRA NF com o mesmo numero (numero colide entre
+   * fornecedores — ex.: TRADECONNEX 6894 x REPLAS 6894). Feature 016, revisao
+   * pre-UAT (FILA-2): sem isso, uma NF "fiscal pendente" nascia "recebida" e o
+   * Atlas nunca concluia o fiscal.
+   */
+  dataEmissaoExpr?: string;
 }): string {
+  const desdeEmissao = args.dataEmissaoExpr ? `
+                AND m.created_at >= (${args.dataEmissaoExpr})::date` : '';
   return `(
     EXISTS (SELECT 1 FROM stockbridge.movimentacao m
               WHERE m.ativo = true AND m.subtipo = 'compra_nacional'
@@ -98,7 +109,7 @@ export function itemNacionalRecebidoSql(args: {
               WHERE m.ativo = true AND m.subtipo = 'compra_nacional'
                 AND m.nf_chave_acesso IS NULL
                 AND m.empresa = 'q2p'
-                AND ltrim(m.nota_fiscal, '0') = ltrim(${args.nfNumeroExpr}, '0'))
+                AND ltrim(m.nota_fiscal, '0') = ltrim(${args.nfNumeroExpr}, '0')${desdeEmissao})
     OR EXISTS (SELECT 1 FROM stockbridge.aprovacao a
               WHERE a.tipo_aprovacao = 'recebimento_externo' AND a.status = 'aprovada'
                 AND a.nf_chave_acesso = ${args.chaveExpr}

@@ -74,6 +74,17 @@ services:
       # Default ligado. 'false' = kill switch sem redeploy do compose (as entradas
       # ficam 'pendente' e sao processadas depois; nada se perde).
       STOCKBRIDGE_BAIXA_PEDIDO_Q2P_ENABLED: ${STOCKBRIDGE_BAIXA_PEDIDO_Q2P_ENABLED:-true}
+
+      # Feature 016 (ACXEGDP-395): recebimento FISCAL da NF nacional pelo Atlas — ESCREVE
+      # no OMIE (AlterarRecebimento + ConcluirRecebimento). Default DESLIGADO; ligar so
+      # depois da migration 0053 e do espelho tbl_recebimentoNFe_Q2P populado pelo n8n.
+      STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED: ${STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED:-false}
+      # Destinatarios do aviso "NF dispensada da fila" (lista separada por virgula).
+      # Vazio = default do codigo (NFe ACXE, Mauricio Yared, Gustavo Dreer).
+      STOCKBRIDGE_FISCAL_EMAILS: ${STOCKBRIDGE_FISCAL_EMAILS:-}
+      # Idade maxima (min) do espelho de recebimentos de NF-e antes de degradar o health
+      # e alertar STOCKBRIDGE_OPS_EMAIL (cron 5,35). PROD: 120 (n8n a cada 30 min).
+      STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN: ${STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN:-120}
       # Destinatarios dos e-mails operacionais. Vazio = default do codigo
       # (comex_acxe@acxe-polimeros.com.br / flavio.endo@acxe-polimeros.com.br).
       STOCKBRIDGE_COMEX_EMAIL: ${STOCKBRIDGE_COMEX_EMAIL:-}
