@@ -189,11 +189,15 @@ Reversão total dos objetos Atlas em PROD (não toca dados OMIE):
 
 ```sql
 DROP SCHEMA IF EXISTS atlas, stockbridge, shared, hedge, forecast, breakingpoint CASCADE;
-DROP VIEW IF EXISTS public.vw_hedge_receber_usd, public.vw_hedge_pagar_usd,
-  public.vw_hedge_estoque, public.vw_hedge_importacoes, public.vw_hedge_resumo;
 DROP TRIGGER IF EXISTS trg_auto_popular_config_produto ON public."tbl_produtos_ACXE";
 DROP TABLE IF EXISTS public."tb_movimentacao_q2p_legado";
 -- NÃO remover a extensão unaccent: ela já existia em PROD antes do Atlas.
+-- NÃO remover as views public.vw_hedge_*: já existiam em PROD antes do Atlas
+-- (criadas à mão, dono claude_coder). As migrations 0006/0041 só as substituem
+-- por definição idêntica, e nenhuma depende dos schemas Atlas.
+-- Ensaiado em 04/10/2026 numa cópia do schema de PROD: as 53 migrations passam
+-- (só o WARNING esperado da 0052) e esta reversão devolve o public a 116
+-- tabelas / 48 views, como antes.
 ```
 
 ## Pós-go-live
