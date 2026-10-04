@@ -101,7 +101,9 @@ FROM unnest(ARRAY[
   'tbl_locaisEstoques_Q2P',
   'tbl_pedidosCompras_Q2P',
   'tbl_nf_header_Q2P',
-  'tbl_nf_itens_Q2P'
+  'tbl_nf_itens_Q2P',
+  'tbl_recebimentoNFe_Q2P',
+  'tbl_recebimentoNFe_itens_Q2P'
 ]) AS t
 WHERE to_regclass(format('public.%I', t)) IS NULL;
 SQL
