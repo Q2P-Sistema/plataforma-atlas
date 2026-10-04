@@ -7,7 +7,7 @@
 #   atlas, stockbridge, shared, hedge, forecast, breakingpoint
 #
 # Pre-requisitos:
-#   - PROD ja com as 52+ migrations aplicadas (scripts/apply-migrations-prod.sh)
+#   - PROD ja com as 53+ migrations aplicadas (scripts/apply-migrations-prod.sh)
 #   - UAT CONGELADO (stack uat-atlas em scale 0) — a validacao exige igualdade
 #     EXATA de contagens, o que so vale com a origem parada
 #

@@ -1,6 +1,6 @@
 import { sendEmail, createLogger, getConfig, getDb, buildEmailLayout, escapeHtml, emailDataList, emailActionBox } from '@atlas/core';
 import { users, userModules } from '@atlas/db';
-import { eq, inArray, and, isNull } from 'drizzle-orm';
+import { eq, inArray, and, isNull, sql } from 'drizzle-orm';
 import { fmtQtdUnidade } from './motor.service.js';
 
 const logger = createLogger('stockbridge:notificacao');
@@ -97,6 +97,21 @@ function alertaOpsCc(to: string): string | undefined {
 /** Caixa de Comex da ACXE — copiada em todo recebimento concluido com sucesso. */
 function getComexEmail(): string {
   return getConfig().STOCKBRIDGE_COMEX_EMAIL ?? COMEX_FALLBACK_EMAIL;
+}
+
+/**
+ * Destinatários do fiscal (feature 016, FR-026) — `STOCKBRIDGE_FISCAL_EMAILS`
+ * (lista separada por vírgula; o schema de config já valida cada endereço).
+ * Ausente ou vazia = lista padrão (NFe ACXE + Mauricio Yared + Gustavo Dreer): o
+ * config trata string vazia como ausente, então não há como "desligar" o aviso
+ * por env — para testar sem avisar o fiscal, aponte para a sua própria caixa.
+ */
+export function getFiscalEmails(): string[] {
+  const cfg = getConfig() as { STOCKBRIDGE_FISCAL_EMAILS?: string[] | string };
+  const v = cfg.STOCKBRIDGE_FISCAL_EMAILS;
+  if (Array.isArray(v)) return v.filter((e) => typeof e === 'string' && e.trim().length > 0);
+  if (typeof v === 'string') return v.split(',').map((e) => e.trim()).filter(Boolean);
+  return [];
 }
 
 /**
@@ -374,6 +389,162 @@ export async function enviarAlertaRecebimentoNacionalLote(args: {
 }
 
 /**
+ * Feature 016 (FR-026, ACXEGDP-395): aviso ao FISCAL quando o gestor dispensa uma
+ * NF da fila de recebimento nacional. A dispensa não toca no OMIE — o que fica
+ * pendente lá é do fiscal: com o recebimento fiscal ainda PENDENTE, a nota segue
+ * na caixa "Recebimento de NF-e" aguardando manifestação/cancelamento; com o
+ * fiscal já CONCLUÍDO, existe conta a pagar a estornar ou manter. Um e-mail por
+ * destinatário (não vaza a lista no To). Sem código OMIE (ACXEGDP-313).
+ */
+export async function enviarAlertaNfDispensada(args: {
+  notaFiscal: string;
+  fornecedorNome: string | null;
+  situacaoFiscalNaDispensa: 'pendente' | 'concluido';
+  valorNfBrl: number;
+  motivo: string;
+  dispensadoPorNome: string | null;
+  dispensadoEm?: string;
+}): Promise<void> {
+  const destinatarios = getFiscalEmails();
+  if (destinatarios.length === 0) {
+    logger.warn({ notaFiscal: args.notaFiscal }, 'STOCKBRIDGE_FISCAL_EMAILS vazio — fiscal não avisado da dispensa');
+    return;
+  }
+  const config = getConfig();
+  const fornecedor = args.fornecedorNome && args.fornecedorNome.trim() ? args.fornecedorNome.trim() : 'Fornecedor não identificado no OMIE';
+  const subject = `StockBridge — NF ${args.notaFiscal} (${fornecedor}) dispensada da fila`;
+  const valor = args.valorNfBrl.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const quando = args.dispensadoEm ? new Date(args.dispensadoEm) : new Date();
+  const quandoFmt = Number.isNaN(quando.getTime()) ? '' : quando.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  // O Atlas conhece a situação pelo espelho no momento da dispensa (pode estar
+  // defasado em minutos) — o texto diz isso e pede a conferência no OMIE (ROT-9).
+  const pendenciaOmie =
+    args.situacaoFiscalNaDispensa === 'pendente'
+      ? 'Pelo espelho do OMIE no momento da dispensa, o recebimento fiscal desta nota ainda NÃO tinha sido concluído: ela fica na caixa de Recebimento de NF-e (etapa "Faturado pelo fornecedor") aguardando manifestação ou cancelamento, sem conta a pagar gerada pelo recebimento. Confira no OMIE antes de agir.'
+      : `O recebimento fiscal desta nota JÁ foi concluído no OMIE: há conta a pagar de ${valor} a estornar ou manter, conforme o acerto com o fornecedor.`;
+  const corpoHtml = `
+    <p>O gestor dispensou a <strong>NF ${escapeHtml(args.notaFiscal)}</strong> de <strong>${escapeHtml(fornecedor)}</strong> da fila de recebimento nacional do StockBridge: ela não será recebida no estoque pelo Atlas.</p>
+    ${emailDataList([
+      { label: 'Nota fiscal', valor: args.notaFiscal },
+      { label: 'Fornecedor', valor: fornecedor },
+      { label: 'Valor da nota', valor: valor },
+      { label: 'Recebimento fiscal no OMIE', valor: args.situacaoFiscalNaDispensa === 'pendente' ? 'Pendente (não concluído)' : 'Concluído' },
+      { label: 'Motivo da dispensa', valor: args.motivo },
+      { label: 'Dispensada por', valor: args.dispensadoPorNome ?? '' },
+      { label: 'Quando', valor: quandoFmt },
+    ])}
+    ${emailActionBox(`<p style="margin:0;">${escapeHtml(pendenciaOmie)}</p><p style="margin:8px 0 0;">A dispensa não alterou nada no OMIE — cancelar, recusar, devolver ou estornar a nota continua com o fiscal.</p>`, 'Pendência no OMIE')}
+  `;
+  const { html, text } = buildEmailLayout({
+    titulo: 'NF dispensada da fila de recebimento',
+    variante: 'alerta',
+    corpoHtml,
+    ctaLabel: 'Abrir aprovações do StockBridge',
+    ctaUrl: `${config.APP_URL}/stockbridge/aprovacoes`,
+  });
+  try {
+    const results = await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html, text })));
+    const falhas = logFalhasEnvio(results, destinatarios, { notaFiscal: args.notaFiscal, tipo: 'nf_dispensada' });
+    if (falhas < destinatarios.length) {
+      logger.info({ notaFiscal: args.notaFiscal, enviados: destinatarios.length - falhas, falhas }, 'Aviso de NF dispensada enviado ao fiscal');
+    }
+  } catch (err) {
+    logger.error({ err, notaFiscal: args.notaFiscal }, 'Falha ao enviar aviso de NF dispensada ao fiscal');
+  }
+}
+
+/**
+ * Feature 016 (revisão pré-UAT, ROT-6): o espelho de recebimentos de NF-e (fonte
+ * "fiscal pendente" da fila nacional) está sem atualização além do limite, vazio
+ * ou inacessível. Vai para STOCKBRIDGE_OPS_EMAIL — quem cuida do n8n e da cópia.
+ */
+export async function enviarAlertaEspelhoRecebimentosDefasado(args: {
+  status: 'degraded' | 'sem_dados' | 'indisponivel';
+  idadeMin: number | null;
+  limiteMin: number;
+}): Promise<void> {
+  const to = getOpsEmail();
+  const config = getConfig();
+  const situacao =
+    args.status === 'sem_dados'
+      ? 'O espelho de recebimentos de NF-e está vazio.'
+      : args.status === 'indisponivel'
+        ? 'O espelho de recebimentos de NF-e não pôde ser lido (tabela ausente ou erro de banco).'
+        : `O espelho de recebimentos de NF-e não é atualizado há ${Math.round(args.idadeMin ?? 0)} minutos (limite: ${args.limiteMin} minutos).`;
+  const subject = 'StockBridge — Espelho de recebimentos de NF-e sem atualização';
+  const corpoHtml = `
+    <p>${escapeHtml(situacao)}</p>
+    <p>Enquanto isso, notas de compra nacional que chegaram da SEFAZ com o recebimento fiscal pendente podem não aparecer na fila de recebimento do StockBridge.</p>
+    ${emailActionBox('<ol style="margin:0;padding-left:18px;"><li>Confira no n8n o workflow "Q2P - Exporta Recebimentos NF-e": se está ativo e se as últimas execuções terminaram sem erro.</li><li>No UAT, confira também a cópia do espelho de produção para o UAT.</li></ol>', 'O que verificar')}
+  `;
+  const { html, text } = buildEmailLayout({
+    titulo: 'Espelho de recebimentos de NF-e sem atualização',
+    variante: 'alerta',
+    corpoHtml,
+    ctaLabel: 'Abrir o StockBridge',
+    ctaUrl: `${config.APP_URL}/stockbridge/fila`,
+  });
+  try {
+    await sendEmail({ to, subject, html, text });
+    logger.info({ status: args.status, idadeMin: args.idadeMin }, 'Alerta de espelho de recebimentos defasado enviado');
+  } catch (err) {
+    logger.error({ err }, 'Falha ao enviar alerta de espelho de recebimentos defasado');
+  }
+}
+
+/**
+ * Feature 016 (revisão pré-UAT, ROT-4): a dispensa foi DESFEITA pelo gestor. O
+ * fiscal foi avisado da dispensa e pode ter agido no OMIE (recusa, cancelamento,
+ * estorno) — avisa que a nota voltou à fila e será recebida pelo Atlas.
+ */
+export async function enviarAlertaDispensaRevertida(args: {
+  notaFiscal: string;
+  fornecedorNome: string | null;
+  situacaoFiscalNaDispensa: 'pendente' | 'concluido';
+  motivoReversao: string;
+  revertidoPorNome: string | null;
+  revertidoEm?: string;
+}): Promise<void> {
+  const destinatarios = getFiscalEmails();
+  if (destinatarios.length === 0) {
+    logger.warn({ notaFiscal: args.notaFiscal }, 'STOCKBRIDGE_FISCAL_EMAILS vazio — fiscal não avisado da reversão da dispensa');
+    return;
+  }
+  const config = getConfig();
+  const fornecedor = args.fornecedorNome && args.fornecedorNome.trim() ? args.fornecedorNome.trim() : 'Fornecedor não identificado no OMIE';
+  const subject = `StockBridge — Dispensa desfeita: NF ${args.notaFiscal} (${fornecedor}) voltou à fila`;
+  const quando = args.revertidoEm ? new Date(args.revertidoEm) : new Date();
+  const quandoFmt = Number.isNaN(quando.getTime()) ? '' : quando.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  const corpoHtml = `
+    <p>O gestor desfez a dispensa da <strong>NF ${escapeHtml(args.notaFiscal)}</strong> de <strong>${escapeHtml(fornecedor)}</strong>: a nota voltou à fila de recebimento nacional do StockBridge e será recebida pelo Atlas${args.situacaoFiscalNaDispensa === 'pendente' ? ', que também concluirá o recebimento fiscal no OMIE' : ''}.</p>
+    ${emailDataList([
+      { label: 'Nota fiscal', valor: args.notaFiscal },
+      { label: 'Fornecedor', valor: fornecedor },
+      { label: 'Motivo da reversão', valor: args.motivoReversao },
+      { label: 'Desfeita por', valor: args.revertidoPorNome ?? '' },
+      { label: 'Quando', valor: quandoFmt },
+    ])}
+    ${emailActionBox('<p style="margin:0;">Se você já tomou alguma providência no OMIE por causa do aviso de dispensa (recusa, cancelamento ou estorno), avise o gestor antes que a nota seja recebida.</p>', 'Atenção')}
+  `;
+  const { html, text } = buildEmailLayout({
+    titulo: 'Dispensa de NF desfeita',
+    variante: 'info',
+    corpoHtml,
+    ctaLabel: 'Abrir aprovações do StockBridge',
+    ctaUrl: `${config.APP_URL}/stockbridge/aprovacoes`,
+  });
+  try {
+    const results = await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html, text })));
+    const falhas = logFalhasEnvio(results, destinatarios, { notaFiscal: args.notaFiscal, tipo: 'nf_dispensa_revertida' });
+    if (falhas < destinatarios.length) {
+      logger.info({ notaFiscal: args.notaFiscal, enviados: destinatarios.length - falhas, falhas }, 'Aviso de dispensa desfeita enviado ao fiscal');
+    }
+  } catch (err) {
+    logger.error({ err, notaFiscal: args.notaFiscal }, 'Falha ao enviar aviso de dispensa desfeita ao fiscal');
+  }
+}
+
+/**
  * Feature 013 (FR-015): digest de divergências de uma NF de IMPORTAÇÃO multi-item.
  * Espelha o EML-09 do nacional — quando 2+ produtos da mesma NF divergem, cada
  * gestor recebe UM e-mail com a tabela dos itens, em vez de um alerta por item.
@@ -595,6 +766,102 @@ export async function resolverEmailOperador(userId: string): Promise<string | nu
 }
 
 /**
+ * ACXEGDP-396: contexto de negócio de uma entrada nacional (`tipo_aprovacao =
+ * 'entrada_manual'`) para os e-mails ao operador — antes eles diziam só "Entrada
+ * manual" e não identificavam NF, produto nem quantidade.
+ *  - `porNf = true`: recebimento pela fila de NF (feature 015), que grava o mesmo
+ *    tipo do lançamento à mão e se diferencia pela chave da NF. Tem fornecedor
+ *    e item da NF.
+ *  - `porNf = false`: formulário manual. A NF é o número digitado (gravado na
+ *    movimentação); não há fornecedor nem item.
+ * `null` para outros tipos (inclusive a baixa por recebimento externo) e em
+ * falha de leitura: o e-mail cai no texto genérico, nunca deixa de sair.
+ */
+export interface ContextoEntradaNacional {
+  porNf: boolean;
+  notaFiscal: string | null;
+  fornecedor: string | null;
+  itemNf: string | null;
+  produto: string | null;
+  quantidadeKg: string | null;
+  local: string | null;
+}
+
+export async function carregarContextoEntradaNacional(aprovacaoId: string): Promise<ContextoEntradaNacional | null> {
+  try {
+    const res = await getDb().execute<{
+      por_nf: boolean;
+      nota_fiscal: string | null;
+      fornecedor: string | null;
+      item_nf: string | null;
+      produto: string | null;
+      quantidade_kg: string | null;
+      local: string | null;
+    }>(sql`
+      SELECT (a.nf_chave_acesso IS NOT NULL) AS por_nf,
+             COALESCE(a.nota_fiscal, m.nota_fiscal) AS nota_fiscal,
+             f.dest_razao AS fornecedor,
+             a.nf_item_descricao AS item_nf,
+             p.descricao AS produto,
+             COALESCE(a.quantidade_recebida_kg, a.quantidade_prevista_kg)::text AS quantidade_kg,
+             COALESCE(l.nome, a.galpao) AS local
+      FROM stockbridge.aprovacao a
+      LEFT JOIN stockbridge.movimentacao m ON m.id = a.movimentacao_id
+      LEFT JOIN public."tbl_produtos_Q2P" p ON p.codigo_produto = a.produto_codigo_q2p
+      LEFT JOIN stockbridge.localidade l ON l.codigo = a.galpao
+      LEFT JOIN LATERAL (
+        SELECT h.dest_razao FROM public."tbl_nf_header_Q2P" h
+        WHERE h.c_chave_nfe = a.nf_chave_acesso
+        LIMIT 1
+      ) f ON true
+      WHERE a.id = ${aprovacaoId}::uuid
+        AND a.tipo_aprovacao = 'entrada_manual'
+    `);
+    const r = res.rows[0];
+    if (!r) return null;
+    return {
+      porNf: r.por_nf === true,
+      notaFiscal: r.nota_fiscal,
+      fornecedor: r.fornecedor,
+      itemNf: r.item_nf,
+      produto: r.produto,
+      quantidadeKg: r.quantidade_kg,
+      local: r.local,
+    };
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, aprovacaoId }, 'Falha ao carregar contexto da entrada nacional para o e-mail');
+    return null;
+  }
+}
+
+function tipoEntradaLabel(ctx: ContextoEntradaNacional): string {
+  return ctx.porNf ? 'Recebimento nacional (NF)' : 'Recebimento nacional (manual)';
+}
+
+/**
+ * Mesmo padrão para as duas origens; o manual leva "manual" no começo (o fim de
+ * assuntos longos é cortado na caixa de entrada). `null` quando o manual não tem
+ * número — o caller usa o genérico.
+ */
+function assuntoEntrada(acao: 'aprovado' | 'rejeitado', ctx: ContextoEntradaNacional): string | null {
+  if (!ctx.notaFiscal) return null;
+  const origem = ctx.porNf ? 'Recebimento' : 'Recebimento manual';
+  return `StockBridge — ${origem} ${acao} — NF ${ctx.notaFiscal}${ctx.fornecedor ? ` (${ctx.fornecedor})` : ''}`;
+}
+
+function dadosEntradaHtml(ctx: ContextoEntradaNacional): string {
+  // emailDataList omite as linhas vazias (fornecedor e item não existem no manual).
+  return emailDataList([
+    { label: 'NF', valor: ctx.notaFiscal ?? '' },
+    { label: 'Fornecedor', valor: ctx.fornecedor ?? '' },
+    { label: 'Item da NF', valor: ctx.itemNf ?? '' },
+    { label: 'Produto', valor: ctx.produto ?? '' },
+    { label: 'Quantidade', valor: ctx.quantidadeKg != null ? fmtKg(ctx.quantidadeKg) : '' },
+    { label: 'Local', valor: ctx.local ?? '' },
+  ]);
+}
+
+/**
  * Notifica o operador que lancou a pendencia quando o gestor/diretor rejeita.
  * Inclui o motivo textual para o operador corrigir antes de re-submeter.
  */
@@ -623,12 +890,14 @@ export async function enviarNotificacaoRejeicaoOperador(args: {
   const paginaLabel = args.fluxo === 'recebimento' ? 'Fila de Recebimento' : 'Saída Manual';
   const acaoLabel = args.fluxo === 'recebimento' ? 'Reenviar agora' : 'Lançar novamente';
   const link = `${config.APP_URL}${paginaPath}#rejeicao=${args.aprovacaoId}`;
-  const tipoLabel = labelTipoAprovacao(args.tipoAprovacao);
+  const ctx = await carregarContextoEntradaNacional(args.aprovacaoId);
+  const tipoLabel = ctx ? tipoEntradaLabel(ctx) : labelTipoAprovacao(args.tipoAprovacao);
   // EML-12: tipo humanizado no assunto — o operador identifica de qual
   // lançamento se trata sem abrir o e-mail.
-  const subject = `StockBridge — Lançamento rejeitado (${tipoLabel})`;
+  const subject = (ctx && assuntoEntrada('rejeitado', ctx)) ?? `StockBridge — Lançamento rejeitado (${tipoLabel})`;
   const corpoHtml = `
     <p>O gestor/diretor rejeitou um lançamento (${escapeHtml(tipoLabel)}) que você fez no StockBridge.</p>
+    ${ctx ? dadosEntradaHtml(ctx) : ''}
     <p><strong>Motivo informado:</strong></p>
     <blockquote style="border-left:3px solid #dc2626;padding-left:12px;color:#555;margin:8px 0;">${escapeHtml(args.motivo)}</blockquote>
     <p>Corrija os dados e ${args.fluxo === 'recebimento' ? 'reenvie para nova aprovação' : 'lance novamente'}:</p>
@@ -665,9 +934,10 @@ export async function enviarNotificacaoAprovacaoOperador(args: {
     logger.warn({ args }, 'Operador sem email cadastrado — notificacao de aprovacao nao enviada');
     return;
   }
-  const tipoLabel = labelTipoAprovacao(args.tipoAprovacao);
+  const ctx = await carregarContextoEntradaNacional(args.aprovacaoId);
+  const tipoLabel = ctx ? tipoEntradaLabel(ctx) : labelTipoAprovacao(args.tipoAprovacao);
   // EML-12: tipo humanizado no assunto.
-  const subject = `StockBridge — Lançamento aprovado (${tipoLabel})`;
+  const subject = (ctx && assuntoEntrada('aprovado', ctx)) ?? `StockBridge — Lançamento aprovado (${tipoLabel})`;
   const extraDivergencia =
     args.tipoAprovacao === 'recebimento_divergencia'
       ? '<p>O ajuste foi registrado automaticamente no OMIE (ACXE + Q2P) com a quantidade aprovada.</p>'
@@ -675,6 +945,7 @@ export async function enviarNotificacaoAprovacaoOperador(args: {
   const corpoHtml = `
     <p>Um lançamento que você fez no StockBridge foi aprovado pelo gestor/diretor.</p>
     <p><strong>Tipo:</strong> ${escapeHtml(tipoLabel)}</p>
+    ${ctx ? dadosEntradaHtml(ctx) : ''}
     ${extraDivergencia}
     <p style="color:#6b7280;font-size:12px;margin-top:16px;">Ref. técnica — aprovação: ${escapeHtml(args.aprovacaoId)}</p>
   `;

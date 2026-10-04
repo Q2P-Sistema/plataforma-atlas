@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { createLogger } from '@atlas/core';
 import { processarAlertasComodatoVencido } from '../services/cron-comodato.service.js';
 import { reprocessarBaixasAguardandoVinculo } from '../services/baixa-pedido.service.js';
+import { verificarEspelhoRecebimentos } from '../services/alerta-espelho-recebimentos.service.js';
 
 const logger = createLogger('stockbridge:cron');
 
@@ -50,4 +51,16 @@ export function iniciarCronsStockBridge(): void {
     { timezone: 'America/Sao_Paulo' },
   );
   logger.info('Cron registrado: baixa-pedido-aguardando-vinculo (20 * * * * BR)');
+
+  // Feature 016: alerta de espelho de recebimentos de NF-e defasado (fonte "fiscal
+  // pendente" da fila nacional). Em :05/:35 — depois das rodadas do n8n (:23/:53).
+  // Com STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED desligada, nao faz nada.
+  cron.schedule(
+    '5,35 * * * *',
+    () => {
+      verificarEspelhoRecebimentos().catch((err) => logger.error({ err }, 'Falha ao verificar o espelho de recebimentos de NF-e'));
+    },
+    { timezone: 'America/Sao_Paulo' },
+  );
+  logger.info('Cron registrado: alerta-espelho-recebimentos (5,35 * * * * BR)');
 }

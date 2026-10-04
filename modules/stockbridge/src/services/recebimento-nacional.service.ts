@@ -4,7 +4,8 @@ import { getDb, getPool, createLogger } from '@atlas/core';
 import { movimentacao, aprovacao } from '@atlas/db';
 import { converterParaKg } from './motor.service.js';
 import { enviarAlertaRecebimentoNacionalLote } from './notificacao.service.js';
-import { getDetalheNfNacional, type DetalheNfNacional, type ItemNfNacional } from './fila-nacional.service.js';
+import { getDetalheNfNacional, recebimentoFiscalHabilitado, NfNacionalDispensadaError, type DetalheNfNacional, type ItemNfNacional } from './fila-nacional.service.js';
+import { concluirRecebimentoFiscal, RecebimentoFiscalSemFornecedorError } from './recebimento-fiscal.service.js';
 import { normalizarDescricaoNf } from './descricao-nf.js';
 import { registrarUsoCorrelacao } from './correlacao-produto.service.js';
 import type { UnidadeMedida, SubtipoMovimento } from '../types.js';
@@ -592,11 +593,30 @@ export interface ProdutoPorNfResult {
   mensagemErro?: string;
 }
 
+/**
+ * Feature 016 (ACXEGDP-395): o que o Atlas fez com o recebimento FISCAL neste clique.
+ *  - concluido      — EDITAR -> IGNORAR -> Concluir passaram no OMIE agora;
+ *  - ja_concluido   — o OMIE ja mostrava concluido (alguem fez no portal, ou um
+ *                     clique anterior deu timeout mas gravou); nada escrito;
+ *  - nao_aplicavel  — a NF ja estava com fiscal feito (fonte do espelho de NF) ou
+ *                     nenhum produto sera gravado (ex.: itens todos bloqueados);
+ *  - desligado      — STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED=false (comportamento da 015).
+ */
+export type StatusFiscalPorNf = 'concluido' | 'ja_concluido' | 'nao_aplicavel' | 'desligado';
+
+export interface FiscalPorNfResult {
+  status: StatusFiscalPorNf;
+  concluidoEm: string | null;
+  /** pt-BR, com NF e fornecedor; sem codigo OMIE */
+  mensagem: string;
+}
+
 export interface ProcessarRecebimentoPorNfResult {
   nfChaveAcesso: string;
   notaFiscal: string;
   produtos: ProdutoPorNfResult[];
   resumo: { enviadosParaAprovacao: number; jaRecebidos: number; bloqueados: number; falhas: number };
+  fiscal: FiscalPorNfResult;
 }
 
 /** Produto preparado para gravacao — todo calculo feito ANTES de qualquer escrita. */
@@ -798,7 +818,13 @@ export async function processarRecebimentoNacionalPorNf(
     const todosJaRecebidos = resultados.length > 0 && resultados.every((r) => r.status === 'ja_recebido');
     if (todosJaRecebidos) throw new NfNacionalJaProcessadaError(detalhe.notaFiscal);
     // So bloqueios: devolve o desfecho por produto (nao e erro da requisicao).
-    return montarResultado(detalhe, resultados);
+    // O fiscal NAO e disparado: nada sera recebido pelo Atlas (spec, edge case
+    // "itens todos bloqueados por unidade") — a NF segue "fiscal pendente".
+    return montarResultado(
+      detalhe,
+      resultados,
+      fiscalSemAcao(`Nenhum item da NF ${detalhe.notaFiscal} pôde ser recebido; o recebimento fiscal não foi alterado.`),
+    );
   }
 
   // Localidades (nao espelhadas — defesa em profundidade, FR-011) e produtos (catalogo Q2P).
@@ -826,6 +852,15 @@ export async function processarRecebimentoNacionalPorNf(
     pp.produtoDescricao = prod.descricao;
     pp.observacoes = `${pp.observacoes} | Produto: ${prod.descricao} | Empresa: Q2P · Estoque ${loc.codigo}`;
   }
+
+  // ── Feature 016: recebimento FISCAL no OMIE, ANTES de qualquer escrita ──
+  // Fiscal pendente + algo a gravar + flag ligada -> EDITAR -> IGNORAR -> Concluir.
+  // Falha aqui propaga (RecebimentoFiscalError & cia.) sem nenhum INSERT (FR-008,
+  // FR-012); `ja_concluido` e `concluido` seguem para o portao 2 (FR-011, FR-014).
+  // Feature 016 (revisao pre-UAT, ROT-3): o gestor pode ter dispensado a NF depois
+  // que este POST leu o detalhe — confere de novo antes de escrever no OMIE/estoque.
+  if (recebimentoFiscalHabilitado()) await garantirNaoDispensada(detalhe);
+  const fiscal = await executarFiscalSeNecessario(detalhe, input.userId);
 
   // ── Portao 2: escrita por produto, uma transacao cada ──────────────────
   const db = getDb();
@@ -934,13 +969,63 @@ export async function processarRecebimentoNacionalPorNf(
   }
 
   logger.info(
-    { nf: detalhe.notaFiscal, chave: detalhe.nfChaveAcesso, criados: criados.length, total: resultados.length, userId: input.userId },
+    { nf: detalhe.notaFiscal, chave: detalhe.nfChaveAcesso, criados: criados.length, total: resultados.length, userId: input.userId, fiscal: fiscal.status },
     'Recebimento nacional por NF processado',
   );
-  return montarResultado(detalhe, resultados);
+  return montarResultado(detalhe, resultados, fiscal);
 }
 
-function montarResultado(detalhe: DetalheNfNacional, produtos: ProdutoPorNfResult[]): ProcessarRecebimentoPorNfResult {
+async function garantirNaoDispensada(detalhe: DetalheNfNacional): Promise<void> {
+  const r = await getPool().query<{ dispensado_em: string }>(
+    `SELECT dispensado_em::text AS dispensado_em FROM stockbridge.nf_dispensa
+      WHERE nf_chave_acesso = $1 AND revertido_em IS NULL LIMIT 1`,
+    [detalhe.nfChaveAcesso],
+  );
+  const d = r.rows[0];
+  if (!d) return;
+  const quando = new Date(d.dispensado_em);
+  const data = Number.isNaN(quando.getTime()) ? d.dispensado_em : quando.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  throw new NfNacionalDispensadaError(detalhe.notaFiscal, data);
+}
+
+/** Desfecho fiscal quando o Atlas NAO age: flag desligada (015) ou nada a fazer. */
+function fiscalSemAcao(mensagemNaoAplicavel: string): FiscalPorNfResult {
+  if (!recebimentoFiscalHabilitado()) {
+    return {
+      status: 'desligado',
+      concluidoEm: null,
+      mensagem: 'O recebimento fiscal pelo Atlas está desligado neste ambiente — o fiscal segue sendo concluído no OMIE.',
+    };
+  }
+  return { status: 'nao_aplicavel', concluidoEm: null, mensagem: mensagemNaoAplicavel };
+}
+
+/**
+ * Feature 016 (research D10): o fiscal so roda com a flag ligada, com a NF
+ * "fiscal pendente" na fila e com ao menos um produto preparado para gravar
+ * (quem chama ja garantiu isto). Erros propagam — nada foi escrito ainda.
+ */
+async function executarFiscalSeNecessario(detalhe: DetalheNfNacional, userId: string): Promise<FiscalPorNfResult> {
+  if (!recebimentoFiscalHabilitado() || detalhe.fiscal !== 'pendente') {
+    return fiscalSemAcao(`O recebimento fiscal da NF ${detalhe.notaFiscal} já estava concluído no OMIE.`);
+  }
+  // Fornecedor nao cadastrado no OMIE: o espelho ja sabe (sem CNPJ). Recusa aqui,
+  // sem abrir o ledger nem consultar o OMIE (revisao pre-UAT, FISC-1/NF 1257).
+  if (!detalhe.fornecedorCnpj) throw new RecebimentoFiscalSemFornecedorError(detalhe.notaFiscal);
+  const r = await concluirRecebimentoFiscal({
+    nfChaveAcesso: detalhe.nfChaveAcesso,
+    nIdReceb: detalhe.nIdReceb,
+    notaFiscal: detalhe.notaFiscal,
+    fornecedorNome: detalhe.fornecedorNome,
+    userId,
+  });
+  const rotulo = `NF ${detalhe.notaFiscal} (${detalhe.fornecedorNome})`;
+  return r.status === 'concluido'
+    ? { status: 'concluido', concluidoEm: r.concluidoEm, mensagem: `Recebimento fiscal da ${rotulo} concluído no OMIE.` }
+    : { status: 'ja_concluido', concluidoEm: r.concluidoEm, mensagem: `O recebimento fiscal da ${rotulo} já estava concluído no OMIE — nada a fazer.` };
+}
+
+function montarResultado(detalhe: DetalheNfNacional, produtos: ProdutoPorNfResult[], fiscal: FiscalPorNfResult): ProcessarRecebimentoPorNfResult {
   produtos.sort((a, b) => a.indice - b.indice || a.produtoCodigoQ2p - b.produtoCodigoQ2p);
   return {
     nfChaveAcesso: detalhe.nfChaveAcesso,
@@ -952,5 +1037,6 @@ function montarResultado(detalhe: DetalheNfNacional, produtos: ProdutoPorNfResul
       bloqueados: produtos.filter((p) => p.status === 'bloqueado_unidade' || p.status === 'bloqueado_unidade_incoerente').length,
       falhas: produtos.filter((p) => p.status === 'falha').length,
     },
+    fiscal,
   };
 }

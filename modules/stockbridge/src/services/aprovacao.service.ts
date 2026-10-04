@@ -755,8 +755,14 @@ export async function rejeitar(input: RejeitarInput): Promise<{ id: string }> {
       await tx.update(lote).set({ status: 'rejeitado', updatedAt: new Date() }).where(eq(lote.id, ap.loteId));
     }
 
-    // Caminho sem lote (saida manual / retorno comodato): libera reserva e
-    // desativa movimentacao linkada (soft delete preserva auditoria).
+    // Caminho sem lote (saida manual / retorno comodato / entrada nacional por NF):
+    // libera reserva e desativa movimentacao linkada (soft delete preserva auditoria).
+    // Feature 016 (FR-016, ACXEGDP-395): para `entrada_manual` da fila de NF, o
+    // `ativo=false` basta para o item VOLTAR a fila (itemNacionalRecebidoSql so
+    // casa movimentacao ativa). O recebimento FISCAL feito no OMIE no clique do
+    // operador NAO e desfeito aqui — nem o ledger `recebimento_fiscal` nem o OMIE
+    // sao tocados; a NF reaparece como "fiscal ja feito" e o operador refaz so o
+    // fisico. Desfazer o fiscal e decisao do fiscal, fora do Atlas.
     if (ap.movimentacaoId) {
       await tx
         .update(reservaSaldo)
@@ -803,7 +809,8 @@ export async function rejeitar(input: RejeitarInput): Promise<{ id: string }> {
     aprovacaoId: input.id,
     loteId: resultado.loteId,
     motivo: input.motivo,
-    fluxo: resultado.temLote ? 'recebimento' : 'saida_manual',
+    // Entrada nacional (sem lote) é refeita na Fila de Recebimento, não na Saída Manual.
+    fluxo: resultado.temLote || resultado.tipoAprovacao === 'entrada_manual' ? 'recebimento' : 'saida_manual',
     tipoAprovacao: resultado.tipoAprovacao,
   });
 

@@ -26,8 +26,27 @@ export {
   type ItemPedidoCompra,
 } from './stockbridge/pedido-compra.js';
 export {
+  consultarRecebimentoNfe,
+  alterarRecebimentoNfeItens,
+  concluirRecebimentoNfe,
+  validarItensRecebimentoEditar,
+  parseRecebimentoNfeConsultado,
+  type RecebimentoNfeConsultado,
+  type RecebimentoNfeRef,
+  type ItemRecebimentoNfe,
+  type ItemRecebimentoEditar,
+  type AcaoItemRecebimento,
+  type AjustesItemRecebimento,
+  type AlterarRecebimentoNfeItensInput,
+  type ConcluirRecebimentoNfeInput,
+  type RecebimentoNfeStatusResponse,
+  type SimNao,
+} from './stockbridge/recebimento-nfe.js';
+export {
   __resetMockState,
   __injectMockAjuste,
   __injectMockPedidoCompra,
   __getMockPedidoCompra,
+  __injectMockRecebimentoNfe,
+  __getMockRecebimentoNfe,
 } from './stockbridge/mock.js';

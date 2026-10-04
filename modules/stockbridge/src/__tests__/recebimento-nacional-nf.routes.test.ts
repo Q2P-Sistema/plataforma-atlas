@@ -26,6 +26,15 @@ vi.mock('../middleware/role.js', () => ({
     (req as Request & { user?: { id: string; role: string } }).user = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', role: roleAtual };
     next();
   },
+  // feature 016: as rotas de dispensa/ledger (gestor+) vivem no mesmo router — contrato HTTP delas em rotas-dispensa.test.ts
+  requireGestor: (req: Request, res: Response, next: NextFunction) => {
+    if (!roleAtual || roleAtual === 'operador') {
+      res.status(roleAtual ? 403 : 401).json({ data: null, error: { code: roleAtual ? 'FORBIDDEN' : 'UNAUTHENTICATED', message: 'perfil insuficiente' } });
+      return;
+    }
+    (req as Request & { user?: { id: string; role: string } }).user = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', role: roleAtual };
+    next();
+  },
 }));
 vi.mock('../middleware/armazem-vinculado.js', () => ({
   requireArmazemVinculado: (_req: Request, res: Response, next: NextFunction) => {

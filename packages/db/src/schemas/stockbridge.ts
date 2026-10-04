@@ -509,6 +509,76 @@ export const baixaPedidoQ2p = stockbridgeSchema.table(
   ],
 );
 
+// ── Recebimento fiscal da NF nacional pelo Atlas (feature 016, migration 0053) ──
+// Ledger de cada TENTATIVA de concluir o fiscal no OMIE (EDITAR -> IGNORAR ->
+// ConcluirRecebimento). A linha 'em_andamento' e gravada ANTES da primeira
+// chamada ao OMIE e e o lock contra duplo clique (indice unico parcial: uma
+// linha "viva" por NF). 'concluido'/'ja_concluido' fazem a fila marcar a NF
+// como "fiscal ja feito" antes de o espelho refletir; 'falha' fica como
+// historico. erro_omie_* e tecnico — nunca vai a UI (ACXEGDP-313).
+export type RecebimentoFiscalStatus = 'em_andamento' | 'concluido' | 'ja_concluido' | 'falha';
+export type RecebimentoFiscalPasso = 'consultar' | 'editar' | 'ignorar' | 'concluir' | 'reconsultar';
+
+export const recebimentoFiscal = stockbridgeSchema.table(
+  'recebimento_fiscal',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    nfChaveAcesso: varchar('nf_chave_acesso', { length: 44 }).notNull(),
+    nIdReceb: bigint('n_id_receb', { mode: 'number' }),
+    notaFiscal: varchar('nota_fiscal', { length: 50 }).notNull(),
+    fornecedorNome: varchar('fornecedor_nome', { length: 255 }),
+    status: varchar('status', { length: 20 }).notNull().$type<RecebimentoFiscalStatus>(),
+    etapaAntes: varchar('etapa_antes', { length: 2 }),
+    recebidoAntes: varchar('recebido_antes', { length: 1 }),
+    passoFalha: varchar('passo_falha', { length: 20 }).$type<RecebimentoFiscalPasso>(),
+    erroOmieCodigo: varchar('erro_omie_codigo', { length: 60 }),
+    erroOmieMensagem: text('erro_omie_mensagem'),
+    itensTotal: integer('itens_total'),
+    confirmadoPor: uuid('confirmado_por').notNull().references(() => users.id),
+    iniciadoEm: timestamp('iniciado_em', { withTimezone: true }).notNull().defaultNow(),
+    finalizadoEm: timestamp('finalizado_em', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('recebimento_fiscal_nf_viva_uq')
+      .on(t.nfChaveAcesso)
+      .where(sql`status IN ('em_andamento', 'concluido', 'ja_concluido')`),
+    index('recebimento_fiscal_status_idx').on(t.status, t.iniciadoEm),
+  ],
+);
+
+// ── Dispensa de NF pelo gestor (feature 016, migration 0053) ──────────────────
+// Tira da fila uma NF nacional que nunca sera recebida fisicamente, com fiscal
+// pendente OU ja feito (decisao de 02/10/2026). Nenhuma acao no OMIE; a
+// situacao fiscal na dispensa diz ao gestor se ha conta a pagar a tratar.
+// Reversao = UPDATE em revertido_* (soft), nunca DELETE — trigger de auditoria.
+export type SituacaoFiscalDispensa = 'pendente' | 'concluido';
+
+export const nfDispensa = stockbridgeSchema.table(
+  'nf_dispensa',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    nfChaveAcesso: varchar('nf_chave_acesso', { length: 44 }).notNull(),
+    notaFiscal: varchar('nota_fiscal', { length: 50 }).notNull(),
+    fornecedorNome: varchar('fornecedor_nome', { length: 255 }),
+    fornecedorCnpj: varchar('fornecedor_cnpj', { length: 20 }),
+    situacaoFiscalNaDispensa: varchar('situacao_fiscal_na_dispensa', { length: 10 })
+      .notNull()
+      .$type<SituacaoFiscalDispensa>(),
+    motivo: text('motivo').notNull(),
+    dispensadoPor: uuid('dispensado_por').notNull().references(() => users.id),
+    dispensadoEm: timestamp('dispensado_em', { withTimezone: true }).notNull().defaultNow(),
+    revertidoPor: uuid('revertido_por').references(() => users.id),
+    revertidoEm: timestamp('revertido_em', { withTimezone: true }),
+    motivoReversao: text('motivo_reversao'),
+  },
+  (t) => [
+    uniqueIndex('nf_dispensa_ativa_uq').on(t.nfChaveAcesso).where(sql`revertido_em IS NULL`),
+    index('nf_dispensa_lista_idx').on(t.revertidoEm, t.dispensadoEm),
+  ],
+);
+
 // ── Type exports ───────────────────────────────────────────
 export type Localidade = typeof localidade.$inferSelect;
 export type NewLocalidade = typeof localidade.$inferInsert;
@@ -540,3 +610,7 @@ export type NfPedidoFilhote = typeof nfPedidoFilhote.$inferSelect;
 export type NewNfPedidoFilhote = typeof nfPedidoFilhote.$inferInsert;
 export type CorrelacaoProdutoFornecedor = typeof correlacaoProdutoFornecedor.$inferSelect;
 export type NewCorrelacaoProdutoFornecedor = typeof correlacaoProdutoFornecedor.$inferInsert;
+export type RecebimentoFiscal = typeof recebimentoFiscal.$inferSelect;
+export type NewRecebimentoFiscal = typeof recebimentoFiscal.$inferInsert;
+export type NfDispensa = typeof nfDispensa.$inferSelect;
+export type NewNfDispensa = typeof nfDispensa.$inferInsert;
