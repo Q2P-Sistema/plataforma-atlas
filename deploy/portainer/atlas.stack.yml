@@ -2,19 +2,22 @@ version: "3.8"
 
 # =============================================================================
 # Stack de PRODUÇÃO do Atlas — atlas.q2p.com.br
-# A stack DEVE se chamar `atlas` no Portainer: no Swarm o DNS é
-# `<stack>_<serviço>` (redis => `atlas_redis`); nome curto não resolve
-# neste cluster. Env: use deploy/portainer/atlas.env.example como template.
+# A stack se chama `atlas` no Portainer. O Redis de PROD roda numa stack
+# SEPARADA: REDIS_URL aponta para ele pelo nome completo `<stack>_<serviço>`
+# (no Swarm o nome curto não resolve entre stacks).
+# Env: use deploy/portainer/atlas.env.example como template.
 #
-# Imagem com TAG DE VERSÃO FIXA (não :latest): rollback = trocar a tag aqui;
-# um push futuro na main não altera produção por acidente.
+# Imagem com TAG DE VERSÃO FIXA via ATLAS_VERSION no env da stack (ex. v1.1.14),
+# não :latest: rollback = trocar a tag no env; um push futuro na main não altera
+# produção por acidente. Atenção: `${ATLAS_VERSION:v1.1.14}` é sintaxe inválida no
+# compose (falta o `-`); use `${ATLAS_VERSION}` ou `${ATLAS_VERSION:-v1.1.14}`.
 # =============================================================================
 
 # ── SERVIÇOS ────────────────────────────────────────────────
 services:
   # ── ATLAS API ─────────────────────────────────────────────
   atlas_api:
-    image: plasticosq2p/atlas-api:${ATLAS_VERSION:?defina ATLAS_VERSION (ex. v1.1.14)}
+    image: plasticosq2p/atlas-api:${ATLAS_VERSION}
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
     environment:
       NODE_ENV: production
@@ -145,12 +148,13 @@ services:
       # PROD (:5432) — a mesma da stack n8n (P2 do runbook, informado em 25/09).
       # Se o /health mostrar postgres down, conferir com
       # `docker network inspect network_swarm_public` qual serviço é o Postgres.
+      # O Redis (stack separada) precisa estar alcançável por esta rede; se ele
+      # estiver em outra overlay, acrescente-a aqui e em `networks:` no fim.
       - network_swarm_public
-      - atlas_internal
 
   # ── ATLAS WEB ─────────────────────────────────────────────
   atlas_web:
-    image: plasticosq2p/atlas-web:${ATLAS_VERSION:?defina ATLAS_VERSION (ex. v1.1.14)}
+    image: plasticosq2p/atlas-web:${ATLAS_VERSION}
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
 
     deploy:
@@ -189,59 +193,9 @@ services:
     networks:
       - network_swarm_public
 
-  # ── REDIS (produção, dedicado) ────────────────────────────
-  # Redis próprio da stack — NÃO compartilha com dev/UAT (sessão/cache/rate-limit).
-  # DNS no Swarm: `atlas_redis` (stack `atlas` + serviço `redis`) —
-  # REDIS_URL=redis://atlas_redis:6379. Config pós-incidente OOM 2026-05-18:
-  # maxmemory + allkeys-lru, healthcheck, update stop-first.
-  redis:
-    image: redis:8.6.2
-    hostname: "{{.Service.Name}}.{{.Task.Slot}}"
-    command: >
-      redis-server
-      --appendonly yes
-      --port 6379
-      --maxmemory 512mb
-      --maxmemory-policy allkeys-lru
-    volumes:
-      - atlas-redisdata:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "-p", "6379", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    networks:
-      - atlas_internal
-    deploy:
-      mode: replicated
-      replicas: 1
-      placement:
-        constraints:
-          - node.role == manager
-      update_config:
-        order: stop-first
-        parallelism: 1
-        delay: 10s
-        failure_action: rollback
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 768M
-      restart_policy:
-        condition: any
-        delay: 5s
-
 # ── REDES DOCKER ────────────────────────────────────────────
 # network_swarm_public = ingress público do Traefik (roteia atlas.q2p.com.br)
-#                        + Postgres de PROD (:5432).
-# atlas_internal       = rede privada da stack (API <-> Redis).
+#                        + Postgres de PROD (:5432) + Redis (stack separada).
 networks:
   network_swarm_public:
     external: true
-  atlas_internal:
-    driver: overlay
-
-# ── VOLUMES ─────────────────────────────────────────────────
-volumes:
-  atlas-redisdata:
