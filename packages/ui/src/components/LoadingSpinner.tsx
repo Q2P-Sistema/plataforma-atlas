@@ -23,7 +23,7 @@ export function LoadingSpinner({ size = 'md', className = '' }: LoadingSpinnerPr
 
 export function LoadingPage() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-atlas-bg">
+    <div className="min-h-screen-app flex items-center justify-center bg-atlas-bg">
       <LoadingSpinner size="lg" />
     </div>
   );

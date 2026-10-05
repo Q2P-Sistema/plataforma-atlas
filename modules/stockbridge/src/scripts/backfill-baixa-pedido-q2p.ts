@@ -34,7 +34,7 @@
 
 import { writeFileSync } from 'node:fs';
 import { getPool, closePool, createLogger } from '@atlas/core';
-import { consultarPedidoCompra } from '@atlas/integration-omie';
+import { consultarPedidoCompra, getOmieMode } from '@atlas/integration-omie';
 import {
   listarBaixasPendentes,
   processarBaixaPedidoQ2p,
@@ -73,6 +73,15 @@ async function main(): Promise<void> {
       nCodPed: Number(CONSULTAR),
     });
     console.log(JSON.stringify(ped, null, 2));
+    return;
+  }
+
+  const omieMode = getOmieMode();
+  if (EXECUTE && omieMode !== 'real') {
+    // Fora do modo real (UAT: leitura, ACXEGDP-405) o AlteraPedCompra é simulado e
+    // o ledger registraria baixas, reversões e encerramentos que não aconteceram.
+    console.error(`OMIE_MODE=${omieMode} — --execute exige o OMIE real. Rode sem --execute (dry-run). Abortando.`);
+    process.exitCode = 2;
     return;
   }
 
@@ -140,7 +149,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  if ((process.env.OMIE_MODE ?? 'real') === 'mock') {
+  if (omieMode === 'mock') {
     console.error('OMIE_MODE=mock — o backfill precisa consultar o OMIE real (saldo ao vivo). Abortando.');
     process.exitCode = 2;
     return;

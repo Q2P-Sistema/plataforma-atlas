@@ -119,6 +119,25 @@ const envSchema = z.object({
   WEB_PORT: z.coerce.number().default(5173),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 
+  // ACXEGDP-405: ambiente em que a instância roda. Só 'uat' muda comportamento:
+  // libera OMIE_MODE=leitura/mock com NODE_ENV=production, proíbe OMIE_MODE=real
+  // (o UAT tem chaves OMIE de produção) e desvia ou suprime os e-mails. Ausente =
+  // produção com NODE_ENV=production, desenvolvimento nos demais casos.
+  ATLAS_ENV: z.enum(['prod', 'uat', 'dev']).optional(),
+  // Modo do cliente OMIE (@atlas/integration-omie lê process.env na hora da
+  // chamada; aqui só valida no boot): real | leitura (lê o ERP, simula escritas)
+  // | mock (fixtures, sem rede).
+  OMIE_MODE: z.preprocess(
+    (v) => (typeof v === 'string' ? v.trim().toLowerCase() : v),
+    z.enum(['real', 'leitura', 'mock']).default('real'),
+  ),
+  // Todo e-mail do Atlas vai para esta caixa (assunto marcado, destinatários
+  // originais no topo). No UAT sem ela, os e-mails só vão para o log.
+  EMAIL_DESVIO_PARA: z.string().email().optional(),
+  // Chave SendGrid usada no desvio. O UAT recebe a chave só com este nome: uma
+  // imagem anterior ao desvio fica sem SENDGRID_API_KEY e não manda e-mail a ninguém.
+  SENDGRID_API_KEY_DESVIO: z.string().optional(),
+
   MODULE_HEDGE_ENABLED: boolString,
   MODULE_STOCKBRIDGE_ENABLED: boolString,
   MODULE_BREAKINGPOINT_ENABLED: boolString,
@@ -139,6 +158,23 @@ const envSchema = z.object({
     .enum(['true', 'false', '1', '0', ''])
     .default('true')
     .transform((v) => v !== 'false' && v !== '0'),
+}).superRefine((env, ctx) => {
+  // Mesmas guardas de getOmieMode() (@atlas/integration-omie), antecipadas para o
+  // boot: configuração proibida derruba a API antes de qualquer chamada OMIE.
+  if (env.ATLAS_ENV === 'uat' && env.OMIE_MODE === 'real') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['OMIE_MODE'],
+      message: 'ATLAS_ENV=uat exige OMIE_MODE=leitura ou mock — o UAT não escreve no OMIE de produção (ACXEGDP-405)',
+    });
+  }
+  if (env.OMIE_MODE !== 'real' && env.NODE_ENV === 'production' && env.ATLAS_ENV !== 'uat') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['OMIE_MODE'],
+      message: `OMIE_MODE=${env.OMIE_MODE} com NODE_ENV=production só é aceito com ATLAS_ENV=uat (STK-15)`,
+    });
+  }
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -169,4 +205,10 @@ export function loadConfig(): Env {
 export function getConfig(): Env {
   if (!_config) return loadConfig();
   return _config;
+}
+
+export type Ambiente = 'prod' | 'uat' | 'dev';
+
+export function getAmbiente(config: Pick<Env, 'ATLAS_ENV' | 'NODE_ENV'> = getConfig()): Ambiente {
+  return config.ATLAS_ENV ?? (config.NODE_ENV === 'production' ? 'prod' : 'dev');
 }

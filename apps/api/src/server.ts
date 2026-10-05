@@ -2,7 +2,7 @@ import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
-import { loadConfig, createLogger } from '@atlas/core';
+import { loadConfig, createLogger, getAmbiente, getModoEmail } from '@atlas/core';
 import { ativarZodPtBr } from './zod-ptbr.js';
 import { globalErrorHandler } from './error-handler.js';
 import healthRouter from './health.js';
@@ -59,7 +59,13 @@ app.use(globalErrorHandler);
 // Start
 app.listen(config.API_PORT, () => {
   logger.info(
-    { port: config.API_PORT, env: config.NODE_ENV },
+    {
+      port: config.API_PORT,
+      env: config.NODE_ENV,
+      ambiente: getAmbiente(config),
+      omieModo: config.OMIE_MODE,
+      email: getModoEmail(config),
+    },
     'Atlas API started',
   );
   // MOD-24: callback não-async + .catch. Como async, uma rejeição do seedAdmin

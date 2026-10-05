@@ -271,7 +271,7 @@ export function SaidaManualPage() {
     <div className="p-6 max-w-7xl">
       {feedback && (
         <div
-          className={`fixed top-4 right-4 z-50 max-w-md p-4 rounded-lg shadow-lg border ${
+          className={`fixed top-banner-4 right-4 z-50 max-w-md p-4 rounded-lg shadow-lg border ${
             feedback.tipo === 'sucesso'
               ? 'bg-emerald-50 border-emerald-300 text-emerald-900 dark:bg-emerald-900/40 dark:border-emerald-700 dark:text-emerald-100'
               : 'bg-red-50 border-red-300 text-red-900 dark:bg-red-900/40 dark:border-red-700 dark:text-red-100'

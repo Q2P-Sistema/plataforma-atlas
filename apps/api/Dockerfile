@@ -64,5 +64,10 @@ COPY --from=builder /app/modules/breakingpoint/dist modules/breakingpoint/dist
 COPY --from=builder /app/modules/stockbridge/dist modules/stockbridge/dist
 COPY --from=builder /app/apps/api/dist apps/api/dist
 COPY --from=builder /app/packages/db/migrations packages/db/migrations
+# ACXEGDP-405: o build do UAT (docker-build-uat.yml) passa ATLAS_ENV=uat — a imagem
+# :uat se declara UAT mesmo com um YAML de stack antigo (que pedia OMIE real): a API
+# então se recusa a subir. No build de produção o argumento não vem e fica vazio.
+ARG ATLAS_ENV=
+ENV ATLAS_ENV=${ATLAS_ENV}
 EXPOSE 3005
 CMD ["node", "apps/api/dist/server.js"]
