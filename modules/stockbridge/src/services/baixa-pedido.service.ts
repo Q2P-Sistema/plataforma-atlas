@@ -218,13 +218,16 @@ export async function resolverPedidosAcxeDaNf(
     // que chega aqui o mapa já está INATIVO. Inativo significa "recebida", não
     // "vínculo inválido". Com o filtro, 137 das 150 NFs do backfill perdiam o
     // vínculo e caíam na FIFO; sem ele, casam com o pedido certo.
-    // (Cada carga diária do n8n insere filhotes novas e desativa as antigas, por
-    // isso o DISTINCT — a mesma NF aparece em dezenas de linhas históricas.)
+    // A filhote, ao contrário, precisa estar ativa: desde a migration 0054 há um
+    // mapa por pedido, e filhote inativa é a que saiu do pedido na FUP (correção
+    // da planilha, ex.: 5296 lançada no pedido 503 por um dia, mas é do 516).
+    // O DISTINCT fica para NF que a FUP lista em mais de um pedido.
     const res = await pool.query<{ pedido_acxe_omie: string }>(
       `SELECT DISTINCT mp.pedido_acxe_omie
          FROM stockbridge.nf_pedido_filhote f
          JOIN stockbridge.nf_pedido_mapa mp ON mp.id = f.mapa_id
-        WHERE ltrim(f.nf_filhote, '0') = ltrim($1, '0')`,
+        WHERE f.ativo = true
+          AND ltrim(f.nf_filhote, '0') = ltrim($1, '0')`,
       [notaFiscal],
     );
     for (const r of res.rows) out.add(String(r.pedido_acxe_omie).replace(/^0+/, ''));
