@@ -250,8 +250,8 @@ export function parsePedidoCompraConsultado(
     cCodIntItem: str(p.cCodIntItem),
     nCodProd: num(p.nCodProd) ?? 0,
     cCodIntProd: str(p.cCodIntProd),
-    cProduto: str(p.cProduto) ?? '',
-    cDescricao: str(p.cDescricao),
+    cProduto: txt(p.cProduto) ?? '',
+    cDescricao: txt(p.cDescricao),
     cNCM: str(p.cNCM),
     cUnidade: str(p.cUnidade),
     cEAN: str(p.cEAN),
@@ -277,13 +277,13 @@ export function parsePedidoCompraConsultado(
     nQtdeParc: num(cab.nQtdeParc),
     cCodCateg: str(cab.cCodCateg),
     nCodCompr: num(cab.nCodCompr),
-    cContato: str(cab.cContato),
-    cContrato: str(cab.cContrato),
+    cContato: txt(cab.cContato),
+    cContrato: txt(cab.cContrato),
     nCodCC: num(cab.nCodCC),
     nCodIntCC: str(cab.nCodIntCC),
     nCodProj: num(cab.nCodProj),
-    cObs: str(cab.cObs),
-    cObsInt: str(cab.cObsInt),
+    cObs: txt(cab.cObs),
+    cObsInt: txt(cab.cObsInt),
     frete: candidato.frete_consulta ?? {},
     produtos,
   };
@@ -293,6 +293,34 @@ function str(v: unknown): string | null {
   if (v == null) return null;
   const s = String(v);
   return s === '' ? null : s;
+}
+
+/**
+ * Decodifica entidades HTML/XML que o OMIE devolve em texto livre (`&gt;`,
+ * `&amp;`, `&#227;`...), em laço até estabilizar: há registros codificados mais
+ * de uma vez. Estes campos voltam ao OMIE no AlteraPedCompra; sem decodificar,
+ * cada regravação codifica de novo (o PC 251 chegou a `-&amp;gt;` em 05/10/2026).
+ */
+export function decodificarEntidadesOmie(s: string): string {
+  let prev = s;
+  for (let i = 0; i < 10; i++) {
+    const cur = prev
+      .replace(/&#(\d+);/g, (_m, n: string) => String.fromCodePoint(parseInt(n, 10)))
+      .replace(/&#x([0-9a-fA-F]+);/g, (_m, n: string) => String.fromCodePoint(parseInt(n, 16)))
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&');
+    if (cur === prev) break;
+    prev = cur;
+  }
+  return prev;
+}
+
+function txt(v: unknown): string | null {
+  const s = str(v);
+  return s == null ? null : decodificarEntidadesOmie(s);
 }
 
 function num(v: unknown): number | null {
