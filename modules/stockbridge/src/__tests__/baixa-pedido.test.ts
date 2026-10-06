@@ -411,11 +411,17 @@ describe('processarBaixaPedidoQ2p — fluxo', () => {
     expect(alertaSpy).not.toHaveBeenCalled();
   });
 
-  it('resolve o vínculo NF→pedido ACXE SEM filtrar por ativo (mapa inativo = NF já recebida)', async () => {
+  it('resolve o vínculo NF→pedido ACXE SEM filtrar o mapa por ativo (mapa inativo = NF já recebida)', async () => {
     await processarBaixaPedidoQ2p({ movimentacaoId: 'mov-1', origem: 'fluxo' });
     const [sql] = poolQuerySpy.mock.calls.find((c) => String(c[0]).includes('nf_pedido_filhote'))!;
-    expect(sql).not.toMatch(/ativo\s*=\s*true/);
+    expect(sql).not.toMatch(/mp\.ativo/);
     expect(sql).toContain('DISTINCT');
+  });
+
+  it('migration 0054: só filhote ATIVA casa NF→pedido (inativa = saiu do pedido na FUP)', async () => {
+    await processarBaixaPedidoQ2p({ movimentacaoId: 'mov-1', origem: 'fluxo' });
+    const [sql] = poolQuerySpy.mock.calls.find((c) => String(c[0]).includes('nf_pedido_filhote'))!;
+    expect(sql).toMatch(/f\.ativo\s*=\s*true/);
   });
 
   it('sem transbordo: só o pedido vinculado é descontado; o excedente vira sem_saldo (nunca outro pedido do produto)', async () => {
