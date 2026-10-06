@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   alterarPedidoCompra,
   consultarPedidoCompra,
+  decodificarEntidadesOmie,
   parsePedidoCompraConsultado,
 } from '../stockbridge/pedido-compra.js';
 import { __resetMockState, __injectMockPedidoCompra, __getMockPedidoCompra } from '../stockbridge/mock.js';
@@ -111,6 +112,30 @@ describe('parsePedidoCompraConsultado — formatos de retorno do OMIE', () => {
   it('aceita o bloco como 1º item de pedidos_pesquisa e dentro de pedido_compra_produto', () => {
     expect(parsePedidoCompraConsultado({ pedidos_pesquisa: [bloco] }, { nCodPed: 1 }).cNumero).toBe('193');
     expect(parsePedidoCompraConsultado({ pedido_compra_produto: bloco }, { nCodPed: 1 }).cNumero).toBe('193');
+  });
+
+  it('decodifica entidades HTML do texto livre — o PC 251 chegou a "-&amp;gt;" de tanto regravar (05/10/2026)', () => {
+    const ped = parsePedidoCompraConsultado(
+      {
+        ...bloco,
+        cabecalho_consulta: {
+          ...bloco.cabecalho_consulta,
+          cObs: 'Atlas - NF 00005775: saldo 162000 kg -&amp;gt; 135000 kg|S&#227;o Paulo &amp; Cia',
+          cObsInt: 'saldo 135000 kg -&gt; 108000 kg',
+        },
+        produtos_consulta: [{ ...bloco.produtos_consulta[0], cDescricao: 'PEAD &quot;HD&quot;' }],
+      },
+      { nCodPed: 1 },
+    );
+    expect(ped.cObs).toBe('Atlas - NF 00005775: saldo 162000 kg -> 135000 kg|São Paulo & Cia');
+    expect(ped.cObsInt).toBe('saldo 135000 kg -> 108000 kg');
+    expect(ped.produtos[0]!.cDescricao).toBe('PEAD "HD"');
+  });
+
+  it('decodificarEntidadesOmie não altera texto já limpo', () => {
+    expect(decodificarEntidadesOmie('saldo 10 kg -> 5 kg | Obs original: 11')).toBe(
+      'saldo 10 kg -> 5 kg | Obs original: 11',
+    );
   });
 
   it('converte numericos que chegam como string e falha claro sem cabecalho', () => {

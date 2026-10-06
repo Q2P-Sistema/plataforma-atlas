@@ -246,6 +246,82 @@ async function resolverDescricaoProdutoQ2p(ncodprod: number, fallback: string): 
   }
 }
 
+// ── Leitura em cache do OMIE ───────────────────────────────────────────────────
+
+/**
+ * O OMIE devolve em cache a mesma consulta repetida em menos de ~1 min. Em
+ * 05/10/2026 (GMUD ACXEGDP-321) duas NFs do pedido 251 foram recebidas com 20 s
+ * de diferença: a segunda leu o saldo de antes da primeira baixa e, como o
+ * AlteraPedCompra grava quantidade ABSOLUTA, apagou a primeira (27 t a mais em
+ * aberto). Depois de uma escrita do Atlas no pedido, a próxima leitura ao vivo
+ * espera esta janela passar.
+ */
+export const JANELA_CACHE_OMIE_MS = 75_000;
+/** Até quanto tempo depois de uma escrita o saldo lido é conferido com o gravado. */
+export const JANELA_CONFERENCIA_SALDO_MS = 10 * 60_000;
+
+/** Relógio injetável (os testes trocam `dormir` para não esperar de verdade). */
+export const relogioBaixaPedido = {
+  agora: (): number => Date.now(),
+  dormir: (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms)),
+};
+
+export interface UltimaEscritaPedido {
+  em: Date;
+  /** Saldo que o Atlas deixou no pedido nessa escrita (null se não dá para saber). */
+  saldoKg: number | null;
+}
+
+/**
+ * Última escrita do Atlas no pedido, pelo ledger: baixa concluída (saldo novo)
+ * ou baixa revertida (o desfazer devolve o saldo anterior e desativa a linha).
+ */
+export async function ultimaEscritaNoPedido(ncodped: number): Promise<UltimaEscritaPedido | null> {
+  const res = await getPool().query<{
+    updated_at: Date | string;
+    ativo: boolean;
+    saldo_anterior_kg: string | null;
+    saldo_novo_kg: string | null;
+    revertida: string | null;
+  }>(
+    `SELECT updated_at, ativo, saldo_anterior_kg, saldo_novo_kg,
+            ultimo_erro->>'revertida' AS revertida
+       FROM stockbridge.baixa_pedido_q2p
+      WHERE ncodped = $1 AND status = 'concluida'
+      ORDER BY updated_at DESC
+      LIMIT 1`,
+    [ncodped],
+  );
+  const row = res.rows[0];
+  if (!row) return null;
+  let saldoKg: number | null = null;
+  if (row.ativo && row.saldo_novo_kg != null) saldoKg = Number(row.saldo_novo_kg);
+  else if (!row.ativo && row.revertida === 'true' && row.saldo_anterior_kg != null) {
+    saldoKg = Number(row.saldo_anterior_kg);
+  }
+  return { em: new Date(row.updated_at), saldoKg };
+}
+
+/** Quanto falta esperar para a próxima leitura do pedido não vir do cache do OMIE. */
+export function esperaParaLeituraFresca(ultimaEscrita: Date | null, agoraMs: number): number {
+  if (!ultimaEscrita) return 0;
+  return Math.max(0, JANELA_CACHE_OMIE_MS - (agoraMs - ultimaEscrita.getTime()));
+}
+
+/** Espera a janela de cache passar se o Atlas alterou o pedido há pouco. */
+async function aguardarLeituraFresca(ncodped: number): Promise<UltimaEscritaPedido | null> {
+  const ultima = await ultimaEscritaNoPedido(ncodped);
+  const espera = esperaParaLeituraFresca(ultima?.em ?? null, relogioBaixaPedido.agora());
+  if (espera > 0) {
+    logger.info(
+      { ncodped, esperaMs: espera },
+      'Pedido Q2P alterado pelo Atlas há pouco — aguardando a janela de cache do OMIE antes de consultar',
+    );
+    await relogioBaixaPedido.dormir(espera);
+  }
+  return ultima;
+}
+
 // ── Lock consultivo por produto ────────────────────────────────────────────────
 
 const LOCK_PREFIXO = 'stockbridge:baixa_pedido_q2p:';
@@ -585,11 +661,15 @@ export async function processarBaixaPedidoQ2p(input: ProcessarBaixaInput): Promi
         if (restante.lte(TOLERANCIA_KG)) break;
 
         let pedidoLive: PedidoCompraConsultado;
+        // Última escrita do Atlas neste pedido — só quando a leitura vem do OMIE
+        // (o cache da execução já reflete as próprias escritas).
+        let ultimaEscrita: UltimaEscritaPedido | null = null;
         try {
           const emCache = input.cachePedidos?.get(cand.ncodped);
           if (emCache) {
             pedidoLive = emCache;
           } else {
+            ultimaEscrita = await aguardarLeituraFresca(cand.ncodped);
             pedidoLive = await consultarPedidoCompra('q2p', {
               nCodPed: cand.ncodped,
             });
@@ -622,6 +702,34 @@ export async function processarBaixaPedidoQ2p(input: ProcessarBaixaInput): Promi
             'Pedido Q2P não está mais em aberto (etapa mudou) — ignorado',
           );
           continue;
+        }
+        // Segunda proteção contra leitura em cache: logo depois de uma escrita do
+        // Atlas, o saldo lido tem de ser o que o Atlas gravou. Se não for, não
+        // grava nada (quantidade absoluta apagaria a escrita anterior) — a baixa
+        // fica em falha e é retentada depois.
+        if (
+          ultimaEscrita?.saldoKg != null &&
+          relogioBaixaPedido.agora() - ultimaEscrita.em.getTime() < JANELA_CONFERENCIA_SALDO_MS &&
+          !aprox(item.nQtde, ultimaEscrita.saldoKg)
+        ) {
+          const erro =
+            `Saldo lido do pedido ${pedidoLive.cNumero ?? cand.ncodped} no OMIE (${item.nQtde} kg) difere do ` +
+            `último saldo gravado pelo Atlas (${ultimaEscrita.saldoKg} kg) — possível resposta em cache. ` +
+            'Nada foi alterado; retente em alguns minutos.';
+          logger.error({ ncodped: cand.ncodped, lido: item.nQtde, gravado: ultimaEscrita.saldoKg }, erro);
+          return finalizarComFalha({
+            mov,
+            ncodprod,
+            produtoDescricao,
+            base,
+            alocacoes,
+            restante,
+            jaDescontado,
+            erro,
+            dryRun,
+            ledgerRow: reutilizaveis.get(cand.ncodped) ?? null,
+            cand,
+          });
         }
         const saldoAtual = dryRun ? (input.simulacaoSaldos?.get(cand.ncodped) ?? item.nQtde) : item.nQtde;
         const plano = planejarAlocacao(restante.toNumber(), [
@@ -1003,6 +1111,7 @@ export async function desfazerBaixaPedidoQ2p(input: {
       }
       const anterior = Number(row.saldoAnteriorKg);
       const alvoGravado = Number(row.saldoNovoKg);
+      await aguardarLeituraFresca(row.ncodped);
       const pedidoLive = await consultarPedidoCompra('q2p', { nCodPed: row.ncodped });
       const item = acharItemDoProduto(pedidoLive, ncodprod);
       if (!item) {
@@ -1122,6 +1231,7 @@ export async function encerrarPedidoQ2p(input: {
 }): Promise<ResultadoEncerramento> {
   const db = getDb();
   const dryRun = input.dryRun === true;
+  await aguardarLeituraFresca(input.ncodped);
   const pedido = await consultarPedidoCompra('q2p', { nCodPed: input.ncodped });
   const item = pedido.produtos[0];
   if (!item) throw new Error(`Pedido ${pedido.cNumero ?? input.ncodped} sem item de produto`);
