@@ -80,6 +80,10 @@ import {
   listarPedidosAbertosQ2p,
   BaixaPedidoNaoAplicavelError,
   ETAPA_PEDIDO_Q2P_ABERTO,
+  JANELA_CACHE_OMIE_MS,
+  esperaParaLeituraFresca,
+  relogioBaixaPedido,
+  ultimaEscritaNoPedido,
 } from '../services/baixa-pedido.service.js';
 import { QTD_SENTINELA_PEDIDO_ZERADO_KG } from '../types.js';
 
@@ -407,11 +411,17 @@ describe('processarBaixaPedidoQ2p — fluxo', () => {
     expect(alertaSpy).not.toHaveBeenCalled();
   });
 
-  it('resolve o vínculo NF→pedido ACXE SEM filtrar por ativo (mapa inativo = NF já recebida)', async () => {
+  it('resolve o vínculo NF→pedido ACXE SEM filtrar o mapa por ativo (mapa inativo = NF já recebida)', async () => {
     await processarBaixaPedidoQ2p({ movimentacaoId: 'mov-1', origem: 'fluxo' });
     const [sql] = poolQuerySpy.mock.calls.find((c) => String(c[0]).includes('nf_pedido_filhote'))!;
-    expect(sql).not.toMatch(/ativo\s*=\s*true/);
+    expect(sql).not.toMatch(/mp\.ativo/);
     expect(sql).toContain('DISTINCT');
+  });
+
+  it('migration 0054: só filhote ATIVA casa NF→pedido (inativa = saiu do pedido na FUP)', async () => {
+    await processarBaixaPedidoQ2p({ movimentacaoId: 'mov-1', origem: 'fluxo' });
+    const [sql] = poolQuerySpy.mock.calls.find((c) => String(c[0]).includes('nf_pedido_filhote'))!;
+    expect(sql).toMatch(/f\.ativo\s*=\s*true/);
   });
 
   it('sem transbordo: só o pedido vinculado é descontado; o excedente vira sem_saldo (nunca outro pedido do produto)', async () => {
@@ -700,6 +710,112 @@ describe('processarBaixaPedidoQ2p — fluxo', () => {
     expect(updates.find((u) => u.table === 'movimentacao')?.set).toMatchObject({
       baixaPedidoQ2p: 'falha',
     });
+  });
+});
+
+describe('leitura em cache do OMIE (GMUD ACXEGDP-321, PC 251 em 05/10/2026)', () => {
+  const SQL_ULTIMA_ESCRITA = "ultimo_erro->>'revertida'";
+
+  it('esperaParaLeituraFresca: só espera dentro da janela de cache depois de uma escrita', () => {
+    const agora = 1_000_000;
+    expect(esperaParaLeituraFresca(null, agora)).toBe(0);
+    expect(esperaParaLeituraFresca(new Date(agora - 20_000), agora)).toBe(JANELA_CACHE_OMIE_MS - 20_000);
+    expect(esperaParaLeituraFresca(new Date(agora - JANELA_CACHE_OMIE_MS - 1), agora)).toBe(0);
+  });
+
+  it('ultimaEscritaNoPedido: baixa ativa → saldo novo; baixa revertida → saldo anterior (o que o desfazer devolveu)', async () => {
+    const em = new Date('2026-10-05T19:34:21Z');
+    poolQuerySpy.mockResolvedValueOnce({
+      rows: [{ updated_at: em, ativo: true, saldo_anterior_kg: '135000', saldo_novo_kg: '108000', revertida: null }],
+    });
+    expect(await ultimaEscritaNoPedido(251)).toEqual({ em, saldoKg: 108000 });
+    poolQuerySpy.mockResolvedValueOnce({
+      rows: [{ updated_at: em, ativo: false, saldo_anterior_kg: '135000', saldo_novo_kg: '108000', revertida: 'true' }],
+    });
+    expect(await ultimaEscritaNoPedido(251)).toEqual({ em, saldoKg: 135000 });
+    poolQuerySpy.mockResolvedValueOnce({ rows: [] });
+    expect(await ultimaEscritaNoPedido(251)).toBeNull();
+  });
+
+  it('pedido alterado pelo Atlas há 20 s (2ª NF da mesma carga): espera a janela ANTES da consulta ao vivo e baixa normalmente', async () => {
+    const agora = Date.now();
+    const ordem: string[] = [];
+    const agoraSpy = vi.spyOn(relogioBaixaPedido, 'agora').mockReturnValue(agora);
+    const dormirSpy = vi.spyOn(relogioBaixaPedido, 'dormir').mockImplementation(async (ms: number) => {
+      ordem.push(`dormir:${ms}`);
+    });
+    try {
+      poolQuerySpy.mockImplementation((sql: string, params?: unknown[]) => {
+        if (sql.includes(SQL_ULTIMA_ESCRITA)) {
+          // Pedido 100: a NF anterior da carga gravou 24125 kg há 20 s; o 200 não foi tocado.
+          return Promise.resolve(
+            params?.[0] === 100
+              ? { rows: [{ updated_at: new Date(agora - 20_000), ativo: true, saldo_anterior_kg: '51125', saldo_novo_kg: '24125', revertida: null }] }
+              : { rows: [] },
+          );
+        }
+        return Promise.resolve(respostaPool(sql));
+      });
+      consultarSpy.mockImplementation((_cnpj: string, ref: { nCodPed: number }) => {
+        ordem.push(`consultar:${ref.nCodPed}`);
+        return Promise.resolve(pedidoLive(ref.nCodPed, ref.nCodPed === 100 ? 24125 : 50000));
+      });
+
+      const res = await processarBaixaPedidoQ2p({ movimentacaoId: 'mov-1', origem: 'fluxo' });
+
+      expect(ordem).toEqual([`dormir:${JANELA_CACHE_OMIE_MS - 20_000}`, 'consultar:100', 'consultar:200']);
+      expect(res.status).toBe('concluida');
+      expect(alterarSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      agoraSpy.mockRestore();
+      dormirSpy.mockRestore();
+    }
+  });
+
+  it('saldo lido diverge do último gravado pelo Atlas (resposta em cache) → falha SEM AlteraPedCompra (quantidade absoluta apagaria a baixa anterior)', async () => {
+    const agora = Date.now();
+    const agoraSpy = vi.spyOn(relogioBaixaPedido, 'agora').mockReturnValue(agora);
+    const dormirSpy = vi.spyOn(relogioBaixaPedido, 'dormir').mockResolvedValue();
+    try {
+      poolQuerySpy.mockImplementation((sql: string, params?: unknown[]) => {
+        if (sql.includes(SQL_ULTIMA_ESCRITA)) {
+          // O Atlas deixou o pedido 100 em 20000 kg há 90 s, mas o OMIE devolveu 24125 (o saldo de antes).
+          return Promise.resolve(
+            params?.[0] === 100
+              ? { rows: [{ updated_at: new Date(agora - 90_000), ativo: true, saldo_anterior_kg: '44125', saldo_novo_kg: '20000', revertida: null }] }
+              : { rows: [] },
+          );
+        }
+        return Promise.resolve(respostaPool(sql));
+      });
+
+      const res = await processarBaixaPedidoQ2p({ movimentacaoId: 'mov-1', origem: 'fluxo' });
+
+      expect(res.status).toBe('falha');
+      expect(res.erro).toMatch(/cache/);
+      expect(alterarSpy).not.toHaveBeenCalled();
+      expect(dormirSpy).not.toHaveBeenCalled(); // fora da janela de 75 s: não espera, mas confere
+      expect(updates.find((u) => u.table === 'movimentacao')?.set).toMatchObject({ baixaPedidoQ2p: 'falha' });
+    } finally {
+      agoraSpy.mockRestore();
+      dormirSpy.mockRestore();
+    }
+  });
+
+  it('cachePedidos (cron/backfill): não espera nem confere — o cache da execução já reflete as próprias escritas', async () => {
+    const dormirSpy = vi.spyOn(relogioBaixaPedido, 'dormir').mockResolvedValue();
+    try {
+      const cache = new Map();
+      cache.set(100, pedidoLive(100, 24125));
+      cache.set(200, pedidoLive(200, 50000));
+      const res = await processarBaixaPedidoQ2p({ movimentacaoId: 'mov-1', origem: 'retry', cachePedidos: cache });
+      expect(res.status).toBe('concluida');
+      expect(consultarSpy).not.toHaveBeenCalled();
+      expect(dormirSpy).not.toHaveBeenCalled();
+      expect(poolQuerySpy.mock.calls.some(([sql]) => String(sql).includes(SQL_ULTIMA_ESCRITA))).toBe(false);
+    } finally {
+      dormirSpy.mockRestore();
+    }
   });
 });
 

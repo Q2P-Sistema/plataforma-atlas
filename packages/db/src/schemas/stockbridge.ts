@@ -448,6 +448,8 @@ export const nfPedidoMapa = stockbridgeSchema.table(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    // Migration 0054: um mapa por pedido (era parcial WHERE ativo = true).
+    uniqueIndex('nf_pedido_mapa_pedido_idx').on(t.pedidoAcxeOmie),
     index('nf_pedido_mapa_nf_mae_idx').on(t.nfMae),
   ],
 );
