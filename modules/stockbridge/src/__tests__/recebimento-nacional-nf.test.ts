@@ -109,7 +109,7 @@ function item(o: Partial<ItemNfNacional> & { descricao?: string; q?: number; u?:
     bloqueio: conv.ok ? 'sem_correlacao' : conv.motivo === 'unidade_incoerente' ? 'unidade_incoerente' : 'unidade_nao_conversivel',
     bloqueioMensagem: conv.ok ? null : conv.mensagem, jaRecebido: false,
     quantidadeNfJaAtribuidaKg: 0, quantidadeConferidaJaGravadaKg: 0,
-    quantidadeRestanteKg: nfKg, baixadoComoExterno: false, baixaSolicitada: false, conversao: conv,
+    quantidadeRestanteKg: nfKg, baixadoComoExterno: false, baixaSolicitada: false, conversao: conv, sequenciasRecebimento: [],
     ...o,
   };
 }
@@ -170,6 +170,17 @@ const movs = () => inserts.filter((i) => i.table === 'movimentacao').map((i) => 
 const aprs = () => inserts.filter((i) => i.table === 'aprovacao').map((i) => i.values);
 
 describe('caminho limpo 1:1 (T017/T027)', () => {
+  it('grava as sequencias do item no recebimento de NF-e (ACXEGDP-412); sem recebimento no espelho grava NULL', async () => {
+    detalheMock.mockResolvedValue(detalhe([item({ sequenciasRecebimento: [1, 3] })]));
+    await processarRecebimentoNacionalPorNf(base());
+    expect(movs()[0]).toMatchObject({ nfItemSequencias: [1, 3] });
+
+    inserts.length = 0;
+    detalheMock.mockResolvedValue(detalhe([item({ sequenciasRecebimento: [] })]));
+    await processarRecebimentoNacionalPorNf(base());
+    expect(movs()[0]).toMatchObject({ nfItemSequencias: null });
+  });
+
   it('grava 1 movimentacao + 1 aprovacao com os dados da NF, chave e descricao do item', async () => {
     const r = await processarRecebimentoNacionalPorNf(base());
     expect(r.resumo).toEqual({ enviadosParaAprovacao: 1, jaRecebidos: 0, bloqueados: 0, falhas: 0 });

@@ -62,7 +62,7 @@ function item(o: Partial<ItemNfNacional> = {}): ItemNfNacional {
     indice: 0, descricaoFornecedor: 'SUCATA PLASTICO', descricaoNormalizada: 'SUCATA PLASTICO', cfop: '1.102', quantidadeNf: 18000, unidadeOriginal: 'KG',
     quantidadeNfKg: nfKg, valorUnitarioBrl: 11.3, valorTotalItemBrl: 203400, rsPorKg: conv.ok ? conv.rsPorKg : null, linhasAgregadas: 1,
     produtosSugeridos: [], bloqueio: 'sem_correlacao', bloqueioMensagem: null, jaRecebido: false, quantidadeNfJaAtribuidaKg: 0,
-    quantidadeConferidaJaGravadaKg: 0, quantidadeRestanteKg: nfKg, baixadoComoExterno: false, baixaSolicitada: false, conversao: conv,
+    quantidadeConferidaJaGravadaKg: 0, quantidadeRestanteKg: nfKg, baixadoComoExterno: false, baixaSolicitada: false, conversao: conv, sequenciasRecebimento: [],
     ...o,
   };
 }

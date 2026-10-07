@@ -178,6 +178,10 @@ export const movimentacao = stockbridgeSchema.table(
     nfChaveAcesso: varchar('nf_chave_acesso', { length: 44 }),
     nfItemDescricao: varchar('nf_item_descricao', { length: 500 }),
     nfItemDescricaoNormalizada: varchar('nf_item_descricao_normalizada', { length: 500 }),
+    // ACXEGDP-412 (migration 0055): sequencia(s) do item no recebimento de NF-e do
+    // OMIE. A descricao da fonte "fiscal pendente" muda depois do fiscal quando o
+    // item esta pre-associado a um produto; a sequencia nao. NULL = so descricao.
+    nfItemSequencias: integer('nf_item_sequencias').array(),
     // quantidade_kg = conferida na balanca; quantidade_nf_kg = parcela da NF atribuida
     // a esta movimentacao (proporcional ao peso em item distribuido entre N produtos).
     quantidadeNfKg: numeric('quantidade_nf_kg', { precision: 12, scale: 3 }),
