@@ -1,4 +1,4 @@
-import { callOmie, isMockMode, type OmieCnpj } from '../client.js';
+import { callOmie, getOmieMode, type OmieCnpj } from '../client.js';
 import { mockListarAjusteEstoque } from './mock.js';
 import type { AjusteTipo, AjusteMotivo, AjusteOrigem } from './ajuste-estoque.js';
 
@@ -66,8 +66,15 @@ export async function listarAjusteEstoque(
   cnpj: OmieCnpj,
   input: ListarAjusteEstoqueInput,
 ): Promise<ListarAjusteEstoqueResponse> {
-  if (isMockMode()) {
+  const modo = getOmieMode();
+  if (modo === 'mock') {
     return mockListarAjusteEstoque(cnpj, input);
+  }
+  // Modo leitura: o ajuste simulado neste processo responde pela idempotência
+  // do retry (busca por cod_int_ajuste) — ver sombra em mock.ts.
+  if (modo === 'leitura' && input.codIntAjuste) {
+    const sombra = mockListarAjusteEstoque(cnpj, input);
+    if (sombra.totalDeRegistros > 0) return sombra;
   }
 
   const params: Record<string, unknown> = {

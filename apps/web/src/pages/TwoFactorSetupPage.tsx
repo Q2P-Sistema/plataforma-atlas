@@ -119,7 +119,7 @@ export function TwoFactorSetupPage() {
 
   if (isLoading || step === 'loading') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-atlas-bg">
+      <div className="min-h-screen-app flex items-center justify-center bg-atlas-bg">
         <p className="text-atlas-muted">Carregando...</p>
       </div>
     );

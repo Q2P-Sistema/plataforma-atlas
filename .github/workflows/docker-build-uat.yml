@@ -33,6 +33,9 @@ jobs:
           context: .
           file: apps/api/Dockerfile
           push: true
+          # ACXEGDP-405: a imagem do UAT se declara UAT (OMIE só leitura, e-mail desviado).
+          build-args: |
+            ATLAS_ENV=uat
           tags: |
             plasticosq2p/atlas-api:uat
             plasticosq2p/atlas-api:uat-${{ env.SHORT_SHA }}

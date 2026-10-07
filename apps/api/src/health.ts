@@ -1,8 +1,22 @@
 import { Router } from 'express';
-import { getConfig, getPool, getRedis } from '@atlas/core';
+import { getAmbiente, getConfig, getModoEmail, getPool, getRedis, type Env } from '@atlas/core';
 import { getModules } from './modules.js';
 
 const router: Router = Router();
+
+/**
+ * ACXEGDP-405: o que esta instância faz com o OMIE e com os e-mails. Conferir
+ * aqui depois de cada deploy do UAT (omie_modo=leitura, email=desviado|suprimido)
+ * — uma imagem sem este bloco é anterior ao modo leitura.
+ */
+function resumoAmbiente(config: Env) {
+  return { nome: getAmbiente(config), omie_modo: config.OMIE_MODE, email: getModoEmail(config) };
+}
+
+// Público (sem sessão): a faixa "ambiente de testes" aparece já na tela de login.
+router.get('/api/v1/ambiente', (_req, res) => {
+  res.json({ data: resumoAmbiente(getConfig()), error: null });
+});
 
 router.get('/api/v1/health', async (_req, res) => {
   const config = getConfig();
@@ -70,6 +84,7 @@ router.get('/api/v1/health', async (_req, res) => {
       status: overallStatus,
       version: '0.1.0',
       uptime_seconds: Math.floor(process.uptime()),
+      ambiente: resumoAmbiente(config),
       dependencies: checks,
       modules: Object.fromEntries(
         getModules().map((m) => [m.id, { enabled: m.enabled }]),

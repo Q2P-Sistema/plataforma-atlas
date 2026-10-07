@@ -1,12 +1,16 @@
 # Runbook — Go-live do Atlas em PRODUÇÃO (atlas.q2p.com.br)
 
-> Janela: **sexta-feira a definir (GMUD ACXEGDP-321), a partir das 17h30** (empresa
-> parada no fim de semana). Release: **v1.1.14** (imagens `plasticosq2p/atlas-{api,web}:v1.1.14`).
+> **Executado em domingo 04/10/2026, 19:11–21:40** (GMUD ACXEGDP-321), com a release
+> **v1.1.14**. GMUD encerrada em 06/10/2026 com PIR (resultado, desvios e lições no card).
+> Correção do 1º dia: v1.1.15 (ACXEGDP-406, baixa do pedido Q2P × cache do OMIE).
+> Este documento fica como registro do plano executado e base para a próxima mudança
+> com transplante de estado. Diferenças entre o plano e a execução (Redis em stack
+> separada `redis_atlas`, sintaxe da imagem, host do banco, data de corte nacional) estão
+> no PIR e já refletidas em `deploy/portainer/atlas.stack.yml` e `atlas.env.example`.
 >
 > Histórico: as janelas de **24/07** (hotfix `0bfc3da`) e de **31/07** (entrada da baixa
-> do pedido de compra Q2P, ACXEGDP-344) **não foram executadas** — nada foi aplicado em
-> PROD. Conferido em 25/09/2026: PROD sem nenhum schema Atlas; `atlas.q2p.com.br` → 404.
-> A operação seguiu no UAT, que por isso continua sendo a origem do estado.
+> do pedido de compra Q2P, ACXEGDP-344) **não foram executadas**; a operação seguiu no
+> UAT até 04/10, por isso ele foi a origem do estado.
 >
 > Origem do estado: banco UAT (`db.manager01.q2p.com.br:5437/acxe_q2p`) — o UAT roda
 > **como produção** desde junho (OMIE real). Destino: banco PROD (`:5432/acxe_q2p`,

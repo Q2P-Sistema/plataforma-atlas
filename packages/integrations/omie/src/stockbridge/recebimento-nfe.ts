@@ -1,8 +1,12 @@
-import { callOmie, isMockMode, type OmieCnpj } from '../client.js';
+import { callOmie, getOmieMode, logEscritaSimulada, type OmieCnpj } from '../client.js';
 import {
+  leituraRecenteRecebimentoNfe,
+  lembrarLeituraRecebimentoNfe,
   mockAlterarRecebimentoNfeItens,
   mockConcluirRecebimentoNfe,
   mockConsultarRecebimentoNfe,
+  registrarSombraRecebimentoNfe,
+  sombraRecebimentoNfe,
 } from './mock.js';
 
 /**
@@ -197,8 +201,13 @@ export function parseRecebimentoNfeConsultado(raw: RawRecebimento): RecebimentoN
  * nIdReceb) — ver research D2 da feature 016.
  */
 export async function consultarRecebimentoNfe(cnpj: OmieCnpj, ref: RecebimentoNfeRef): Promise<RecebimentoNfeConsultado> {
-  if (isMockMode()) {
+  const modo = getOmieMode();
+  if (modo === 'mock') {
     return mockConsultarRecebimentoNfe(cnpj, ref);
+  }
+  if (modo === 'leitura') {
+    const sombra = sombraRecebimentoNfe(cnpj, ref);
+    if (sombra) return sombra;
   }
   const params: Record<string, unknown> = 'nIdReceb' in ref ? { nIdReceb: ref.nIdReceb } : { cChaveNfe: ref.cChaveNfe };
   const raw = await callOmie<RawRecebimento>(
@@ -206,7 +215,9 @@ export async function consultarRecebimentoNfe(cnpj: OmieCnpj, ref: RecebimentoNf
     { endpoint: 'produtos/recebimentonfe/', method: 'ConsultarRecebimento', params },
     { retries: 2 },
   );
-  return parseRecebimentoNfeConsultado(raw);
+  const rec = parseRecebimentoNfeConsultado(raw);
+  if (modo === 'leitura') lembrarLeituraRecebimentoNfe(cnpj, rec);
+  return rec;
 }
 
 /**
@@ -225,6 +236,13 @@ export function validarItensRecebimentoEditar(itens: ItemRecebimentoEditar[]): v
   }
 }
 
+/** Modo leitura: a escrita simulada parte do recebimento real (ver sombra em mock.ts). */
+async function garantirSombraRecebimento(cnpj: OmieCnpj, nIdReceb: number): Promise<void> {
+  if (sombraRecebimentoNfe(cnpj, { nIdReceb })) return;
+  const base = leituraRecenteRecebimentoNfe(cnpj, { nIdReceb }) ?? (await consultarRecebimentoNfe(cnpj, { nIdReceb }));
+  registrarSombraRecebimentoNfe(cnpj, base);
+}
+
 /**
  * Altera os itens de um recebimento (cAcao EDITAR | IGNORAR). Escrita — SEM retry.
  * Endpoint produtos/recebimentonfe/ -> AlterarRecebimento.
@@ -234,7 +252,16 @@ export async function alterarRecebimentoNfeItens(
   input: AlterarRecebimentoNfeItensInput,
 ): Promise<RecebimentoNfeStatusResponse> {
   validarItensRecebimentoEditar(input.itens);
-  if (isMockMode()) {
+  const modo = getOmieMode();
+  if (modo === 'mock') {
+    return mockAlterarRecebimentoNfeItens(cnpj, input);
+  }
+  if (modo === 'leitura') {
+    await garantirSombraRecebimento(cnpj, input.nIdReceb);
+    logEscritaSimulada(cnpj, 'AlterarRecebimento', {
+      nIdReceb: input.nIdReceb,
+      acoes: input.itens.map((it) => `${it.nSequencia}:${it.cAcao}`).join(','),
+    });
     return mockAlterarRecebimentoNfeItens(cnpj, input);
   }
   const params = {
@@ -265,7 +292,13 @@ export async function concluirRecebimentoNfe(
   cnpj: OmieCnpj,
   input: ConcluirRecebimentoNfeInput,
 ): Promise<RecebimentoNfeStatusResponse> {
-  if (isMockMode()) {
+  const modo = getOmieMode();
+  if (modo === 'mock') {
+    return mockConcluirRecebimentoNfe(cnpj, input);
+  }
+  if (modo === 'leitura') {
+    await garantirSombraRecebimento(cnpj, input.nIdReceb);
+    logEscritaSimulada(cnpj, 'ConcluirRecebimento', { nIdReceb: input.nIdReceb, cEtapa: input.cEtapa ?? '60' });
     return mockConcluirRecebimentoNfe(cnpj, input);
   }
   const raw = await callOmie<Partial<RecebimentoNfeStatusResponse>>(cnpj, {

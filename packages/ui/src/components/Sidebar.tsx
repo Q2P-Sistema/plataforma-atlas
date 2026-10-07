@@ -68,7 +68,7 @@ export function Sidebar({
     <>
       {/* Mobile toggle */}
       <button
-        className="lg:hidden fixed top-4 left-4 z-50 p-2 rounded-lg bg-atlas-card border border-atlas-border shadow-md"
+        className="lg:hidden fixed top-banner-4 left-4 z-50 p-2 rounded-lg bg-atlas-card border border-atlas-border shadow-md"
         onClick={() => setMobileOpen(!mobileOpen)}
         aria-label={mobileOpen ? 'Fechar menu' : 'Abrir menu'}
       >
@@ -86,7 +86,7 @@ export function Sidebar({
       {/* Sidebar */}
       <aside
         className={`
-          fixed lg:sticky top-0 left-0 z-40 h-screen
+          fixed lg:sticky top-banner left-0 z-40 h-screen-app
           bg-atlas-card border-r border-atlas-border
           flex flex-col transition-all duration-200
           ${collapsed ? 'w-16' : 'w-60'}

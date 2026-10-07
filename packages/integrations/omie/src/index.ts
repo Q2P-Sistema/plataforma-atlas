@@ -1,4 +1,14 @@
-export { callOmie, isMockMode, OmieApiError, type OmieCnpj, type OmieEndpoint, type OmieCredentials } from './client.js';
+export {
+  callOmie,
+  getOmieMode,
+  isMockMode,
+  OmieApiError,
+  OmieEscritaBloqueadaError,
+  type OmieCnpj,
+  type OmieEndpoint,
+  type OmieCredentials,
+  type OmieMode,
+} from './client.js';
 
 // StockBridge integration
 export { consultarNF, type ConsultarNFResponse, type ItemNF } from './stockbridge/nf.js';

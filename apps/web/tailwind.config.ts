@@ -33,6 +33,15 @@ const config: Config = {
         // forcando hex cru #059669 nos modulos (UI-B).
         success: '#059669',
       },
+      // ACXEGDP-405: a faixa "ambiente de testes" do UAT publica sua altura em
+      // --atlas-faixa-ambiente (0 em produção). Telas cheias usam *-screen-app em
+      // vez de *-screen, e elementos fixos no topo usam top-banner(-4).
+      minHeight: { 'screen-app': 'calc(100vh - var(--atlas-faixa-ambiente, 0px))' },
+      height: { 'screen-app': 'calc(100vh - var(--atlas-faixa-ambiente, 0px))' },
+      inset: {
+        banner: 'var(--atlas-faixa-ambiente, 0px)',
+        'banner-4': 'calc(var(--atlas-faixa-ambiente, 0px) + 1rem)',
+      },
       fontFamily: {
         sans: ['DM Sans', 'system-ui', 'sans-serif'],
         heading: ['Fraunces', 'Georgia', 'serif'],
