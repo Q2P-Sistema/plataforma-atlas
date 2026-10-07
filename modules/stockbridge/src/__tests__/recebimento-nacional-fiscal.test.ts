@@ -107,7 +107,7 @@ function item(o: Partial<ItemNfNacional> & { q?: number; u?: string; v?: number 
     bloqueio: conv.ok ? 'sem_correlacao' : conv.motivo === 'unidade_incoerente' ? 'unidade_incoerente' : 'unidade_nao_conversivel',
     bloqueioMensagem: conv.ok ? null : conv.mensagem, jaRecebido: false,
     quantidadeNfJaAtribuidaKg: 0, quantidadeConferidaJaGravadaKg: 0,
-    quantidadeRestanteKg: nfKg, baixadoComoExterno: false, baixaSolicitada: false, conversao: conv,
+    quantidadeRestanteKg: nfKg, baixadoComoExterno: false, baixaSolicitada: false, conversao: conv, sequenciasRecebimento: [],
     ...o,
   };
 }

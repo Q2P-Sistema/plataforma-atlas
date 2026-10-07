@@ -235,6 +235,18 @@ describe('getFilaNacional — flag LIGADA (duas fontes, research D8)', () => {
     await expect(getDetalheNfNacional(CHAVE)).rejects.toBeInstanceOf(FilaNacionalIncompletaError);
   });
 
+  it('coluna da 0055 ausente (42703 — imagem nova antes da migration, ACXEGDP-412): erro VISIVEL tambem com a flag desligada', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = false;
+    poolQuerySpy.mockImplementation((sql: string, params?: unknown[]) => {
+      chamadas.push({ sql, params });
+      if (sql.includes('information_schema')) return Promise.resolve({ rows: [{ ok: true }] });
+      if (sql.includes('WITH nf_unificada')) return Promise.reject(Object.assign(new Error('column m.nf_item_sequencias does not exist'), { code: '42703' }));
+      return Promise.resolve({ rows: [] });
+    });
+    await expect(getFilaNacional()).rejects.toBeInstanceOf(FilaNacionalIncompletaError);
+    await expect(getDetalheNfNacional(CHAVE)).rejects.toBeInstanceOf(FilaNacionalIncompletaError);
+  });
+
   it('outro erro de banco continua degradando a fila para [] (informativa)', async () => {
     poolQuerySpy.mockImplementation((sql: string) => {
       if (sql.includes('information_schema')) return Promise.resolve({ rows: [{ ok: true }] });
@@ -370,5 +382,73 @@ describe('health do espelho de recebimentos (revisao pre-UAT, ROT-6)', () => {
     expect((await idadeEspelhoRecebimentos()).status).toBe('indisponivel');
     config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = false;
     expect(await idadeEspelhoRecebimentos()).toEqual({ idadeMin: null, status: 'desligado' });
+  });
+});
+
+// ACXEGDP-412 (NF 36624, 06/10/2026): com o item pre-associado a um produto no
+// OMIE, a fonte (b) trazia a descricao do PRODUTO e, depois do fiscal, as duas
+// fontes passaram a trazer a do XML — o item recebido voltou inteiro a fila.
+// A movimentacao passa a casar tambem pela sequencia do item no recebimento.
+describe('identidade do item pela sequencia no recebimento (ACXEGDP-412)', () => {
+  it('flag ligada: fonte (b) expoe ri.n_sequencia; fonte (a) liga o item pelo n_id_item e, so na janela entre syncs, pela ordem', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    await getFilaNacional();
+    const { sql } = sqlFila();
+    dump('fila-412.sql', sql);
+    expect(sql).toContain('ri.n_sequencia::int                                  AS n_seq');
+    // (a): ligacao exata pelo id do item (n_id_item do recebimento = n_cod_item da NF)
+    expect(sql).toContain('MAX(ri.n_sequencia) FILTER (WHERE ri.n_id_item = i.n_cod_item)');
+    expect(sql).toContain('WHERE r.c_chave_nfe = h.c_chave_nfe)');
+    // ordem so quando o recebimento existe e ainda nao tem nenhum n_id_item (espelho de recebimentos atrasado)
+    expect(sql).toContain('CASE WHEN COUNT(*) > 0 AND COUNT(*) FILTER (WHERE COALESCE(ri.n_id_item, 0) <> 0) = 0');
+    expect(sql).toContain('i2.n_id_nf = i.n_id_nf AND i2.n_cod_item <= i.n_cod_item');
+  });
+
+  it('flag ligada: "ja recebido" e o restante atribuido casam por descricao OU sequencia', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    await getFilaNacional();
+    const { sql } = sqlFila();
+    const casamento = `(m.nf_item_descricao_normalizada = ${'upper(regexp_replace(btrim(unaccent(u.x_prod)), \'\\s+\', \' \', \'g\'))'} OR u.n_seq = ANY(m.nf_item_sequencias))`;
+    // via 1 (recebido) + nf_atribuida
+    expect(sql.split(casamento).length - 1).toBe(2);
+  });
+
+  it('flag desligada: fonte (a) com n_seq NULL — nenhuma referencia ao espelho de recebimentos', async () => {
+    await getFilaNacional();
+    const { sql } = sqlFila();
+    expect(sql).toContain('NULL::int  AS n_seq');
+    expect(sql).not.toContain('tbl_recebimentoNFe');
+  });
+
+  it('detalhe: somas do item casam pela sequencia tambem e o item carrega as sequencias das linhas', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    detalheRows = [
+      linhaDetalhe({ n_cod_item: '1', n_seq: 1, x_prod: 'SUCATA DE PP', desc_norm: 'SUCATA DE PP', q_com: 3000 }),
+      linhaDetalhe({ n_cod_item: '3', n_seq: '3', x_prod: 'SUCATA DE PP', desc_norm: 'SUCATA DE PP', q_com: 3128 }),
+      linhaDetalhe({ n_cod_item: '2', n_seq: null, x_prod: 'SUCATA PE', desc_norm: 'SUCATA PE' }),
+    ];
+    const d = await getDetalheNfNacional(CHAVE);
+    const { sql } = sqlDetalhe();
+    dump('detalhe-412.sql', sql);
+    expect(sql).toContain('u.n_seq                                          AS n_seq');
+    // nf_ja_atribuida_kg + conferida_ja_gravada_kg + via 1
+    expect(sql.split('u.n_seq = ANY(m.nf_item_sequencias)').length - 1).toBe(3);
+    expect(d.itens.find((i) => i.descricaoNormalizada === 'SUCATA DE PP')!.sequenciasRecebimento).toEqual([1, 3]);
+    expect(d.itens.find((i) => i.descricaoNormalizada === 'SUCATA PE')!.sequenciasRecebimento).toEqual([]);
+  });
+
+  it('detalhe: NF 36624 depois do fiscal — descricao nova, mas a sequencia casa: item recebido e sem restante', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    // O banco ja devolve recebido/somas pela sequencia; aqui o que importa e o item NAO voltar pendente.
+    detalheRows = [
+      linhaDetalhe({
+        fiscal_pendente: false, n_seq: 1, q_com: 6128, valor_item: 49024,
+        x_prod: 'SUCATA DE PLASTICO   -   POS CONSUMO', desc_norm: 'SUCATA DE PLASTICO - POS CONSUMO',
+        recebido: true, nf_ja_atribuida_kg: 6128, conferida_ja_gravada_kg: 6078,
+      }),
+    ];
+    const d = await getDetalheNfNacional(CHAVE);
+    expect(d.itens[0]).toMatchObject({ jaRecebido: true, quantidadeRestanteKg: 0, sequenciasRecebimento: [1] });
+    expect(d.dispensavel).toBe(false);
   });
 });

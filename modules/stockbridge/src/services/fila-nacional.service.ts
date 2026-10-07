@@ -3,6 +3,7 @@ import {
   nfValidaSql,
   colunaCanceladaExiste,
   itemNacionalRecebidoSql,
+  movimentacaoDoItemNacionalSql,
   normalizarDescricaoSql,
 } from './fiscal-recebida-sql.js';
 import { converterItemNfParaKg, type ConversaoNf } from './unidade-nf.js';
@@ -45,6 +46,9 @@ const logger = createLogger('stockbridge:fila-nacional');
  *    constante — PLASTFIX e a contraparte ACXE sao seed da migration 0052.
  *  - D18/D20: linhas de mesma descricao na mesma NF sao AGREGADAS (somadas, nunca
  *    descartadas — sao lotes distintos); a pendencia e por descricao normalizada.
+ *  - ACXEGDP-412: a movimentacao do item tambem casa pela SEQUENCIA do item no
+ *    recebimento de NF-e (`n_seq`), porque a descricao da fonte (b) muda depois
+ *    do fiscal quando o OMIE pre-associa o item a um produto (NF 36624).
  *  - D3: o espelho nao guarda total de cabecalho — valor da NF = soma dos itens.
  *  - D26 (ACXEGDP-328, 24/09/2026): o valor do item e `i.v_prod`, NAO `i.v_tot_item`.
  *    O espelho grava `v_prod` = valor do item COM tributos (o `<vItem>` do XML) e
@@ -111,12 +115,16 @@ export class FilaNacionalIncompletaError extends Error {
   }
 }
 
-/** Erro do Postgres "relation does not exist" (42P01), percorrendo `cause`. */
+/**
+ * Erro do Postgres por objeto de schema ausente, percorrendo `cause`: tabela
+ * (42P01) ou coluna (42703 — ex.: imagem nova antes da migration 0055, ACXEGDP-412).
+ * E erro de AMBIENTE e precisa ser visivel, nunca fila vazia (MIG-3).
+ */
 export function ehTabelaAusente(err: unknown): boolean {
   let e: unknown = err;
   for (let i = 0; i < 4 && e && typeof e === 'object'; i++) {
     const o = e as { code?: unknown; cause?: unknown };
-    if (o.code === '42P01') return true;
+    if (o.code === '42P01' || o.code === '42703') return true;
     e = o.cause;
   }
   return false;
@@ -224,14 +232,45 @@ export interface FilaNacionalItem {
 // descricao, conversao de unidade, checagem "ja recebida", sugestao de
 // correlacao e UI continuem iguais (plan.md, Structure Decision):
 //   c_chave_nfe, n_nf, dest_razao, dest_cnpj_cpf, d_emi, n_id_receb,
-//   fiscal_pendente, cancelada, deletada, n_cod_item, x_prod, cfop, q_com, u_com, valor_item
+//   fiscal_pendente, cancelada, deletada, n_cod_item, x_prod, cfop, q_com, u_com, valor_item,
+//   n_seq (sequencia do item no recebimento de NF-e — identidade estavel, ACXEGDP-412)
 
 const LEDGER_FISCAL_CONCLUIDO_SQL = (chaveExpr: string): string =>
   `EXISTS (SELECT 1 FROM stockbridge.recebimento_fiscal rf
             WHERE rf.nf_chave_acesso = ${chaveExpr} AND rf.status IN ('concluido', 'ja_concluido'))`;
 
-/** Fonte (a): espelho de NF — fiscal ja concluido no OMIE. `nfValida` so se aplica a fila (o detalhe le as flags). */
-function fonteNfSql(canceladaExiste: boolean, nfValida: string): string {
+/**
+ * Sequencia, no recebimento de NF-e, do item `i` da NF `h` (fonte a) — ACXEGDP-412.
+ *
+ * A fonte (b) traz `n_sequencia` direto. Na (a), o item so se liga ao recebimento
+ * depois que o fiscal e concluido: e ai que o OMIE cria a NF, e o `n_id_item` do
+ * recebimento passa a ser o `n_cod_item` da NF (5.072 de 5.072 itens em PROD,
+ * 07/10/2026; antes da conclusao ele e 0). Ligacao exata por esse id.
+ *
+ * Janela: o espelho de NF (:08/:38) pode trazer a NF antes de o de recebimentos
+ * (:23/:53) refletir a conclusao — o recebimento ainda esta la, mas sem nenhum
+ * `n_id_item`. So nesse caso vale a ORDEM do item na NF (posicao por
+ * `n_cod_item`), que bateu com a sequencia em todos os itens desde o go-live (as
+ * 9 excecoes medidas sao devolucoes de 2023). Recebimento ausente do espelho =
+ * NULL (casa so por descricao, como na 015).
+ */
+function sequenciaItemNfSql(h: string, i: string): string {
+  return `(SELECT COALESCE(
+                  MAX(ri.n_sequencia) FILTER (WHERE ri.n_id_item = ${i}.n_cod_item),
+                  CASE WHEN COUNT(*) > 0 AND COUNT(*) FILTER (WHERE COALESCE(ri.n_id_item, 0) <> 0) = 0
+                       THEN (SELECT COUNT(*)::int FROM public."tbl_nf_itens_Q2P" i2
+                              WHERE i2.n_id_nf = ${i}.n_id_nf AND i2.n_cod_item <= ${i}.n_cod_item)
+                  END)
+             FROM public."tbl_recebimentoNFe_Q2P" r
+             JOIN public."tbl_recebimentoNFe_itens_Q2P" ri ON ri.n_id_receb = r.n_id_receb
+            WHERE r.c_chave_nfe = ${h}.c_chave_nfe)`;
+}
+
+/**
+ * Fonte (a): espelho de NF — fiscal ja concluido no OMIE. `nfValida` so se aplica a fila (o detalhe le as flags).
+ * Com a flag desligada nao toca no espelho de recebimentos (pode nem existir): `n_seq` NULL.
+ */
+function fonteNfSql(flag: boolean, canceladaExiste: boolean, nfValida: string): string {
   return `
         SELECT h.c_chave_nfe, h.n_nf, h.dest_razao, h.dest_cnpj_cpf, h.d_emi::date AS d_emi,
                h.n_id_receb::bigint                                 AS n_id_receb,
@@ -240,7 +279,8 @@ function fonteNfSql(canceladaExiste: boolean, nfValida: string): string {
                COALESCE(h.deletada, false)                          AS deletada,
                i.n_cod_item::bigint                                 AS n_cod_item,  -- ordem NUMERICA dos itens (FILA-6)
                i.x_prod, i.cfop, i.q_com, i.u_com,
-               i.v_prod                                             AS valor_item  -- D26: NAO v_tot_item (IPI em dobro)
+               i.v_prod                                             AS valor_item,  -- D26: NAO v_tot_item (IPI em dobro)
+               ${flag ? sequenciaItemNfSql('h', 'i') : 'NULL::int'}  AS n_seq
         FROM public."tbl_nf_header_Q2P" h
         JOIN public."tbl_nf_itens_Q2P" i ON i.n_id_nf = h.n_id_nf
         WHERE h.tp_nf = 0
@@ -273,7 +313,8 @@ function fonteRecebSql(): string {
                ri.c_cfop_entrada                                    AS cfop,       -- CFOP de ENTRADA (o c_cfop e o do fornecedor)
                ri.n_qtde_nfe                                        AS q_com,
                ri.c_unidade_nfe                                     AS u_com,
-               ri.v_total_item                                      AS valor_item  -- = v_prod (research D7 da 016)
+               ri.v_total_item                                      AS valor_item,  -- = v_prod (research D7 da 016)
+               ri.n_sequencia::int                                  AS n_seq
         FROM public."tbl_recebimentoNFe_Q2P" r
         JOIN public."tbl_recebimentoNFe_itens_Q2P" ri ON ri.n_id_receb = r.n_id_receb
         WHERE r.d_emissao >= $2::date
@@ -293,10 +334,20 @@ function fonteRecebSql(): string {
  * sumir; paridade conferida no UAT na revisao pre-UAT.
  */
 function nfUnificadaSql(flag: boolean, canceladaExiste: boolean, nfValida: string): string {
-  const a = fonteNfSql(canceladaExiste, nfValida);
+  const a = fonteNfSql(flag, canceladaExiste, nfValida);
   return flag ? `${a}
         UNION ALL
         ${fonteRecebSql()}` : a;
+}
+
+/** Movimentacao `m` (caminho novo) do item da linha `u` — por descricao ou pela sequencia (ACXEGDP-412). */
+function movimentacaoDoItemSql(m: string, alias = 'u'): string {
+  return movimentacaoDoItemNacionalSql({
+    alias: m,
+    chaveExpr: `${alias}.c_chave_nfe`,
+    descricaoNormalizadaExpr: normalizarDescricaoSql(`${alias}.x_prod`),
+    sequenciaExpr: `${alias}.n_seq`,
+  });
 }
 
 /** Fragmento SQL "item ja recebido" para a linha `u` da fonte unificada. */
@@ -306,6 +357,7 @@ function recebidoSql(alias = 'u'): string {
     descricaoNormalizadaExpr: normalizarDescricaoSql(`${alias}.x_prod`),
     nfNumeroExpr: `${alias}.n_nf`,
     dataEmissaoExpr: `${alias}.d_emi`,
+    sequenciaExpr: `${alias}.n_seq`,
   });
 }
 
@@ -333,8 +385,7 @@ const fatorKgSql = (alias = 'u'): string =>
 function nfJaAtribuidaSql(alias = 'u'): string {
   return `(SELECT COALESCE(SUM(m.quantidade_nf_kg), 0) FROM stockbridge.movimentacao m
             WHERE m.ativo = true AND m.subtipo = 'compra_nacional'
-              AND m.nf_chave_acesso = ${alias}.c_chave_nfe
-              AND m.nf_item_descricao_normalizada = ${normalizarDescricaoSql(`${alias}.x_prod`)})`;
+              AND ${movimentacaoDoItemSql('m', alias)})`;
 }
 
 /** Existe solicitacao de baixa externa PENDENTE para a linha `u`. */
@@ -525,6 +576,12 @@ export interface ItemNfNacional {
   baixaSolicitada: boolean;
   /** detalhe da conversao (para quem precisa dos dois R$/kg) */
   conversao: ConversaoNf;
+  /**
+   * Sequencias, no recebimento de NF-e do OMIE, das linhas agregadas neste item
+   * (ACXEGDP-412). Gravadas na movimentacao para o item continuar reconhecido como
+   * recebido quando a descricao muda depois do fiscal. Vazio sem recebimento no espelho.
+   */
+  sequenciasRecebimento: number[];
 }
 
 export interface DetalheNfNacional {
@@ -588,6 +645,8 @@ interface LinhaRow {
   baixa_solicitada: boolean;
   nf_ja_atribuida_kg: number;
   conferida_ja_gravada_kg: number;
+  /** sequencia do item no recebimento de NF-e (ACXEGDP-412); null sem recebimento no espelho ou com a flag desligada */
+  n_seq: number | string | null;
 }
 
 /**
@@ -641,12 +700,11 @@ export async function getDetalheNfNacional(chaveAcesso: string): Promise<Detalhe
       ${baixaSolicitadaSql('u')}                       AS baixa_solicitada,
       (SELECT COALESCE(SUM(m.quantidade_nf_kg), 0) FROM stockbridge.movimentacao m
         WHERE m.ativo = true AND m.subtipo = 'compra_nacional'
-          AND m.nf_chave_acesso = u.c_chave_nfe
-          AND m.nf_item_descricao_normalizada = ${descNorm})::float8 AS nf_ja_atribuida_kg,
+          AND ${movimentacaoDoItemSql('m', 'u')})::float8 AS nf_ja_atribuida_kg,
       (SELECT COALESCE(SUM(m.quantidade_kg), 0) FROM stockbridge.movimentacao m
         WHERE m.ativo = true AND m.subtipo = 'compra_nacional'
-          AND m.nf_chave_acesso = u.c_chave_nfe
-          AND m.nf_item_descricao_normalizada = ${descNorm})::float8 AS conferida_ja_gravada_kg
+          AND ${movimentacaoDoItemSql('m', 'u')})::float8 AS conferida_ja_gravada_kg,
+      u.n_seq                                          AS n_seq
     FROM nf_unificada u
     WHERE u.c_chave_nfe = $1
     ORDER BY u.n_cod_item
@@ -779,6 +837,9 @@ export async function getDetalheNfNacional(chaveAcesso: string): Promise<Detalhe
       baixadoComoExterno: linhas.some((l) => l.baixado_externo),
       baixaSolicitada: linhas.some((l) => l.baixa_solicitada),
       conversao,
+      sequenciasRecebimento: Array.from(
+        new Set(linhas.map((l) => (l.n_seq == null || l.n_seq === '' ? NaN : Number(l.n_seq))).filter((n) => Number.isInteger(n) && n > 0)),
+      ).sort((x, y) => x - y),
     });
   }
 
