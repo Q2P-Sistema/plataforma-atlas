@@ -55,8 +55,8 @@ TypeScript 5.5+ (strict mode, ES2022, bundler resolution) / Node.js 20 LTS: Foll
 
 ## StockBridge — status operacional (007)
 
-- **Modulo funcionalmente completo** (8/8 user stories + movimentacoes). Ainda nao esta em producao — aguarda **validacao paralela** de 2 semanas com o legado PHP (Principio V).
-- **Feature flag**: `MODULE_STOCKBRIDGE_ENABLED`. Em prod deve subir em `false` ate paridade confirmada.
+- **Em produção desde 04/10/2026** em `https://atlas.q2p.com.br` (GMUD ACXEGDP-321, encerrada com PIR em 06/10/2026). O UAT rodou como produção de junho a outubro de 2026 — essa foi a validação paralela com o legado PHP (Princípio V), que está desligado — e o estado foi transplantado para PROD na janela. Runbook e lições: `docs/prod-golive-runbook.md`. A versão em PROD é a `ATLAS_VERSION` da stack `atlas` no Portainer (tag fixa, nunca `:latest`).
+- **Feature flag**: `MODULE_STOCKBRIDGE_ENABLED` — `true` em PROD desde o go-live.
 - **OMIE em modo real exige**: `OMIE_ACXE_KEY/SECRET`, `OMIE_Q2P_KEY/SECRET`. Em dev, `OMIE_MODE=mock` retorna fixtures sinteticas (nao bate na API).
 - **Saidas automaticas via n8n**: requer `ATLAS_INTEGRATION_KEY` (shared secret com o workflow) + workflow importado de `workflows/stockbridge-saida-automatica.json`. Ver [docs/n8n-workflow-import.md](docs/n8n-workflow-import.md) para passo a passo de importação e testes.
 - **Excecao documentada ao Principio II**: escrita na API OMIE (`estoque/ajuste/`, `produtos/pedidocompra/`) e leitura de NF individual (`produtos/nfconsultar/`). Justificativa em `specs/007-stockbridge-module/research.md` secao 2 — unica alternativa viavel porque OMIE nao tem webhook de saida.
