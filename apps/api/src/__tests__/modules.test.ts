@@ -21,6 +21,8 @@ let mockConfig = {
 vi.mock('@atlas/core', () => ({
   loadConfig: () => mockConfig,
   getConfig: () => mockConfig,
+  getAmbiente: () => 'dev',
+  getModoEmail: () => 'log',
   getPool: () => ({
     query: vi.fn().mockResolvedValue({ rows: [{ '?column?': 1 }] }),
   }),

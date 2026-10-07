@@ -8,7 +8,7 @@ import { ThemeToggle } from '../components/ThemeToggle.js';
  */
 export function AuthPageShell({ children }: { children: ReactNode }) {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-atlas-bg p-4">
+    <div className="relative min-h-screen-app flex items-center justify-center bg-atlas-bg p-4">
       <div className="absolute top-4 right-4">
         <ThemeToggle />
       </div>

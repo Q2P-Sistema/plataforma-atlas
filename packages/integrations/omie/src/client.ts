@@ -32,20 +32,83 @@ export class OmieApiError extends Error {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
-function getCredentials(cnpj: OmieCnpj): OmieCredentials {
-  const apiUrl = process.env.OMIE_API_URL ?? 'https://app.omie.com.br/api/v1/';
-  if (cnpj === 'acxe') {
-    const appKey = process.env.OMIE_ACXE_KEY;
-    const appSecret = process.env.OMIE_ACXE_SECRET;
-    if (!appKey || !appSecret) {
-      throw new Error('OMIE_ACXE_KEY/SECRET nao configuradas. Use OMIE_MODE=mock em dev sem credenciais.');
-    }
-    return { apiUrl, appKey, appSecret };
+/**
+ * Modo do cliente OMIE (OMIE_MODE):
+ *  - real:    lê e escreve no ERP. Produção.
+ *  - leitura: lê no ERP real; as escritas são simuladas e não saem do processo
+ *             (ACXEGDP-405 — UAT standalone, que tem chaves de produção).
+ *  - mock:    nada sai do processo; fixtures sintéticas (dev sem credenciais).
+ */
+export type OmieMode = 'real' | 'leitura' | 'mock';
+
+const OMIE_MODES: readonly OmieMode[] = ['real', 'leitura', 'mock'];
+
+/**
+ * Únicos métodos que saem do processo fora do modo real. Lista de permissão (e
+ * não de bloqueio) de propósito: uma escrita nova nasce bloqueada no UAT.
+ */
+const METODOS_LEITURA = new Set(['ConsultarNF', 'ListarAjusteEstoque', 'ConsultarPedCompra', 'ConsultarRecebimento']);
+
+/** Escrita que chegou ao transporte HTTP fora do modo real — bug de quem chamou. */
+export class OmieEscritaBloqueadaError extends Error {
+  constructor(
+    public readonly modo: OmieMode,
+    public readonly method: string,
+  ) {
+    super(`OMIE_MODE=${modo}: ${method} não é leitura e não sai deste ambiente.`);
+    this.name = 'OmieEscritaBloqueadaError';
   }
-  const appKey = process.env.OMIE_Q2P_KEY;
-  const appSecret = process.env.OMIE_Q2P_SECRET;
+}
+
+export function getOmieMode(): OmieMode {
+  const bruto = (process.env.OMIE_MODE ?? '').trim().toLowerCase();
+  const modo = (bruto === '' ? 'real' : bruto) as OmieMode;
+  // Valor desconhecido era tratado como real — um erro de digitação em
+  // "leitura" escreveria no ERP. Fail-fast.
+  if (!OMIE_MODES.includes(modo)) {
+    throw new Error(`OMIE_MODE inválido: "${process.env.OMIE_MODE}". Use real, leitura ou mock.`);
+  }
+  const uat = process.env.ATLAS_ENV === 'uat';
+  if (uat && modo === 'real') {
+    throw new Error(
+      'ATLAS_ENV=uat com OMIE_MODE=real — configuração proibida: o UAT tem chaves de produção e ' +
+        'escreveria no OMIE real. Use OMIE_MODE=leitura.',
+    );
+  }
+  // STK-15 (ACXEGDP-289): mock em producao gravaria recebimentos/saidas como
+  // 'concluida' com ids MOCK-* sem tocar o ERP — silenciosamente. Um copy-paste
+  // de .env (que traz OMIE_MODE=mock como default de dev) bastaria. Fail-fast.
+  // ACXEGDP-405: o UAT (ATLAS_ENV=uat) é a única exceção.
+  if (modo !== 'real' && process.env.NODE_ENV === 'production' && !uat) {
+    throw new Error(
+      `OMIE_MODE=${modo} com NODE_ENV=production — configuração proibida: as escritas OMIE seriam ` +
+        'simuladas com ids MOCK-* sem tocar o ERP. Configure OMIE_MODE=real (com as credenciais ' +
+        'OMIE_*_KEY/SECRET) ou, no UAT, ATLAS_ENV=uat.',
+    );
+  }
+  return modo;
+}
+
+export function isMockMode(): boolean {
+  return getOmieMode() === 'mock';
+}
+
+/** Rastro de toda escrita simulada no modo leitura — é o que o UAT "gravou". */
+export function logEscritaSimulada(cnpj: OmieCnpj, method: string, ref: Record<string, unknown>): void {
+  logger.info({ cnpj, method, ...ref }, `[OMIE SIMULADO] ${method} não enviado ao ERP (OMIE_MODE=leitura)`);
+}
+
+function getCredentials(cnpj: OmieCnpj, modo: OmieMode): OmieCredentials {
+  const apiUrl = process.env.OMIE_API_URL ?? 'https://app.omie.com.br/api/v1/';
+  // ACXEGDP-405: no modo leitura as chaves chegam como OMIE_LEITURA_*. Uma imagem
+  // anterior a este modo trata OMIE_MODE=leitura como real; sem OMIE_ACXE_KEY e
+  // OMIE_Q2P_KEY no container, ela não consegue chamar o OMIE — nem para escrever.
+  const prefixo = modo === 'leitura' ? 'OMIE_LEITURA_' : 'OMIE_';
+  const empresa = cnpj === 'acxe' ? 'ACXE' : 'Q2P';
+  const appKey = process.env[`${prefixo}${empresa}_KEY`];
+  const appSecret = process.env[`${prefixo}${empresa}_SECRET`];
   if (!appKey || !appSecret) {
-    throw new Error('OMIE_Q2P_KEY/SECRET nao configuradas. Use OMIE_MODE=mock em dev sem credenciais.');
+    throw new Error(`${prefixo}${empresa}_KEY/SECRET nao configuradas. Use OMIE_MODE=mock em dev sem credenciais.`);
   }
   return { apiUrl, appKey, appSecret };
 }
@@ -54,7 +117,11 @@ async function executarChamadaOmie<TResponse = unknown>(
   cnpj: OmieCnpj,
   endpoint: OmieEndpoint,
 ): Promise<TResponse> {
-  const { apiUrl, appKey, appSecret } = getCredentials(cnpj);
+  const modo = getOmieMode();
+  if (modo !== 'real' && !METODOS_LEITURA.has(endpoint.method)) {
+    throw new OmieEscritaBloqueadaError(modo, endpoint.method);
+  }
+  const { apiUrl, appKey, appSecret } = getCredentials(cnpj, modo);
   const url = apiUrl + endpoint.endpoint;
   const payload = {
     call: endpoint.method,
@@ -218,19 +285,4 @@ export async function callOmie<TResponse = unknown>(
     }
   }
   throw ultimoErro;
-}
-
-export function isMockMode(): boolean {
-  const mock = (process.env.OMIE_MODE ?? 'real') === 'mock';
-  // STK-15 (ACXEGDP-289): mock em producao gravaria recebimentos/saidas como
-  // 'concluida' com ids MOCK-* sem tocar o ERP — silenciosamente. Um copy-paste
-  // de .env (que traz OMIE_MODE=mock como default de dev) bastaria. Fail-fast.
-  if (mock && process.env.NODE_ENV === 'production') {
-    throw new Error(
-      'OMIE_MODE=mock com NODE_ENV=production — configuração proibida: as escritas OMIE seriam ' +
-        'simuladas com ids MOCK-* sem tocar o ERP. Configure OMIE_MODE=real (com as credenciais ' +
-        'OMIE_*_KEY/SECRET) ou rode fora de produção.',
-    );
-  }
-  return mock;
 }

@@ -26,7 +26,7 @@ export function ShellLayout({
   const [collapsed, setCollapsed] = useState(false);
 
   return (
-    <div className="min-h-screen flex bg-atlas-bg">
+    <div className="min-h-screen-app flex bg-atlas-bg">
       <Sidebar
         modules={modules}
         currentPath={currentPath}

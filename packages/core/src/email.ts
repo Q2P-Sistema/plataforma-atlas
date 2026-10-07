@@ -1,9 +1,9 @@
-import { getConfig } from './config.js';
+import { getAmbiente, getConfig, type Ambiente, type Env } from './config.js';
 import { createLogger } from './logger.js';
 
 const logger = createLogger('email');
 
-interface EmailOptions {
+export interface EmailOptions {
   to: string;
   cc?: string | string[];
   subject: string;
@@ -11,8 +11,59 @@ interface EmailOptions {
   text?: string;
 }
 
-export async function sendEmail(options: EmailOptions): Promise<void> {
+/**
+ * Para onde vão os e-mails desta instância — exposto no health/ambiente para
+ * conferir o deploy (ACXEGDP-405).
+ */
+export type ModoEmail = 'normal' | 'log' | 'desviado' | 'suprimido';
+
+export function getModoEmail(config: Env = getConfig()): ModoEmail {
+  if (!config.EMAIL_DESVIO_PARA && getAmbiente(config) === 'uat') return 'suprimido';
+  if (!chaveSendgrid(config) || !config.SENDGRID_FROM_EMAIL) return 'log';
+  return config.EMAIL_DESVIO_PARA ? 'desviado' : 'normal';
+}
+
+function chaveSendgrid(config: Env): string | undefined {
+  return config.EMAIL_DESVIO_PARA
+    ? (config.SENDGRID_API_KEY_DESVIO ?? config.SENDGRID_API_KEY)
+    : config.SENDGRID_API_KEY;
+}
+
+/**
+ * Reescreve o e-mail para a caixa de desvio: assunto com o ambiente e uma faixa
+ * no topo dizendo para quem ele iria. O CC original não é enviado.
+ */
+export function desviarEmail(options: EmailOptions, para: string, ambiente: Ambiente): EmailOptions {
+  const cc = options.cc ? (Array.isArray(options.cc) ? options.cc : [options.cc]) : [];
+  const rotulo = ambiente.toUpperCase();
+  const aviso = `E-mail de teste (${rotulo}). Iria para ${options.to}${cc.length > 0 ? `, com cópia para ${cc.join(', ')}` : ''}.`;
+  const avisoHtml = `<div style="background:#fef3c7;border-bottom:1px solid #f59e0b;color:#78350f;font:13px Arial,Helvetica,sans-serif;padding:10px 16px;">${escapeHtml(aviso)}</div>`;
+  const html = /<body[^>]*>/i.test(options.html)
+    ? options.html.replace(/<body[^>]*>/i, (tag) => tag + avisoHtml)
+    : avisoHtml + options.html;
+  return {
+    to: para,
+    subject: `[${rotulo}] ${options.subject}`,
+    html,
+    text: options.text !== undefined ? `${aviso}\n\n${options.text}` : undefined,
+  };
+}
+
+export async function sendEmail(original: EmailOptions): Promise<void> {
   const config = getConfig();
+  const modo = getModoEmail(config);
+
+  // ACXEGDP-405: fora de produção nenhum e-mail chega a usuário real.
+  if (modo === 'suprimido') {
+    logger.info(
+      { to: original.to, cc: original.cc, subject: original.subject },
+      '[UAT] E-mail não enviado — defina EMAIL_DESVIO_PARA para recebê-lo numa caixa de testes',
+    );
+    return;
+  }
+  const options = config.EMAIL_DESVIO_PARA
+    ? desviarEmail(original, config.EMAIL_DESVIO_PARA, getAmbiente(config))
+    : original;
 
   // SendGrid retorna 400 se o mesmo endereco aparece em `to` e `cc` da mesma
   // personalizacao. Acontece quando STOCKBRIDGE_ADMIN_CC_EMAIL e o mesmo do
@@ -23,7 +74,8 @@ export async function sendEmail(options: EmailOptions): Promise<void> {
   const ccFiltered = ccList.filter((c) => c.toLowerCase() !== toLower);
   const cc = ccFiltered.length > 0 ? ccFiltered : undefined;
 
-  if (!config.SENDGRID_API_KEY || !config.SENDGRID_FROM_EMAIL) {
+  const apiKey = chaveSendgrid(config);
+  if (!apiKey || !config.SENDGRID_FROM_EMAIL) {
     // Dev fallback: log instead of sending
     logger.info(
       { to: options.to, cc, subject: options.subject },
@@ -34,7 +86,7 @@ export async function sendEmail(options: EmailOptions): Promise<void> {
   }
 
   const sgMail = await import('@sendgrid/mail');
-  sgMail.default.setApiKey(config.SENDGRID_API_KEY);
+  sgMail.default.setApiKey(apiKey);
 
   await sgMail.default.send({
     to: options.to,

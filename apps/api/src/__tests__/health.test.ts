@@ -24,6 +24,8 @@ vi.mock('@atlas/core', () => ({
     SESSION_SECRET: 'test-secret-1234567890',
     API_PORT: 3005,
     NODE_ENV: 'test',
+    ATLAS_ENV: 'uat',
+    OMIE_MODE: 'leitura',
     N8N_HEALTH_URL: undefined,
     MODULE_HEDGE_ENABLED: false,
     MODULE_STOCKBRIDGE_ENABLED: false,
@@ -33,6 +35,8 @@ vi.mock('@atlas/core', () => ({
     MODULE_COMEXFLOW_ENABLED: false,
     MODULE_FORECAST_ENABLED: false,
   }),
+  getAmbiente: (c: { ATLAS_ENV?: string }) => c.ATLAS_ENV ?? 'dev',
+  getModoEmail: () => 'suprimido',
   getPool: () => ({
     query: vi.fn().mockResolvedValue({ rows: [{ '?column?': 1 }] }),
   }),
@@ -74,6 +78,19 @@ describe('GET /api/v1/health', () => {
     expect(res.body.data.modules.hedge).toEqual({ enabled: false });
     expect(res.body.data.modules.stockbridge).toEqual({ enabled: false });
     expect(res.body.data.modules.forecast).toEqual({ enabled: false });
+  });
+
+  it('informa ambiente, modo OMIE e destino dos e-mails (ACXEGDP-405)', async () => {
+    const res = await request(app).get('/api/v1/health');
+
+    expect(res.body.data.ambiente).toEqual({ nome: 'uat', omie_modo: 'leitura', email: 'suprimido' });
+  });
+
+  it('GET /api/v1/ambiente devolve o mesmo resumo, sem sessão', async () => {
+    const res = await request(app).get('/api/v1/ambiente');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ data: { nome: 'uat', omie_modo: 'leitura', email: 'suprimido' }, error: null });
   });
 
   it('includes uptime_seconds as number', async () => {

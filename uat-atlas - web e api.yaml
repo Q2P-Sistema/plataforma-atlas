@@ -8,6 +8,17 @@ services:
       NODE_ENV: production
       API_PORT: "3005"
 
+      # ── Ambiente de testes standalone (ACXEGDP-405) ──────────
+      # Valores LITERAIS de propósito (sem ${...}): o env do Portainer não consegue
+      # sobrescrevê-los. ATLAS_ENV=uat + OMIE_MODE=leitura: lê o OMIE real e SIMULA
+      # toda escrita (ajuste, baixa de pedido, recebimento fiscal) — nada chega ao
+      # ERP. A API se recusa a subir com ATLAS_ENV=uat e OMIE_MODE=real.
+      # Conferir após cada deploy: GET /api/v1/health → data.ambiente
+      #   { nome: "uat", omie_modo: "leitura", email: "desviado" | "suprimido" }
+      # Sem o bloco `ambiente` no health = imagem anterior à 405 → derrubar a stack.
+      ATLAS_ENV: uat
+      OMIE_MODE: leitura
+
       # App é Brasil-only: roda o container em BRT para a lógica de datas locais
       # (ex: "Data do Movimento" do ajuste OMIE, via getDate/getMonth). Sem isto o
       # container fica em UTC e, após ~21h BRT, manda a data de amanhã -> OMIE rejeita.
@@ -27,34 +38,47 @@ services:
       APP_URL: ${APP_URL:-https://uat-atlas.q2p.com.br}
 
       # ── E-mail transacional (SendGrid) ───────
-      # Sem chave, e-mails caem em log (console) em vez de enviar de verdade.
-      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      # Com ATLAS_ENV=uat nenhum e-mail chega a usuário real: com EMAIL_DESVIO_PARA
+      # todos vão para essa caixa (assunto "[UAT] ..." e destinatários originais no
+      # topo); sem ela, só vão para o log da API. A chave entra SÓ como
+      # SENDGRID_API_KEY_DESVIO (o env do Portainer segue com SENDGRID_API_KEY): uma
+      # imagem anterior ao desvio fica sem chave e também não manda e-mail.
+      SENDGRID_API_KEY_DESVIO: ${SENDGRID_API_KEY}
       SENDGRID_FROM_EMAIL: ${SENDGRID_FROM_EMAIL}
+      EMAIL_DESVIO_PARA: ${EMAIL_DESVIO_PARA:-}
 
-      # ── StockBridge — integração OMIE (dual-CNPJ) ───
-      # ATENÇÃO: OMIE_MODE=real GRAVA de verdade no ERP OMIE (ACXE e Q2P).
-      # Recomendado subir como 'mock' para o smoke test e só então flipar
-      # para 'real' no Portainer quando estiver pronto para o ensaio fiel.
-      OMIE_MODE: ${OMIE_MODE:-mock}
+      # ── StockBridge — integração OMIE (dual-CNPJ), só leitura ───
+      # As chaves entram no container como OMIE_LEITURA_* — o único nome que o modo
+      # leitura usa. OMIE_ACXE_KEY/OMIE_Q2P_KEY NÃO são repassadas: uma imagem antiga
+      # (que trata "leitura" como "real") fica sem chave e não consegue chamar o OMIE.
+      # No env do Portainer as variáveis continuam com o nome de sempre.
       OMIE_API_URL: ${OMIE_API_URL:-https://app.omie.com.br/api/v1/}
-      OMIE_ACXE_KEY: ${OMIE_ACXE_KEY}
-      OMIE_ACXE_SECRET: ${OMIE_ACXE_SECRET}
-      OMIE_Q2P_KEY: ${OMIE_Q2P_KEY}
-      OMIE_Q2P_SECRET: ${OMIE_Q2P_SECRET}
+      OMIE_LEITURA_ACXE_KEY: ${OMIE_ACXE_KEY}
+      OMIE_LEITURA_ACXE_SECRET: ${OMIE_ACXE_SECRET}
+      OMIE_LEITURA_Q2P_KEY: ${OMIE_Q2P_KEY}
+      OMIE_LEITURA_Q2P_SECRET: ${OMIE_Q2P_SECRET}
 
-      # CC do admin em e-mails operacionais do StockBridge (monitorar por cópia).
-      STOCKBRIDGE_ADMIN_CC_EMAIL: ${STOCKBRIDGE_ADMIN_CC_EMAIL}
-      # Data de corte (YYYY-MM-DD) p/ gap fiscal/físico no Cockpit. Preencher no .env
-      # com valor real (vazio só é tolerado depois do rebuild com o config.ts novo).
-      STOCKBRIDGE_FISCAL_CUTOFF_DATE: ${STOCKBRIDGE_FISCAL_CUTOFF_DATE}
+      # CC do admin em e-mails operacionais do StockBridge (desviado como os demais).
+      STOCKBRIDGE_ADMIN_CC_EMAIL: ${STOCKBRIDGE_ADMIN_CC_EMAIL:-}
+      # Data de corte (YYYY-MM-DD) p/ gap fiscal/físico no Cockpit. Sem set: 180d atrás.
+      STOCKBRIDGE_FISCAL_CUTOFF_DATE: ${STOCKBRIDGE_FISCAL_CUTOFF_DATE:-}
+      # Feature 015: corte fixo da fila nacional (igual ao de PROD). Sem ela a fila dá 503.
+      STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE: ${STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE:-2026-09-11}
+      STOCKBRIDGE_RECEBIMENTO_EXTERNO_ENABLED: ${STOCKBRIDGE_RECEBIMENTO_EXTERNO_ENABLED:-true}
+      # Com OMIE_MODE=leitura as escritas destes fluxos são simuladas — ficam ligados
+      # para que os testes percorram o fluxo inteiro, como em produção.
+      STOCKBRIDGE_BAIXA_PEDIDO_Q2P_ENABLED: ${STOCKBRIDGE_BAIXA_PEDIDO_Q2P_ENABLED:-true}
+      STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED: ${STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED:-true}
+      STOCKBRIDGE_FISCAL_EMAILS: ${STOCKBRIDGE_FISCAL_EMAILS:-}
+      # O espelho de recebimentos de NF-e chega pela cópia PROD→UAT, não pelo n8n.
+      STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN: ${STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN:-1440}
+      STOCKBRIDGE_COMEX_EMAIL: ${STOCKBRIDGE_COMEX_EMAIL:-}
+      STOCKBRIDGE_OPS_EMAIL: ${STOCKBRIDGE_OPS_EMAIL:-}
 
-      # Shared secret n8n ↔ Atlas (endpoint de saídas automáticas).
-      # Sem isto, as saídas automáticas via n8n NÃO autenticam.
+      # Shared secret n8n ↔ Atlas. Desde o go-live (04/10/2026) o n8n chama só o PROD.
       ATLAS_INTEGRATION_KEY: ${ATLAS_INTEGRATION_KEY}
 
       # ── Feature Flags ────────────────────────
-      # Defaults do UAT já ligam os 4 módulos do escopo deste ensaio;
-      # podem ser sobrescritos pelo env do Portainer.
       MODULE_HEDGE_ENABLED: ${MODULE_HEDGE_ENABLED:-true}
       MODULE_STOCKBRIDGE_ENABLED: ${MODULE_STOCKBRIDGE_ENABLED:-true}
       MODULE_BREAKINGPOINT_ENABLED: ${MODULE_BREAKINGPOINT_ENABLED:-true}
@@ -62,6 +86,12 @@ services:
       MODULE_COMEXINSIGHT_ENABLED: ${MODULE_COMEXINSIGHT_ENABLED:-false}
       MODULE_COMEXFLOW_ENABLED: ${MODULE_COMEXFLOW_ENABLED:-false}
       MODULE_FORECAST_ENABLED: ${MODULE_FORECAST_ENABLED:-true}
+
+      # ── Autenticação ─────────────────────────
+      # 2FA ligado: o UAT é público, lê dados reais e tem os mesmos usuários e
+      # senhas do PROD (transplante do go-live). Sem 2FA, uma senha vazada daria
+      # acesso pelo UAT ao que o PROD protege com 2FA.
+      AUTH_2FA_ENABLED: ${AUTH_2FA_ENABLED:-true}
 
     deploy:
       mode: replicated

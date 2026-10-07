@@ -27,6 +27,7 @@ import { TwoFactorPage } from './pages/TwoFactorPage.js';
 import { TwoFactorSetupPage } from './pages/TwoFactorSetupPage.js';
 import { DashboardPage } from './pages/DashboardPage.js';
 import { ModulePlaceholder } from './components/ModulePlaceholder.js';
+import { FaixaAmbiente } from './components/FaixaAmbiente.js';
 import { AdminUsersPage } from './pages/AdminUsersPage.js';
 import { PositionDashboard } from './pages/hedge/PositionDashboard.js';
 import { NDFListPage } from './pages/hedge/NDFListPage.js';
@@ -154,6 +155,7 @@ export function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
+        <FaixaAmbiente />
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/2fa" element={<TwoFactorPage />} />
@@ -307,7 +309,7 @@ function ProtectedShell() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-atlas-bg">
+      <div className="min-h-screen-app flex items-center justify-center bg-atlas-bg">
         <p className="text-atlas-muted">Carregando...</p>
       </div>
     );

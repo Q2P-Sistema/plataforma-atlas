@@ -1,5 +1,12 @@
-import { callOmie, isMockMode, type OmieCnpj } from '../client.js';
-import { mockAlterarPedidoCompra, mockConsultarPedidoCompra } from './mock.js';
+import { callOmie, getOmieMode, logEscritaSimulada, type OmieCnpj } from '../client.js';
+import {
+  leituraRecentePedidoCompra,
+  lembrarLeituraPedidoCompra,
+  mockAlterarPedidoCompra,
+  mockConsultarPedidoCompra,
+  registrarSombraPedidoCompra,
+  sombraPedidoCompra,
+} from './mock.js';
 
 export interface AlterarPedidoCompraInput {
   /** Identificação do pedido: cCodIntPed (código de integração) e/ou nCodPed (id OMIE). */
@@ -63,11 +70,22 @@ export async function alterarPedidoCompra(
   cnpj: OmieCnpj,
   input: AlterarPedidoCompraInput,
 ): Promise<AlterarPedidoCompraResponse> {
-  if (isMockMode()) {
+  const modo = getOmieMode();
+  if (modo === 'mock') {
     return mockAlterarPedidoCompra(cnpj, input);
   }
   if (!input.cCodIntPed && input.nCodPed == null) {
     throw new Error('alterarPedidoCompra exige cCodIntPed ou nCodPed');
+  }
+  if (modo === 'leitura') {
+    // A sombra parte do pedido real; a quantidade nova fica nela (ver mock.ts).
+    if (!sombraPedidoCompra(cnpj, input)) {
+      const ref = input.nCodPed != null ? { nCodPed: input.nCodPed } : { cCodIntPed: input.cCodIntPed! };
+      const base = leituraRecentePedidoCompra(cnpj, input) ?? (await consultarPedidoCompra(cnpj, ref));
+      registrarSombraPedidoCompra(cnpj, base);
+    }
+    logEscritaSimulada(cnpj, 'AlteraPedCompra', { nCodPed: input.nCodPed, nQtde: input.produto.nQtde });
+    return mockAlterarPedidoCompra(cnpj, input);
   }
 
   const params: Record<string, unknown> = {
@@ -204,8 +222,13 @@ export async function consultarPedidoCompra(
   cnpj: OmieCnpj,
   ref: { nCodPed: number } | { cCodIntPed: string },
 ): Promise<PedidoCompraConsultado> {
-  if (isMockMode()) {
+  const modo = getOmieMode();
+  if (modo === 'mock') {
     return mockConsultarPedidoCompra(cnpj, ref);
+  }
+  if (modo === 'leitura') {
+    const sombra = sombraPedidoCompra(cnpj, ref);
+    if (sombra) return sombra;
   }
 
   const raw = await callOmie<Record<string, unknown>>(
@@ -217,7 +240,9 @@ export async function consultarPedidoCompra(
     },
     { retries: 2 },
   );
-  return parsePedidoCompraConsultado(raw, ref);
+  const pedido = parsePedidoCompraConsultado(raw, ref);
+  if (modo === 'leitura') lembrarLeituraPedidoCompra(cnpj, pedido);
+  return pedido;
 }
 
 export function parsePedidoCompraConsultado(

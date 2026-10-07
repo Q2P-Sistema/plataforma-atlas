@@ -41,6 +41,8 @@ export function __resetMockState(): void {
   ajustesRegistrados.length = 0;
   pedidosRegistrados.length = 0;
   recebimentosRegistrados.length = 0;
+  pedidosLidos.clear();
+  recebimentosLidos.clear();
   mockIdSeq = 1_000_000;
 }
 
@@ -191,6 +193,77 @@ export function __getMockPedidoCompra(cnpj: OmieCnpj, nCodPed: number): PedidoCo
   return found ? structuredClone(found.pedido) : null;
 }
 
+// ── Sombra do modo leitura (OMIE_MODE=leitura — UAT, ACXEGDP-405) ─────────────
+// As leituras vão ao OMIE real e as escritas são simuladas por este mock. Para o
+// fluxo enxergar o que "gravou" (a baixa reconfere o saldo ao vivo no retry; o
+// fiscal reconsulta o recebimento), o documento escrito é copiado do OMIE real
+// para os registros do mock e, dali em diante, as consultas dele respondem por
+// aqui. Vive em memória: reiniciar o processo volta a mostrar o OMIE real.
+//
+// A sombra nasce da leitura real que o fluxo acabou de fazer (o serviço sempre
+// consulta antes de escrever). Reler o mesmo documento com os mesmos parâmetros
+// segundos depois dispara a trava de "consumo redundante" do OMIE — que vale para
+// a chave inteira, ou seja, também para o PROD.
+
+const LEITURA_RECENTE_TTL_MS = 10 * 60_000;
+
+interface LeituraRecente<T> {
+  doc: T;
+  em: number;
+}
+
+const pedidosLidos = new Map<string, LeituraRecente<PedidoCompraConsultado>>();
+const recebimentosLidos = new Map<string, LeituraRecente<RecebimentoNfeConsultado>>();
+
+function lerRecente<T>(mapa: Map<string, LeituraRecente<T>>, chaves: string[]): T | null {
+  for (const chave of chaves) {
+    const lida = mapa.get(chave);
+    if (lida && Date.now() - lida.em <= LEITURA_RECENTE_TTL_MS) return structuredClone(lida.doc);
+  }
+  return null;
+}
+
+function chavesPedido(cnpj: OmieCnpj, ref: { nCodPed?: number; cCodIntPed?: string | null }): string[] {
+  const chaves: string[] = [];
+  if (ref.nCodPed != null) chaves.push(`${cnpj}:ped:${ref.nCodPed}`);
+  if (ref.cCodIntPed) chaves.push(`${cnpj}:int:${ref.cCodIntPed}`);
+  return chaves;
+}
+
+function chavesRecebimento(cnpj: OmieCnpj, ref: { nIdReceb?: number; cChaveNfe?: string }): string[] {
+  const chaves: string[] = [];
+  if (ref.nIdReceb != null) chaves.push(`${cnpj}:id:${ref.nIdReceb}`);
+  if (ref.cChaveNfe) chaves.push(`${cnpj}:chave:${ref.cChaveNfe}`);
+  return chaves;
+}
+
+/** Guarda a última leitura real do pedido (modo leitura) para semear a sombra. */
+export function lembrarLeituraPedidoCompra(cnpj: OmieCnpj, pedido: PedidoCompraConsultado): void {
+  const lida = { doc: structuredClone(pedido), em: Date.now() };
+  for (const chave of chavesPedido(cnpj, pedido)) pedidosLidos.set(chave, lida);
+}
+
+/** Leitura real do pedido feita há até 10 min neste processo, ou null. */
+export function leituraRecentePedidoCompra(
+  cnpj: OmieCnpj,
+  ref: { nCodPed?: number; cCodIntPed?: string },
+): PedidoCompraConsultado | null {
+  return lerRecente(pedidosLidos, chavesPedido(cnpj, ref));
+}
+
+/** Pedido já escrito neste processo no modo leitura, ou null (consultar o OMIE). */
+export function sombraPedidoCompra(
+  cnpj: OmieCnpj,
+  ref: { nCodPed?: number; cCodIntPed?: string },
+): PedidoCompraConsultado | null {
+  const found = acharPedidoMock(cnpj, ref);
+  return found ? structuredClone(found.pedido) : null;
+}
+
+export function registrarSombraPedidoCompra(cnpj: OmieCnpj, pedido: PedidoCompraConsultado): void {
+  __injectMockPedidoCompra(cnpj, pedido);
+}
+
 function acharPedidoMock(
   cnpj: OmieCnpj,
   ref: { nCodPed?: number; cCodIntPed?: string },
@@ -313,6 +386,29 @@ function acharRecebimentoMock(cnpj: OmieCnpj, ref: RecebimentoNfeRef): MockReceb
       r.cnpj === cnpj &&
       (('nIdReceb' in ref && r.rec.nIdReceb === ref.nIdReceb) || ('cChaveNfe' in ref && r.rec.cChaveNFe === ref.cChaveNfe)),
   );
+}
+
+/** Recebimento já escrito neste processo no modo leitura, ou null (consultar o OMIE). Ver sombraPedidoCompra. */
+export function sombraRecebimentoNfe(cnpj: OmieCnpj, ref: RecebimentoNfeRef): RecebimentoNfeConsultado | null {
+  const found = acharRecebimentoMock(cnpj, ref);
+  return found ? structuredClone(found.rec) : null;
+}
+
+export function registrarSombraRecebimentoNfe(cnpj: OmieCnpj, rec: RecebimentoNfeConsultado): void {
+  __injectMockRecebimentoNfe(cnpj, rec);
+}
+
+/** Guarda a última leitura real do recebimento (modo leitura) — ver sombraPedidoCompra. */
+export function lembrarLeituraRecebimentoNfe(cnpj: OmieCnpj, rec: RecebimentoNfeConsultado): void {
+  const lida = { doc: structuredClone(rec), em: Date.now() };
+  for (const chave of chavesRecebimento(cnpj, { nIdReceb: rec.nIdReceb, cChaveNfe: rec.cChaveNFe })) {
+    recebimentosLidos.set(chave, lida);
+  }
+}
+
+/** Leitura real do recebimento feita há até 10 min neste processo, ou null. */
+export function leituraRecenteRecebimentoNfe(cnpj: OmieCnpj, ref: RecebimentoNfeRef): RecebimentoNfeConsultado | null {
+  return lerRecente(recebimentosLidos, chavesRecebimento(cnpj, ref));
 }
 
 function faultRecebimento(cnpj: OmieCnpj, method: string, code: string, msg: string): OmieApiError {

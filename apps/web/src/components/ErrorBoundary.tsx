@@ -33,7 +33,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   override render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen flex items-center justify-center bg-atlas-bg p-4">
+        <div className="min-h-screen-app flex items-center justify-center bg-atlas-bg p-4">
           <div className="w-full max-w-md bg-atlas-card rounded-xl shadow-lg p-8 border border-atlas-border text-center">
             <CloudAlert size={40} className="mx-auto mb-4 text-atlas-muted" aria-hidden />
             <h1 className="text-xl font-heading font-semibold text-atlas-text mb-2">

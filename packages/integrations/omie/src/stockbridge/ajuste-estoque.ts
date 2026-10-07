@@ -1,5 +1,5 @@
 import { createLogger } from '@atlas/core';
-import { callOmie, isMockMode, OmieApiError, type OmieCnpj } from '../client.js';
+import { callOmie, getOmieMode, logEscritaSimulada, OmieApiError, type OmieCnpj } from '../client.js';
 import { mockIncluirAjusteEstoque } from './mock.js';
 import { listarAjusteEstoque } from './listar-ajuste-estoque.js';
 
@@ -49,7 +49,9 @@ export async function incluirAjusteEstoque(
   cnpj: OmieCnpj,
   input: IncluirAjusteEstoqueInput,
 ): Promise<IncluirAjusteEstoqueResponse> {
-  if (isMockMode()) {
+  const modo = getOmieMode();
+  if (modo !== 'real') {
+    if (modo === 'leitura') logEscritaSimulada(cnpj, 'IncluirAjusteEstoque', { codIntAjuste: input.codIntAjuste });
     return mockIncluirAjusteEstoque(cnpj, input);
   }
 
