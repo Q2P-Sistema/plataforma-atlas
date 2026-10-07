@@ -53,6 +53,9 @@ SendGrid. Travas independentes:
   sombra (o fiscal reconsulta o recebimento; o retry da baixa reconfere o saldo).
   **Reiniciar a API apaga a sombra**: o pedido volta ao saldo real e o recebimento
   volta à etapa 40 no OMIE (no Atlas, o ledger continua dizendo que foi concluído).
+  Com a conferência da ACXEGDP-406 (até 10 min depois de uma baixa do Atlas, o saldo
+  lido tem de ser o gravado), uma baixa no mesmo pedido logo após um reinício vira
+  `falha` — retentável depois da janela.
 - `backfill-baixa-pedido-q2p` com `--execute` recusa rodar fora do modo real; o
   dry-run e o `--consultar` funcionam no UAT.
 - Limite de ritmo: o OMIE bloqueia por ~1 min a mesma consulta repetida com a
