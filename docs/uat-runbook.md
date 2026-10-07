@@ -128,17 +128,45 @@ quando não há teste em andamento.
 
 ## Dados de base
 
-| Dado | Como atualizar hoje | Pendente (fase 2 da 405) |
+| Dado | Como atualizar | Pendente (fase 2 da 405) |
 |---|---|---|
-| Espelho OMIE `public.*` | Manual: `scripts/sync-omie-public-prod-to-uat.sh` (só `public.*`; preserva os schemas Atlas). **Nunca rode duas cópias ao mesmo tempo**: a segunda deixa `pg_restore` órfão e trava o `TRUNCATE` | Agendar 1×/dia com trava e alerta |
-| Estado Atlas (lotes, movimentações, aprovações, baixas, `atlas.users`) | Congelado no transplante de 04/10; diverge do PROD a cada dia | Script de refresh PROD→UAT dos 6 schemas, sob demanda |
-| Mapa NF→pedido (`stockbridge.nf_pedido_mapa`) | Parado (o n8n publica só no PROD) | Vir no refresh do estado Atlas, ou 2º POST no workflow da FUP com `continueOnFail` |
+| Espelho OMIE `public.*` | `scripts/sync-omie-public-prod-to-uat.sh` (só `public.*`; preserva os schemas Atlas). Rodar 1×/dia. **Nunca rode duas cópias ao mesmo tempo**: a segunda deixa `pg_restore` órfão e trava o `TRUNCATE` | Agendar com trava e alerta |
+| Estado Atlas (lotes, movimentações, aprovações, baixas, mapa NF→pedido, `atlas.users`, auditoria) | `scripts/refresh-atlas-prod-to-uat.sh`, **sob demanda** — antes de uma rodada de testes. Apaga o que foi testado no UAT | — |
+| Mapa NF→pedido (`stockbridge.nf_pedido_mapa`) | Vem no refresh do estado Atlas; entre dois refreshes fica parado (o n8n publica só no PROD) | 2º POST no workflow da FUP com `continueOnFail`, se fizer falta |
+
+As senhas não precisam ir na linha de comando: sem `PGPASSWORD_PROD`/`PGPASSWORD_UAT`
+no ambiente, os scripts pedem as duas sem eco.
 
 ```bash
-# espelho OMIE PROD -> UAT (não toca nos schemas Atlas)
-export PROD_USER=<usuario-prod> PGPASSWORD_PROD='…' PGPASSWORD_UAT='…'
-scripts/sync-omie-public-prod-to-uat.sh
+cd /home/primebot/Documentos/Github/q2p/plataforma-atlas
+
+# espelho OMIE PROD -> UAT, diário (não toca nos schemas Atlas)
+PROD_USER=postgres ./scripts/sync-omie-public-prod-to-uat.sh
+
+# estado Atlas PROD -> UAT, sob demanda — primeiro só as checagens:
+PROD_USER=postgres DRY_RUN=1 ./scripts/refresh-atlas-prod-to-uat.sh
+PROD_USER=postgres ./scripts/refresh-atlas-prod-to-uat.sh
 ```
+
+O refresh do estado Atlas:
+
+- lê o PROD com sessão somente leitura e se recusa a rodar se origem e destino forem o
+  mesmo banco;
+- aborta se o PROD tiver tabela ou coluna que o UAT não tem (aplique as migrations no
+  UAT antes); avisa se o UAT tiver tabela a mais (migration em teste — fica vazia);
+- faz backup data-only do estado Atlas do UAT antes de apagar (`BACKUP_UAT=0` pula) e,
+  no fim, pergunta se apaga o dump do PROD (padrão sim) e o backup (padrão não — é o
+  que desfaz o refresh);
+- não copia `atlas.sessions` (todos fazem login de novo) e zera tokens de reset de
+  senha e bloqueios por tentativa; senhas e 2FA ficam iguais aos do PROD;
+- valida contando cada tabela no PROD antes e depois do dump (o PROD segue operando):
+  tabela que não mudou tem de bater exato;
+- recalcula o trânsito da FUP no UAT no fim — por isso `stockbridge.lote` e
+  `shared.audit_log` podem sair com alguns registros a mais que o PROD (lote de
+  trânsito novo que o PROD ainda não recalculou). Não é divergência.
+
+Recomendado: API do UAT em scale 0 durante o refresh (o script avisa se encontrar
+conexões abertas) e religada depois — zera também a sombra do OMIE em memória.
 
 Antes de qualquer operação de banco, teste `SELECT 1` nos dois bancos: o acesso ao
 `db.manager01` é liberado por IP no firewall da DigitalOcean.
