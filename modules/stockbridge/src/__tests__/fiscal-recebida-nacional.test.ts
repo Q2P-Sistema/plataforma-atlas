@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest';
 // gerado: e SQL de fragmento, injetado na query da fila; o que importa e a FORMA
 // dos tres EXISTS e, sobretudo, os filtros que impedem falso positivo.
 
-import { itemNacionalRecebidoSql, normalizarDescricaoSql } from '../services/fiscal-recebida-sql.js';
+import { itemNacionalRecebidoSql, movimentacaoDoItemNacionalSql, normalizarDescricaoSql } from '../services/fiscal-recebida-sql.js';
 
 const ARGS = {
   chaveExpr: 'h.c_chave_nfe',
@@ -75,6 +75,33 @@ describe('itemNacionalRecebidoSql — as tres vias', () => {
 
   it('nunca usa n_id_receb (universal em NF de entrada nacional — research D1)', () => {
     expect(itemNacionalRecebidoSql(ARGS)).not.toContain('n_id_receb');
+  });
+});
+
+describe('ACXEGDP-412 — via 1 tambem casa pela sequencia do item no recebimento', () => {
+  it('com sequenciaExpr: (descricao OR sequencia gravada na movimentacao), sempre dentro da mesma chave', () => {
+    const [v1] = ramos(itemNacionalRecebidoSql({ ...ARGS, sequenciaExpr: 'u.n_seq' }));
+    expect(v1).toContain('m.nf_chave_acesso = h.c_chave_nfe');
+    expect(v1).toContain(
+      `(m.nf_item_descricao_normalizada = ${ARGS.descricaoNormalizadaExpr} OR u.n_seq = ANY(m.nf_item_sequencias))`,
+    );
+  });
+
+  it('sem sequenciaExpr: so a descricao (comportamento da 015), sem referencia a nf_item_sequencias', () => {
+    const sql = itemNacionalRecebidoSql(ARGS);
+    expect(sql).not.toContain('nf_item_sequencias');
+  });
+
+  it('a sequencia nao alcanca as vias 2 e 3 (manual e baixa externa seguem como eram)', () => {
+    const [, v2, v3] = ramos(itemNacionalRecebidoSql({ ...ARGS, sequenciaExpr: 'u.n_seq' }));
+    expect(v2).not.toContain('n_seq');
+    expect(v3).not.toContain('n_seq');
+  });
+
+  it('movimentacaoDoItemNacionalSql respeita o alias da movimentacao', () => {
+    const sql = movimentacaoDoItemNacionalSql({ alias: 'mv', chaveExpr: 'u.c_chave_nfe', descricaoNormalizadaExpr: 'X', sequenciaExpr: 'u.n_seq' });
+    expect(sql).toContain('mv.nf_chave_acesso = u.c_chave_nfe');
+    expect(sql).toContain('(mv.nf_item_descricao_normalizada = X OR u.n_seq = ANY(mv.nf_item_sequencias))');
   });
 });
 

@@ -886,6 +886,8 @@ export async function processarRecebimentoNacionalPorNf(
             nfChaveAcesso: detalhe.nfChaveAcesso,
             nfItemDescricao: pp.item.descricaoFornecedor,
             nfItemDescricaoNormalizada: pp.item.descricaoNormalizada,
+            // ACXEGDP-412: identidade do item que sobrevive a troca de descricao no fiscal.
+            nfItemSequencias: pp.item.sequenciasRecebimento.length > 0 ? pp.item.sequenciasRecebimento : null,
             observacoes: pp.observacoes,
             custoUnitarioBrl: String(pp.custoUnitarioBrl),
             statusOmie: 'pendente_q2p',

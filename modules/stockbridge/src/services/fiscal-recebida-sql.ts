@@ -64,12 +64,40 @@ export function normalizarDescricaoSql(expr: string): string {
 }
 
 /**
+ * Movimentacao `m` (caminho novo, por NF) que pertence ao item da NF: mesma chave
+ * de acesso e (mesma descricao normalizada OU a sequencia do item no recebimento
+ * de NF-e gravada na movimentacao).
+ *
+ * A sequencia existe porque a descricao nao e estavel antes do fiscal
+ * (ACXEGDP-412, NF 36624, 06/10/2026): com o item pre-associado a um produto no
+ * OMIE, o `ListarRecebimentos` devolve a descricao do PRODUTO; depois do IGNORAR
+ * do recebimento fiscal os dois espelhos passam a trazer a do XML. Sem a
+ * sequencia o item recebido voltava inteiro a fila. `sequenciaExpr` ausente (ou
+ * NULL) = so a descricao, como na feature 015.
+ */
+export function movimentacaoDoItemNacionalSql(args: {
+  alias: string;
+  chaveExpr: string;
+  descricaoNormalizadaExpr: string;
+  sequenciaExpr?: string;
+}): string {
+  const m = args.alias;
+  const porDescricao = `${m}.nf_item_descricao_normalizada = ${args.descricaoNormalizadaExpr}`;
+  const identidade = args.sequenciaExpr
+    ? `(${porDescricao} OR ${args.sequenciaExpr} = ANY(${m}.nf_item_sequencias))`
+    : porDescricao;
+  return `${m}.nf_chave_acesso = ${args.chaveExpr}
+                AND ${identidade}`;
+}
+
+/**
  * Feature 015 (ACXEGDP-328): item de NF NACIONAL ja recebido — checagem em DUAS
  * VIAS mais a baixa externa (data-model §3.1, research D21):
  *
  *  1. Caminho novo: movimentacao com `nf_chave_acesso` + descricao normalizada do
- *     item. Granularidade por linha da NF (97,5% dos itens nao tem codigo de
- *     produto — a descricao e a unica identidade da linha).
+ *     item (ou a sequencia do item no recebimento, quando informada — ver
+ *     `movimentacaoDoItemNacionalSql`). Granularidade por linha da NF (97,5% dos
+ *     itens nao tem codigo de produto — a descricao e a unica identidade da linha).
  *  2. Historico do formulario manual (145 linhas) e tudo que ele criar daqui em
  *     diante (NF fora do espelho nunca tera chave): casa por NUMERO sem zeros a
  *     esquerda + empresa. Por NF inteira — o manual nao guarda a linha de origem.
@@ -97,14 +125,20 @@ export function itemNacionalRecebidoSql(args: {
    * Atlas nunca concluia o fiscal.
    */
   dataEmissaoExpr?: string;
+  /** Sequencia do item no recebimento de NF-e (ACXEGDP-412) — via 1 casa por ela tambem. */
+  sequenciaExpr?: string;
 }): string {
   const desdeEmissao = args.dataEmissaoExpr ? `
                 AND m.created_at >= (${args.dataEmissaoExpr})::date` : '';
   return `(
     EXISTS (SELECT 1 FROM stockbridge.movimentacao m
               WHERE m.ativo = true AND m.subtipo = 'compra_nacional'
-                AND m.nf_chave_acesso = ${args.chaveExpr}
-                AND m.nf_item_descricao_normalizada = ${args.descricaoNormalizadaExpr})
+                AND ${movimentacaoDoItemNacionalSql({
+                  alias: 'm',
+                  chaveExpr: args.chaveExpr,
+                  descricaoNormalizadaExpr: args.descricaoNormalizadaExpr,
+                  sequenciaExpr: args.sequenciaExpr,
+                })})
     OR EXISTS (SELECT 1 FROM stockbridge.movimentacao m
               WHERE m.ativo = true AND m.subtipo = 'compra_nacional'
                 AND m.nf_chave_acesso IS NULL
