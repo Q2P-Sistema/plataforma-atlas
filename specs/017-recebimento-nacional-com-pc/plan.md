@@ -1,0 +1,195 @@
+# Implementation Plan: Recebimento Nacional com Pedido de Compra
+
+**Branch**: `017-recebimento-nacional-com-pc` | **Date**: 2026-10-21 | **Spec**: [spec.md](./spec.md)
+**Input**: Feature specification from `/specs/017-recebimento-nacional-com-pc/spec.md`
+**Jira**: ACXEGDP-437 (subtarefa de ACXEGDP-114; estende ACXEGDP-328/015 e ACXEGDP-395/016)
+
+## Summary
+
+Desde 19/10/2026, compras lança pedido de compra (PC) no OMIE para a compra nacional. A receita fiscal da 016 (`EDITAR → IGNORAR → Concluir`) desfaz o vínculo do item com o PC, e o PC fica aberto. Isso aconteceu nas NFs 7736 e 67913, e por isso o fiscal pelo Atlas está desligado em PROD desde 21/10 (contenção). A feature faz o Atlas sugerir o PC de cada item, o operador confirmar, e o fiscal ser concluído **com o item vinculado ao PC e sem movimentar estoque no OMIE**. O estoque continua entrando pelo Atlas, depois da aprovação.
+
+**Abordagem técnica**: seis peças sobre a estrutura da 015/016.
+
+1. **Espelho de recebimentos com o vínculo**: quatro colunas novas (`n_id_pedido`, `n_id_it_pedido`, `n_num_ped_compra`, `c_num_it_ped_compra`) na migration `0056`, gravadas pelo n8n (D9). É de onde vem o "vínculo do OMIE" e a detecção de estoque lançado pelo portal.
+2. **Sugestão de PC** (`pc-sugestao.service.ts`, novo): monta, por item agregado, o vínculo do OMIE, os candidatos dentro da tolerância (2% na quantidade, 1% no preço, etapa 15, mesmo fornecedor), os outros PCs do fornecedor (escolha manual com justificativa) e os PCs aguardando aprovação. Lê só o Postgres: espelho de recebimentos e cópia de PCs na Rev 1.5 (D3).
+3. **Fiscal com vínculo**: `recebimento-fiscal.service.ts` passa a manter o vínculo existente (`EDITAR` + `Concluir`, validado na NF 7813, D1) ou gravar um novo (`ASSOCIAR-PEDIDO` antes do `EDITAR`, D2). O `IGNORAR` fica restrito a itens sem PC. Antes de escrever, relê ao vivo o recebimento e cada PC (D4). Os vínculos ficam em `stockbridge.recebimento_fiscal_pc` (D5).
+4. **Regras novas no portão 1**: NF sem PC (configurável, bloquear por padrão, aviso a compras deduplicado, D6) e estoque já lançado pelo OMIE (bloqueio que vale com a chave desligada, D7).
+5. **Leitores da cópia de PCs** passam a usar o saldo (`nqtde − nqtderec`): cockpit, pendências fiscais e a função de trânsito (D10).
+6. **Compra nacional pela ACXE** (História 5, fase 2, migration `0057`): empresa como dimensão da fila, espelho de recebimentos da ACXE, fiscal na ACXE, entrada de estoque pela regra da importação (local espelhado → ACXE + Q2P; local só da ACXE → só ACXE), **mesmo valor nas duas empresas**, sem PC nem baixa na Q2P (D11).
+
+**O que a pesquisa fixou** (detalhe em [research.md](./research.md)):
+
+- O teste da NF 7813 mostrou que `EDITAR` preserva o vínculo, que `Concluir` gera a conta a pagar sem movimentar estoque e que o OMIE atualiza sozinho o `nQtdeRec` do PC. O Atlas não precisa mexer no PC.
+- O n8n que espelha PCs da ACXE na Q2P ignora PC nacional (ACXEGDP-376). Por isso não há PC na Q2P na compra nacional pela ACXE.
+- `ConsultarPedCompra` tem cache de cerca de 1 minuto, daí a regra "PC recém-usado".
+- O vínculo novo pela API (`ASSOCIAR-PEDIDO`) **ainda não foi testado**. O teste bloqueia a ativação, não o desenvolvimento.
+
+## Technical Context
+
+**Language/Version**: TypeScript 5.5+ strict, Node.js 20 LTS
+
+**Primary Dependencies**: as mesmas da 016, sem dependência nova.
+- Express 4: rotas estendidas, nenhuma nova.
+- Drizzle ORM: 2 tabelas novas, 1 estendida.
+- Raw SQL via `getPool()`: sugestão sobre os espelhos.
+- `@atlas/integration-omie`: ação `ASSOCIAR-PEDIDO` e parse do vínculo em `recebimento-nfe.ts`; `consultarPedidoCompra` reaproveitado da 344.
+- Zod, React 18 + TanStack Query + Tailwind (`RecebimentoNacionalNfPanel`).
+- n8n, fora deste repo, contrato em `contracts/espelhos-n8n.md`: nova revisão do workflow de recebimentos da Q2P e workflow novo da ACXE.
+
+**Storage**: PostgreSQL 16.
+- **Leitura**: `public."tbl_recebimentoNFe_*"` (com as colunas novas), `public."tbl_pedidosCompras_*"` (Rev 1.5), `public."tbl_nf_header_*"`/`"tbl_nf_itens_*"`, `public."tbl_cadastroFornecedoresClientes_*"`, `stockbridge.fornecedor_exclusao`, `stockbridge.localidade_correlacao`.
+- **Escrita**: as novas `stockbridge.recebimento_fiscal_pc` e `stockbridge.nf_aviso_compras` (com trigger de auditoria), a extensão de `stockbridge.recebimento_fiscal` e, pelo fluxo existente, `movimentacao`/`aprovacao`.
+- **Escrita no OMIE**: `AlterarRecebimento` com a ação nova `ASSOCIAR-PEDIDO`, dentro da exceção ao Princípio II já documentada para `produtos/recebimentonfe/`.
+
+**Testing**: Vitest.
+- Cliente OMIE: `ASSOCIAR-PEDIDO`, parse do vínculo, mock com associação e `nQtdeRec`.
+- `pc-sugestao.service`: tolerâncias, ordenação, empates, número do pedido, PC-espelho, etapa 10, vínculos divergentes por sequência.
+- `recebimento-fiscal.service`: receitas D1/D2, `IGNORAR` só sem PC, releitura, "PC recém-usado", `VINCULO_OMIE_MUDOU`, idempotência por item.
+- Portão 1: `NF_SEM_PC` nos dois modos, estoque já lançado, aviso deduplicado.
+- Regressão da contenção (chave desligada) e da baixa da 344.
+- Supertest no schema `.strict()` do POST.
+- Integração `ATLAS_DB_INTEGRATION=1` para as triggers novas.
+
+**Target Platform**: Linux server (Docker Swarm, `apps/api` + `apps/web`); n8n self-hosted na mesma infra.
+
+**Project Type**: Web, monorepo modular (`modules/stockbridge` + `apps/web` + `packages/db` + `packages/core` + `packages/integrations/omie`).
+
+**Performance Goals**:
+- O detalhe da NF ganha uma consulta à cópia de PCs filtrada por fornecedor. A cópia tem cerca de 250 linhas, então o custo é desprezível.
+- O POST com fiscal pendente ganha **1 `ConsultarPedCompra` por PC distinto** e **1 `AlterarRecebimento` (`ASSOCIAR-PEDIDO`)** por item com vínculo novo. O item com vínculo do OMIE não ganha chamada extra.
+- O caso típico (1 item, 1 PC, vínculo do OMIE) soma 1 chamada à 016: cerca de 1 a 1,5 s a mais num clique de confirmação.
+
+**Config nova**: ver data-model §10.
+- `STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC` (default `true`);
+- `STOCKBRIDGE_PC_TOLERANCIA_QTD_PCT` (2) e `STOCKBRIDGE_PC_TOLERANCIA_PRECO_PCT` (1);
+- `STOCKBRIDGE_COMPRAS_EMAILS` (vazio → `STOCKBRIDGE_OPS_EMAIL`);
+- `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED` (default `false`).
+
+Todas no schema Zod de `packages/core/src/config.ts` e listadas nas stacks (`atlas.stack.yml`, YAML do UAT, `.env.example`). Reaproveitada: `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED`.
+
+**Constraints**:
+- (a) Nunca `IGNORAR` item com PC associado, salvo troca explícita para outro PC por `ASSOCIAR-PEDIDO` (FR-011a).
+- (b) Nunca concluir com `cNaoGerarMovEstoque = 'N'` em item não ignorado.
+- (c) Releitura ao vivo do recebimento e dos PCs antes de escrever; falha ⇒ nada gravado.
+- (d) Sem retry em escrita OMIE (STK-23); idempotência pelos ledgers.
+- (e) Cache de cerca de 1 min no OMIE: regra "PC recém-usado" (75 s) e corpo alternado na reconsulta.
+- (f) Mensagens com número da NF, fornecedor e número do PC, nunca IDs internos (ACXEGDP-313).
+- (g) A chave desligada mantém a contenção, mais FR-021/021a.
+- (h) A baixa da 344 não muda.
+- (i) Religar a chave só com a imagem da 017 (quickstart).
+- (j) No UAT, `OMIE_MODE=leitura`: o `ASSOCIAR-PEDIDO` é simulado na sombra.
+
+**Scale/Scope**:
+- Volume: cerca de 3 PCs nacionais por dia na Q2P (19 a 21/10), zero na ACXE; fila nacional de unidades por dia.
+- Mudanças: cerca de 7 arquivos de backend estendidos e 2 novos, 2 migrations, 3 arquivos do cliente OMIE, 1 tela estendida, 2 workflows n8n (1 revisão e 1 novo).
+
+## Constitution Check
+
+*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
+
+| Princípio | Avaliação | Status |
+|---|---|---|
+| **I. Monólito Modular com Fronteiras Inegociáveis** | Código novo em `modules/stockbridge/*`, `packages/integrations/omie/*`, `packages/db/*`, `packages/core/src/config.ts` e `apps/web`. Tabelas de estado em `stockbridge.*`. Os espelhos ficam em `public."tbl_*"`, escritos só pelo n8n (exceção prevista no gate, como na 016). Nenhuma leitura de tabela privada de outro módulo: o forecast continua lendo `tbl_pedidosCompras_ACXE` pela sua própria query, sem mudança. | ✅ PASS |
+| **II. OMIE é Fonte de Verdade, Atlas Lê do Postgres** | A fila, o detalhe e a sugestão de PC leem **só** o Postgres (espelho de recebimentos e cópia de PCs, sincronizados pelo n8n por evento e agenda, sem full-refresh no caminho de leitura). As leituras ao vivo acontecem só no POST, imediatamente antes de escrever (`ConsultarRecebimento`, da 016, e `ConsultarPedCompra`, da 344), e uma vez no caso raro de NF "fiscal já feito" fora do espelho (D7). A escrita nova (`ASSOCIAR-PEDIDO`) é uma ação de `AlterarRecebimento`, dentro da exceção já documentada para `produtos/recebimentonfe/`. O texto da seção 2 da 007 ganha a ação. O OMIE segue fonte de verdade do PC: o Atlas não altera o PC, e o próprio ERP atualiza `nQtdeRec` (D1). | ✅ PASS (exceção existente, ampliada) |
+| **III. Dinheiro Só em TypeScript** | Tolerâncias, escolha de candidato, valores de entrada (incluindo a regra "mesmo valor nas duas empresas" da História 5) e regras de bloqueio ficam em TS, com Vitest. O n8n só copia OMIE→Postgres. A correção de saldo em `refresh_lotes_em_transito_se_stale` é SQL de **leitura** (projeção de trânsito), sem cálculo financeiro novo. | ✅ PASS |
+| **IV. Audit Log Append-Only via Trigger** | `stockbridge.recebimento_fiscal_pc` e `stockbridge.nf_aviso_compras` nascem com `audit_<tabela>()` + `trg_audit_sb_<tabela>` (padrão da skill `stockbridge-migration`). A extensão de `recebimento_fiscal` herda a trigger existente. Nada é apagado: os vínculos passam por estados, e a troca do vínculo do OMIE guarda o anterior e a justificativa. | ✅ PASS |
+| **V. Validação Paralela, Zero Big-Bang** | A ativação é por chave (a da 016, hoje desligada). Desligada, vale a contenção, mais duas proteções aditivas (FR-021/021a). O vínculo novo (D2) tem teste controlado com NF real antes da ativação em PROD, como foi feito na NF 6842 e na 7813. A História 5 entra numa fase própria, atrás de outra chave. Reversível: desligar a chave devolve a contenção sem migration. | ✅ PASS |
+
+**Resultado do gate**: PASS. A única decisão com registro formal é a ampliação da exceção ao Princípio II para a ação `ASSOCIAR-PEDIDO`. Nada a justificar em Complexity Tracking.
+
+**Re-check pós-Fase 1**: mantido PASS. O desenho não pôs leitura OMIE no caminho da fila nem do detalhe, não moveu regra para o n8n, criou trigger nas duas tabelas novas e não criou tabela de domínio fora de `stockbridge.*`.
+
+## Project Structure
+
+### Documentation (this feature)
+
+```text
+specs/017-recebimento-nacional-com-pc/
+├── plan.md                                  # Este arquivo
+├── spec.md                                  # 5 histórias, FR-000..029, SC-001..009, clarificações de 21/10/2026
+├── research.md                              # Phase 0: 12 decisões (teste NF 7813, gate ACXEGDP-376, cache)
+├── data-model.md                            # Phase 1: colunas do espelho, 2 tabelas novas, extensões, shapes
+├── quickstart.md                            # Phase 1: 8 cenários + ordem de deploy
+├── contracts/
+│   ├── recebimento-nacional-pc.md           # API Atlas: fila/detalhe/POST/ledger estendidos, erros novos
+│   └── espelhos-n8n.md                      # n8n: colunas de pedido (Q2P) + espelho ACXE
+├── checklists/requirements.md               # aprovado
+└── tasks.md                                 # Phase 2 (/speckit.tasks; NÃO criado aqui)
+```
+
+### Source Code (repository root)
+
+```text
+packages/db/
+├── migrations/
+│   ├── 0056_stockbridge_recebimento_nacional_pc.sql   # NOVA (Q2P): colunas de pedido no espelho de itens;
+│   │                                                  #   recebimento_fiscal (+empresa, +passo 'associar', +itens_vinculados);
+│   │                                                  #   recebimento_fiscal_pc + trigger; nf_aviso_compras + trigger;
+│   │                                                  #   refresh_lotes_em_transito_se_stale com saldo
+│   └── 0057_stockbridge_recebimento_nacional_acxe.sql # NOVA (História 5): espelho de recebimentos ACXE;
+│                                                      #   fornecedor_exclusao.empresa (+ Q2P excluída na ACXE)
+└── src/schemas/stockbridge.ts                         # ESTENDER: recebimentoFiscal (+campos), recebimentoFiscalPc,
+                                                       #   nfAvisoCompras, fornecedorExclusao.empresa
+
+packages/core/src/config.ts                            # ESTENDER: 5 variáveis novas (data-model §10)
+
+packages/integrations/omie/src/
+├── stockbridge/recebimento-nfe.ts                     # ESTENDER: AcaoItemRecebimento += 'ASSOCIAR-PEDIDO'
+│                                                      #   (nIdPedidoExistente/nIdItPedidoExistente); parse de
+│                                                      #   itensCabec.nIdPedido/nIdItPedido e itensInfoAdic
+├── stockbridge/mock.ts                                # ESTENDER: associação com estado, nQtdeRec do PC ao concluir,
+│                                                      #   sombra do modo leitura
+└── __tests__/recebimento-nfe.test.ts, mock.test.ts    # ESTENDER
+
+modules/stockbridge/src/
+├── services/
+│   ├── pc-sugestao.service.ts               # NOVO: sugerirPcPorItem (vínculo do OMIE, candidatos, outros, aguardando),
+│   │                                        #   validarEscolhaPc (portão 1), releituraPc (ConsultarPedCompra + trava
+│   │                                        #   + "PC recém-usado")
+│   ├── fila-nacional.service.ts             # ESTENDER: colunas de pedido nas duas fontes; pc por item agregado;
+│   │                                        #   pcSituacao; estoqueLancadoPeloOmie; empresa (fase 2)
+│   ├── recebimento-fiscal.service.ts        # ESTENDER: itensParaIgnorar só sem PC; ASSOCIAR-PEDIDO antes de EDITAR;
+│   │                                        #   recusa VINCULO_OMIE_MUDOU; linhas em recebimento_fiscal_pc;
+│   │                                        #   callOmie por empresa (fase 2)
+│   ├── recebimento-nacional.service.ts      # ESTENDER: portão 1 (NF_SEM_PC, estoque já lançado, escolha de PC);
+│   │                                        #   pc no resultado; entrada ACXE/dual sem markup (fase 2)
+│   ├── notificacao.service.ts               # ESTENDER: enviarAvisoComprasNfSemPc (deduplicado)
+│   ├── cockpit.service.ts                   # ESTENDER: saldo = nqtde - nqtderec (D10)
+│   └── pendencias-fiscais.service.ts        # ESTENDER: idem
+├── routes/recebimento-nacional.routes.ts    # ESTENDER: schema .strict() com itens[].pc; mapeamento dos erros novos;
+│                                            #   GET /fiscal com vínculos
+└── __tests__/                               # NOVOS: pc-sugestao, recebimento-fiscal-pc, recebimento-nacional-pc;
+                                             #   ESTENDER: rotas, fila unificada, flag-off, auditoria, cockpit/pendências
+
+apps/web/src/pages/stockbridge/operador/
+└── RecebimentoNacionalNfPanel.tsx           # ESTENDER: selo de PC na fila; bloco "Pedido de compra" no ItemCard
+                                             #   (vínculo do OMIE, candidatos, outros com justificativa, aguardando
+                                             #   aprovação, sem PC); aviso de estoque já lançado; mensagens dos erros novos
+
+specs/007-stockbridge-module/research.md    # ESTENDER: seção 2, ação ASSOCIAR-PEDIDO
+CLAUDE.md                                   # ESTENDER: bloco StockBridge (feature 017)
+deploy/portainer/atlas.stack.yml, YAML UAT, .env.example   # ESTENDER: variáveis novas
+
+# Fora deste repo (contrato em contracts/espelhos-n8n.md):
+# backup-workflow-n8n: "Q2P - Exporta Recebimentos NF-e" (nova revisão) + "ACXE - Exporta Recebimentos NF-e" (novo)
+```
+
+**Structure Decision**: web monorepo modular, estendendo os arquivos da 015/016. A sugestão de PC fica num service próprio (`pc-sugestao.service.ts`), chamado pelo detalhe (só leitura) e pelo portão 1 e pela releitura do POST. Assim fica testável sozinha e a regra de elegibilidade fica num lugar só. O fiscal continua isolado em `recebimento-fiscal.service.ts`, agora decidindo a ação por item (manter vínculo, associar ou ignorar). A História 5 reaproveita a mesma fila e o mesmo fiscal, parametrizados por empresa, e a escolha de locais da importação (`listarLocalidadesEspelhadas` + `listarLocalidadesNacional('acxe')`, com a correspondência em `localidade_correlacao`).
+
+**Fases de entrega**:
+- **Fase 1** (Histórias 1 a 4, Q2P): 0056, n8n Q2P, sugestão, fiscal com vínculo, portão 1, leitores. Fecha a contenção.
+- **Fase 2** (História 5, ACXE): 0057, n8n ACXE, empresa na fila e no fiscal, entrada ACXE/dual. O local só da ACXE é o 21.2 EXTREMA (NACIONAL) (research D11).
+
+## Complexity Tracking
+
+> Constitution Check passou sem violações; preenchimento não requerido.
+
+Quatro notas de desenho, nenhuma delas violação:
+
+**1. Teste com NF real antes de ativar.** O vínculo novo (`ASSOCIAR-PEDIDO`) não foi exercitado contra o OMIE de produção, que é o único disponível. O desenho segue o estado provado na NF 7813, e a chave só é religada depois do teste (quickstart, pré-requisito 5). O plano B (ordem invertida) está registrado em D2.
+
+**2. Religar a chave com imagem antiga reabre o problema.** A chave é a mesma da 016 por decisão do usuário. O risco operacional (ligar antes do deploy da 017) fica no quickstart e no runbook de deploy, e não em código.
+
+**3. Correção preventiva de leitores.** Cockpit, pendências fiscais e trânsito só ficariam errados com PC recebido em parte, que hoje não existe. A correção entra nesta feature porque a Rev 1.5 passou a manter esses PCs na cópia.
+
+**4. Local só da ACXE.** É o 21.2 EXTREMA (NACIONAL), já cadastrado em `stockbridge.localidade` com correlação só do lado ACXE. O 21.1 EXTREMA (IMPORTADO) é espelhado. Decidido em 21/10/2026, sem pendência para a Fase 2.
