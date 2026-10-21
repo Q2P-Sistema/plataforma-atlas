@@ -41,6 +41,6 @@
   4. Um item da NF não se divide entre dois PCs.
   5. Fiscal com estoque pelo portal é detectado e a entrada física é bloqueada.
   6. A chave é a da 016.
-  7. Não existe PC na Q2P para compra nacional da ACXE; o estoque segue a regra da importação (local espelhado nas duas empresas, local da ACXE só na ACXE).
+  7. Não existe PC na Q2P para compra nacional da ACXE; o estoque segue a regra da importação, sempre nas duas empresas no local espelhado (Extrema = 21.1, para vendas vender pela Q2P).
   8. O valor é o mesmo nas duas empresas (o valor do item na NF), sem o acréscimo de 14,5% que a importação aplica na Q2P.
 - Spec pronta para o `/speckit.plan`.

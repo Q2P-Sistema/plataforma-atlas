@@ -15,7 +15,7 @@ Desde 19/10/2026, compras lança pedido de compra (PC) no OMIE para a compra nac
 3. **Fiscal com vínculo**: `recebimento-fiscal.service.ts` passa a manter o vínculo existente (`EDITAR` + `Concluir`, validado na NF 7813, D1) ou gravar um novo (`ASSOCIAR-PEDIDO` antes do `EDITAR`, D2). O `IGNORAR` fica restrito a itens sem PC. Antes de escrever, relê ao vivo o recebimento e cada PC (D4). Os vínculos ficam em `stockbridge.recebimento_fiscal_pc` (D5).
 4. **Regras novas no portão 1**: NF sem PC (configurável, bloquear por padrão, aviso a compras deduplicado, D6) e estoque já lançado pelo OMIE (bloqueio que vale com a chave desligada, D7).
 5. **Leitores da cópia de PCs** passam a usar o saldo (`nqtde − nqtderec`): cockpit, pendências fiscais e a função de trânsito (D10).
-6. **Compra nacional pela ACXE** (História 5, fase 2, migration `0057`): empresa como dimensão da fila, espelho de recebimentos da ACXE, fiscal na ACXE, entrada de estoque pela regra da importação (local espelhado → ACXE + Q2P; local só da ACXE → só ACXE), **mesmo valor nas duas empresas**, sem PC nem baixa na Q2P (D11).
+6. **Compra nacional pela ACXE** (História 5, fase 2, migration `0057`): empresa como dimensão da fila, espelho de recebimentos da ACXE, fiscal na ACXE, entrada de estoque pela regra da importação, sempre nas duas empresas no local espelhado escolhido (Extrema = 21.1), **mesmo valor nas duas empresas**, sem PC nem baixa na Q2P (D11).
 
 **O que a pesquisa fixou** (detalhe em [research.md](./research.md)):
 
@@ -174,11 +174,11 @@ deploy/portainer/atlas.stack.yml, YAML UAT, .env.example   # ESTENDER: variávei
 # backup-workflow-n8n: "Q2P - Exporta Recebimentos NF-e" (nova revisão) + "ACXE - Exporta Recebimentos NF-e" (novo)
 ```
 
-**Structure Decision**: web monorepo modular, estendendo os arquivos da 015/016. A sugestão de PC fica num service próprio (`pc-sugestao.service.ts`), chamado pelo detalhe (só leitura) e pelo portão 1 e pela releitura do POST. Assim fica testável sozinha e a regra de elegibilidade fica num lugar só. O fiscal continua isolado em `recebimento-fiscal.service.ts`, agora decidindo a ação por item (manter vínculo, associar ou ignorar). A História 5 reaproveita a mesma fila e o mesmo fiscal, parametrizados por empresa, e a escolha de locais da importação (`listarLocalidadesEspelhadas` + `listarLocalidadesNacional('acxe')`, com a correspondência em `localidade_correlacao`).
+**Structure Decision**: web monorepo modular, estendendo os arquivos da 015/016. A sugestão de PC fica num service próprio (`pc-sugestao.service.ts`), chamado pelo detalhe (só leitura) e pelo portão 1 e pela releitura do POST. Assim fica testável sozinha e a regra de elegibilidade fica num lugar só. O fiscal continua isolado em `recebimento-fiscal.service.ts`, agora decidindo a ação por item (manter vínculo, associar ou ignorar). A História 5 reaproveita a mesma fila e o mesmo fiscal, parametrizados por empresa, e a escolha de locais da importação (`listarLocalidadesEspelhadas`, com a correspondência em `localidade_correlacao`).
 
 **Fases de entrega**:
 - **Fase 1** (Histórias 1 a 4, Q2P): 0056, n8n Q2P, sugestão, fiscal com vínculo, portão 1, leitores. Fecha a contenção.
-- **Fase 2** (História 5, ACXE): 0057, n8n ACXE, empresa na fila e no fiscal, entrada ACXE/dual. O local só da ACXE é o 21.2 EXTREMA (NACIONAL) (research D11).
+- **Fase 2** (História 5, ACXE): 0057, n8n ACXE, empresa na fila e no fiscal, entrada dual (ACXE + Q2P) no local espelhado; Extrema = 21.1 (research D11).
 
 ## Complexity Tracking
 
@@ -192,4 +192,4 @@ Quatro notas de desenho, nenhuma delas violação:
 
 **3. Correção preventiva de leitores.** Cockpit, pendências fiscais e trânsito só ficariam errados com PC recebido em parte, que hoje não existe. A correção entra nesta feature porque a Rev 1.5 passou a manter esses PCs na cópia.
 
-**4. Local só da ACXE.** É o 21.2 EXTREMA (NACIONAL), já cadastrado em `stockbridge.localidade` com correlação só do lado ACXE. O 21.1 EXTREMA (IMPORTADO) é espelhado. Decidido em 21/10/2026, sem pendência para a Fase 2.
+**4. Sem entrada só na ACXE.** A compra nacional da ACXE entra sempre nas duas empresas. Quando chega fisicamente a Extrema, o local é o 21.1 EXTREMA, espelhado, para que vendas possa vender pela Q2P. O 21.2 EXTREMA (NACIONAL), só da ACXE, não é usado. Decidido em 21/10/2026, sem pendência para a Fase 2.

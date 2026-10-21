@@ -85,7 +85,7 @@ Pré-requisitos: 0057, workflow "ACXE - Exporta Recebimentos NF-e" e `STOCKBRIDG
 1. A NF da ACXE aparece na fila identificada pela empresa. A NF Q2P→ACXE não aparece.
 2. Fiscal com vínculo no OMIE da ACXE (mesma receita).
 3. Local espelhado: a entrada é lançada na ACXE e na Q2P com **o mesmo valor unitário**, sem os 14,5%, e sem divergência nova na Conferência de Estoque.
-4. Local só da ACXE (21.2 EXTREMA (NACIONAL)): a entrada é só na ACXE.
+4. Material chegando a Extrema: local 21.1 EXTREMA. A entrada vai para o 21.1 da ACXE e o 21.1 da Q2P, e o produto aparece disponível para venda na Q2P.
 5. Nenhuma baixa de PC na Q2P.
 
 ## Testes automatizados
