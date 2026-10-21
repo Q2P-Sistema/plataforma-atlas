@@ -130,23 +130,58 @@ quando não há teste em andamento.
 
 | Dado | Como atualizar | Pendente (fase 2 da 405) |
 |---|---|---|
-| Espelho OMIE `public.*` | `scripts/sync-omie-public-prod-to-uat.sh` (só `public.*`; preserva os schemas Atlas). Rodar 1×/dia. **Nunca rode duas cópias ao mesmo tempo**: a segunda deixa `pg_restore` órfão e trava o `TRUNCATE` | Agendar com trava e alerta |
+| Espelho OMIE `public.*` | `scripts/sync-omie-public-prod-to-uat.sh` (só `public.*`; preserva os schemas Atlas). **Agendado 1×/dia às 05h30** (ver abaixo); pode ser rodado à mão a qualquer hora | — |
 | Estado Atlas (lotes, movimentações, aprovações, baixas, mapa NF→pedido, `atlas.users`, auditoria) | `scripts/refresh-atlas-prod-to-uat.sh`, **sob demanda** — antes de uma rodada de testes. Apaga o que foi testado no UAT | — |
 | Mapa NF→pedido (`stockbridge.nf_pedido_mapa`) | Vem no refresh do estado Atlas; entre dois refreshes fica parado (o n8n publica só no PROD) | 2º POST no workflow da FUP com `continueOnFail`, se fizer falta |
 
 As senhas não precisam ir na linha de comando: sem `PGPASSWORD_PROD`/`PGPASSWORD_UAT`
-no ambiente, os scripts pedem as duas sem eco.
+no ambiente, os scripts usam o `~/.pgpass` ou pedem as duas sem eco. No PROD, use o
+`claude_ro` (só leitura) — os dois scripts só leem o PROD, e a sessão do PROD abre como
+somente leitura de qualquer jeito.
 
 ```bash
 cd /home/primebot/Documentos/Github/q2p/plataforma-atlas
 
-# espelho OMIE PROD -> UAT, diário (não toca nos schemas Atlas)
-PROD_USER=postgres ./scripts/sync-omie-public-prod-to-uat.sh
+# espelho OMIE PROD -> UAT (não toca nos schemas Atlas)
+PROD_USER=claude_ro ./scripts/sync-omie-public-prod-to-uat.sh
 
 # estado Atlas PROD -> UAT, sob demanda — primeiro só as checagens:
-PROD_USER=postgres DRY_RUN=1 ./scripts/refresh-atlas-prod-to-uat.sh
-PROD_USER=postgres ./scripts/refresh-atlas-prod-to-uat.sh
+PROD_USER=claude_ro DRY_RUN=1 ./scripts/refresh-atlas-prod-to-uat.sh
+PROD_USER=claude_ro ./scripts/refresh-atlas-prod-to-uat.sh
 ```
+
+Os dois scripts usam a mesma trava (`/tmp/atlas-uat-db.lock`): um não começa enquanto
+o outro roda. Duas cópias simultâneas deixavam `pg_restore` órfão e travavam o
+`TRUNCATE` da seguinte.
+
+### Agendamento diário do espelho
+
+Roda na máquina `primebot` (a mesma que tem o IP liberado no firewall da DigitalOcean):
+
+```
+# crontab -l
+30 5 * * * /home/primebot/.local/bin/atlas-sync-espelho-uat
+```
+
+- `~/.local/bin/atlas-sync-espelho-uat` busca a `origin/uat` e roda a versão do
+  `sync-omie-public-prod-to-uat.sh` que está nela (não a do checkout de trabalho, que
+  troca de branch), com `ASSUME_YES=1` e `PROD_USER=claude_ro`, limite de 2 h.
+- Log: `~/logs/atlas-sync-espelho-uat.log` (início, saída do script e `rc` de cada
+  rodada). O script sai com código 1 se sobrar tabela divergente.
+- Senhas no `~/.pgpass` (`chmod 600`), uma linha por banco:
+  ```
+  db.manager01.q2p.com.br:5432:acxe_q2p:claude_ro:<senha do claude_ro no PROD>
+  db.manager01.q2p.com.br:5437:acxe_q2p:postgres:<senha do postgres no UAT>
+  ```
+- Pré-requisito no PROD (uma vez, como `postgres`): o n8n recria tabelas de `public`
+  (staging → swap) e o `claude_ro` perderia o `SELECT` nelas — o `pg_dump` falharia.
+  ```sql
+  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT ON TABLES TO claude_ro;
+  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT ON SEQUENCES TO claude_ro;
+  ```
+- Se falhar, o próprio UAT avisa: o cron `5,35` do StockBridge manda e-mail (desviado
+  para a caixa de testes) quando o espelho de recebimentos passa de
+  `STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN` (1440 min no UAT).
 
 O refresh do estado Atlas:
 

@@ -60,9 +60,13 @@ SCHEMAS=(atlas stockbridge shared hedge forecast breakingpoint)
 SEM_DADOS=(atlas.sessions)
 
 [ -z "$PROD_USER" ] && { echo "X PROD_USER nao setado (sem default de proposito)."; exit 1; }
-for cmd in pg_dump pg_restore psql join sort comm awk; do
+for cmd in pg_dump pg_restore psql join sort comm awk flock; do
   command -v "$cmd" >/dev/null || { echo "X '$cmd' nao instalado"; exit 1; }
 done
+# Mesma trava do sync do espelho: nunca rodar os dois ao mesmo tempo no UAT.
+LOCK_FILE="${ATLAS_UAT_LOCK:-/tmp/atlas-uat-db.lock}"
+exec 9>"$LOCK_FILE"
+flock -n 9 || { echo "X Outra copia para o UAT esta rodando (trava $LOCK_FILE). Abortado."; exit 1; }
 if [ "$UAT_HOST:$UAT_PORT/$UAT_DB" == "$PROD_HOST:$PROD_PORT/$PROD_DB" ]; then
   echo "X Origem e destino sao o mesmo banco ($UAT_HOST:$UAT_PORT/$UAT_DB). Abortado."
   exit 1
