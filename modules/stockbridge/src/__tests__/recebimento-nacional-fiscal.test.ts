@@ -74,7 +74,15 @@ vi.mock('../services/correlacao-produto.service.js', () => ({
 const detalheMock = vi.fn();
 vi.mock('../services/fila-nacional.service.js', async () => {
   const real = await vi.importActual<typeof import('../services/fila-nacional.service.js')>('../services/fila-nacional.service.js');
-  return { ...real, getDetalheNfNacional: (c: string) => detalheMock(c) };
+  return {
+    ...real,
+    getDetalheNfNacional: (c: string) => detalheMock(c),
+    // 017: o POST usa o detalhe com o bloco interno do PC — neutro aqui (NF no espelho, sem PC)
+    montarDetalheNfNacional: async (c: string) => ({
+      detalhe: await detalheMock(c),
+      interno: { fornecedorCodigo: 8498397152, espelhoConfirmaConclusao: true, pcPorIndice: new Map() },
+    }),
+  };
 });
 
 const fiscalSpy = vi.fn();
@@ -117,7 +125,7 @@ function detalhe(itens: ItemNfNacional[], over: Partial<DetalheNfNacional> = {})
     nfChaveAcesso: CHAVE, notaFiscal: '6842', fornecedorNome: FORNECEDOR, fornecedorCnpj: '14.555.032/0007-53',
     dtEmissao: '2026-10-01', diasDesdeEmissao: 1, cfop: '1.102',
     valorTotalBrl: itens.reduce((s, i) => s + i.valorTotalItemBrl, 0), itens, linhasForaDoRecorte: 0,
-    fiscal: 'pendente', nIdReceb: N_ID_RECEB, dispensavel: true, valorNotaBrl: itens.reduce((s, i) => s + i.valorTotalItemBrl, 0),
+    fiscal: 'pendente', nIdReceb: N_ID_RECEB, dispensavel: true, valorNotaBrl: itens.reduce((s, i) => s + i.valorTotalItemBrl, 0), itensSemAvaliacaoPc: [],
     ...over,
   };
 }
@@ -145,6 +153,9 @@ const fiscalOk = (status: 'concluido' | 'ja_concluido' = 'concluido') => ({
   concluidoEm: '2026-10-02T13:00:00.000Z',
   ledgerId: 'ledger-1',
   itensTotal: status === 'concluido' ? 1 : 0,
+  // 017: vinculos com PC e itens recebidos sem vinculo (vazios: NF sem PC no detalhe)
+  vinculos: [],
+  semVinculo: [],
 });
 
 beforeEach(() => {
@@ -170,7 +181,11 @@ describe('processarRecebimentoNacionalPorNf — passo fiscal (research D10)', ()
     const r = await processarRecebimentoNacionalPorNf(base());
 
     expect(fiscalSpy).toHaveBeenCalledTimes(1);
-    expect(fiscalSpy).toHaveBeenCalledWith({ nfChaveAcesso: CHAVE, nIdReceb: N_ID_RECEB, notaFiscal: '6842', fornecedorNome: FORNECEDOR, userId: USER });
+    expect(fiscalSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ nfChaveAcesso: CHAVE, nIdReceb: N_ID_RECEB, notaFiscal: '6842', fornecedorNome: FORNECEDOR, userId: USER }),
+    );
+    // 017: NF sem PC no detalhe — nenhuma escolha e nenhum item "sem vinculo" para o fiscal
+    expect(fiscalSpy.mock.calls[0]![0]).toMatchObject({ vinculos: [], sequenciasSemVinculo: [] });
     // ordem: fiscal -> transacao -> inserts
     expect(ordem[0]).toBe('fiscal');
     expect(ordem.indexOf('fiscal')).toBeLessThan(ordem.indexOf('transacao'));
@@ -180,6 +195,10 @@ describe('processarRecebimentoNacionalPorNf — passo fiscal (research D10)', ()
       status: 'concluido',
       concluidoEm: '2026-10-02T13:00:00.000Z',
       mensagem: `Recebimento fiscal da NF 6842 (${FORNECEDOR}) concluído no OMIE.`,
+      // 017: NF sem PC no detalhe — sem vinculo, sem item "sem vinculo", sem aviso a compras
+      vinculos: [],
+      semVinculo: [],
+      avisoCompras: false,
     });
     expect(r.resumo.enviadosParaAprovacao).toBe(1);
   });
@@ -269,10 +288,20 @@ describe('processarRecebimentoNacionalPorNf — passo fiscal (research D10)', ()
     expect(inserts).toHaveLength(0);
   });
 
-  it('flag desligada: a dispensa nao e consultada (comportamento da 015)', async () => {
+  it('flag desligada: a dispensa ATIVA continua valendo — o POST confere antes de gravar (achado fila-v01; a contencao da 017 deixava receber NF dispensada)', async () => {
     config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = false;
     await processarRecebimentoNacionalPorNf(base());
-    expect(poolQuerySpy.mock.calls.some((c) => String(c[0]).includes('stockbridge.nf_dispensa'))).toBe(false);
+    expect(poolQuerySpy.mock.calls.some((c) => String(c[0]).includes('stockbridge.nf_dispensa'))).toBe(true);
+    expect(fiscalSpy).not.toHaveBeenCalled();
+  });
+
+  it('flag desligada com dispensa ATIVA (NFs 6936/6937 de PROD, físico já entrou pela NF 6923): 404 NF_DISPENSADA, zero INSERT', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = false;
+    poolQuerySpy.mockImplementation((sql: string, params?: unknown[]) =>
+      Promise.resolve(String(sql).includes('FROM stockbridge.nf_dispensa') ? { rows: [{ dispensado_em: '2026-10-07 16:09:23-03' }] } : poolPadrao(sql, params)),
+    );
+    await expect(processarRecebimentoNacionalPorNf(base())).rejects.toBeInstanceOf(NfNacionalDispensadaError);
+    expect(inserts).toHaveLength(0);
   });
 
   it('nIdReceb nulo no detalhe e repassado como null (o service do fiscal resolve pela consulta)', async () => {

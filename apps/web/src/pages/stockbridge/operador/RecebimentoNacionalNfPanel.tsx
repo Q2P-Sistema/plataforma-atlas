@@ -3,6 +3,21 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '@atlas/ui';
 import { useAuthStore } from '../../../stores/auth.store.js';
 import { ProdutoCombobox, useApiFetch, type Localidade } from './RecebimentoNacionalForm.js';
+import {
+  PedidoCompraBloco,
+  fmtBrlKg,
+  fmtKg,
+  mesmoPc,
+  pcBloqueiaRecebimento,
+  pcEscolhaEfetiva,
+  pcOpcaoEscolhida,
+  pcParaEnvio,
+  pcPendencia,
+  rotuloPc,
+  type PcDoItem,
+  type PcPendencia,
+  type PcRef,
+} from './PedidoCompraBloco.js';
 
 /**
  * Feature 015 (ACXEGDP-328) — recebimento nacional A PARTIR DA NF.
@@ -23,6 +38,16 @@ import { ProdutoCombobox, useApiFetch, type Localidade } from './RecebimentoNaci
  * O formulario manual continua ao lado (FR-014) para NF fora do espelho.
  * Rotulos: a contraparte e "Fornecedor" — nunca "Destinatario" (research D7).
  * Mensagens: produto por descricao, local por nome; nada de codigo OMIE (313).
+ *
+ * Feature 017 (ACXEGDP-437) — pedido de compra (PC) no recebimento fiscal.
+ * Com o fiscal pendente, o operador confirma, item a item, o PC ao qual o item sera
+ * vinculado no OMIE (vinculo que o OMIE ja traz, sugestao do Atlas ou escolha manual com
+ * justificativa) — bloco em `PedidoCompraBloco.tsx`. O PC aparece so pelo numero legivel
+ * ("PC 304"); `nCodPed`/`nCodItem` ficam so na selecao e no corpo do POST. Tambem aqui:
+ * selos de PC na fila, NF "aguardando pedido de compra" (com aviso a equipe de Compras), PC de cada item no resultado, os
+ * 409/422/503 novos e o bloqueio quando o estoque ja entrou pelo OMIE. Item pendente que o Atlas nao recebe (unidade que nao
+ * converte para kg) e que nao tem PC vinculado no OMIE (`itensSemAvaliacaoPc`): no modo "bloquear" barra a NF inteira, como o
+ * 422 NF_SEM_PC do servidor; no modo "receber sem vinculo" so informa que o OMIE o conclui sem vinculo.
  */
 
 interface FilaNacionalItem {
@@ -39,9 +64,17 @@ interface FilaNacionalItem {
   fiscal: SituacaoFiscal;
   /** quando o Atlas concluiu o fiscal — null se foi no OMIE/portal */
   fiscalConcluidoPeloAtlasEm: string | null;
+  /** feature 017 (campos novos: ausentes = backend anterior) — por ora sempre 'q2p', sem UI */
+  empresa?: Empresa;
+  /** resumo do PC da NF (pior caso entre os itens); 'nao_aplicavel' = fiscal ja feito ou fiscal pelo Atlas desligado */
+  pcSituacao?: PcSituacao;
+  /** o fiscal ja lancou o estoque no OMIE: o recebimento fisico aqui lancaria em dobro */
+  estoqueLancadoPeloOmie?: boolean;
 }
 
 type SituacaoFiscal = 'pendente' | 'concluido';
+type Empresa = 'q2p' | 'acxe';
+type PcSituacao = 'vinculado_omie' | 'sugerido' | 'escolha_necessaria' | 'aguardando_aprovacao' | 'sem_pc' | 'nao_aplicavel';
 
 /** GET /fila devolve a lista em `data` e a flag da feature 016 em `meta`. */
 interface FilaResposta {
@@ -78,6 +111,10 @@ interface ItemNf {
   baixadoComoExterno: boolean;
   /** ha solicitacao de baixa externa aguardando o gestor */
   baixaSolicitada: boolean;
+  /** ACXEGDP-412: sequencias do item no recebimento de NF-e do OMIE — casam com `fiscal.vinculos[].nSequencia` */
+  sequenciasRecebimento?: number[];
+  /** feature 017: PC do item; null/ausente = fiscal pelo Atlas desligado e nada a mostrar */
+  pc?: PcDoItem | null;
 }
 
 interface DetalheNf {
@@ -100,6 +137,21 @@ interface DetalheNf {
   dispensavel: boolean;
   /** flag STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED — selo/banner fiscal somem quando false */
   recebimentoFiscalHabilitado?: boolean;
+  /** feature 017 (campos novos: ausentes = backend anterior) */
+  empresa?: Empresa;
+  /** true = item sem PC possivel bloqueia a NF; false = esse item e recebido sem vinculo */
+  exigePc?: boolean;
+  /** true = o estoque ja entrou pelo OMIE: bloqueia o recebimento */
+  estoqueLancadoPeloOmie?: boolean;
+  /** true = lista local de PCs desatualizada: sem sugestao confiavel e, com fiscal pendente, sem recebimento */
+  copiaPcsDefasada?: boolean;
+  /**
+   * Itens PENDENTES que o Atlas nao recebe por bloqueio de unidade e que nao tem PC vinculado no OMIE. So vem preenchido
+   * com o fluxo de PC valendo (chave da 016 ligada e fiscal pendente); senao [] (ausente = backend anterior = nenhum).
+   * Modo "bloquear" (`exigePc`): o POST da NF e recusado com 422 NF_SEM_PC — o item nao tem como ser avaliado.
+   * Modo "receber sem vinculo": o item e concluido no OMIE sem vinculo e compras e avisado depois.
+   */
+  itensSemAvaliacaoPc?: Array<{ indice: number; descricao: string }>;
 }
 
 type StatusProduto = 'aguardando_aprovacao' | 'ja_recebido' | 'bloqueado_unidade' | 'bloqueado_unidade_incoerente' | 'falha';
@@ -109,13 +161,72 @@ interface ResultadoPorNf {
   produtos: Array<{ indice: number; produto: string; descricaoFornecedor: string; status: StatusProduto; quantidadeKg: number; mensagemErro?: string }>;
   resumo: { enviadosParaAprovacao: number; jaRecebidos: number; bloqueados: number; falhas: number };
   /** feature 016: o que o Atlas fez com o recebimento FISCAL neste envio */
-  fiscal?: { status: 'concluido' | 'ja_concluido' | 'nao_aplicavel' | 'desligado'; concluidoEm: string | null; mensagem: string };
+  fiscal?: {
+    status: 'concluido' | 'ja_concluido' | 'nao_aplicavel' | 'desligado';
+    concluidoEm: string | null;
+    mensagem: string;
+    /** feature 017: PC de cada item vinculado no OMIE, por sequencia do recebimento */
+    vinculos?: VinculoPcResultado[];
+    /** feature 017: sequencias recebidas sem PC (modo "receber sem vinculo") */
+    semVinculo?: number[];
+    /** feature 017: um aviso a compras partiu neste envio */
+    avisoCompras?: boolean;
+  };
+}
+
+type VinculoOrigem = 'omie' | 'sugestao' | 'manual';
+
+interface VinculoPcResultado {
+  nSequencia: number;
+  pcNumero: string;
+  origem: VinculoOrigem;
+  status: 'concluido';
+}
+
+/** PC de cada item no resultado: `fiscal.vinculos` casado, por sequencia, com os itens enviados. */
+interface ResumoPcResultado {
+  linhas: Array<{ indice: number; descricao: string; pcs: Array<{ pcNumero: string; origem: VinculoOrigem }>; semVinculo: boolean }>;
+  /** vinculos cuja sequencia nao pertence a nenhum item conhecido (espelho sem sequencia) */
+  soltos: Array<{ pcNumero: string; origem: VinculoOrigem }>;
+}
+
+const ORIGEM_PC: Record<VinculoOrigem, string> = { omie: 'vínculo do OMIE', sugestao: 'sugerido pelo Atlas', manual: 'escolha manual' };
+const origensPc = (pcs: Array<{ origem: VinculoOrigem }>) => Array.from(new Set(pcs.map((p) => ORIGEM_PC[p.origem] ?? p.origem))).join(', ');
+
+function montarResumoPc(fiscal: ResultadoPorNf['fiscal'], itens: ItemNf[]): ResumoPcResultado {
+  const vinculos = fiscal?.vinculos ?? [];
+  const semVinculo = fiscal?.semVinculo ?? [];
+  const usadas = new Set<number>();
+  const linhas: ResumoPcResultado['linhas'] = [];
+  for (const it of itens) {
+    const seqs = it.sequenciasRecebimento ?? [];
+    const dele = vinculos.filter((v) => seqs.includes(v.nSequencia));
+    dele.forEach((v) => usadas.add(v.nSequencia));
+    const pcs: ResumoPcResultado['linhas'][number]['pcs'] = [];
+    for (const v of dele) if (!pcs.some((p) => p.pcNumero === v.pcNumero)) pcs.push({ pcNumero: v.pcNumero, origem: v.origem });
+    const sem = dele.length === 0 && seqs.some((s) => semVinculo.includes(s));
+    if (pcs.length > 0 || sem) linhas.push({ indice: it.indice, descricao: it.descricaoFornecedor.trim(), pcs, semVinculo: sem });
+  }
+  const soltos: ResumoPcResultado['soltos'] = [];
+  for (const v of vinculos) {
+    if (!usadas.has(v.nSequencia) && !soltos.some((p) => p.pcNumero === v.pcNumero)) soltos.push({ pcNumero: v.pcNumero, origem: v.origem });
+  }
+  return { linhas, soltos };
 }
 
 interface ResultadoBaixa {
   notaFiscal: string;
   aprovacoesCriadas: number;
   jaSolicitados: number;
+}
+
+/** POST /aviso-compras: a equipe de Compras foi avisada agora ('enviado') ou ja tinha sido nas ultimas 24 h ('deduplicado'). */
+interface AvisoComprasResposta {
+  status: 'enviado' | 'deduplicado';
+  motivo: 'sem_pc' | 'pc_aguardando_aprovacao';
+  itens: string[];
+  /** texto pronto para o operador */
+  mensagem: string;
 }
 
 /** Uma linha "produto no estoque" de um item da NF (Historia 4: pode haver N). */
@@ -132,11 +243,14 @@ interface ItemForm {
   /** input controlado; vazio = usa a quantidade da NF */
   quantidadeConferida: string;
   motivoDivergencia: string;
+  /** feature 017: PC escolhido. undefined = ainda nao mexeu (vale a pre-selecao do servidor); null = sem escolha */
+  pcEscolha?: PcRef | null;
+  /** feature 017: justificativa (1 a 500) — so segue no envio quando a escolha a exige */
+  pcJustificativa: string;
 }
 
 const TOLERANCIA_KG = 1;
 
-const fmtKg = (v: number) => v.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
 const fmtBrl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtData = (iso: string) => {
   const d = new Date(iso.length === 10 ? `${iso}T00:00:00` : iso);
@@ -186,8 +300,109 @@ function formInicial(it: ItemNf): ItemForm {
     it.produtosSugeridos.length > 0
       ? it.produtosSugeridos.map((s) => ({ produto: { codigo: s.codigo, descricao: s.descricao }, localidadeId: '', quantidade: '' }))
       : [{ produto: null, localidadeId: '', quantidade: '' }];
-  return { linhas, quantidadeConferida: '', motivoDivergencia: '' };
+  return { linhas, quantidadeConferida: '', motivoDivergencia: '', pcJustificativa: '' };
 }
+
+/** Volta a escolha de PC de todos os itens para a pre-selecao do servidor (a nota foi recarregada). */
+function limparEscolhasPc(prev: Record<number, ItemForm>): Record<number, ItemForm> {
+  return Object.fromEntries(Object.entries(prev).map(([k, f]) => [k, { ...f, pcEscolha: undefined, pcJustificativa: '' }]));
+}
+
+/**
+ * Erros em que o servidor recusou com dado que mudou no OMIE, ou que a tela via diferente dele (lista de PCs velha, PC que
+ * passou a exigir justificativa, item que ganhou PC possivel): a nota e recarregada junto com a mensagem. A escolha e a
+ * justificativa digitadas ficam — `pcEscolha` so vira "sem escolha" se a opcao sumir da nota recarregada. NF_SEM_PC fica de
+ * fora: a nota nao mudou, o aviso ambar basta.
+ */
+const ERROS_QUE_RECARREGAM_NOTA = new Set([
+  'ESTOQUE_JA_LANCADO_PELO_OMIE',
+  'PC_VINCULO_INVALIDO',
+  'VINCULO_OMIE_MUDOU',
+  'PC_NAO_ELEGIVEL',
+  'PC_NAO_ESCOLHIDO',
+  'PC_JUSTIFICATIVA_OBRIGATORIA',
+  'COPIA_PCS_DEFASADA',
+  // a NF mudou desde que a tela abriu (item que passou a ser recebivel ou sumiu): a mensagem do
+  // servidor manda recarregar — a tela recarrega e mantem o formulario (achado portao-r02)
+  'NF_INCOMPLETA',
+  'ITEM_NAO_ENCONTRADO',
+]);
+
+/** "ao PC 304" | "aos PCs 304 e 305" | "ao PC (número não informado)" — o PC (ou os PCs) a que um item foi vinculado. */
+function textoPcsVinculados(pcs: Array<{ pcNumero: string }>): string {
+  if (pcs.length === 1) return `ao ${rotuloPc(pcs[0]?.pcNumero)}`;
+  const nomes = pcs.map((p) => p.pcNumero.trim() || '(número não informado)');
+  return `aos PCs ${nomes.slice(0, -1).join(', ')} e ${nomes[nomes.length - 1]}`;
+}
+
+function textoPendenciaPc(p: PcPendencia, rot: string): string {
+  switch (p.tipo) {
+    case 'escolher':
+      return `Escolha o pedido de compra do item ${rot}.`;
+    case 'justificar':
+      return `Informe por que o ${rotuloPc(p.pcNumero)} foi escolhido para o item ${rot}.`;
+  }
+}
+
+/** "A" | "A e B" | "A, B e C" */
+function listaPt(partes: string[]): string {
+  if (partes.length <= 1) return partes[0] ?? '';
+  return `${partes.slice(0, -1).join(', ')} e ${partes[partes.length - 1]}`;
+}
+
+/**
+ * Item pendente com unidade que o Atlas nao converte para kg e sem PC vinculado no OMIE, no modo "bloquear": a NF inteira
+ * fica barrada (o servidor recusaria com 422 NF_SEM_PC). `destaque` diz o que ha; `orientacao`, o que fazer.
+ */
+function textoSemAvaliacaoBloqueio(nomes: string[]): { destaque: string; orientacao: string } {
+  const itens = nomes.map((n) => `"${n}"`);
+  return nomes.length === 1
+    ? {
+        destaque: `O item ${itens[0]} tem unidade que o Atlas não converte para kg e não tem pedido de compra vinculado no OMIE.`,
+        orientacao: 'Peça ao fiscal para corrigir a unidade ou concluir o recebimento desta NF no OMIE, vinculando o pedido.',
+      }
+    : {
+        destaque: `Os itens ${listaPt(itens)} têm unidades que o Atlas não converte para kg e não têm pedido de compra vinculado no OMIE.`,
+        orientacao: 'Peça ao fiscal para corrigir as unidades ou concluir o recebimento desta NF no OMIE, vinculando os pedidos.',
+      };
+}
+
+/** Mesmo item, no modo "receber sem vinculo": nao bloqueia — o OMIE conclui o recebimento sem vinculo e compras e avisado depois. */
+function textoSemAvaliacaoInforma(nomes: string[]): string {
+  const itens = nomes.map((n) => `"${n}"`);
+  return nomes.length === 1
+    ? `O item ${itens[0]} será concluído no OMIE sem vínculo com pedido de compra.`
+    : `Os itens ${listaPt(itens)} serão concluídos no OMIE sem vínculo com pedido de compra.`;
+}
+
+/** Selo de PC na fila, por `pcSituacao` ('nao_aplicavel' fica sem selo). */
+const SELO_PC: Record<Exclude<PcSituacao, 'nao_aplicavel'>, { label: string; title: string; cls: string }> = {
+  vinculado_omie: {
+    label: 'PC vinculado no OMIE',
+    title: 'O OMIE já traz os itens desta nota vinculados a pedido de compra. Confirme o PC na conferência.',
+    cls: 'font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400',
+  },
+  sugerido: {
+    label: 'PC sugerido',
+    title: 'O Atlas encontrou pedido de compra compatível com os itens desta nota. Confirme o PC na conferência.',
+    cls: 'border border-atlas-border text-atlas-muted',
+  },
+  escolha_necessaria: {
+    label: 'Escolher PC',
+    title: 'Há mais de um pedido de compra possível, ou o pedido está fora da tolerância de quantidade ou preço. A escolha é feita na conferência.',
+    cls: 'font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400',
+  },
+  aguardando_aprovacao: {
+    label: 'PC aguardando aprovação',
+    title: 'O pedido de compra desta nota ainda aguarda aprovação no OMIE.',
+    cls: 'font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400',
+  },
+  sem_pc: {
+    label: 'Sem PC',
+    title: 'Não há pedido de compra aprovado com saldo para esta nota no OMIE.',
+    cls: 'font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400',
+  },
+};
 
 interface Props {
   /** Abre o formulario manual (NF fora do espelho / fornecedor sem NF-e). */
@@ -254,18 +469,23 @@ function FilaSection({ onSelecionar, onAbrirManual }: { onSelecionar: (chave: st
           </button>
         </div>
       </div>
-      <p className="text-xs text-atlas-muted mb-4">
+      <div className="text-xs text-atlas-muted mb-4 space-y-1">
         {fiscalHabilitado ? (
           <>
-            A lista traz as notas de compra que chegaram ao OMIE. As marcadas como <strong className="text-atlas-ink font-medium">fiscal pendente</strong> terão o
-            recebimento fiscal concluído ao confirmar; as demais já tiveram o fiscal feito e recebem só o estoque. Quantidade e valor vêm do documento.
-            Notas recém-chegadas da SEFAZ aparecem após a próxima atualização do espelho do OMIE. O formulário manual não conclui o recebimento fiscal:
-            use-o só para nota que não está nesta lista e, nesse caso, avise o fiscal.
+            <p>
+              A lista traz as notas de compra que chegaram ao OMIE. As marcadas como <strong className="text-atlas-ink font-medium">fiscal pendente</strong> terão o
+              recebimento fiscal concluído ao confirmar, com cada item vinculado ao pedido de compra (PC) escolhido; as demais já tiveram o fiscal feito e recebem só o estoque.
+              Quantidade e valor vêm do documento.
+            </p>
+            <p>
+              Notas recém-chegadas da SEFAZ aparecem após a próxima atualização do espelho do OMIE. O formulário manual não conclui o recebimento fiscal:
+              use-o só para nota que não está nesta lista e, nesse caso, avise o fiscal.
+            </p>
           </>
         ) : (
-          'A lista vem das notas de compra já registradas no OMIE. Escolha a nota, confira os itens e dê entrada — quantidade e valor vêm do documento.'
+          <p>A lista vem das notas de compra já registradas no OMIE. Escolha a nota, confira os itens e dê entrada — quantidade e valor vêm do documento.</p>
         )}
-      </p>
+      </div>
 
       {isLoading && <div className="p-6 text-sm text-atlas-muted">Carregando notas…</div>}
 
@@ -336,6 +556,19 @@ function FilaSection({ onSelecionar, onAbrirManual }: { onSelecionar: (chave: st
                           Fiscal já feito
                         </span>
                       ))}
+                    {x.pcSituacao && x.pcSituacao !== 'nao_aplicavel' && SELO_PC[x.pcSituacao] && (
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${SELO_PC[x.pcSituacao].cls}`} title={SELO_PC[x.pcSituacao].title}>
+                        {SELO_PC[x.pcSituacao].label}
+                      </span>
+                    )}
+                    {x.estoqueLancadoPeloOmie === true && (
+                      <span
+                        className="text-xs font-medium px-1.5 py-0.5 rounded bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
+                        title="O fiscal concluiu esta nota no OMIE com movimento de estoque. O recebimento físico por aqui está bloqueado para não lançar o estoque em dobro."
+                      >
+                        Estoque já lançado pelo OMIE — fale com o fiscal
+                      </span>
+                    )}
                   </div>
                   <div className="text-xs text-atlas-muted mt-0.5">
                     <span className={agingClass(x.diasDesdeEmissao)}>
@@ -351,7 +584,11 @@ function FilaSection({ onSelecionar, onAbrirManual }: { onSelecionar: (chave: st
                 </div>
                 <button
                   onClick={() => onSelecionar(x.nfChaveAcesso)}
-                  className="px-4 py-2 bg-atlas-btn-bg text-atlas-btn-text rounded text-sm font-medium hover:opacity-90 whitespace-nowrap"
+                  className={`px-4 py-2 rounded text-sm font-medium whitespace-nowrap ${
+                    x.estoqueLancadoPeloOmie === true
+                      ? 'border border-atlas-border text-atlas-ink hover:bg-atlas-bg'
+                      : 'bg-atlas-btn-bg text-atlas-btn-text hover:opacity-90'
+                  }`}
                 >
                   Conferir →
                 </button>
@@ -373,6 +610,8 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
   const queryClient = useQueryClient();
   const [form, setForm] = useState<Record<number, ItemForm>>({});
   const [resultado, setResultado] = useState<ResultadoPorNf | null>(null);
+  /** feature 017: PC de cada item do envio, casado por sequencia (montado no sucesso, com os itens da epoca do clique) */
+  const [pcResultado, setPcResultado] = useState<ResumoPcResultado | null>(null);
   const [erroEnvio, setErroEnvio] = useState<string | null>(null);
   /** codigo do erro da API (feature 016: 409 em andamento -> recarregar; 502 fiscal -> tentar de novo) */
   const [erroCodigo, setErroCodigo] = useState<string | null>(null);
@@ -399,7 +638,7 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
   const [motivoBaixa, setMotivoBaixa] = useState('');
   const [avisoBaixa, setAvisoBaixa] = useState<string | null>(null);
 
-  const { data: nf, isLoading, error } = useQuery<DetalheNf, Error>({
+  const { data: nf, isLoading, isFetching, error } = useQuery<DetalheNf, Error>({
     queryKey: ['sb', 'rec-nacional', 'detalhe', chave],
     queryFn: async () => (await apiFetch(`/api/v1/stockbridge/recebimento/nacional/fila/${chave}`)).data as DetalheNf,
   });
@@ -427,6 +666,73 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
   /** feature 016 (Historia 4): gestor/diretor pode tirar da fila uma NF que nunca sera recebida */
   const podeDispensar = (role === 'gestor' || role === 'diretor') && nf?.recebimentoFiscalHabilitado === true && nf.dispensavel === true && !resultado;
 
+  // ── feature 017: pedido de compra (PC) ──
+  /** o PC so entra quando o Atlas conclui o fiscal agora: flag ligada, fiscal pendente e fornecedor cadastrado */
+  const pcAtivo = fiscalPendente && !fiscalSemFornecedor;
+  /** true = item sem PC possivel bloqueia a NF; false = esse item e recebido sem vinculo (o servidor decide; ausente = bloquear) */
+  const exigePc = nf?.exigePc !== false;
+  /** lista local de PCs desatualizada: sem sugestao confiavel e, com fiscal pendente, sem recebimento ate ela voltar */
+  const copiaPcsDefasada = fiscalPendente && nf?.copiaPcsDefasada === true;
+  /** o fiscal ja lancou o estoque no OMIE: receber aqui lancaria em dobro (vale tambem com o fiscal pelo Atlas desligado) */
+  const estoqueLancadoPeloOmie = nf?.estoqueLancadoPeloOmie === true;
+  /** o que falta em item COM PC possivel para o PC estar confirmado (escolha ou justificativa): isso desabilita o botao */
+  const pcPendencias: Array<{ it: ItemNf; p: PcPendencia }> =
+    pcAtivo && !copiaPcsDefasada
+      ? recebiveis.flatMap((it) => {
+          if (!it.pc) return [];
+          const fi = getForm(it);
+          const p = pcPendencia(it.pc, fi.pcEscolha, fi.pcJustificativa);
+          return p ? [{ it, p }] : [];
+        })
+      : [];
+  /**
+   * Itens a receber sem PC que possa ser vinculado (inclusive vinculo do OMIE inelegivel ou divergente sem outro PC,
+   * nos dois modos): a nota nao pode ser recebida agora. Banner "Aguardando pedido de compra" com o botao que avisa a
+   * equipe de Compras (POST /aviso-compras) e botao de receber desabilitado. Se um POST de recebimento chegar mesmo
+   * assim (corrida), o servidor recusa com 422 NF_SEM_PC.
+   */
+  const itensSemPc = pcAtivo && !copiaPcsDefasada ? recebiveis.filter((it) => it.pc != null && pcBloqueiaRecebimento(it.pc, exigePc)).length : 0;
+  const aguardandoPcCompras = itensSemPc > 0;
+  /**
+   * Itens pendentes que o Atlas nao recebe (bloqueio de unidade) e sem PC vinculado no OMIE: o servidor nao tem como
+   * avalia-los (`itensSemAvaliacaoPc`, so preenchido com o fluxo de PC valendo). Com a lista de PCs defasada o servidor nao
+   * decide nada de PC (D13) e o aviso da lista velha vale sozinho. Lista ausente ou vazia = nada disto aparece.
+   */
+  const listaSemAvaliacao = nf?.itensSemAvaliacaoPc;
+  const nomesSemAvaliacao =
+    pcAtivo && !copiaPcsDefasada && Array.isArray(listaSemAvaliacao)
+      ? listaSemAvaliacao.map((x) => (x.descricao ?? '').trim() || nf?.itens.find((i) => i.indice === x.indice)?.descricaoFornecedor.trim() || '(sem descrição)')
+      : [];
+  /** modo "bloquear": a NF inteira fica barrada (o servidor recusa com 422 NF_SEM_PC); no modo "receber sem vinculo" so informa */
+  const semAvaliacaoBloqueia = exigePc && nomesSemAvaliacao.length > 0;
+  const semAvaliacaoInforma = !exigePc && nomesSemAvaliacao.length > 0;
+  const avisoSemAvaliacao = semAvaliacaoBloqueia ? textoSemAvaliacaoBloqueio(nomesSemAvaliacao) : null;
+  /** recebimento barrado por um aviso proprio (banner acima dos itens): botao desabilitado */
+  const recebimentoBarrado = estoqueLancadoPeloOmie || copiaPcsDefasada || aguardandoPcCompras || semAvaliacaoBloqueia;
+  const bloqueadoPorPc = recebimentoBarrado || pcPendencias.length > 0;
+  /** por que o botao esta desabilitado (aviso visivel ao lado do botao) */
+  const primeiraPendenciaPc = pcPendencias[0];
+  const nomeItem = (it: ItemNf) => `"${it.descricaoFornecedor.trim()}"`;
+  const dicaPc = estoqueLancadoPeloOmie
+    ? 'Recebimento bloqueado: o estoque desta NF já entrou pelo OMIE. Fale com o fiscal.'
+    : copiaPcsDefasada
+      ? 'Recebimento bloqueado: a lista de pedidos de compra está desatualizada.'
+      : aguardandoPcCompras
+        ? 'Recebimento bloqueado: a nota está aguardando pedido de compra.'
+        : semAvaliacaoBloqueia
+          ? nomesSemAvaliacao.length === 1
+            ? `Recebimento bloqueado: o item "${nomesSemAvaliacao[0]}" tem unidade que o Atlas não converte e não tem pedido de compra vinculado no OMIE.`
+            : `Recebimento bloqueado: ${nomesSemAvaliacao.length} itens têm unidade que o Atlas não converte e não têm pedido de compra vinculado no OMIE.`
+          : !primeiraPendenciaPc
+            ? null
+            : pcPendencias.length > 1
+              ? `Falta escolher ou justificar o pedido de compra em ${pcPendencias.length} itens.`
+              : primeiraPendenciaPc.p.tipo === 'justificar'
+                ? `Falta a justificativa do ${rotuloPc(primeiraPendenciaPc.p.pcNumero)} no item ${nomeItem(primeiraPendenciaPc.it)}.`
+                : `Falta escolher o pedido de compra do item ${nomeItem(primeiraPendenciaPc.it)}.`;
+  /** ha item com PC para confirmar neste envio (muda o texto do aviso do fiscal) */
+  const haPcParaConfirmar = pcAtivo && !copiaPcsDefasada && recebiveis.some((it) => it.pc != null);
+
   /** Peso que ainda entra por este envio: conferido (ou da NF) menos o que ja foi gravado. */
   function alvoKg(it: ItemNf, fi: ItemForm): number {
     const conferida = parseNum(fi.quantidadeConferida);
@@ -444,6 +750,11 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
   /** Validacao local — espelha a do servidor para o operador ver antes de enviar. */
   function validar(): string | null {
     if (recebiveis.length === 0) return 'Nenhum item desta nota pode ser recebido por aqui.';
+    // feature 017: o botao ja fica desabilitado nestes casos; aqui cobre "Tentar novamente" e nota recarregada
+    if (estoqueLancadoPeloOmie) return 'O estoque desta NF já entrou pelo OMIE. Fale com o fiscal.';
+    if (copiaPcsDefasada) return 'A lista de pedidos de compra está desatualizada. Tente de novo em alguns minutos.';
+    if (aguardandoPcCompras) return 'Esta nota está aguardando pedido de compra e não pode ser recebida agora.';
+    if (avisoSemAvaliacao) return `${avisoSemAvaliacao.destaque} ${avisoSemAvaliacao.orientacao}`;
     for (const it of recebiveis) {
       const fi = getForm(it);
       const rot = `"${it.descricaoFornecedor.trim()}"`;
@@ -473,6 +784,8 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
           return `${rot}: a soma dos produtos (${fmtKg(soma)} kg) não fecha com o peso conferido (${fmtKg(alvo)} kg).`;
         }
       }
+      const pend = pcPendencias.find((x) => x.it === it);
+      if (pend) return textoPendenciaPc(pend.p, rot);
     }
     return null;
   }
@@ -485,12 +798,15 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
           const fi = getForm(it);
           const conferida = parseNum(fi.quantidadeConferida);
           const qtds = quantidadesDasLinhas(it, fi);
+          // feature 017: so com o fiscal sendo concluido agora; item sem PC possivel vai sem a chave `pc`
+          const pcEnvio = pcAtivo && !copiaPcsDefasada && it.pc ? pcParaEnvio(it.pc, fi.pcEscolha, fi.pcJustificativa) : null;
           return {
             indice: it.indice,
             descricao_fornecedor: it.descricaoFornecedor,
             ...(conferida !== null ? { quantidade_conferida_kg: conferida } : {}),
             ...(fi.motivoDivergencia.trim() ? { motivo_divergencia: fi.motivoDivergencia.trim() } : {}),
             produtos: fi.linhas.map((l, i) => ({ produto_codigo_q2p: l.produto!.codigo, quantidade_kg: qtds[i] ?? 0, localidade_id: l.localidadeId })),
+            ...(pcEnvio ? { pc: pcEnvio } : {}),
           };
         }),
       };
@@ -499,6 +815,7 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
     },
     onSuccess: (r) => {
       setResultado(r);
+      setPcResultado(montarResumoPc(r.fiscal, recebiveis));
       setErroEnvio(null);
       // Historia 3/4: o servidor memoriza o que foi GRAVADO; se o operador tirou um
       // produto que vinha sugerido, o conjunto memorizado e corrigido aqui (best-effort).
@@ -518,8 +835,38 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
       queryClient.invalidateQueries({ queryKey: ['stockbridge'] });
     },
     onError: (e) => {
-      const { code, status, retryAfterSeconds } = e as Error & { code?: string; status?: number; retryAfterSeconds?: number };
-      setErroEnvio(e.message);
+      const { code, status, retryAfterSeconds, pc: pcRecusado } = e as Error & { code?: string; status?: number; retryAfterSeconds?: number; pc?: PcRef };
+      // VINCULO_OMIE_MUDOU: a nota e recarregada logo abaixo; o operador precisa saber que as escolhas voltaram ao que o OMIE traz
+      setErroEnvio(code === 'VINCULO_OMIE_MUDOU' ? `${e.message.replace(/\s*[.!?]*\s*$/, '.')} A nota foi recarregada. Confira o pedido de cada item.` : e.message);
+      // feature 017: o servidor recusou com base em dado que mudou no OMIE — a nota e recarregada junto com a mensagem
+      if (code && ERROS_QUE_RECARREGAM_NOTA.has(code)) {
+        queryClient.invalidateQueries({ queryKey: ['sb', 'rec-nacional', 'detalhe', chave] });
+        queryClient.invalidateQueries({ queryKey: ['sb', 'rec-nacional', 'fila'] });
+      }
+      // O vinculo do OMIE mudou: a escolha feita sobre o vinculo antigo nao vale — volta a pre-selecao da nota recarregada
+      if (code === 'VINCULO_OMIE_MUDOU') setForm(limparEscolhasPc);
+      // O PC recusado deixa de estar escolhido em TODO item que o tenha como escolha efetiva: "escolha outro PC". O servidor manda
+      // o item de PC recusado (error.pc, ids so de selecao) — vale tambem para o vinculo do OMIE fora da lista local, sem numero.
+      // Sem error.pc (servidor anterior), cai no numero que a mensagem cita ("PC 304"). A escolha e lida do estado mais recente
+      // (`prev`): quem trocou de PC enquanto o envio estava em andamento nao perde a escolha nova.
+      if (code === 'PC_VINCULO_INVALIDO') {
+        const numero = pcRecusado ? undefined : /\bPC\s+(\S+?)[\s.,;:)]/.exec(`${e.message} `)?.[1];
+        const foiRecusado = (it: ItemNf, f: ItemForm): boolean => {
+          const efetiva = it.pc ? pcEscolhaEfetiva(it.pc, f.pcEscolha) : null;
+          if (!it.pc || !efetiva) return false;
+          return pcRecusado ? mesmoPc(efetiva, pcRecusado) : numero != null && pcOpcaoEscolhida(it.pc, efetiva)?.pcNumero === numero;
+        };
+        setForm((prev) => {
+          let prox = prev;
+          for (const it of recebiveis) {
+            const atual = prev[it.indice] ?? formInicial(it);
+            if (!foiRecusado(it, atual)) continue;
+            if (prox === prev) prox = { ...prev };
+            prox[it.indice] = { ...atual, pcEscolha: null };
+          }
+          return prox;
+        });
+      }
       // Proxy/rede sem corpo da API (502/503/504 ou conexao caida): o fiscal pode ter
       // passado — repetir e seguro (o ledger devolve ja_concluido ou 409).
       setErroCodigo(code ?? (status === 0 || status === 502 || status === 503 || status === 504 ? 'FALHA_DE_REDE' : null));
@@ -550,6 +897,17 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
       queryClient.invalidateQueries({ queryKey: ['sb', 'rec-nacional', 'detalhe', chave] });
       queryClient.invalidateQueries({ queryKey: ['stockbridge'] });
       onVoltar();
+    },
+  });
+
+  /** feature 017: avisa a equipe de Compras (e-mail) de que a nota aguarda pedido de compra — nao exige produto, estoque nem peso */
+  const avisarComprasMut = useMutation<AvisoComprasResposta, Error>({
+    mutationFn: async () => {
+      const r = await apiFetch('/api/v1/stockbridge/recebimento/nacional/aviso-compras', {
+        method: 'POST',
+        body: JSON.stringify({ nf_chave_acesso: chave }),
+      });
+      return r.data as AvisoComprasResposta;
     },
   });
 
@@ -648,13 +1006,105 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
             </div>
           </div>
 
-          {fiscalPendente && !resultado && (
+          {estoqueLancadoPeloOmie && !resultado && (
+            <div className="mb-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-sm text-red-800 dark:text-red-300">
+              <strong className="font-semibold">O estoque desta NF já entrou pelo OMIE. Fale com o fiscal.</strong> Para não lançar o estoque em dobro, o recebimento por aqui está bloqueado.
+            </div>
+          )}
+
+          {copiaPcsDefasada && !resultado && (
+            <div className="mb-3 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-sm text-amber-900 dark:text-amber-200 flex items-start gap-3 flex-wrap">
+              <p className="flex-1 min-w-[16rem]">
+                <strong className="font-semibold">A lista de pedidos de compra está desatualizada.</strong> Sem ela não há como sugerir nem vincular o PC, então o recebimento desta nota
+                fica bloqueado por enquanto. Tente de novo em alguns minutos; se persistir, avise o suporte.
+              </p>
+              <button
+                type="button"
+                onClick={() => queryClient.invalidateQueries({ queryKey: ['sb', 'rec-nacional', 'detalhe', chave] })}
+                disabled={isFetching}
+                className="px-3 py-1 border border-amber-700 dark:border-amber-500 rounded text-xs font-medium hover:bg-amber-100 dark:hover:bg-amber-900/40 whitespace-nowrap disabled:opacity-50"
+              >
+                {isFetching ? 'Recarregando…' : 'Recarregar nota'}
+              </button>
+            </div>
+          )}
+
+          {aguardandoPcCompras && !resultado && (
+            <div className="mb-3 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-sm text-amber-900 dark:text-amber-200">
+              <div className="flex items-start gap-3 flex-wrap">
+                <p className="flex-1 min-w-[16rem]">
+                  <strong className="font-semibold">Aguardando pedido de compra.</strong> Esta nota tem {itensSemPc} {itensSemPc === 1 ? 'item' : 'itens'} sem pedido de compra (PC) que{' '}
+                  {itensSemPc === 1 ? 'possa ser vinculado' : 'possam ser vinculados'} no OMIE e não pode ser recebida agora. Avise a equipe de Compras para lançar ou aprovar o PC; a nota
+                  continua na fila.
+                </p>
+                {avisarComprasMut.data == null && (
+                  <button
+                    type="button"
+                    onClick={() => avisarComprasMut.mutate()}
+                    disabled={avisarComprasMut.isPending}
+                    className="px-3 py-1 border border-amber-700 dark:border-amber-500 rounded text-xs font-medium hover:bg-amber-100 dark:hover:bg-amber-900/40 whitespace-nowrap disabled:opacity-50"
+                  >
+                    {avisarComprasMut.isPending ? 'Enviando…' : 'Avisar a equipe de Compras'}
+                  </button>
+                )}
+              </div>
+              <div aria-live="polite">
+                {avisarComprasMut.data && (
+                  <p
+                    className={`mt-2 p-2 rounded text-xs border ${
+                      avisarComprasMut.data.status === 'enviado'
+                        ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
+                        : 'bg-atlas-card border-atlas-border text-atlas-ink'
+                    }`}
+                  >
+                    {avisarComprasMut.data.mensagem}
+                  </p>
+                )}
+                {avisarComprasMut.isError && (
+                  <p role="alert" className="mt-2 p-2 rounded text-xs border bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-800 dark:text-red-300">
+                    {avisarComprasMut.error.message}
+                    {['AVISO_COMPRAS_NAO_APLICAVEL', 'COPIA_PCS_DEFASADA'].includes((avisarComprasMut.error as Error & { code?: string }).code ?? '') && (
+                      <>
+                        {' '}
+                        <button
+                          type="button"
+                          onClick={() => queryClient.invalidateQueries({ queryKey: ['sb', 'rec-nacional', 'detalhe', chave] })}
+                          disabled={isFetching}
+                          className="underline disabled:opacity-50"
+                        >
+                          Recarregar nota
+                        </button>
+                      </>
+                    )}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {avisoSemAvaliacao && !resultado && (
+            <div className="mb-3 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-sm text-amber-900 dark:text-amber-200">
+              <p>
+                <strong className="font-semibold">{avisoSemAvaliacao.destaque}</strong> {avisoSemAvaliacao.orientacao}
+              </p>
+            </div>
+          )}
+
+          {fiscalPendente && !resultado && (fiscalSemFornecedor || recebiveis.length === 0 || !recebimentoBarrado) && (
             <div className="mb-3 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-sm text-amber-900 dark:text-amber-200">
               {fiscalSemFornecedor
                 ? 'Esta nota está sem fornecedor cadastrado no OMIE, então o recebimento fiscal não pode ser concluído. Peça ao fiscal para cadastrar o fornecedor; a nota pode ser recebida depois da próxima atualização do espelho do OMIE.'
                 : recebiveis.length === 0
                   ? 'Nenhum item desta nota pode ser recebido por aqui agora (veja o motivo em cada item), e o recebimento fiscal continua pendente no OMIE. Se a nota não for recebida, peça ao gestor para dispensá-la.'
-                  : 'O recebimento fiscal desta nota será concluído no OMIE ao confirmar — a conta a pagar é gerada e nenhum estoque é movimentado por ele. O estoque continua entrando pela aprovação do gestor.'}
+                  : (
+                    <>
+                      <p>
+                        O recebimento fiscal desta nota será concluído no OMIE ao confirmar — a conta a pagar é gerada e nenhum estoque é movimentado por ele. O estoque continua entrando pela aprovação do gestor.
+                      </p>
+                      {haPcParaConfirmar && <p className="mt-1">Cada item fica vinculado ao pedido de compra escolhido abaixo.</p>}
+                      {semAvaliacaoInforma && <p className="mt-1">{textoSemAvaliacaoInforma(nomesSemAvaliacao)}</p>}
+                    </>
+                  )}
             </div>
           )}
 
@@ -682,6 +1132,9 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
                 onChange={(patch) => setItem(it, patch)}
                 onSolicitarBaixa={baixaPermitida && itemBaixavel(it) && !resultado ? () => setPedidoBaixa({ modo: 'item', item: it }) : undefined}
                 fiscalPendente={fiscalPendente}
+                pcAtivo={pcAtivo}
+                exigePc={exigePc}
+                copiaPcsDefasada={copiaPcsDefasada}
               />
             ))}
           </div>
@@ -697,6 +1150,36 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
               {resultado.fiscal && resultado.fiscal.status !== 'desligado' && (
                 <div className={`text-xs mb-2 ${resultado.fiscal.status === 'concluido' ? 'text-green-700 dark:text-green-400' : 'text-atlas-muted'}`}>
                   {resultado.fiscal.mensagem}
+                </div>
+              )}
+              {pcResultado && (pcResultado.linhas.length > 0 || pcResultado.soltos.length > 0) && (
+                <ul className="text-xs space-y-1 mb-2" aria-label="Pedido de compra de cada item">
+                  {pcResultado.linhas.map((l) => (
+                    <li key={l.indice} className="flex flex-wrap gap-x-2">
+                      <span className="text-atlas-ink">{l.descricao}</span>{' '}
+                      {l.pcs.length > 0 ? (
+                        <span className="text-green-700 dark:text-green-400">
+                          vinculado {textoPcsVinculados(l.pcs)} <span className="text-atlas-muted">· {origensPc(l.pcs)}</span>
+                        </span>
+                      ) : (
+                        <span className="text-amber-700 dark:text-amber-400">recebido sem vínculo com pedido de compra</span>
+                      )}
+                    </li>
+                  ))}
+                  {pcResultado.soltos.map((p) => (
+                    <li key={p.pcNumero} className="text-green-700 dark:text-green-400">
+                      Vinculado {textoPcsVinculados([p])} <span className="text-atlas-muted">· {origensPc([p])}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {resultado.fiscal?.avisoCompras === true && (
+                <div className="mb-2 p-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-xs text-amber-900 dark:text-amber-200">
+                  {(resultado.fiscal.semVinculo?.length ?? 0) > 1
+                    ? 'A equipe de Compras foi avisada sobre os itens recebidos sem pedido de compra.'
+                    : (resultado.fiscal.semVinculo?.length ?? 0) === 1
+                      ? 'A equipe de Compras foi avisada sobre o item recebido sem pedido de compra.'
+                      : 'A equipe de Compras foi avisada sobre esta nota.'}
                 </div>
               )}
               {(resultado.fiscal?.status === 'concluido' || resultado.fiscal?.status === 'ja_concluido') && resultado.resumo.falhas > 0 && (
@@ -722,7 +1205,13 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
           )}
 
           {erroEnvio && (
-            <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-sm text-red-800 dark:text-red-300 flex items-start gap-3 flex-wrap">
+            <div
+              className={`mt-4 p-3 border rounded text-sm flex items-start gap-3 flex-wrap ${
+                erroCodigo === 'NF_SEM_PC'
+                  ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200'
+                  : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-800 dark:text-red-300'
+              }`}
+            >
               <span role="alert" className="flex-1">{erroEnvio}</span>
               {erroCodigo === 'RECEBIMENTO_FISCAL_EM_ANDAMENTO' && (
                 <button
@@ -737,7 +1226,7 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
                   Recarregar nota
                 </button>
               )}
-              {(erroCodigo === 'RECEBIMENTO_FISCAL_FAIL' || erroCodigo === 'RECEBIMENTO_FISCAL_AGUARDE' || erroCodigo === 'FALHA_DE_REDE') && (
+              {(erroCodigo === 'RECEBIMENTO_FISCAL_FAIL' || erroCodigo === 'RECEBIMENTO_FISCAL_AGUARDE' || erroCodigo === 'PC_RECEM_USADO_AGUARDE' || erroCodigo === 'FALHA_DE_REDE') && (
                 <button
                   type="button"
                   onClick={handleEnviar}
@@ -754,7 +1243,7 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
             <div className="mt-4 flex items-center justify-between gap-4 flex-wrap">
               <div className="text-xs text-atlas-muted">
                 Cada item vira uma aprovação do gestor. O ajuste no OMIE acontece na aprovação.
-                {fiscalNoClique && ' O recebimento fiscal é concluído no OMIE agora, ao confirmar.'}
+                {fiscalNoClique && !recebimentoBarrado && ` O recebimento fiscal é concluído no OMIE agora, ao confirmar${haPcParaConfirmar ? ', com cada item vinculado ao pedido de compra escolhido' : ''}.`}
                 {baixaPermitida && baixaveis.length > 0 && (
                   <>
                     {' '}
@@ -775,7 +1264,8 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
               <button
                 type="button"
                 onClick={handleEnviar}
-                disabled={enviarMut.isPending || recebiveis.length === 0 || fiscalSemFornecedor || retryRestanteSeg > 0}
+                disabled={enviarMut.isPending || recebiveis.length === 0 || fiscalSemFornecedor || retryRestanteSeg > 0 || bloqueadoPorPc}
+                aria-describedby={dicaPc ? 'rec-nacional-pc-dica' : undefined}
                 className="px-5 py-2 bg-atlas-btn-bg text-atlas-btn-text rounded text-sm font-medium hover:opacity-90 disabled:opacity-50"
               >
                 {enviarMut.isPending
@@ -783,6 +1273,12 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
                   : `${fiscalNoClique ? 'Concluir fiscal e dar entrada' : 'Dar entrada'} em ${recebiveis.length} ${recebiveis.length === 1 ? 'item' : 'itens'} →`}
               </button>
             </div>
+          )}
+
+          {!resultado && dicaPc && (
+            <p id="rec-nacional-pc-dica" className="mt-2 text-right text-xs text-amber-800 dark:text-amber-300">
+              {dicaPc}
+            </p>
           )}
 
           {dispensando && (
@@ -898,6 +1394,9 @@ function ItemCard({
   onChange,
   onSolicitarBaixa,
   fiscalPendente = false,
+  pcAtivo = false,
+  exigePc = true,
+  copiaPcsDefasada = false,
 }: {
   item: ItemNf;
   form: ItemForm;
@@ -909,11 +1408,20 @@ function ItemCard({
   onSolicitarBaixa?: () => void;
   /** feature 016: a NF esta com o fiscal pendente — o formulario manual nao o conclui */
   fiscalPendente?: boolean;
+  /** feature 017: o Atlas conclui o fiscal agora, entao o item pede o PC (bloco "Pedido de compra") */
+  pcAtivo?: boolean;
+  /** feature 017: true = item sem PC possivel bloqueia a NF; false = e recebido sem vinculo */
+  exigePc?: boolean;
+  /** feature 017: lista local de PCs desatualizada — sem sugestao */
+  copiaPcsDefasada?: boolean;
 }) {
   const bloqueadoUnidade = item.bloqueio === 'unidade_nao_conversivel' || item.bloqueio === 'unidade_incoerente';
   const recebidoIntegral = item.jaRecebido && (item.quantidadeRestanteKg ?? 0) <= TOLERANCIA_KG;
   const parcial = item.quantidadeNfJaAtribuidaKg > 0 && !recebidoIntegral;
   const editavel = itemRecebivel(item);
+  const pcDoItem = item.pc ?? null;
+  /** feature 017: item a receber sem PC que possa ser vinculado — "Aguardando pedido de compra" */
+  const aguardandoPc = editavel && pcAtivo && !copiaPcsDefasada && pcDoItem != null && pcBloqueiaRecebimento(pcDoItem, exigePc);
   const nfKg = item.quantidadeNfKg ?? 0;
   const conferida = parseNum(form.quantidadeConferida);
   const conferidaEfetiva = conferida !== null && !Number.isNaN(conferida) ? conferida : nfKg;
@@ -931,7 +1439,7 @@ function ItemCard({
   const removeLinha = (i: number) => onChange({ linhas: form.linhas.filter((_, j) => j !== i) });
 
   return (
-    <div className={`bg-atlas-card border rounded-lg p-4 ${bloqueadoUnidade ? 'border-amber-300 dark:border-amber-800' : 'border-atlas-border'}`}>
+    <div className={`bg-atlas-card border rounded-lg p-4 ${bloqueadoUnidade || aguardandoPc ? 'border-amber-300 dark:border-amber-800' : 'border-atlas-border'}`}>
       <div className="flex items-start gap-4 flex-wrap">
         <div className="flex-1 min-w-[16rem]">
           <div className="text-[11px] uppercase tracking-wide text-atlas-muted">Item da nota</div>
@@ -941,7 +1449,7 @@ function ItemCard({
             {item.quantidadeNfKg != null && item.unidadeOriginal !== 'KG' && ` = ${fmtKg(item.quantidadeNfKg)} kg`}
             {' · '}
             {fmtBrl(item.valorTotalItemBrl)}
-            {item.rsPorKg != null && ` (${fmtBrl(item.rsPorKg)}/kg)`}
+            {item.rsPorKg != null && ` (${fmtBrlKg(item.rsPorKg)}/kg)`}
             {item.linhasAgregadas > 1 && ` · ${item.linhasAgregadas} linhas da nota somadas`}
           </div>
         </div>
@@ -959,6 +1467,14 @@ function ItemCard({
         {parcial && (
           <div className="text-xs font-medium px-2 py-1 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400 self-center">
             {fmtKg(item.quantidadeNfJaAtribuidaKg)} kg já recebidos · faltam {fmtKg(item.quantidadeRestanteKg ?? 0)} kg
+          </div>
+        )}
+        {!pcAtivo && pcDoItem?.vinculadoNoOmie && (
+          <div
+            className="text-xs px-2 py-1 rounded border border-atlas-border text-atlas-muted self-center"
+            title="Pedido de compra ao qual este item foi vinculado no recebimento fiscal do OMIE."
+          >
+            {pcDoItem.vinculadoNoOmie.pcNumero?.trim() ? `PC ${pcDoItem.vinculadoNoOmie.pcNumero.trim()} vinculado no OMIE` : 'PC vinculado no OMIE'}
           </div>
         )}
         {onSolicitarBaixa && (
@@ -981,6 +1497,19 @@ function ItemCard({
             </div>
           )}
         </div>
+      )}
+
+      {editavel && pcAtivo && pcDoItem && (
+        <PedidoCompraBloco
+          pc={pcDoItem}
+          descricaoItem={item.descricaoFornecedor.trim()}
+          escolha={pcEscolhaEfetiva(pcDoItem, form.pcEscolha)}
+          onEscolher={(ref) => onChange({ pcEscolha: ref })}
+          justificativa={form.pcJustificativa}
+          onJustificar={(texto) => onChange({ pcJustificativa: texto })}
+          exigePc={exigePc}
+          copiaDefasada={copiaPcsDefasada}
+        />
       )}
 
       {editavel && (

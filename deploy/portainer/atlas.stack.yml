@@ -81,6 +81,9 @@ services:
       # Feature 016 (ACXEGDP-395): recebimento FISCAL da NF nacional pelo Atlas — ESCREVE
       # no OMIE (AlterarRecebimento + ConcluirRecebimento). Default DESLIGADO; ligar so
       # depois da migration 0053 e do espelho tbl_recebimentoNFe_Q2P populado pelo n8n.
+      # Desligado em PROD desde 21/10/2026 (contencao da ACXEGDP-437): religar SO com a
+      # imagem da feature 017 e o teste do vinculo novo (ASSOCIAR-PEDIDO) aprovado — com
+      # imagem anterior, o IGNORAR volta a desfazer o vinculo do item com o PC.
       STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED: ${STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED:-false}
       # Destinatarios do aviso "NF dispensada da fila" (lista separada por virgula).
       # Vazio = default do codigo (NFe ACXE, Mauricio Yared, Gustavo Dreer).
@@ -88,6 +91,18 @@ services:
       # Idade maxima (min) do espelho de recebimentos de NF-e antes de degradar o health
       # e alertar STOCKBRIDGE_OPS_EMAIL (cron 5,35). PROD: 120 (n8n a cada 30 min).
       STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN: ${STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN:-120}
+      # Feature 017 (ACXEGDP-437): recebimento nacional com pedido de compra (PC).
+      # NF com item sem PC possivel: true (default) recusa a NF (422 NF_SEM_PC) e avisa
+      # compras; false recebe o item sem vinculo (receita da 016) e avisa compras.
+      STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC: ${STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC:-true}
+      # Tolerancias da sugestao de PC (%): quantidade acima do saldo e diferenca de preco por kg.
+      STOCKBRIDGE_PC_TOLERANCIA_QTD_PCT: ${STOCKBRIDGE_PC_TOLERANCIA_QTD_PCT:-2}
+      STOCKBRIDGE_PC_TOLERANCIA_PRECO_PCT: ${STOCKBRIDGE_PC_TOLERANCIA_PRECO_PCT:-1}
+      # Aviso "NF sem pedido de compra no OMIE" (lista separada por virgula). Vazio = STOCKBRIDGE_OPS_EMAIL.
+      STOCKBRIDGE_COMPRAS_EMAILS: ${STOCKBRIDGE_COMPRAS_EMAILS:-}
+      # Idade maxima (min) da copia de PCs antes de degradar o health, alertar o ops e
+      # recusar o recebimento com fiscal pendente (503 COPIA_PCS_DEFASADA). PROD: 120.
+      STOCKBRIDGE_COPIA_PCS_MAX_MIN: ${STOCKBRIDGE_COPIA_PCS_MAX_MIN:-120}
       # Destinatarios dos e-mails operacionais. Vazio = default do codigo
       # (comex_acxe@acxe-polimeros.com.br / flavio.endo@acxe-polimeros.com.br).
       STOCKBRIDGE_COMEX_EMAIL: ${STOCKBRIDGE_COMEX_EMAIL:-}

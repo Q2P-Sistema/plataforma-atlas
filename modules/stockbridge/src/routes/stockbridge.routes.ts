@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express';
-import { idadeEspelhoRecebimentos, statusHealthModulo } from '../services/fila-nacional.service.js';
+import { idadeCopiaPcs, idadeEspelhoRecebimentos, statusHealthModulo } from '../services/fila-nacional.service.js';
 import { requireAuth, requireModule, csrfProtection } from '@atlas/auth';
 import { createLogger } from '@atlas/core';
 import filaRouter from './fila.routes.js';
@@ -39,14 +39,22 @@ router.use('/api/v1/stockbridge', requireAuth, csrfProtection, requireModule('st
 
 // Health check. Feature 016 (T051): expoe a defasagem do espelho de recebimentos
 // de NF-e (fonte "fiscal pendente" da fila nacional) — `degraded` acima de 120 min
-// com a flag ligada; 'desligado' quando a feature esta off.
+// com a flag ligada; 'desligado' quando a feature esta off. Feature 017 (D13): o
+// mesmo para a copia de pedidos de compra, que decide a sugestao de PC.
 router.get('/api/v1/stockbridge/health', async (_req: Request, res: Response) => {
-  const recebimentoNfeEspelho = await idadeEspelhoRecebimentos();
-  // Com a flag ligada, espelho vazio ('sem_dados') ou inacessivel ('indisponivel')
-  // tambem e degradacao: a fonte "fiscal pendente" esta cega (revisao pre-UAT, ROT-6).
-  const status = statusHealthModulo(recebimentoNfeEspelho);
+  const [recebimentoNfeEspelho, pedidosCompraCopia] = await Promise.all([idadeEspelhoRecebimentos(), idadeCopiaPcs()]);
+  // Com a flag ligada, espelho/copia vazios ('sem_dados') ou inacessiveis ('indisponivel')
+  // tambem sao degradacao: a fila e a sugestao ficam cegas (revisao pre-UAT, ROT-6).
+  const status = statusHealthModulo(recebimentoNfeEspelho, pedidosCompraCopia);
   res.json({
-    data: { status, module: 'stockbridge', recebimentoNfeEspelhoIdadeMin: recebimentoNfeEspelho.idadeMin, recebimentoNfeEspelho },
+    data: {
+      status,
+      module: 'stockbridge',
+      recebimentoNfeEspelhoIdadeMin: recebimentoNfeEspelho.idadeMin,
+      recebimentoNfeEspelho,
+      pedidosCompraCopiaIdadeMin: pedidosCompraCopia.idadeMin,
+      pedidosCompraCopia,
+    },
     error: null,
   });
 });

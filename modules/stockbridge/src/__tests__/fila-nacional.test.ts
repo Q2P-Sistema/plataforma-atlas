@@ -25,7 +25,9 @@ vi.mock('../services/correlacao-produto.service.js', () => ({
   sugerirProdutosEmLote: (cnpj: string, descricoes: string[]) => sugerirSpy(cnpj, descricoes),
 }));
 
-const omieSpies = { incluirAjusteEstoque: vi.fn(), listarAjusteEstoque: vi.fn(), consultarNF: vi.fn() };
+// vi.hoisted: desde a 017 o pc-sugestao importa o cliente OMIE no carregamento do modulo,
+// entao a fabrica do mock roda antes das declaracoes comuns do arquivo.
+const omieSpies = vi.hoisted(() => ({ incluirAjusteEstoque: vi.fn(), listarAjusteEstoque: vi.fn(), consultarNF: vi.fn(), consultarPedidoCompra: vi.fn() }));
 vi.mock('@atlas/integration-omie', () => ({
   ...omieSpies,
   isMockMode: () => false,
@@ -125,9 +127,14 @@ describe('getFilaNacional — exclusoes obrigatorias (T026)', () => {
     // Feature 016: `h.n_id_receb` passa a ser SELECIONADO (identidade do recebimento
     // fiscal no OMIE, usado so para concluir o fiscal) — mas continua fora de
     // qualquer filtro/pendencia: nunca comparado, nunca testado contra NULL.
-    expect(sql).not.toMatch(/n_id_receb\s*[<>=!]/);
-    expect(sql).not.toMatch(/n_id_receb\s+IS\s+(NOT\s+)?NULL/i);
-    expect(sql).not.toMatch(/WHERE[^;]*n_id_receb/);
+    // Feature 017: o espelho de recebimentos entra por chave + sequencia, com o join
+    // INTERNO entre as duas tabelas dele (ri.n_id_receb = r.n_id_receb) — o campo da
+    // NF (h.n_id_receb) continua so no SELECT.
+    const semJoinEspelho = sql.replace(/ri\.n_id_receb = r\.n_id_receb/g, '');
+    expect(semJoinEspelho).not.toMatch(/n_id_receb\s*[<>=!]/);
+    expect(semJoinEspelho).not.toMatch(/n_id_receb\s+IS\s+(NOT\s+)?NULL/i);
+    expect(sql.match(/\bh\.n_id_receb\b/g) ?? []).toEqual(['h.n_id_receb']);
+    expect(sql).toContain('h.n_id_receb::bigint');
   });
 
   it('checagem de "recebida" em duas vias + baixa externa (itemNacionalRecebidoSql)', async () => {
@@ -191,6 +198,8 @@ describe('getFilaNacional — configuracao e degrade (T013/T014)', () => {
       itensTotal: 1, itensPendentes: 1, valorTotalBrl: 156604,
       // feature 016 (flag desligada): colunas novas constantes
       fiscal: 'concluido', fiscalConcluidoPeloAtlasEm: null,
+      // feature 017: empresa, selo do PC (so com fiscal pendente) e estoque ja lancado
+      empresa: 'q2p', pcSituacao: 'nao_aplicavel', estoqueLancadoPeloOmie: false,
     });
   });
 });
@@ -198,10 +207,7 @@ describe('getFilaNacional — configuracao e degrade (T013/T014)', () => {
 describe('Principio II / FR-016 — zero chamada OMIE (T027b)', () => {
   it('fila e detalhe nao invocam o cliente OMIE', async () => {
     await getFilaNacional();
-    poolQuerySpy.mockImplementation((sql: string) => {
-      if (sql.includes('information_schema')) return Promise.resolve({ rows: [{ ok: true }] });
-      return Promise.resolve({ rows: [linha({})] });
-    });
+    detalheCom([linha({})]);
     await getDetalheNfNacional(CHAVE);
     for (const s of Object.values(omieSpies)) expect(s).not.toHaveBeenCalled();
   });
@@ -237,6 +243,8 @@ function linha(o: Partial<Record<string, unknown>>) {
 function detalheCom(rows: unknown[]) {
   poolQuerySpy.mockImplementation((sql: string) => {
     if (sql.includes('information_schema')) return Promise.resolve({ rows: [{ ok: true }] });
+    // a dispensa e consultada com a chave em qualquer posicao (achado fila-v01): sem dispensa aqui
+    if (sql.includes('FROM stockbridge.nf_dispensa')) return Promise.resolve({ rows: [] });
     return Promise.resolve({ rows });
   });
 }

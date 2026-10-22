@@ -30,6 +30,7 @@ vi.mock('../services/correlacao-produto.service.js', () => ({
 import {
   getFilaNacional,
   getDetalheNfNacional,
+  montarDetalheNfNacional,
   statusHealthModulo,
   limiteIdadeEspelhoMin,
   idadeEspelhoRecebimentos,
@@ -116,9 +117,14 @@ describe('getFilaNacional — flag DESLIGADA (comportamento da 015, FR-020)', ()
     dump('fila-flag-off.sql', sql);
     expect(sql).toContain('public."tbl_nf_header_Q2P" h');
     expect(sql).toContain('public."tbl_nf_itens_Q2P" i');
-    expect(sql).not.toContain('tbl_recebimentoNFe_Q2P');
-    expect(sql).not.toContain('tbl_recebimentoNFe_itens_Q2P');
-    expect(sql).not.toContain('stockbridge.nf_dispensa');
+    // 017 (FR-021/021a): a fonte (a) le o espelho de recebimentos SO por chave +
+    // sequencia (vinculo com o PC e estoque ja lancado), tambem com a chave desligada.
+    // A fonte (b) "fiscal pendente" continua fora: sem c_recebido = 'N' e sem UNION ALL.
+    expect(sql).toContain('ri.n_sequencia = a.n_seq');
+    expect(sql).not.toContain("r.c_recebido = 'N'");
+    // a dispensa ativa vale com a chave desligada (achado fila-v01: a contencao da 017 trazia de
+    // volta a fila NFs dispensadas — 6936/6937 em PROD, cujo fisico ja entrou pela NF 6923)
+    expect(sql).toContain('stockbridge.nf_dispensa');
     expect(sql).not.toContain('stockbridge.recebimento_fiscal');
     expect(sql).not.toContain('UNION ALL');
     // D26: valor do item e v_prod, nunca v_tot_item
@@ -295,19 +301,30 @@ describe('getFilaNacional — flag LIGADA (duas fontes, research D8)', () => {
 });
 
 describe('getDetalheNfNacional — feature 016', () => {
-  it('flag desligada: fiscal "concluido", dispensavel false, nenhuma consulta a nf_dispensa', async () => {
+  it('flag desligada: fiscal "concluido", dispensavel false (criar dispensa exige a chave), mas a dispensa ativa e consultada', async () => {
     detalheRows = [linhaDetalhe({ fiscal_pendente: false, n_id_receb: '123' })];
     const d = await getDetalheNfNacional(CHAVE);
     dump('detalhe-flag-off.sql', sqlDetalhe().sql);
     expect(d.fiscal).toBe('concluido');
     expect(d.nIdReceb).toBe(123);
     expect(d.dispensavel).toBe(false);
-    expect(sqlDetalhe().sql).not.toContain('tbl_recebimentoNFe_Q2P');
-    expect(chamadas.some((c) => c.sql.includes('FROM stockbridge.nf_dispensa'))).toBe(false);
+    // 017: o espelho de recebimentos entra so pela fonte (a) (vinculo/estoque); sem a fonte (b)
+    expect(sqlDetalhe().sql).not.toContain('UNION ALL');
+    expect(sqlDetalhe().sql).not.toContain("r.c_recebido = 'N'");
+    expect(d.copiaPcsDefasada).toBe(false);
+    expect(d.estoqueLancadoPeloOmie).toBe(false);
+    expect(d.itens[0]!.pc).toBeNull();
+    expect(chamadas.some((c) => c.sql.includes('FROM stockbridge.nf_dispensa'))).toBe(true);
     expect(d.itens).toHaveLength(1);
     expect(d.itens[0]!.quantidadeNfKg).toBe(18000);
   });
 
+
+  it('flag desligada com dispensa ATIVA: o detalhe recusa (NF_DISPENSADA) — a contencao nao traz a NF de volta (achado fila-v01)', async () => {
+    detalheRows = [linhaDetalhe({ fiscal_pendente: false })];
+    dispensaRows = [{ dispensado_em: '2026-10-07 16:09:23-03' }];
+    await expect(getDetalheNfNacional(CHAVE)).rejects.toBeInstanceOf(NfNacionalDispensadaError);
+  });
   it('detalhe ordena os itens pelo codigo NUMERICO (ORDER BY u.n_cod_item sobre bigint)', async () => {
     detalheRows = [linhaDetalhe()];
     await getDetalheNfNacional(CHAVE);
@@ -413,11 +430,13 @@ describe('identidade do item pela sequencia no recebimento (ACXEGDP-412)', () =>
     expect(sql.split(casamento).length - 1).toBe(2);
   });
 
-  it('flag desligada: fonte (a) com n_seq NULL — nenhuma referencia ao espelho de recebimentos', async () => {
+  it('flag desligada (017): fonte (a) calcula a sequencia e le o vinculo no espelho de recebimentos, sem a fonte (b)', async () => {
     await getFilaNacional();
     const { sql } = sqlFila();
-    expect(sql).toContain('NULL::int  AS n_seq');
-    expect(sql).not.toContain('tbl_recebimentoNFe');
+    expect(sql).not.toContain('NULL::int  AS n_seq');
+    expect(sql).toContain('ri.n_id_item = i.n_cod_item');
+    expect(sql).toContain('ri.n_sequencia = a.n_seq');
+    expect(sql).not.toContain('UNION ALL');
   });
 
   it('detalhe: somas do item casam pela sequencia tambem e o item carrega as sequencias das linhas', async () => {
@@ -450,5 +469,232 @@ describe('identidade do item pela sequencia no recebimento (ACXEGDP-412)', () =>
     const d = await getDetalheNfNacional(CHAVE);
     expect(d.itens[0]).toMatchObject({ jaRecebido: true, quantidadeRestanteKg: 0, sequenciasRecebimento: [1] });
     expect(d.dispensavel).toBe(false);
+  });
+});
+
+// ── Feature 017 (ACXEGDP-437), T021 — vinculo com o pedido de compra na fila e no detalhe ──
+describe('017 — pedido de compra na fila e no detalhe', () => {
+  const PC_ROWS = [
+    {
+      ncodped: '8516905979', ncoditem: '8516907022', cnumero: '304', cetapa: '15', ncodfor: '1111', nqtde: 18000, nqtderec: 0, nvalunit: 11.3,
+      cunidade: 'KG', ddtprevisao: '2026-10-20', cdescricao: 'PS CRISTAL B', cproduto: 'PSCB', atualizado_ms: Date.now() - 60_000,
+      valor_total_pc: 203400, fornecedor_acxe: false,
+    },
+  ];
+  let idadeCopiaMin: number | null = 5;
+  let pcFilaRows: Record<string, unknown>[] = [];
+  let numerosRows: Record<string, unknown>[] = [];
+  let ledgerPcRows: Record<string, unknown>[] = [];
+  let pcRows: Record<string, unknown>[] = PC_ROWS;
+
+  const linhaPc = (over: Record<string, unknown> = {}) =>
+    linhaDetalhe({
+      preco_comercial: 11.3, fornecedor_codigo: '1111', n_seq: 1, n_id_pedido: null, n_id_it_pedido: null, n_num_ped_compra: null,
+      c_ignorar_item: 'N', c_nao_gerar_mov_estoque: 'N', receb_recebido: 'N', ledger_concluido: false, ...over,
+    });
+
+  beforeEach(() => {
+    idadeCopiaMin = 5;
+    pcFilaRows = [];
+    numerosRows = [];
+    ledgerPcRows = [];
+    pcRows = PC_ROWS;
+    poolQuerySpy.mockImplementation((sql: string, params?: unknown[]) => {
+      chamadas.push({ sql, params });
+      if (sql.includes('MAX(data_atualizacao)')) return Promise.resolve({ rows: [{ idade_min: idadeCopiaMin }] });
+      if (sql.includes('MAX(synced_at)')) return Promise.resolve({ rows: [{ idade_min: 5 }] });
+      if (sql.includes('FROM public."tbl_pedidosCompras_Q2P" pc')) return Promise.resolve({ rows: pcRows });
+      if (sql.includes('UNION ALL') && sql.includes('pc_numero')) return Promise.resolve({ rows: numerosRows });
+      if (sql.includes('JOIN stockbridge.recebimento_fiscal rf')) return Promise.resolve({ rows: ledgerPcRows });
+      if (sql.includes('FROM stockbridge.recebimento_fiscal_pc')) return Promise.resolve({ rows: [] });
+      if (sql.includes('u.c_chave_nfe = ANY($3::text[])')) return Promise.resolve({ rows: pcFilaRows });
+      return Promise.resolve(responder(sql));
+    });
+  });
+
+  it('as duas fontes levam o vinculo com o PC, o preco comercial e o c_recebido do recebimento (T017)', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    await getFilaNacional();
+    const { sql } = sqlFila();
+    // fonte (a): vinculo por chave + sequencia no espelho de recebimentos, preco v_un_com (sem tributos)
+    expect(sql).toContain('ri.n_sequencia = a.n_seq');
+    expect(sql).toContain('CASE WHEN COALESCE(rv.n_id_pedido, 0) > 0 THEN rv.n_id_pedido END');
+    expect(sql).toContain('i.v_un_com                                           AS preco_comercial');
+    expect(sql).toContain('rv.c_recebido                                        AS receb_recebido');
+    // fonte (b): direto do item do recebimento, com o fornecedor do OMIE
+    expect(sql).toContain('CASE WHEN COALESCE(ri.n_id_pedido, 0) > 0 THEN ri.n_id_it_pedido END');
+    expect(sql).toContain('ri.n_preco_unit                                      AS preco_comercial');
+    expect(sql).toContain('NULLIF(r.n_id_fornecedor, 0)                         AS fornecedor_codigo');
+    // estoque ja lancado (D7), so entre os itens pendentes
+    expect(sql).toContain("(u.receb_recebido = 'S' AND u.c_ignorar_item = 'N' AND u.c_nao_gerar_mov_estoque = 'N') AS estoque_lancado");
+    expect(sql).toContain('COALESCE(bool_or(estoque_lancado) FILTER (WHERE pendente), false) AS estoque_lancado');
+  });
+
+  it('pcSituacao por NF: so com fiscal pendente; vinculo do OMIE valido -> vinculado_omie; fiscal ja feito -> nao_aplicavel', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    const CHAVE_B = CHAVE.replace(/4$/, '5');
+    filaRows = [
+      { nf_chave_acesso: CHAVE, nota_fiscal: '7813', fornecedor_nome: 'REPLAS', fornecedor_cnpj: 'x', dt_emissao: '2026-10-20', dias_desde_emissao: 1, itens_total: 1, itens_pendentes: 1, valor_total_brl: 203400, fiscal: 'pendente', fiscal_concluido_em: null, estoque_lancado: false },
+      { nf_chave_acesso: CHAVE_B, nota_fiscal: '7736', fornecedor_nome: 'REPLAS', fornecedor_cnpj: 'x', dt_emissao: '2026-10-20', dias_desde_emissao: 1, itens_total: 1, itens_pendentes: 1, valor_total_brl: 151872, fiscal: 'concluido', fiscal_concluido_em: null, estoque_lancado: true },
+    ];
+    pcFilaRows = [
+      { c_chave_nfe: CHAVE, x_prod: 'SUCATA PLASTICO', desc_norm: 'SUCATA PLASTICO', q_com: 18000, u_com: 'KG', valor_item: 203400, preco_comercial: 11.3,
+        n_seq: 1, n_id_pedido: '8516905979', n_id_it_pedido: '8516907022', n_num_ped_compra: '304', fornecedor_codigo: '1111', recebido: false },
+    ];
+    const fila = await getFilaNacional();
+    expect(fila.find((f) => f.notaFiscal === '7813')).toMatchObject({ pcSituacao: 'vinculado_omie', empresa: 'q2p', estoqueLancadoPeloOmie: false });
+    expect(fila.find((f) => f.notaFiscal === '7736')).toMatchObject({ pcSituacao: 'nao_aplicavel', estoqueLancadoPeloOmie: true });
+    // a consulta de itens so pede as NFs com fiscal pendente
+    const itensSql = chamadas.find((c) => c.sql.includes('u.c_chave_nfe = ANY($3::text[])'))!;
+    expect(itensSql.params![2]).toEqual([CHAVE]);
+  });
+
+  it('copia de PCs defasada: pcSituacao nao_aplicavel (a fila nao decide nada — D13)', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    idadeCopiaMin = 500;
+    filaRows = [
+      { nf_chave_acesso: CHAVE, nota_fiscal: '7813', fornecedor_nome: 'REPLAS', fornecedor_cnpj: 'x', dt_emissao: '2026-10-20', dias_desde_emissao: 1, itens_total: 1, itens_pendentes: 1, valor_total_brl: 203400, fiscal: 'pendente', fiscal_concluido_em: null, estoque_lancado: false },
+    ];
+    const [f] = await getFilaNacional();
+    expect(f!.pcSituacao).toBe('nao_aplicavel');
+    expect(chamadas.some((c) => c.sql.includes('u.c_chave_nfe = ANY($3::text[])'))).toBe(false);
+  });
+
+  it('detalhe com fiscal pendente: pc por item (vinculo do OMIE pre-selecionado), exigePc e copia em dia', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    detalheRows = [linhaPc({ n_id_pedido: '8516905979', n_id_it_pedido: '8516907022', n_num_ped_compra: '304' })];
+    const d = await getDetalheNfNacional(CHAVE);
+    expect(d).toMatchObject({ empresa: 'q2p', exigePc: true, copiaPcsDefasada: false, estoqueLancadoPeloOmie: false });
+    const pc = d.itens[0]!.pc!;
+    expect(pc.vinculoOmie).toMatchObject({ pcNumero: '304', saldoKg: 18000, precoUnit: 11.3, dentroTolerancia: true });
+    expect(pc.preSelecionado).toEqual({ nCodPed: 8516905979, nCodItem: 8516907022 });
+    expect(pc.vinculadoNoOmie).toBeNull();
+  });
+
+  it('detalhe com a copia defasada: copiaPcsDefasada true e nada a escolher no item', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    idadeCopiaMin = 500;
+    detalheRows = [linhaPc()];
+    const d = await getDetalheNfNacional(CHAVE);
+    expect(d.copiaPcsDefasada).toBe(true);
+    expect(d.itens[0]!.pc).toMatchObject({ vinculoOmie: null, candidatos: [], outrosDoFornecedor: [], preSelecionado: null });
+    expect(chamadas.some((c) => c.sql.includes('FROM public."tbl_pedidosCompras_Q2P" pc'))).toBe(false);
+  });
+
+  it('fiscal ja feito com a chave DESLIGADA: PC vinculado a vista (FR-021), numero pela copia ou pelo ledger', async () => {
+    detalheRows = [linhaPc({ fiscal_pendente: false, receb_recebido: 'S', c_nao_gerar_mov_estoque: 'S', n_id_pedido: '8516999999', n_id_it_pedido: '8516999998', n_num_ped_compra: '200001909863465' })];
+    numerosRows = [{ ncodped: '8516999999', numero: '999', prio: 2 }];
+    const d = await getDetalheNfNacional(CHAVE);
+    expect(d.itens[0]!.pc).toMatchObject({ vinculadoNoOmie: { pcNumero: '999' }, candidatos: [] });
+    expect(d.copiaPcsDefasada).toBe(false);
+  });
+
+  it('fiscal ja feito sem numero na copia nem no ledger: numero vazio — nunca o xPed do fornecedor', async () => {
+    detalheRows = [linhaPc({ fiscal_pendente: false, receb_recebido: 'S', c_nao_gerar_mov_estoque: 'S', n_id_pedido: '8516999999', n_id_it_pedido: '8516999998', n_num_ped_compra: '200001909863465' })];
+    const d = await getDetalheNfNacional(CHAVE);
+    expect(d.itens[0]!.pc!.vinculadoNoOmie).toEqual({ pcNumero: '' });
+  });
+
+  it('fiscal ja feito sem vinculo: pc null', async () => {
+    detalheRows = [linhaPc({ fiscal_pendente: false, receb_recebido: 'S', c_ignorar_item: 'S' })];
+    const d = await getDetalheNfNacional(CHAVE);
+    expect(d.itens[0]!.pc).toBeNull();
+  });
+
+  it('estoque ja lancado pelo OMIE (D7): item pendente concluido sem "nao movimentar estoque"; item ja recebido nao conta', async () => {
+    detalheRows = [linhaPc({ fiscal_pendente: false, receb_recebido: 'S', c_ignorar_item: 'N', c_nao_gerar_mov_estoque: 'N' })];
+    expect((await getDetalheNfNacional(CHAVE)).estoqueLancadoPeloOmie).toBe(true);
+    detalheRows = [linhaPc({ fiscal_pendente: false, receb_recebido: 'S', c_ignorar_item: 'N', c_nao_gerar_mov_estoque: 'N', recebido: true })];
+    expect((await getDetalheNfNacional(CHAVE)).estoqueLancadoPeloOmie).toBe(false);
+  });
+
+  it('descricao trocada pelo vinculo nao devolve a NF a fila: a sequencia tambem casa com a chave desligada (FR-016, ACXEGDP-412)', async () => {
+    await getFilaNacional();
+    const { sql } = sqlFila();
+    expect(sql).not.toContain('NULL::int  AS n_seq');
+    expect(sql).toContain('nf_item_sequencias');
+  });
+  // ── Correcoes da revisao adversarial de 22/10/2026 ──
+
+  it('conclusao CONFIRMADA (FR-021a, achado fila-01): espelho com c_recebido S nas linhas a receber, ou o ledger do Atlas; defasada ou nao casada, nao', async () => {
+    const confirma = async (over: Record<string, unknown>) => {
+      detalheRows = [linhaPc({ fiscal_pendente: false, c_nao_gerar_mov_estoque: 'S', ...over })];
+      return (await montarDetalheNfNacional(CHAVE)).interno.espelhoConfirmaConclusao;
+    };
+    expect(await confirma({ receb_recebido: 'S' })).toBe(true);
+    expect(await confirma({ receb_recebido: 'N' })).toBe(false); // linha do espelho defasada
+    expect(await confirma({ receb_recebido: null })).toBe(false); // linha ausente ou nao casada
+    expect(await confirma({ receb_recebido: 'N', ledger_concluido: true })).toBe(true); // o Atlas concluiu (e conferiu)
+    expect(await confirma({ receb_recebido: 'N', recebido: true })).toBe(true); // nada a receber
+    // o SQL do detalhe le o ledger em vez de so testar a existencia da NF no espelho
+    expect(sqlDetalhe().sql).toContain('AS ledger_concluido');
+    expect(sqlDetalhe().sql).not.toContain('receb_no_espelho');
+  });
+
+  it('itensSemAvaliacaoPc (FR-011a/FR-020, achado fila-02): item pendente com unidade nao convertida e SEM vinculo, so com o fluxo de PC', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    detalheRows = [
+      linhaPc(),
+      linhaPc({ n_cod_item: '2', x_prod: 'TAMPA', desc_norm: 'TAMPA', u_com: 'UN', q_com: 300, valor_item: 900, preco_comercial: 3, n_seq: 2 }),
+      linhaPc({ n_cod_item: '3', x_prod: 'ROTULO', desc_norm: 'ROTULO', u_com: 'UN', q_com: 10, valor_item: 50, preco_comercial: 5, n_seq: 3, n_id_pedido: '8516905979', n_id_it_pedido: '8516907022' }),
+    ];
+    const d = await getDetalheNfNacional(CHAVE);
+    expect(d.itensSemAvaliacaoPc).toEqual([{ indice: 1, descricao: 'TAMPA' }]);
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = false;
+    expect((await getDetalheNfNacional(CHAVE)).itensSemAvaliacaoPc).toEqual([]);
+  });
+
+  it('fiscal ja feito PELO ATLAS: o PC do ledger tem precedencia sobre o espelho (troca ainda nao refletida — achado fila-04)', async () => {
+    ledgerPcRows = [{ n_sequencia: 1, pc_numero: '304' }];
+    numerosRows = [{ ncodped: '8516900302', numero: '302', prio: 1 }];
+    // espelho defasado ainda com o PC antigo (302)
+    detalheRows = [linhaPc({ fiscal_pendente: false, ledger_concluido: true, n_id_pedido: '8516900302', n_id_it_pedido: '8516900303' })];
+    expect((await getDetalheNfNacional(CHAVE)).itens[0]!.pc!.vinculadoNoOmie).toEqual({ pcNumero: '304' });
+    // espelho ainda sem vinculo nenhum
+    detalheRows = [linhaPc({ fiscal_pendente: false, ledger_concluido: true })];
+    expect((await getDetalheNfNacional(CHAVE)).itens[0]!.pc!.vinculadoNoOmie).toEqual({ pcNumero: '304' });
+    // a consulta do ledger junta o fiscal da NF (concluido/ja_concluido) e so linhas concluido
+    const sqlLedger = chamadas.find((c) => c.sql.includes('JOIN stockbridge.recebimento_fiscal rf'))!;
+    expect(sqlLedger.sql).toContain("rf.status IN ('concluido', 'ja_concluido') AND p.status = 'concluido'");
+    expect(sqlLedger.params).toEqual([CHAVE]);
+  });
+
+  it('fiscal ja feito FORA do Atlas: segue o espelho e nem consulta o ledger', async () => {
+    ledgerPcRows = [{ n_sequencia: 1, pc_numero: '304' }];
+    numerosRows = [{ ncodped: '8516900302', numero: '302', prio: 1 }];
+    detalheRows = [linhaPc({ fiscal_pendente: false, receb_recebido: 'S', c_nao_gerar_mov_estoque: 'S', n_id_pedido: '8516900302', n_id_it_pedido: '8516900303' })];
+    expect((await getDetalheNfNacional(CHAVE)).itens[0]!.pc!.vinculadoNoOmie).toEqual({ pcNumero: '302' });
+    expect(chamadas.some((c) => c.sql.includes('JOIN stockbridge.recebimento_fiscal rf'))).toBe(false);
+  });
+
+  it('pcSituacao da fila ignora item bloqueado por unidade e e nao_aplicavel sem fornecedor no OMIE (achado tela-05)', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    const CHAVE_B = CHAVE.replace(/4$/, '5');
+    const nf = (chave: string, numero: string) => ({
+      nf_chave_acesso: chave, nota_fiscal: numero, fornecedor_nome: 'REPLAS', fornecedor_cnpj: 'x', dt_emissao: '2026-10-20', dias_desde_emissao: 1,
+      itens_total: 2, itens_pendentes: 2, valor_total_brl: 1, fiscal: 'pendente', fiscal_concluido_em: null, estoque_lancado: false,
+    });
+    filaRows = [nf(CHAVE, '7813'), nf(CHAVE_B, '9001')];
+    const linha = (chave: string, over: Record<string, unknown>) => ({
+      c_chave_nfe: chave, x_prod: 'SUCATA PLASTICO', desc_norm: 'SUCATA PLASTICO', q_com: 18000, u_com: 'KG', valor_item: 203400, preco_comercial: 11.3,
+      n_seq: 1, n_id_pedido: null, n_id_it_pedido: null, n_num_ped_compra: null, fornecedor_codigo: '1111', recebido: false, ...over,
+    });
+    pcFilaRows = [
+      linha(CHAVE, { n_id_pedido: '8516905979', n_id_it_pedido: '8516907022' }),
+      linha(CHAVE, { x_prod: 'TAMPA', desc_norm: 'TAMPA', q_com: 300, u_com: 'UN', valor_item: 900, preco_comercial: 3, n_seq: 2 }),
+      linha(CHAVE_B, { fornecedor_codigo: null }),
+    ];
+    const fila = await getFilaNacional();
+    expect(fila.find((f) => f.notaFiscal === '7813')!.pcSituacao).toBe('vinculado_omie');
+    expect(fila.find((f) => f.notaFiscal === '9001')!.pcSituacao).toBe('nao_aplicavel');
+  });
+
+  it('preco da NF nas duas bases (research D3 revisto): PC lancado com o preco COM IPI vira candidato pelo valor do item', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    pcRows = [{ ...PC_ROWS[0], nqtde: 13750, nvalunit: 10.8, valor_total_pc: 148500 }];
+    detalheRows = [linhaPc({ x_prod: 'MC PEAD ES', desc_norm: 'MC PEAD ES', q_com: 13750, valor_item: 149187.58, preco_comercial: 10.50848 })];
+    const pc = (await getDetalheNfNacional(CHAVE)).itens[0]!.pc!;
+    expect(pc.candidatos.map((c) => c.pcNumero)).toEqual(['304']);
+    expect(pc.candidatos[0]!.precoNfKgComparado).toBeCloseTo(10.850006, 5);
   });
 });

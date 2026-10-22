@@ -450,7 +450,8 @@ function BaixasExternasSection({
  * Feature 016 (ACXEGDP-395): NFs que o gestor dispensou da fila de recebimento
  * nacional (FR-021..FR-025). "Desfazer" devolve a NF a fila, com motivo; o
  * filtro "incluir desfeitas" mostra o historico das reversoes (FR-024).
- * Com a flag desligada a rota devolve 403: a secao nao aparece e o polling para.
+ * Desde a 017 a listagem e o "Desfazer" valem com a chave da 016 em qualquer posicao (a dispensa
+ * ativa tira a NF da fila mesmo com ela desligada); um 403 de ambiente antigo ainda esconde a secao.
  * Falha momentanea de refetch mantem a lista (e o modal aberto) na tela.
  */
 function NfsDispensadasSection({

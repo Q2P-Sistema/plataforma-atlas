@@ -222,6 +222,8 @@ describe('dispensarNf — aviso ao fiscal (FR-026, best-effort)', () => {
       motivo: 'Carga nunca chegou',
       dispensadoPorNome: 'Gestor Teste',
       dispensadoEm: new Date('2026-10-02 10:00:00+00').toISOString(),
+      // 017 (T044): sem vinculo com PC no detalhe nem no ledger — lista vazia
+      pcsPorItem: [],
     });
   });
 
@@ -265,12 +267,17 @@ describe('reverterDispensa', () => {
     await expect(reverterDispensa({ id: ID, motivo: 'x', ...gestor })).rejects.toBeInstanceOf(DispensaNaoEncontradaError);
   });
 
-  it('exige motivo, gestor e flag', async () => {
+  it('exige motivo e gestor', async () => {
     await expect(reverterDispensa({ id: ID, motivo: '', ...gestor })).rejects.toBeInstanceOf(MotivoDispensaObrigatorioError);
     await expect(reverterDispensa({ id: ID, motivo: '  ', ...gestor })).rejects.toThrow('Informe o motivo para desfazer a dispensa');
     await expect(reverterDispensa({ id: ID, motivo: 'x', userId: USER, perfilUsuario: 'operador' })).rejects.toBeInstanceOf(DispensaNaoPermitidaError);
+  });
+
+  it('com a chave da 016 DESLIGADA também desfaz: a dispensa ativa vale nesse modo (017, achado portao-r01) — só criar exige a chave', async () => {
     config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = false;
-    await expect(reverterDispensa({ id: ID, motivo: 'x', ...gestor })).rejects.toBeInstanceOf(RecebimentoFiscalDesabilitadoError);
+    reverterRows = [{ id: ID, nota_fiscal: '6937', fornecedor_nome: 'TRADECONNEX', situacao_fiscal_na_dispensa: 'concluido', revertido_em: '2026-10-22 09:00:00+00' }];
+    await expect(reverterDispensa({ id: ID, motivo: 'dispensada por engano', ...gestor })).resolves.toMatchObject({ id: ID, notaFiscal: '6937' });
+    await expect(dispensarNf({ nfChaveAcesso: CHAVE, motivo: 'x', ...gestor })).rejects.toBeInstanceOf(RecebimentoFiscalDesabilitadoError);
   });
 });
 

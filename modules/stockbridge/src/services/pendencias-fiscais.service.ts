@@ -40,6 +40,10 @@ export interface FilhoteItem {
 export interface PedidoPendencia {
   pedidoAcxeOmie: string;
   nfMae: string;
+  /**
+   * Saldo do PC na cópia local (nqtde - nqtderec, feature 017) — igual à quantidade
+   * cheia enquanto nada foi recebido no PC.
+   */
   qtdePedidoKg: number;
   recebidoKg: number;
   saldoPendenteKg: number;
@@ -146,7 +150,8 @@ export async function getPendenciasFiscais(
   };
 
   try {
-    // 1) Cabeçalho por pedido com mapa ativo: NF mãe + data exoneração + qtde do pedido + FUP.
+    // 1) Cabeçalho por pedido com mapa ativo: NF mãe + data exoneração + qtde do pedido
+    //    (saldo do PC, feature 017) + FUP.
     const pedidosRes = await pool.query<PedidoRow>(`
       SELECT
         mapa.id::text                              AS mapa_id,
@@ -160,9 +165,11 @@ export async function getPendenciasFiscais(
       FROM stockbridge.nf_pedido_mapa mapa
       LEFT JOIN public."tbl_nf_header_ACXE" hm ON hm.n_nf = LPAD(mapa.nf_mae, 8, '0')
       LEFT JOIN LATERAL (
-        SELECT SUM(pc.nqtde)::numeric AS qtde_pedido
+        -- Feature 017 (ACXEGDP-437): SALDO do PC (nqtde - nqtderec; NULL conta 0), não a
+        -- quantidade cheia — a cópia de PCs (n8n Rev 1.5) mantém PC recebido em parte.
+        SELECT SUM(pc.nqtde - COALESCE(pc.nqtderec, 0))::numeric AS qtde_pedido
         FROM public."tbl_pedidosCompras_ACXE" pc
-        WHERE pc.cnumero = mapa.pedido_acxe_omie AND pc.nqtde > 0
+        WHERE pc.cnumero = mapa.pedido_acxe_omie AND (pc.nqtde - COALESCE(pc.nqtderec, 0)) > 0
       ) ped ON true
       LEFT JOIN LATERAL (
         SELECT

@@ -50,6 +50,7 @@ const svc = {
   getFilaNacional: vi.fn(),
   getDetalheNfNacional: vi.fn(),
   processarRecebimentoNacionalPorNf: vi.fn(),
+  avisarComprasNfSemPc: vi.fn(),
   definirConjuntoCorrelacao: vi.fn(),
   solicitarRecebimentoExterno: vi.fn(),
 };
@@ -81,6 +82,7 @@ vi.mock('../services/recebimento-nacional.service.js', async () => {
     buscarProdutosNacional: vi.fn(),
     processarRecebimentoNacional: vi.fn(),
     processarRecebimentoNacionalPorNf: (...a: unknown[]) => svc.processarRecebimentoNacionalPorNf(...a),
+    avisarComprasNfSemPc: (...a: unknown[]) => svc.avisarComprasNfSemPc(...a),
   };
 });
 
@@ -90,12 +92,25 @@ import {
   NfNacionalNaoEncontradaError,
   NfNacionalCanceladaError,
   FornecedorExcluidoError,
+  EstoqueJaLancadoPeloOmieError,
 } from '../services/fila-nacional.service.js';
 import {
   ValidacaoRecebimentoNacionalError,
   NfNacionalJaProcessadaError,
   LocalidadeNaoElegivelError,
+  VerificacaoEstoqueOmieError,
+  AvisoComprasNaoAplicavelError,
 } from '../services/recebimento-nacional.service.js';
+import {
+  CopiaPcsDefasadaError,
+  NfSemPcError,
+  PcJustificativaObrigatoriaError,
+  PcNaoElegivelError,
+  PcNaoEscolhidoError,
+  PcRecemUsadoAguardeError,
+  PcVinculoInvalidoError,
+} from '../services/pc-sugestao.service.js';
+import { VinculoOmieMudouError } from '../services/recebimento-fiscal.service.js';
 import { ItemJaRecebidoError, NenhumItemPendenteError, MotivoObrigatorioError, ItemNaoCorrespondeError } from '../services/recebimento-externo.service.js';
 
 const CHAVE = '35260868176072000128550010000667241693158505';
@@ -199,7 +214,7 @@ describe('POST /recebimento/nacional/por-nf', () => {
       observacoes: 'obs',
       userId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       itens: [{ indice: 0, descricaoFornecedor: 'X', quantidadeConferidaKg: 13500, motivoDivergencia: 'balança', observacoes: null,
-        produtos: [{ produtoCodigoQ2p: 3033097757, quantidadeKg: 13500, localidadeId: LOC }] }],
+        produtos: [{ produtoCodigoQ2p: 3033097757, quantidadeKg: 13500, localidadeId: LOC }], pc: null }],
     });
   });
 
@@ -256,11 +271,121 @@ describe('POST /recebimento/nacional/por-nf', () => {
     expect(typeof res.body.error.userMessage).toBe('string');
   });
 
+  // ── Feature 017 (ACXEGDP-437) — itens[].pc e erros do pedido de compra (T022/T024) ──
+  it('aceita itens[].pc valido e repassa ao servico (snake_case -> service)', async () => {
+    const body = bodyValido();
+    body.itens[0] = { ...body.itens[0]!, pc: { n_cod_ped: 8516905979, n_cod_item: 8516907022, justificativa: 'Preço renegociado', n_cod_item_omie_visto: 8516907022 } } as never;
+    const res = await request(app).post('/api/v1/stockbridge/recebimento/nacional/por-nf').send(body);
+    expect(res.status).toBe(201);
+    const input = svc.processarRecebimentoNacionalPorNf.mock.calls[0]![0] as { itens: Array<{ pc: unknown }> };
+    expect(input.itens[0]!.pc).toEqual({ n_cod_ped: 8516905979, n_cod_item: 8516907022, justificativa: 'Preço renegociado', n_cod_item_omie_visto: 8516907022 });
+  });
+
+  it('pc: null tambem e aceito (item sem PC possivel)', async () => {
+    const body = bodyValido();
+    body.itens[0] = { ...body.itens[0]!, pc: null } as never;
+    expect((await request(app).post('/api/v1/stockbridge/recebimento/nacional/por-nf').send(body)).status).toBe(201);
+  });
+
+  it.each([
+    ['campo extra dentro de pc (.strict())', { n_cod_ped: 1, n_cod_item: 2, pc_numero: '304' }],
+    ['n_cod_ped 0', { n_cod_ped: 0, n_cod_item: 2 }],
+    ['n_cod_item negativo', { n_cod_ped: 1, n_cod_item: -2 }],
+    ['sem n_cod_item', { n_cod_ped: 1 }],
+    ['justificativa so de espacos', { n_cod_ped: 1, n_cod_item: 2, justificativa: '   ' }],
+    ['justificativa acima de 500', { n_cod_ped: 1, n_cod_item: 2, justificativa: 'x'.repeat(501) }],
+    ['visto nao inteiro', { n_cod_ped: 1, n_cod_item: 2, n_cod_item_omie_visto: 1.5 }],
+  ])('400 INVALID_INPUT em itens[].pc: %s', async (_n, pc) => {
+    const body = bodyValido();
+    body.itens[0] = { ...body.itens[0]!, pc } as never;
+    const res = await request(app).post('/api/v1/stockbridge/recebimento/nacional/por-nf').send(body);
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('INVALID_INPUT');
+    expect(svc.processarRecebimentoNacionalPorNf).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [new EstoqueJaLancadoPeloOmieError('7813', 'REPLAS'), 409, 'ESTOQUE_JA_LANCADO_PELO_OMIE'],
+    [new NfSemPcError('7813', 'REPLAS', [{ descricao: 'SUCATA PLASTICO', motivo: 'sem_pc' }]), 422, 'NF_SEM_PC'],
+    [new PcNaoEscolhidoError('7813', 'REPLAS', 'SUCATA PLASTICO'), 422, 'PC_NAO_ESCOLHIDO'],
+    [new PcNaoElegivelError('7813', '305', 'SUCATA PLASTICO', 'está aguardando aprovação'), 422, 'PC_NAO_ELEGIVEL'],
+    [new PcJustificativaObrigatoriaError('7813', '302', 'SUCATA PLASTICO', 'troca do pedido vinculado no OMIE'), 422, 'PC_JUSTIFICATIVA_OBRIGATORIA'],
+    [new CopiaPcsDefasadaError(), 503, 'COPIA_PCS_DEFASADA'],
+    [new PcVinculoInvalidoError('7813', '304', 'não tem saldo disponível (saldo atual: 0 kg)'), 409, 'PC_VINCULO_INVALIDO'],
+    [new VinculoOmieMudouError('7813', 'SUCATA PLASTICO'), 409, 'VINCULO_OMIE_MUDOU'],
+    [new VerificacaoEstoqueOmieError('7813'), 502, 'VERIFICACAO_ESTOQUE_OMIE_FAIL'],
+  ])('017: mapeia %s -> %i %s, com userMessage sem codigo OMIE', async (err, status, code) => {
+    svc.processarRecebimentoNacionalPorNf.mockRejectedValue(err);
+    const res = await request(app).post('/api/v1/stockbridge/recebimento/nacional/por-nf').send(bodyValido());
+    expect(res.status).toBe(status);
+    expect(res.body.error.code).toBe(code);
+    expect(typeof res.body.error.userMessage).toBe('string');
+    expect(res.body.error.userMessage).not.toMatch(/\d{10}/);
+  });
+
+  it('017: PC_VINCULO_INVALIDO leva o item de PC recusado em error.pc (id de seleção — a mensagem continua sem ele)', async () => {
+    svc.processarRecebimentoNacionalPorNf.mockRejectedValue(
+      new PcVinculoInvalidoError('7813', '304', 'não tem saldo disponível (saldo atual: 0 kg)', { nCodPed: 8516905979, nCodItem: 8516907022 }),
+    );
+    const res = await request(app).post('/api/v1/stockbridge/recebimento/nacional/por-nf').send(bodyValido());
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatchObject({ code: 'PC_VINCULO_INVALIDO', pc: { nCodPed: 8516905979, nCodItem: 8516907022 } });
+    expect(res.body.error.userMessage).not.toMatch(/\d{10}/);
+    // sem o item (erro antigo): o corpo nao inventa o campo
+    svc.processarRecebimentoNacionalPorNf.mockRejectedValue(new PcVinculoInvalidoError('7813', '304', 'é de outro fornecedor'));
+    const sem = await request(app).post('/api/v1/stockbridge/recebimento/nacional/por-nf').send(bodyValido());
+    expect(sem.body.error.pc).toBeUndefined();
+  });
+
+  it('017: PC_RECEM_USADO_AGUARDE leva retryAfterSeconds para a contagem da tela', async () => {
+    svc.processarRecebimentoNacionalPorNf.mockRejectedValue(new PcRecemUsadoAguardeError('304', 52));
+    const res = await request(app).post('/api/v1/stockbridge/recebimento/nacional/por-nf').send(bodyValido());
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatchObject({ code: 'PC_RECEM_USADO_AGUARDE', retryAfterSeconds: 52 });
+    expect(res.body.error.userMessage).toContain('52 segundos');
+  });
+
   it('erro inesperado -> 500 RECEBIMENTO_NACIONAL_NF_FAIL', async () => {
     svc.processarRecebimentoNacionalPorNf.mockRejectedValue(new Error('boom'));
     const res = await request(app).post('/api/v1/stockbridge/recebimento/nacional/por-nf').send(bodyValido());
     expect(res.status).toBe(500);
     expect(res.body.error.code).toBe('RECEBIMENTO_NACIONAL_NF_FAIL');
+  });
+});
+
+// ── Feature 017 — POST /aviso-compras (contrato §3b) ─────────────────────────
+describe('POST /recebimento/nacional/aviso-compras', () => {
+  const URL_AVISO = '/api/v1/stockbridge/recebimento/nacional/aviso-compras';
+
+  it('200 com o desfecho do aviso; repassa chave e usuario', async () => {
+    svc.avisarComprasNfSemPc.mockResolvedValue({ status: 'enviado', motivo: 'sem_pc', itens: ['SUCATA PLASTICO'], mensagem: 'A equipe de Compras foi avisada.' });
+    const res = await request(app).post(URL_AVISO).send({ nf_chave_acesso: CHAVE });
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({ status: 'enviado', motivo: 'sem_pc' });
+    expect(svc.avisarComprasNfSemPc).toHaveBeenCalledWith({ nfChaveAcesso: CHAVE, userId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' });
+  });
+
+  it('400 com campo extra (.strict()) ou chave invalida; 403 sem armazem vinculado', async () => {
+    expect((await request(app).post(URL_AVISO).send({ nf_chave_acesso: CHAVE, motivo: 'x' })).status).toBe(400);
+    expect((await request(app).post(URL_AVISO).send({ nf_chave_acesso: '123' })).status).toBe(400);
+    armazemVinculado = false;
+    expect((await request(app).post(URL_AVISO).send({ nf_chave_acesso: CHAVE })).status).toBe(403);
+    expect(svc.avisarComprasNfSemPc).not.toHaveBeenCalled();
+  });
+
+  it('422 AVISO_COMPRAS_NAO_APLICAVEL, 503 COPIA_PCS_DEFASADA e 502 quando o envio falha', async () => {
+    svc.avisarComprasNfSemPc.mockRejectedValueOnce(new AvisoComprasNaoAplicavelError('7813', 'ela não está aguardando pedido de compra'));
+    let res = await request(app).post(URL_AVISO).send({ nf_chave_acesso: CHAVE });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('AVISO_COMPRAS_NAO_APLICAVEL');
+    svc.avisarComprasNfSemPc.mockRejectedValueOnce(new CopiaPcsDefasadaError());
+    res = await request(app).post(URL_AVISO).send({ nf_chave_acesso: CHAVE });
+    expect(res.status).toBe(503);
+    expect(res.body.error.code).toBe('COPIA_PCS_DEFASADA');
+    svc.avisarComprasNfSemPc.mockResolvedValueOnce({ status: 'falha', motivo: 'sem_pc', itens: [], mensagem: 'Não foi possível avisar a equipe de Compras agora. Tente de novo em instantes.' });
+    res = await request(app).post(URL_AVISO).send({ nf_chave_acesso: CHAVE });
+    expect(res.status).toBe(502);
+    expect(res.body.error).toMatchObject({ code: 'AVISO_COMPRAS_FALHOU', retryAfterSeconds: 0 });
   });
 });
 

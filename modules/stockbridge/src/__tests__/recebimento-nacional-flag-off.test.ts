@@ -66,13 +66,23 @@ vi.mock('../services/correlacao-produto.service.js', () => ({
 }));
 
 const detalheMock = vi.fn();
+/** 017: a NF esta no espelho de recebimentos? (senao o POST le o recebimento ao vivo — D7) */
+let noEspelho = true;
 vi.mock('../services/fila-nacional.service.js', async () => {
   const real = await vi.importActual<typeof import('../services/fila-nacional.service.js')>('../services/fila-nacional.service.js');
-  return { ...real, getDetalheNfNacional: (c: string) => detalheMock(c) };
+  return {
+    ...real,
+    getDetalheNfNacional: (c: string) => detalheMock(c),
+    // 017: o POST usa o detalhe com o bloco interno do PC — neutro aqui (NF no espelho, sem PC)
+    montarDetalheNfNacional: async (c: string) => ({
+      detalhe: await detalheMock(c),
+      interno: { fornecedorCodigo: null, espelhoConfirmaConclusao: noEspelho, pcPorIndice: new Map() },
+    }),
+  };
 });
 
 import { processarRecebimentoNacionalPorNf } from '../services/recebimento-nacional.service.js';
-import { getFilaNacional, recebimentoFiscalHabilitado } from '../services/fila-nacional.service.js';
+import { getFilaNacional, recebimentoFiscalHabilitado, EstoqueJaLancadoPeloOmieError } from '../services/fila-nacional.service.js';
 import { converterItemNfParaKg } from '../services/unidade-nf.js';
 import type { DetalheNfNacional, ItemNfNacional } from '../services/fila-nacional.service.js';
 
@@ -97,7 +107,7 @@ function item(): ItemNfNacional {
 const detalhe = (): DetalheNfNacional => ({
   nfChaveAcesso: CHAVE, notaFiscal: '6842', fornecedorNome: 'REPLAS COMERCIAL LTDA', fornecedorCnpj: '14.555.032/0007-53',
   dtEmissao: '2026-10-01', diasDesdeEmissao: 1, cfop: '1.102', valorTotalBrl: 203400, itens: [item()], linhasForaDoRecorte: 0,
-  fiscal: 'pendente', nIdReceb: 8510564869, dispensavel: false, valorNotaBrl: 203400,
+  fiscal: 'pendente', nIdReceb: 8510564869, dispensavel: false, valorNotaBrl: 203400, itensSemAvaliacaoPc: [],
 });
 
 function poolPadrao(sql: string, params?: unknown[]) {
@@ -120,6 +130,7 @@ beforeEach(() => {
   for (const f of Object.values(omie)) f.mockReset();
   detalheMock.mockReset();
   detalheMock.mockResolvedValue(detalhe());
+  noEspelho = true;
 });
 
 describe('flag desligada — regressao para o comportamento da 015 (FR-020, SC-006)', () => {
@@ -127,13 +138,17 @@ describe('flag desligada — regressao para o comportamento da 015 (FR-020, SC-0
     expect(recebimentoFiscalHabilitado()).toBe(false);
   });
 
-  it('a fila consulta so tbl_nf_header_Q2P/tbl_nf_itens_Q2P e nenhuma tabela da feature 016', async () => {
+  it('a fila consulta o espelho de NF; do espelho de recebimentos so o vinculo/estoque da fonte (a) (017)', async () => {
     await getFilaNacional();
     const sql = String(poolQuerySpy.mock.calls.find((c) => String(c[0]).includes('WITH nf_unificada'))![0]);
     expect(sql).toContain('public."tbl_nf_header_Q2P" h');
-    for (const tabela of ['tbl_recebimentoNFe_Q2P', 'tbl_recebimentoNFe_itens_Q2P', 'stockbridge.recebimento_fiscal', 'stockbridge.nf_dispensa']) {
-      expect(sql, tabela).not.toContain(tabela);
-    }
+    expect(sql).not.toContain('stockbridge.recebimento_fiscal');
+    // a dispensa ativa vale com a chave desligada (achado fila-v01)
+    expect(sql).toContain('stockbridge.nf_dispensa');
+    // 017 (FR-021/021a): vinculo com o PC e estoque ja lancado valem com a chave
+    // desligada — mas a fonte (b) "fiscal pendente" continua fora.
+    expect(sql).toContain('ri.n_sequencia = a.n_seq');
+    expect(sql).not.toContain("r.c_recebido = 'N'");
     expect(sql).not.toContain('UNION ALL');
     // colunas novas sao constantes
     expect(sql).toContain("CASE WHEN bool_or(fiscal_pendente) THEN 'pendente' ELSE 'concluido' END AS fiscal");
@@ -165,6 +180,45 @@ describe('flag desligada — regressao para o comportamento da 015 (FR-020, SC-0
       status: 'desligado',
       concluidoEm: null,
       mensagem: 'O recebimento fiscal pelo Atlas está desligado neste ambiente — o fiscal segue sendo concluído no OMIE.',
+      // 017: sem fiscal pelo Atlas nao ha vinculo nem aviso
+      vinculos: [],
+      semVinculo: [],
+      avisoCompras: false,
     });
+  });
+
+  // ── Feature 017 (T041): com a chave desligada (contencao) valem FR-021/FR-021a ──
+  const post = () => processarRecebimentoNacionalPorNf({
+    nfChaveAcesso: CHAVE,
+    userId: USER,
+    itens: [{ indice: 0, descricaoFornecedor: DESC, produtos: [{ produtoCodigoQ2p: 3033097757, quantidadeKg: 18000, localidadeId: LOC_A }] }],
+  });
+
+  it('FR-021a: NF concluida no portal com estoque (espelho) -> 409, nada gravado e nenhuma chamada ao OMIE', async () => {
+    detalheMock.mockResolvedValue({ ...detalhe(), fiscal: 'concluido', estoqueLancadoPeloOmie: true });
+    await expect(post()).rejects.toBeInstanceOf(EstoqueJaLancadoPeloOmieError);
+    expect(inserts).toHaveLength(0);
+    for (const f of Object.values(omie)) expect(f).not.toHaveBeenCalled();
+  });
+
+  it('FR-021a: NF "fiscal ja feito" fora do espelho -> UMA leitura ao vivo do recebimento, nunca escrita; sem estoque, segue', async () => {
+    noEspelho = false;
+    detalheMock.mockResolvedValue({ ...detalhe(), fiscal: 'concluido' });
+    omie.consultarRecebimentoNfe.mockResolvedValue({ cRecebido: 'S', itens: [{ nSequencia: 1, cIgnorarItem: 'S', cNaoGerarMovEstoque: 'N' }] });
+    const r = await post();
+    expect(omie.consultarRecebimentoNfe).toHaveBeenCalledTimes(1);
+    expect(omie.consultarRecebimentoNfe).toHaveBeenCalledWith('q2p', { cChaveNfe: CHAVE });
+    expect(omie.alterarRecebimentoNfeItens).not.toHaveBeenCalled();
+    expect(omie.concluirRecebimentoNfe).not.toHaveBeenCalled();
+    expect(inserts.filter((i) => i.table === 'movimentacao')).toHaveLength(1);
+    expect(r.fiscal.status).toBe('desligado');
+  });
+
+  it('FR-021a: fora do espelho e concluida COM estoque -> 409 sem gravar', async () => {
+    noEspelho = false;
+    detalheMock.mockResolvedValue({ ...detalhe(), fiscal: 'concluido' });
+    omie.consultarRecebimentoNfe.mockResolvedValue({ cRecebido: 'S', itens: [{ nSequencia: 1, cIgnorarItem: 'N', cNaoGerarMovEstoque: 'N' }] });
+    await expect(post()).rejects.toBeInstanceOf(EstoqueJaLancadoPeloOmieError);
+    expect(inserts).toHaveLength(0);
   });
 });

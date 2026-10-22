@@ -219,11 +219,13 @@ describe('GET /dispensas (contrato §5) e POST /dispensas/:id/reverter (§6)', (
     expect((await request(app).get(`${BASE}/dispensas?incluirRevertidas=talvez`)).status).toBe(400);
   });
 
-  it('flag desligada: GET /dispensas -> 403 (a UI esconde a secao inteira)', async () => {
+  it('flag desligada: listar e desfazer dispensa continuam valendo (a dispensa ativa tira a NF da fila nesse modo — 017, achado portao-r01); criar -> 403', async () => {
     flagFiscal = false;
-    const res = await request(app).get(`${BASE}/dispensas`);
-    expect(res.status).toBe(403);
-    expect(res.body.error.code).toBe('RECEBIMENTO_FISCAL_DESABILITADO');
+    expect((await request(app).get(`${BASE}/dispensas`)).status).toBe(200);
+    expect((await request(app).post(`${BASE}/dispensas/${ID}/reverter`).send({ motivo: 'engano' })).status).toBe(200);
+    const criar = await request(app).post(`${BASE}/dispensar`).send({ nf_chave_acesso: CHAVE, motivo: 'x' });
+    expect(criar.status).toBe(403);
+    expect(criar.body.error.code).toBe('RECEBIMENTO_FISCAL_DESABILITADO');
   });
 
   it('reverter: 200; id invalido -> 400; campo extra -> 400; inexistente -> 404 DISPENSA_NAO_ENCONTRADA', async () => {
