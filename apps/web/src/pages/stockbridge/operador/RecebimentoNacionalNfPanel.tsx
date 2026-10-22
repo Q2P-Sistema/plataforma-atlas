@@ -1242,6 +1242,7 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
                     : null
                 }
                 justificativaNaNota={itemNaJustNota(it)}
+                pcSemTrocaNoItem={recebiveis.length === 1 && pcsDaNf.length === 1}
               />
             ))}
           </div>
@@ -1508,6 +1509,7 @@ function ItemCard({
   justificativaPc,
   pcCompactoNota = null,
   justificativaNaNota = false,
+  pcSemTrocaNoItem = false,
 }: {
   item: ItemNf;
   form: ItemForm;
@@ -1529,10 +1531,12 @@ function ItemCard({
   escolhaPcForm: PcRef | null | undefined;
   /** feature 017: texto de justificativa que vale para o item (o da nota, quando ele segue o pedido escolhido na nota) */
   justificativaPc: string;
-  /** PC por NF: o item segue o pedido escolhido na nota (linha compacta "PC 306 · produto · Trocar") */
+  /** PC por NF: o item segue o pedido escolhido na nota (so o link "Usar outro pedido de compra neste item") */
   pcCompactoNota?: PcCompactoNota | null;
   /** PC por NF: a justificativa deste item e a unica da nota (o campo por item nao aparece) */
   justificativaNaNota?: boolean;
+  /** nota de um item e um PC: o item que segue o pedido da nota nao mostra nada de PC (nao ha o que trocar) */
+  pcSemTrocaNoItem?: boolean;
 }) {
   const bloqueadoUnidade = item.bloqueio === 'unidade_nao_conversivel' || item.bloqueio === 'unidade_incoerente';
   const recebidoIntegral = item.jaRecebido && (item.quantidadeRestanteKg ?? 0) <= TOLERANCIA_KG;
@@ -1618,7 +1622,9 @@ function ItemCard({
         </div>
       )}
 
-      {editavel && pcAtivo && pcDoItem && (
+      {/* Item coberto pelo pedido da nota: o bloco "Pedido de compra da nota" ja mostra o PC e a ligacao item -> item do PC; no
+          item fica so o link "Usar outro pedido de compra neste item", e nem ele na nota de um item e um PC (usuario, 22/10/2026). */}
+      {editavel && pcAtivo && pcDoItem && !(pcCompactoNota && pcSemTrocaNoItem) && (
         <PedidoCompraBloco
           pc={pcDoItem}
           descricaoItem={item.descricaoFornecedor.trim()}

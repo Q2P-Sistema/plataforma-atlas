@@ -680,31 +680,21 @@ export function PedidoCompraBloco({
   const produto = compactoNota?.produtoDescricao.trim() ?? '';
   return (
     <div ref={raiz} className={compacto ? 'mt-3' : undefined}>
-      <div className={compacto ? 'rounded border border-atlas-border' : undefined}>
+      <div className={compacto && trocando ? 'rounded border border-atlas-border' : undefined}>
         {compactoNota && (
           <button
             type="button"
             aria-expanded={trocando}
             aria-controls={idOpcoes}
             onClick={() => setTrocando((v) => !v)}
-            className="flex w-full cursor-pointer flex-wrap items-baseline gap-x-2 gap-y-1 rounded px-3 py-2 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-atlas-btn-bg"
+            className={`cursor-pointer rounded text-left text-xs text-atlas-muted underline hover:text-atlas-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-atlas-btn-bg ${trocando ? 'mx-3 my-2' : ''}`}
           >
-            <span className="text-[11px] uppercase tracking-wide text-atlas-muted">Pedido de compra</span>
-            <span className={`text-atlas-ink ${compactoNota.pcNumero.trim() ? 'font-mono' : ''}`}>{rotuloPc(compactoNota.pcNumero)}</span>
-            {produto && (
-              <>
-                <span aria-hidden="true" className="text-atlas-muted">
-                  ·
-                </span>
-                <span className="break-words text-atlas-ink">{produto}</span>
-              </>
-            )}
-            <span aria-hidden="true" className="text-atlas-muted">
-              ·
-            </span>
-            <span className="text-xs text-atlas-muted underline">
-              {trocando ? 'Fechar' : 'Trocar'}
-              <span className="sr-only"> {trocando ? 'as opções de pedido de compra' : 'o pedido de compra'} do item {descricaoItem}</span>
+            {/* o PC e o produto ja estao no bloco "Pedido de compra da nota"; aqui so a troca, para a excecao */}
+            {trocando ? 'Fechar os pedidos de compra deste item' : 'Usar outro pedido de compra neste item'}
+            <span className="sr-only">
+              {' '}
+              {descricaoItem} (hoje: {rotuloPc(compactoNota.pcNumero)}
+              {produto ? `, ${produto}` : ''})
             </span>
           </button>
         )}
@@ -712,7 +702,7 @@ export function PedidoCompraBloco({
           {opcoes}
         </div>
       </div>
-      {compacto && justificativaNaNota && <p className="mt-1 text-xs text-atlas-muted">A justificativa deste item é a do pedido de compra da nota.</p>}
+      {compacto && trocando && justificativaNaNota && <p className="mt-1 text-xs text-atlas-muted">A justificativa deste item é a do pedido de compra da nota.</p>}
     </div>
   );
 }
