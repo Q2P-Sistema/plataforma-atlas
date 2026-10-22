@@ -103,6 +103,10 @@ services:
       # Idade maxima (min) da copia de PCs antes de degradar o health, alertar o ops e
       # recusar o recebimento com fiscal pendente (503 COPIA_PCS_DEFASADA). PROD: 120.
       STOCKBRIDGE_COPIA_PCS_MAX_MIN: ${STOCKBRIDGE_COPIA_PCS_MAX_MIN:-120}
+      # PC em unidade diferente da NF (NF em toneladas x PC em kg): bloquear (default) = o PC nao e
+      # oferecido e a NF e recusada; converter = o EDITAR manda a quantidade recebida ja na unidade do
+      # PC (o OMIE baixa o pedido na unidade da NF sem converter — NF 60199 x PC 306, 22/10/2026).
+      STOCKBRIDGE_PC_UNIDADE_DIFERENTE: ${STOCKBRIDGE_PC_UNIDADE_DIFERENTE:-bloquear}
       # Destinatarios dos e-mails operacionais. Vazio = default do codigo
       # (comex_acxe@acxe-polimeros.com.br / flavio.endo@acxe-polimeros.com.br).
       STOCKBRIDGE_COMEX_EMAIL: ${STOCKBRIDGE_COMEX_EMAIL:-}

@@ -48,7 +48,7 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
 **Purpose**: verificação do terreno; o projeto já existe.
 
 - [X] T001 Confirmar que a branch `017-recebimento-nacional-com-pc` está sobre `origin/main` (`git merge-base --is-ancestor origin/main HEAD`) e que `pnpm install` roda limpo na raiz do repositório
-- [X] T002 Confirmar a numeração da migration com `ls packages/db/migrations/ | tail -3`: as próximas livres devem ser `0056` e `0057` (última: `0055_stockbridge_movimentacao_nf_item_sequencias.sql`)
+- [X] T002 Confirmar a numeração da migration com `ls packages/db/migrations/ | tail -3`: as próximas livres devem ser `0056` e `0057` (última: `0055_stockbridge_movimentacao_nf_item_sequencias.sql`). Revisto em 22/10/2026: a `0057` ficou com o cache de PCs vistos (T066) e a Fase 2 (ACXE) passa a `0058`
 - [ ] T003 [P] Acompanhar a entrega do contrato `specs/017-recebimento-nacional-com-pc/contracts/espelhos-n8n.md` §1, enviado em 21/10/2026 à sessão `backup-workflow-n8n-b3`. Conferir em PROD que `public."tbl_recebimentoNFe_itens_Q2P"` tem as 4 colunas e que a NF 7813 (recebimento 8517930857) está com `n_id_pedido = 8516905979` e `n_num_ped_compra = '304'`. Registrar a revisão do workflow na ACXEGDP-437. A US1 em UAT/PROD depende disso
 - [X] T004 [P] Acrescentar em `.env.example` (raiz, dev), `deploy/portainer/atlas.env.example` e `deploy/portainer/atlas-uat.env.example` as variáveis `STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC=true`, `STOCKBRIDGE_PC_TOLERANCIA_QTD_PCT=2`, `STOCKBRIDGE_PC_TOLERANCIA_PRECO_PCT=1`, `STOCKBRIDGE_COMPRAS_EMAILS=` e `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED=false`, com comentário (data-model §10). No `.env` local de dev, também `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED=true`
 
@@ -231,12 +231,15 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
 - [X] T032 [US2] Em `apps/web/src/pages/stockbridge/operador/RecebimentoNacionalNfPanel.tsx` (~l.697-740):
   - o resultado mostra o PC de cada item;
   - mensagens dos 409 novos (`PC_VINCULO_INVALIDO` com "escolha outro PC" e recarga do detalhe; `VINCULO_OMIE_MUDOU` com recarga; `PC_RECEM_USADO_AGUARDE` com contagem por `retryAfterSeconds`, como `RECEBIMENTO_FISCAL_AGUARDE`)
-- [ ] T033 [US2] Teste controlado do vínculo novo (research D2), **com autorização do usuário**, com uma NF real da Q2P sem vínculo e PC compatível, num workflow n8n de teste nos moldes de `CA0PlrtFkzcdQlpM` (passo a passo, 70 s entre passos):
-  - `ASSOCIAR-PEDIDO`, conferir, `EDITAR`, conferir, `Concluir`, conferir;
-  - verificar: aceito na etapa 40, vínculo preservado depois do `EDITAR`, troca de vínculo, NF menor que o PC (o saldo fica aberto?), estoque sem movimento.
-  Registrar o resultado em `specs/017-recebimento-nacional-com-pc/research.md` (D2) e na ACXEGDP-437. **Bloqueia religar `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED` em PROD**
+- [X] T033 [US2] Teste controlado do vínculo novo (research D2), **com autorização do usuário**, com uma NF real da Q2P sem vínculo e PC compatível, num workflow n8n de teste nos moldes de `CA0PlrtFkzcdQlpM` (passo a passo, 70 s entre passos). **Feito e aprovado em 22/10/2026**: workflow n8n `4OnbxvfALn9OoXLH` ("Teste OMIE - ASSOCIAR-PEDIDO (NF 60199 Zaraplast x PC 306, Q2P) T033", pasta Em Desenvolvimento; hoje só com passos de leitura). A NF 60199 (cadastro da filial, 4 itens em TL, etapa 40, sem vínculo) contra o PC 306 (cadastro da matriz, 3 itens em kg, mesma raiz de CNPJ):
+  - `ASSOCIAR-PEDIDO` aceito na etapa 40, inclusive com PC de outro cadastro do mesmo fornecedor;
+  - o `EDITAR` seguinte preservou o vínculo; chamadas com vários itens numa só (3 associações, depois 3 `EDITAR`, no formato do Atlas) e duas linhas da NF (itens 3 e 4, 2,75 t cada) no mesmo item do PC foram aceitas; depois da associação a descrição do item passou a ser a do produto do PC;
+  - durante o teste: PC sem baixa, estoque inalterado, nenhuma conta a pagar;
+  - **não testados**: (c) troca de um vínculo existente e (d) NF menor que o saldo do PC (as quantidades batiam exatas): ver T075;
+  - a chave `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED` foi religada em PROD às ~14h50. A primeira NF recebida pelo Atlas (a própria 60199, 15h02) concluiu o fiscal com os 4 vínculos mantidos e 3 entradas físicas aprovadas, e revelou a unidade na baixa do PC (T059 a T063) e o PC fora da lista de pendentes (T066 e T067).
+  Resultado registrado em `specs/017-recebimento-nacional-com-pc/research.md` (D2).
 
-**Checkpoint**: Histórias 1 e 2 entregam o caminho normal. Com o teste T033 aprovado, a contenção pode ser encerrada.
+**Checkpoint**: Histórias 1 e 2 entregam o caminho normal. O T033 foi aprovado em 22/10/2026 e a contenção foi encerrada com a chave religada em PROD.
 
 ---
 
@@ -312,7 +315,7 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
 
 **Independent Test**: quickstart cenário 8.
 
-- [ ] T045 [US5] Criar `packages/db/migrations/0057_stockbridge_recebimento_nacional_acxe.sql`:
+- [ ] T045 [US5] Criar `packages/db/migrations/0058_stockbridge_recebimento_nacional_acxe.sql` (a `0057` ficou com o cache de PCs vistos, T066):
   - `CREATE TABLE IF NOT EXISTS public."tbl_recebimentoNFe_ACXE"` e `"tbl_recebimentoNFe_itens_ACXE"` com a DDL das tabelas da Q2P na 0053, mais as 4 colunas de pedido;
   - `stockbridge.fornecedor_exclusao`: `ADD COLUMN empresa varchar(4) NOT NULL DEFAULT 'q2p' CHECK (empresa IN ('q2p','acxe'))`, índice único incluindo `empresa`, e duas linhas com a Q2P como fornecedor excluído na ACXE: as CNPJs `27.019.059/0001-88` (matriz) e `27.019.059/0002-69` (filial), com máscara, como no cadastro da ACXE e como já está gravada a ACXE (`42.672.052/0001-54`), motivo "intercompany". Não há constante de CNPJ da Q2P: `CNPJ_Q2P_MATRIZ` em `types.ts` é rótulo.
   Estender `fornecedorExclusao` em `packages/db/src/schemas/stockbridge.ts` e `modules/stockbridge/src/services/fornecedor.service.ts` (listar, excluir e reincluir por CNPJ passam a considerar a empresa), e aplicar em dev (`psql -1 -f`)
@@ -336,7 +339,7 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
   - entrada dual com o mesmo valor, sem markup;
   - `pendente_q2p` em falha parcial;
   - nenhuma chamada da baixa da 344
-- [ ] T052 [US5] Ativar o workflow n8n "ACXE - Exporta Recebimentos NF-e" (`contracts/espelhos-n8n.md` §2), aplicar a 0057 no UAT e validar o cenário 8 do quickstart antes de ligar `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED` em PROD
+- [ ] T052 [US5] Ativar o workflow n8n "ACXE - Exporta Recebimentos NF-e" (`contracts/espelhos-n8n.md` §2), aplicar a 0058 no UAT e validar o cenário 8 do quickstart antes de ligar `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED` em PROD
 
 ---
 
@@ -352,8 +355,54 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
   - tolerâncias;
   - ACXE sempre espelhada, Extrema = 21.1, mesmo valor nas duas empresas
 - [X] T056 Rodar `pnpm --filter @atlas/integration-omie test`, `pnpm --filter @atlas/stockbridge test` e `pnpm --filter @atlas/stockbridge typecheck` (envs dummy como no CI), mais `npm run lint`, e corrigir o que falhar
-- [ ] T057 Validar os cenários 1 a 7 do `specs/017-recebimento-nacional-com-pc/quickstart.md` no UAT (`OMIE_MODE=leitura`, escrita simulada na sombra) e registrar o resultado na ACXEGDP-437
-- [X] T058 Abrir PR de `017-recebimento-nacional-com-pc` para `main` com o resumo das fases, as migrations (0056; 0057 só na Fase 2) e a ordem de ativação
+- [ ] T057 Validar os cenários 1 a 7, 9 e 10 do `specs/017-recebimento-nacional-com-pc/quickstart.md` no UAT (`OMIE_MODE=leitura`, escrita simulada na sombra) e registrar o resultado na ACXEGDP-437
+- [X] T058 Abrir PR de `017-recebimento-nacional-com-pc` para `main` com o resumo das fases, as migrations (0056; 0057, cache de PCs vistos, na rodada de 22/10; 0058 só na Fase 2) e a ordem de ativação
+
+---
+
+## Phase 9: Ajustes pós-estreia (22/10/2026)
+
+**Purpose**: o que a NF 60199 (Zaraplast × PC 306) mostrou em PROD no dia em que a chave foi religada: o OMIE baixa o PC na unidade da NF, o PC some da lista de pendentes, o PC da matriz serve à NF da filial e a escolha do PC por item é repetitiva. Pedidos do usuário, todos aprovados. Referências: research D14 a D17, spec FR-031 a FR-033 e Clarifications de 22/10/2026.
+
+**Independent Test**: quickstart cenários 9 e 10.
+
+- [X] T059 [P] [US2] Config da trava de unidade: `STOCKBRIDGE_PC_UNIDADE_DIFERENTE` (`bloquear` | `converter`, default `bloquear`) em `packages/core/src/config.ts` e nas stacks e exemplos (`.env.example`, `deploy/portainer/atlas.stack.yml`, `deploy/portainer/atlas.env.example`, `deploy/portainer/atlas-uat.env.example` e `uat-atlas - web e api.yaml`)
+- [X] T060 [P] [US2] Cliente OMIE: `itensAjustes.nQtdeRecebida` em `packages/integrations/omie/src/stockbridge/recebimento-nfe.ts` (`AjustesItemRecebimento`, e `ItemRecebimentoNfe.nQtdeRecebida` no parser) e no mock (`mock.ts`), que grava o valor sem mexer em `nQtdeNFe`
+- [X] T061 [US1] Trava de unidade na sugestão, em `pc-sugestao.service.ts` e `fila-nacional.service.ts`:
+  - `modoUnidadeDiferentePc` e `opcoesPc`;
+  - `ItemParaSugestao.unidadeNf` e `fatorUnidadeNf` (da conversão da 015);
+  - `PcDoItem.unidadeIncompativel` e `PcCandidato.unidade`: PC em unidade diferente fora dos candidatos e dos "outros";
+  - vínculo do OMIE em unidade diferente inelegível, com alerta;
+  - motivo interno `unidade_pc` (situação `sem_pc`)
+- [X] T062 [US2] Trava de unidade no POST e no fiscal:
+  - `validarEscolhaPc` recusa o PC de `unidadeIncompativel` (`PC_NAO_ELEGIVEL` com texto de unidade);
+  - `relerEReservarPcs` recusa PC em unidade diferente no modo `bloquear` (`409 PC_VINCULO_INVALIDO`) e, no `converter`, devolve `ReservaPc.nQtdeRecebida`;
+  - `recebimento-fiscal.service.ts` manda `itensAjustes.nQtdeRecebida` no `EDITAR` e a confere em `ajustesJaAplicados`;
+  - `recebimento-nacional.service.ts` repassa a unidade do item (`NF_SEM_PC` com texto próprio, `pcsUnidadeIncompativel` no aviso)
+- [X] T063 [US3] Aviso a compras com o quadro "Pedido em unidade diferente da nota" em `notificacao.service.ts` (`unidadeIncompativel`), no lugar do quadro de outro cadastro (`pcsOutroCadastro` e `cnpjNf` removidos)
+- [X] T064 [US1] PC de outro cadastro com a mesma raiz de CNPJ oferecido (D17): `carregarContextoPc` (`raizPorFornecedor`, `raizesDosCadastros`), `PcCandidato.outroCadastro` e `cnpjCadastro`, releitura ao vivo por raiz em `relerEReservarPcs`; remove o "só informativo" do motivo e do aviso a compras
+- [X] T065 [US1] PC por NF (D14): `montarPcsDaNf` e os tipos `PcDaNf`, `PcDaNfItem` e `PcsDaNf` em `pc-sugestao.service.ts`; `DetalheNfNacional.pcsDaNf` em `fila-nacional.service.ts`. O POST continua por item
+- [X] T066 Migration `packages/db/migrations/0057_stockbridge_pedido_compra_visto.sql` (cache de PCs vistos: tabela, índices e trigger de auditoria `trg_audit_sb_pedido_compra_visto`) e o schema Drizzle `pedidoCompraVisto` em `packages/db/src/schemas/stockbridge.ts`
+- [X] T067 [US1] Cache de PCs vistos (D16): `modules/stockbridge/src/services/pc-visto.service.ts` (`registrarPcsVistos`, `registrarPcsVistosSeVencido`, `lerPcsVistos`), gravação no cron `5,35 * * * *` (`cron/index.ts`) e ao carregar o contexto da sugestão, leitura em `carregarContextoPc` (`fonte: 'cache'`, `dadosEmCache`, vínculo do OMIE com alerta) e `numerosDosPcs` com o cache como terceira fonte
+- [ ] T068 [P] Testes (Vitest) da rodada, em `modules/stockbridge/src/__tests__/` e `packages/integrations/omie/src/__tests__/`:
+  - `pc-sugestao.test.ts`: PC de outro cadastro (selo, sufixo no motivo, raiz de CNPJ);
+  - `pc-por-nf.test.ts` (novo): `montarPcsDaNf`, incluindo o caso NF 60199 × PC 306;
+  - `pc-unidade.test.ts` (novo): trava de unidade nos dois modos, da sugestão à releitura ao vivo;
+  - `pc-reserva.test.ts`: releitura por raiz de CNPJ e unidade;
+  - `recebimento-fiscal-pc.test.ts`: `nQtdeRecebida` no `EDITAR` (modo `converter`);
+  - `pc-visto.test.ts` (a criar);
+  - `notificacao-aviso-compras.test.ts`: quadro de unidade, sem o de outro cadastro (o teste antigo usava `pcsOutroCadastro`);
+  - `recebimento-nfe.test.ts`: `nQtdeRecebida` no parser, no `EDITAR` e no mock;
+  - auditoria (`ATLAS_DB_INTEGRATION=1`): trigger de `pedido_compra_visto`
+- [ ] T069 [US1] Front, `apps/web/src/pages/stockbridge/operador/RecebimentoNacionalNfPanel.tsx` e os tipos do web: escolha do PC uma vez por nota a partir de `pcsDaNf` (um `pc` por item no POST, mesma justificativa), marcação de outro cadastro (com o CNPJ formatado) e de dados em cache, `unidadeIncompativel` não selecionável com o motivo, e as mensagens dos erros de unidade
+- [ ] T070 [P] Aplicar a 0057 no banco de dev (`psql -1 -f packages/db/migrations/0057_stockbridge_pedido_compra_visto.sql`) e conferir `to_regclass('stockbridge.pedido_compra_visto')` e o trigger; depois, UAT
+- [ ] T071 Implantar a rodada em PROD pela ordem do runbook ("Ativação da feature 017", passo da 0057): **0057 → imagem seguinte à v1.1.20**, com `STOCKBRIDGE_PC_UNIDADE_DIFERENTE` em `bloquear`. Conferir o detalhe de uma NF com PC (número e saldo à vista) e o health
+- [X] T072 [P] Documentação da rodada: research D14 a D17 (e D2, D3, D4, D8, D12), spec (Clarifications de 22/10, FR-002, FR-031 a FR-033), data-model §8 e §11, contrato (§2, §3, §5, §6), quickstart (cenários 9 e 10), plano, `CLAUDE.md` (parágrafo da 017), `docs/prod-golive-runbook.md` e a seção 2 de `specs/007-stockbridge-module/research.md`
+- [ ] T073 [US2] Teste do modo `converter` com NF real (quickstart, cenário 10.6), **com autorização do usuário**: NF em toneladas contra PC em kg, `EDITAR` com `nQtdeRecebida` e `Concluir`, em workflow n8n de teste nos moldes do T033. Conferir `nQtdeRec` do PC na unidade do PC, `nQtdeNFe` da NF inalterada, um só título de conta a pagar e estoque sem movimento. Registrar em research D15
+- [ ] T074 [US2] Decisão de ligar `STOCKBRIDGE_PC_UNIDADE_DIFERENTE=converter` em PROD, só depois do T073 aprovado. Até lá o padrão é `bloquear`
+- [ ] T075 [US2] T033 (c) e (d) quando houver NF: (c) troca de um vínculo existente por `ASSOCIAR-PEDIDO` (inclusive entre cadastros) e (d) NF menor que o saldo do PC (o saldo fica aberto?). Registrar em research D2. Se o OMIE recusar a troca, vale o plano B da D2
+
+**Checkpoint**: PC por NF, PC de outro cadastro, trava de unidade e cache de PCs vistos no ar; `converter` só depois do T073 e do T074.
 
 ---
 
@@ -366,12 +415,13 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
 - **US4 (Phase 6)**: o T039 (estoque já lançado) depende só do T017 e pode ser feito logo após a Phase 2, porque protege a contenção atual. Os demais dependem da US2.
 - **Phase 8** depois das Histórias 1 a 4 (Fase 1 de entrega).
 - **US5 (Phase 7)** depois do deploy da Fase 1.
+- **Phase 9 (ajustes pós-estreia)** sobre a Fase 1 já em PROD. T061 a T065 dependem do T018/T020 (sugestão e detalhe); T067 depende do T066; o front (T069) depende de T065 e T061; o deploy (T071) depende de T066, T068 e T069 e vem depois do T070; T074 depende do T073.
 
 ```
 Phase 2 ──▶ US1 (T017–T025) ──▶ US2 (T026–T033) ──▶ US3 (T034–T037)
    │                                   └──────────▶ US4 (T038, T040–T044)
    └──▶ T039 (estoque já lançado — pode antecipar)
-US1–US4 ──▶ Phase 8 (T053–T058) ──▶ deploy Fase 1 ──▶ US5 (T045–T052)
+US1–US4 ──▶ Phase 8 (T053–T058) ──▶ deploy Fase 1 ──▶ Phase 9 (T059–T075) ──▶ US5 (T045–T052)
 T003 (n8n) ───────────────────────────────▶ validações em UAT/PROD
 ```
 
@@ -388,13 +438,14 @@ T003 (n8n) ───────────────────────
 2. **MVP = Phase 1 + 2 + US1 + US2**: sugestão, confirmação e fiscal com vínculo. Demonstrável em dev (mock) e em UAT (sombra do modo leitura).
 3. **US3 e US4** completam a Fase 1: regra de NF sem PC, avisos e robustez.
 4. **Ativação da Fase 1**: o deploy segue a ordem do T054 e o T033 aprovado é pré-requisito. Religar a chave primeiro no UAT, observar algumas NFs reais em PROD com a chave ligada e encerrar a contenção (SC-007).
-5. **Fase 2 (US5)**: só depois da Fase 1 estável em PROD e de existirem PCs nacionais na ACXE.
+5. **Ajustes pós-estreia (Phase 9)**: a Fase 1 entrou em PROD em 22/10/2026 e a NF 60199 pediu os quatro ajustes. A 0057 vai antes da imagem; `converter` só depois do teste com NF real.
+6. **Fase 2 (US5)**: só depois da Fase 1 estável em PROD e de existirem PCs nacionais na ACXE.
 
 ## Format Validation
 
-Todas as tarefas seguem `- [ ] T### [P?] [US?] descrição com caminho de arquivo`. Setup, Foundational e Polish não têm rótulo de história; US1 a US5 têm. O T003, o T033, o T052 e o T057 são tarefas operacionais (n8n, teste com NF real, validação em UAT) e citam os artefatos onde o resultado é registrado.
+Todas as tarefas seguem `- [ ] T### [P?] [US?] descrição com caminho de arquivo`. Setup, Foundational e Polish não têm rótulo de história; US1 a US5 têm. O T003, o T033, o T052, o T057, o T070, o T071, o T073, o T074 e o T075 são tarefas operacionais (n8n, teste com NF real, deploy, validação em UAT) e citam os artefatos onde o resultado é registrado.
 
-Total: **58 tarefas**:
+Total: **75 tarefas**:
 
 | Fase | Tarefas |
 |---|---|
@@ -406,3 +457,4 @@ Total: **58 tarefas**:
 | US4 | 7 |
 | US5 | 8 |
 | Polish | 6 |
+| Ajustes pós-estreia (22/10/2026) | 17 |

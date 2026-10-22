@@ -485,16 +485,16 @@ export const AVISO_COMPRAS_DEDUP_HORAS = 24;
 const AVISO_COMPRAS_LOCK_TIMEOUT = '10s';
 
 /**
- * Pedido de compra do MESMO fornecedor lancado em OUTRO cadastro (CNPJ) do OMIE —
- * ex.: PC no cadastro da matriz e NF emitida pela filial (NF 60199 x PC 306).
- * `itemDescricao` e a descricao do item da NF, igual a `itens[].descricao`;
- * `pcNumero` e o numero legivel do PC (nunca o codigo interno do OMIE);
- * `cnpjCadastroPc` e o CNPJ do cadastro onde o PC foi lancado, so digitos.
+ * Trava de unidade (22/10/2026): os PCs do fornecedor estao em unidade diferente da
+ * NF (ex.: NF em toneladas, PC em kg). O OMIE baixaria o pedido na unidade da nota,
+ * sem converter; a orientacao a compras e lancar o pedido na unidade da nota.
+ * `pcs` sao numeros legiveis (nunca o codigo interno do OMIE); `itens` sao as
+ * descricoes dos itens da NF afetados.
  */
-export interface PcOutroCadastroAviso {
-  itemDescricao: string;
-  pcNumero: string;
-  cnpjCadastroPc: string;
+export interface UnidadeIncompativelAviso {
+  unidadeNf: string;
+  pcs: string[];
+  itens: string[];
 }
 
 export interface ArgsAvisoComprasNfSemPc {
@@ -511,17 +511,10 @@ export interface ArgsAvisoComprasNfSemPc {
   pcsAguardandoAprovacao: string[];
   motivo: MotivoAvisoCompras;
   disparadoPor: string | null;
-  /** PCs do mesmo fornecedor lancados em OUTRO cadastro do OMIE; omitido ou vazio = nenhum */
-  pcsOutroCadastro?: PcOutroCadastroAviso[];
-  /** CNPJ do cadastro da nota (so digitos), citado junto de pcsOutroCadastro */
-  cnpjNf?: string | null;
+  /** PCs do fornecedor em unidade diferente da NF (trava de unidade); omitido ou null = nao se aplica */
+  unidadeIncompativel?: UnidadeIncompativelAviso | null;
 }
 
-
-/** Compara descricao de item da NF x item do aviso sem depender de caixa, acento ou espacos repetidos. */
-function chaveDescricaoItem(descricao: string): string {
-  return descricao.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
-}
 
 /** "a", "a e b", "a, b e c". */
 function listaPtBr(itens: string[]): string {
@@ -529,57 +522,38 @@ function listaPtBr(itens: string[]): string {
   return `${itens.slice(0, -1).join(', ')} e ${itens[itens.length - 1]}`;
 }
 
-/**
- * Texto do quadro "PC em outro cadastro": agrupa os itens por PC e cadastro do PC.
- * So o numero legivel do PC e o CNPJ mascarado aparecem — numero vazio ou com cara
- * de codigo interno do OMIE (10+ digitos) vira "um pedido de compra" (ACXEGDP-313).
- */
-function textoPcsOutroCadastro(pcs: PcOutroCadastroAviso[], cnpjNf: string | null | undefined): string {
-  const grupos = new Map<string, { pc: string; cnpj: string; itens: string[] }>();
-  for (const p of pcs) {
-    const numero = String(p.pcNumero ?? '').trim();
-    const pc = numero && !/^\d{10,}$/.test(numero) ? `PC ${numero}` : 'um pedido de compra';
-    const cnpj = fmtCnpj(p.cnpjCadastroPc);
-    const item = String(p.itemDescricao ?? '').trim();
-    const chave = `${pc}|${cnpj}`;
-    const grupo = grupos.get(chave) ?? { pc, cnpj, itens: [] };
-    if (item && !grupo.itens.includes(item)) grupo.itens.push(item);
-    grupos.set(chave, grupo);
-  }
-  const lista = Array.from(grupos.values())
-    .map((g) => {
-      const cadastro = g.cnpj ? ` (CNPJ ${g.cnpj})` : '';
-      const itens = g.itens.length > 0 ? ` para ${g.itens.length === 1 ? 'o item' : 'os itens'} ${listaPtBr(g.itens.map((i) => `"${i}"`))}` : '';
-      return `${g.pc}${cadastro}${itens}`;
-    })
-    .join('; ');
-  const plural = grupos.size > 1;
-  const cadastroNota = fmtCnpj(cnpjNf);
-  return [
-    `Há ${plural ? 'pedidos' : 'pedido'} de compra deste fornecedor ${plural ? 'lançados' : 'lançado'} em OUTRO cadastro do OMIE: ${lista}.`,
-    cadastroNota ? `A nota é do cadastro ${cadastroNota}.` : '',
-    `Ajuste o fornecedor ${plural ? 'dos pedidos' : 'do pedido'} para o cadastro da nota (ou peça ao fiscal para concluir o recebimento no OMIE) em vez de lançar ${plural ? 'pedidos novos' : 'um pedido novo'}.`,
-  ]
-    .filter(Boolean)
-    .join(' ');
+/** "kg" / "toneladas" — mesma leitura da sugestao (sem importar o modulo, para nao criar ciclo). */
+function rotuloUnidadeAviso(unidade: string | null | undefined): string {
+  const u = (unidade ?? '').trim().toUpperCase();
+  if (u === 'KG') return 'kg';
+  if (u === 'T' || u === 'TON' || u === 'TL') return 'toneladas';
+  return u || 'unidade desconhecida';
 }
 
 /**
- * "O que fazer" do motivo sem_pc. Item com PC em outro cadastro nao recebe a ordem
- * de lancar PC novo (duplicaria o pedido); so os demais itens da NF recebem.
+ * Texto do quadro "Pedido em unidade diferente da nota" (trava de unidade). So o
+ * numero legivel do PC aparece — numero vazio ou com cara de codigo interno do OMIE
+ * (10+ digitos) vira "um pedido de compra" (ACXEGDP-313).
  */
-function oQueFazerSemPc(itens: Array<{ descricao: string }>, pcsOutro: PcOutroCadastroAviso[]): string {
-  if (pcsOutro.length === 0) {
-    return 'Lance e aprove no OMIE o pedido de compra deste item para este fornecedor. A NF fica na fila do StockBridge até o PC existir.';
-  }
-  const cobertos = new Set(pcsOutro.map((p) => chaveDescricaoItem(String(p.itemDescricao ?? ''))));
-  const descobertos = Array.from(
-    new Set(itens.map((it) => it.descricao.trim()).filter((d) => d && !cobertos.has(chaveDescricaoItem(d)))),
+function textoUnidadeIncompativel(u: UnidadeIncompativelAviso): string {
+  const pcs = u.pcs.map((p) => String(p ?? '').trim()).filter((p) => p && !/^\d{10,}$/.test(p));
+  const quais = pcs.length === 0 ? 'o pedido de compra deste fornecedor' : pcs.length === 1 ? `o PC ${pcs[0]}` : `os PCs ${listaPtBr(pcs)}`;
+  const itens = u.itens.map((i) => String(i ?? '').trim()).filter(Boolean);
+  const paraItens = itens.length > 0 ? ` para ${itens.length === 1 ? 'o item' : 'os itens'} ${listaPtBr(itens.map((i) => `"${i}"`))}` : '';
+  return (
+    `A nota está em ${rotuloUnidadeAviso(u.unidadeNf)} e ${quais} está em outra unidade${paraItens}. ` +
+    'Na conclusão do recebimento o OMIE grava no pedido a quantidade recebida na unidade da nota, sem converter ' +
+    '(uma NF de 8,25 toneladas baixaria um pedido em kg com 8,25, não 8.250). ' +
+    'Lance (ou ajuste) o pedido de compra na mesma unidade da nota.'
   );
-  if (descobertos.length === 0) {
-    return 'Siga a orientação acima e não lance pedido de compra novo para estes itens. A NF fica na fila do StockBridge até o pedido estar no cadastro da nota.';
+}
+
+/** "O que fazer" do motivo sem_pc. */
+function oQueFazerSemPc(unidade: UnidadeIncompativelAviso | null | undefined): string {
+  if (unidade) {
+    return 'Siga a orientação acima: o pedido precisa estar na unidade da nota. A NF fica na fila do StockBridge até o pedido estar na unidade certa.';
   }
-  return `Para os itens com pedido em outro cadastro, siga a orientação acima e não lance pedido novo. Para ${descobertos.length === 1 ? 'o item' : 'os itens'} ${listaPtBr(descobertos.map((d) => `"${d}"`))}, lance e aprove no OMIE o pedido de compra deste fornecedor. A NF fica na fila do StockBridge até o PC existir.`;
+  return 'Lance e aprove no OMIE o pedido de compra deste item para este fornecedor. A NF fica na fila do StockBridge até o PC existir.';
 }
 
 /**
@@ -601,7 +575,7 @@ function destinatariosAvisoCompras(): { destinatarios: string[]; viaOps: boolean
 /** Assunto e corpo do aviso a compras — o mesmo e-mail vai a todos os destinatarios pendentes. */
 function montarEmailAvisoCompras(args: ArgsAvisoComprasNfSemPc): { subject: string; html: string; text: string } {
   const config = getConfig();
-  const pcsOutro = (args.pcsOutroCadastro ?? []).filter(Boolean);
+  const unidade = args.unidadeIncompativel ?? null;
   const fornecedor = args.fornecedorNome && args.fornecedorNome.trim() ? args.fornecedorNome.trim() : 'Fornecedor não identificado no OMIE';
   const empresaRotulo = args.empresa === 'acxe' ? 'ACXE' : 'Q2P';
   const subject =
@@ -636,13 +610,11 @@ function montarEmailAvisoCompras(args: ArgsAvisoComprasNfSemPc): { subject: stri
       ? 'Se havia pedido de compra para este item, confira com o fiscal o ajuste do PC no OMIE: o recebimento não foi contado nele.'
       : args.motivo === 'pc_aguardando_aprovacao'
         ? 'Aprove o pedido de compra no OMIE. A NF fica na fila do StockBridge e pode ser recebida assim que o PC estiver aprovado e a lista de pedidos for atualizada.'
-        : oQueFazerSemPc(args.itens, pcsOutro);
-  // PC do mesmo fornecedor em OUTRO cadastro (sugestao-01): sem este quadro compras
-  // lancaria um PC novo e duplicaria o pedido que ja existe.
-  const blocoOutroCadastro =
-    pcsOutro.length > 0
-      ? emailActionBox(`<p style="margin:0;">${escapeHtml(textoPcsOutroCadastro(pcsOutro, args.cnpjNf))}</p>`, 'Pedido de compra em outro cadastro do OMIE')
-      : '';
+        : oQueFazerSemPc(unidade);
+  // Trava de unidade: sem este quadro compras lancaria um PC novo em kg e o problema se repetiria.
+  const blocoUnidade = unidade
+    ? emailActionBox(`<p style="margin:0;">${escapeHtml(textoUnidadeIncompativel(unidade))}</p>`, 'Pedido em unidade diferente da nota')
+    : '';
   const corpoHtml = `
     <p>${abertura}</p>
     ${emailDataList([
@@ -660,7 +632,7 @@ function montarEmailAvisoCompras(args: ArgsAvisoComprasNfSemPc): { subject: stri
         <tbody>${linhas}</tbody>
       </table>
     </div>
-    ${blocoOutroCadastro}
+    ${blocoUnidade}
     ${emailActionBox(`<p style="margin:0;">${escapeHtml(oQueFazer)}</p>${aguardando}`, 'O que fazer')}
   `;
   const { html, text } = buildEmailLayout({
@@ -687,8 +659,8 @@ function montarEmailAvisoCompras(args: ArgsAvisoComprasNfSemPc): { subject: stri
  * proxima tentativa tambem reenvia — um e-mail enviado nao se desfaz.
  *
  * Destino: STOCKBRIDGE_COMPRAS_EMAILS; vazio, STOCKBRIDGE_OPS_EMAIL com aviso no log.
- * `pcsOutroCadastro`: PC do mesmo fornecedor lancado em OUTRO cadastro do OMIE — o
- * e-mail diz isso e manda ajustar o fornecedor do pedido em vez de lancar um novo.
+ * `unidadeIncompativel`: os PCs do fornecedor estao em unidade diferente da NF — o
+ * e-mail diz isso e manda lancar o pedido na unidade da nota (trava de unidade).
  * Sem codigo OMIE (ACXEGDP-313). Best-effort: nunca lanca — quem chama nao espera
  * (o recebimento nao depende do e-mail).
  */

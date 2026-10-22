@@ -734,3 +734,36 @@ export type RecebimentoFiscalPc = typeof recebimentoFiscalPc.$inferSelect;
 export type NewRecebimentoFiscalPc = typeof recebimentoFiscalPc.$inferInsert;
 export type NfAvisoCompras = typeof nfAvisoCompras.$inferSelect;
 export type NewNfAvisoCompras = typeof nfAvisoCompras.$inferInsert;
+
+// ── Cache de pedidos de compra vistos (feature 017, migration 0057) ───────────
+// Última versão de cada item de PC que passou pela cópia local tbl_pedidosCompras_*.
+// O OMIE tira da lista de pendentes o PC com item associado a um recebimento aberto
+// (PC 306, 22/10/2026); a sugestão lê daqui o que a cópia não traz. Upsert só do
+// que mudou — o trigger de auditoria registra o histórico real do PC.
+export const pedidoCompraVisto = stockbridgeSchema.table(
+  'pedido_compra_visto',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    empresa: varchar('empresa', { length: 4 }).notNull().$type<EmpresaRecebimento>(),
+    nCodPed: bigint('n_cod_ped', { mode: 'number' }).notNull(),
+    nCodItem: bigint('n_cod_item', { mode: 'number' }).notNull(),
+    pcNumero: varchar('pc_numero', { length: 50 }).notNull().default(''),
+    nCodFor: bigint('n_cod_for', { mode: 'number' }),
+    produtoDescricao: varchar('produto_descricao', { length: 255 }),
+    unidade: varchar('unidade', { length: 10 }),
+    qtde: numeric('qtde', { precision: 14, scale: 3 }),
+    qtdeRec: numeric('qtde_rec', { precision: 14, scale: 3 }),
+    precoUnit: numeric('preco_unit', { precision: 14, scale: 6 }),
+    etapa: varchar('etapa', { length: 2 }),
+    dtPrevisao: date('dt_previsao'),
+    valorTotalPc: numeric('valor_total_pc', { precision: 14, scale: 2 }),
+    vistoEm: timestamp('visto_em', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('pedido_compra_visto_item_uq').on(t.empresa, t.nCodItem),
+    index('pedido_compra_visto_ped_idx').on(t.empresa, t.nCodPed),
+    index('pedido_compra_visto_for_idx').on(t.empresa, t.nCodFor),
+  ],
+);

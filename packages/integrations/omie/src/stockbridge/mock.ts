@@ -543,6 +543,8 @@ export function mockAlterarRecebimentoNfeItens(
       // EDITAR preserva o vinculo com o PC (NF 7813).
       if (it.itensAjustes?.cNaoGerarMovEstoque) item.cNaoGerarMovEstoque = it.itensAjustes.cNaoGerarMovEstoque;
       if (it.itensAjustes?.cNaoGerarFinanceiro) item.cNaoGerarFinanceiro = it.itensAjustes.cNaoGerarFinanceiro;
+      // Quantidade recebida na unidade do PC (017, trava de unidade): nao mexe em nQtdeNFe.
+      if (it.itensAjustes?.nQtdeRecebida != null) item.nQtdeRecebida = it.itensAjustes.nQtdeRecebida;
     } else if (it.cAcao === 'ASSOCIAR-PEDIDO') {
       // Substitui o vinculo anterior, se houver.
       item.cAssociarExistente = 'S';
@@ -587,15 +589,17 @@ export function mockConcluirRecebimentoNfe(
     if (it.nIdItem === 0 || it.nIdItem == null) it.nIdItem = Number(nextMockId());
   }
   // Item vinculado a PC: o OMIE atualiza sozinho o nQtdeRec do item do pedido ao
-  // concluir (NF 7813: 0 -> 18.000). Item ignorado nao conta; PC que o mock nao
-  // conhece (nao injetado nem na sombra do modo leitura) nao e criado nem tocado.
-  // O mock nao modela estoque — concluir nunca mexe nele.
+  // concluir (NF 7813: 0 -> 18.000) com a QUANTIDADE RECEBIDA do item (itensAjustes.
+  // nQtdeRecebida, que o EDITAR pode ter gravado na unidade do PC) ou, sem ela, a
+  // quantidade da NF na unidade da NF, sem converter (NF 60199 x PC 306, 22/10/2026).
+  // Item ignorado nao conta; PC que o mock nao conhece (nao injetado nem na sombra do
+  // modo leitura) nao e criado nem tocado. O mock nao modela estoque.
   for (const it of found.rec.itens) {
     if (it.cIgnorarItem === 'S' || it.nIdPedido == null || it.nIdItPedido == null) continue;
     const itemPc = acharPedidoMock(cnpj, { nCodPed: it.nIdPedido })?.pedido.produtos.find(
       (p) => p.nCodItem === it.nIdItPedido,
     );
-    if (itemPc) itemPc.nQtdeRec = somarQtde(itemPc.nQtdeRec ?? 0, it.nQtdeNFe);
+    if (itemPc) itemPc.nQtdeRec = somarQtde(itemPc.nQtdeRec ?? 0, it.nQtdeRecebida ?? it.nQtdeNFe);
   }
   return { nIdReceb: found.rec.nIdReceb, cCodStatus: '0', cDescStatus: 'Recebimento concluído com sucesso!' };
 }

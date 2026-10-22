@@ -14,10 +14,22 @@ import {
   pcParaEnvio,
   pcPendencia,
   rotuloPc,
+  type PcCompactoNota,
+  type PcDaNf,
   type PcDoItem,
   type PcPendencia,
   type PcRef,
+  type PcsDaNf,
 } from './PedidoCompraBloco.js';
+import {
+  PedidoCompraNfBloco,
+  escolhasDoPcDaNf,
+  justificativaDaNota,
+  pcDaNfEscolhido,
+  pcJustificativaDaNota,
+  preSelecaoDaNf,
+  type PcNfItemEstado,
+} from './PedidoCompraNfBloco.js';
 
 /**
  * Feature 015 (ACXEGDP-328) — recebimento nacional A PARTIR DA NF.
@@ -152,6 +164,11 @@ interface DetalheNf {
    * Modo "receber sem vinculo": o item e concluido no OMIE sem vinculo e compras e avisado depois.
    */
   itensSemAvaliacaoPc?: Array<{ indice: number; descricao: string }>;
+  /**
+   * PC por NF: os pedidos que atendem a nota, com a atribuicao item da NF -> item do PC, para o operador escolher uma vez.
+   * Vazio fora do fluxo de PC ou com a lista local defasada; ausente = backend anterior (a tela segue so com o PC por item).
+   */
+  pcsDaNf?: PcsDaNf;
 }
 
 type StatusProduto = 'aguardando_aprovacao' | 'ja_recebido' | 'bloqueado_unidade' | 'bloqueado_unidade_incoerente' | 'falha';
@@ -675,16 +692,71 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
   const copiaPcsDefasada = fiscalPendente && nf?.copiaPcsDefasada === true;
   /** o fiscal ja lancou o estoque no OMIE: receber aqui lancaria em dobro (vale tambem com o fiscal pelo Atlas desligado) */
   const estoqueLancadoPeloOmie = nf?.estoqueLancadoPeloOmie === true;
+  // ── PC por NF: o operador escolhe o pedido uma vez; a escolha e expandida em `pcEscolha` de cada item coberto ──
+  /** pedidos que atendem a nota inteira, na ordem do servidor (vazio = backend anterior, fora do fluxo de PC ou lista defasada) */
+  const pcsDaNf = nf?.pcsDaNf?.pcs ?? [];
+  const pcNfDisponivel = pcAtivo && !copiaPcsDefasada && recebiveis.length > 0 && pcsDaNf.length > 0;
+  /** pre-selecao do servidor para a nota: vale so nos itens em que o operador ainda nao mexeu (`pcEscolha === undefined`) */
+  const preSelecaoNf = useMemo(() => (pcNfDisponivel ? preSelecaoDaNf(nf?.pcsDaNf) : new Map<number, PcRef>()), [nf, pcNfDisponivel]);
+  /** escolha do formulario do item com a pre-selecao da nota: `undefined` = nem o operador nem a nota escolheram (vale a pre-selecao do item) */
+  const escolhaFormDoItem = (it: ItemNf, fi: ItemForm = getForm(it)): PcRef | null | undefined =>
+    fi.pcEscolha !== undefined ? fi.pcEscolha : preSelecaoNf.get(it.indice);
+  const indicesRecebiveis = new Set(recebiveis.map((it) => it.indice));
+  const estadoPcItens: PcNfItemEstado[] = pcNfDisponivel
+    ? recebiveis.flatMap((it) => (it.pc ? [{ indice: it.indice, pc: it.pc, escolhaForm: escolhaFormDoItem(it) }] : []))
+    : [];
+  /** pedido marcado na nota: derivado das escolhas por item (todos os itens cobertos seguem a atribuicao dele) */
+  const pcEscolhidoNf = pcNfDisponivel ? pcDaNfEscolhido(pcsDaNf, estadoPcItens) : null;
+  /** item a receber coberto pelo pedido marcado -> atribuicao dele */
+  const atribuicaoNf = new Map((pcEscolhidoNf?.itens ?? []).filter((a) => indicesRecebiveis.has(a.indice)).map((a) => [a.indice, a] as const));
+  /** uma so justificativa por nota: gravada em `pcJustificativa` de todos os itens cobertos */
+  const justNotaInfo = pcJustificativaDaNota(pcEscolhidoNf, estadoPcItens);
+  const modoJustNota = pcEscolhidoNf != null && justNotaInfo.obrigatoria;
+  const justificativaNota = justificativaDaNota(pcEscolhidoNf, (indice) => form[indice]?.pcJustificativa ?? '');
+  const faltaJustificativaNota = modoJustNota && justificativaNota.trim() === '';
+  /** o item usa a justificativa da nota: o campo por item nao aparece e vale o texto da nota */
+  const itemNaJustNota = (it: ItemNf): boolean => modoJustNota && atribuicaoNf.has(it.indice);
+  const justificativaPcDoItem = (it: ItemNf): string => (itemNaJustNota(it) ? justificativaNota : getForm(it).pcJustificativa);
+  /** o operador escolheu o pedido da nota: aplica a atribuicao em cada item coberto; os demais itens seguem com a escolha propria */
+  function escolherPcDaNf(p: PcDaNf) {
+    const aplicar = escolhasDoPcDaNf(p, indicesRecebiveis);
+    if (aplicar.length === 0) return;
+    // Trocar o pedido da nota LIMPA a justificativa: o texto escrito para o PC anterior nao justifica o
+    // novo (revisao de design, 22/10/2026). Marcar de novo o mesmo pedido mantem o que estava.
+    const mesmoPedido = pcEscolhidoNf?.nCodPed === p.nCodPed;
+    const texto = mesmoPedido ? justificativaNota : '';
+    setForm((prev) => {
+      const prox = { ...prev };
+      for (const { indice, ref } of aplicar) {
+        const it = recebiveis.find((i) => i.indice === indice);
+        if (it) prox[indice] = { ...(prev[indice] ?? formInicial(it)), pcEscolha: ref, pcJustificativa: texto };
+      }
+      return prox;
+    });
+  }
+  function justificarNota(texto: string) {
+    setForm((prev) => {
+      const prox = { ...prev };
+      for (const it of recebiveis) {
+        if (atribuicaoNf.has(it.indice)) prox[it.indice] = { ...(prev[it.indice] ?? formInicial(it)), pcJustificativa: texto };
+      }
+      return prox;
+    });
+  }
   /** o que falta em item COM PC possivel para o PC estar confirmado (escolha ou justificativa): isso desabilita o botao */
   const pcPendencias: Array<{ it: ItemNf; p: PcPendencia }> =
     pcAtivo && !copiaPcsDefasada
       ? recebiveis.flatMap((it) => {
           if (!it.pc) return [];
-          const fi = getForm(it);
-          const p = pcPendencia(it.pc, fi.pcEscolha, fi.pcJustificativa);
+          const p = pcPendencia(it.pc, escolhaFormDoItem(it), justificativaPcDoItem(it));
           return p ? [{ it, p }] : [];
         })
       : [];
+  /** pendencias que a tela diz por item (as de justificativa dos itens cobertos viram uma so, a da nota) */
+  const pendenciasItens = pcPendencias.filter((x) => !itemNaJustNota(x.it));
+  /** com o bloco da nota na tela e nenhum pedido marcado, o que falta e escolher o pedido da nota (nao o de cada item) */
+  const faltaEscolherNota = pcNfDisponivel && pcEscolhidoNf == null && pendenciasItens.some((x) => x.p.tipo === 'escolher');
+  const textoJustNota = `Informe por que o ${rotuloPc(pcEscolhidoNf?.pcNumero)} foi escolhido para a nota.`;
   /**
    * Itens a receber sem PC que possa ser vinculado (inclusive vinculo do OMIE inelegivel ou divergente sem outro PC,
    * nos dois modos): a nota nao pode ser recebida agora. Banner "Aguardando pedido de compra" com o botao que avisa a
@@ -709,9 +781,9 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
   const avisoSemAvaliacao = semAvaliacaoBloqueia ? textoSemAvaliacaoBloqueio(nomesSemAvaliacao) : null;
   /** recebimento barrado por um aviso proprio (banner acima dos itens): botao desabilitado */
   const recebimentoBarrado = estoqueLancadoPeloOmie || copiaPcsDefasada || aguardandoPcCompras || semAvaliacaoBloqueia;
-  const bloqueadoPorPc = recebimentoBarrado || pcPendencias.length > 0;
+  const bloqueadoPorPc = recebimentoBarrado || pcPendencias.length > 0 || faltaJustificativaNota;
   /** por que o botao esta desabilitado (aviso visivel ao lado do botao) */
-  const primeiraPendenciaPc = pcPendencias[0];
+  const primeiraPendenciaPc = pendenciasItens[0];
   const nomeItem = (it: ItemNf) => `"${it.descricaoFornecedor.trim()}"`;
   const dicaPc = estoqueLancadoPeloOmie
     ? 'Recebimento bloqueado: o estoque desta NF já entrou pelo OMIE. Fale com o fiscal.'
@@ -723,13 +795,17 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
           ? nomesSemAvaliacao.length === 1
             ? `Recebimento bloqueado: o item "${nomesSemAvaliacao[0]}" tem unidade que o Atlas não converte e não tem pedido de compra vinculado no OMIE.`
             : `Recebimento bloqueado: ${nomesSemAvaliacao.length} itens têm unidade que o Atlas não converte e não têm pedido de compra vinculado no OMIE.`
-          : !primeiraPendenciaPc
-            ? null
-            : pcPendencias.length > 1
-              ? `Falta escolher ou justificar o pedido de compra em ${pcPendencias.length} itens.`
-              : primeiraPendenciaPc.p.tipo === 'justificar'
-                ? `Falta a justificativa do ${rotuloPc(primeiraPendenciaPc.p.pcNumero)} no item ${nomeItem(primeiraPendenciaPc.it)}.`
-                : `Falta escolher o pedido de compra do item ${nomeItem(primeiraPendenciaPc.it)}.`;
+          : faltaEscolherNota
+            ? 'Escolha o pedido de compra da nota.'
+            : faltaJustificativaNota
+              ? `Falta a justificativa do ${rotuloPc(pcEscolhidoNf?.pcNumero)} para a nota.`
+              : !primeiraPendenciaPc
+                ? null
+                : pendenciasItens.length > 1
+                  ? `Falta escolher ou justificar o pedido de compra em ${pendenciasItens.length} itens.`
+                  : primeiraPendenciaPc.p.tipo === 'justificar'
+                    ? `Falta a justificativa do ${rotuloPc(primeiraPendenciaPc.p.pcNumero)} no item ${nomeItem(primeiraPendenciaPc.it)}.`
+                    : `Falta escolher o pedido de compra do item ${nomeItem(primeiraPendenciaPc.it)}.`;
   /** ha item com PC para confirmar neste envio (muda o texto do aviso do fiscal) */
   const haPcParaConfirmar = pcAtivo && !copiaPcsDefasada && recebiveis.some((it) => it.pc != null);
 
@@ -785,8 +861,14 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
         }
       }
       const pend = pcPendencias.find((x) => x.it === it);
-      if (pend) return textoPendenciaPc(pend.p, rot);
+      if (pend) {
+        // PC por NF: a pendencia e da nota (escolher o pedido ou a justificativa unica), nao do item
+        if (pend.p.tipo === 'escolher' && faltaEscolherNota) return 'Escolha o pedido de compra da nota.';
+        if (pend.p.tipo === 'justificar' && itemNaJustNota(it)) return textoJustNota;
+        return textoPendenciaPc(pend.p, rot);
+      }
     }
+    if (faltaJustificativaNota) return textoJustNota;
     return null;
   }
 
@@ -799,7 +881,7 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
           const conferida = parseNum(fi.quantidadeConferida);
           const qtds = quantidadesDasLinhas(it, fi);
           // feature 017: so com o fiscal sendo concluido agora; item sem PC possivel vai sem a chave `pc`
-          const pcEnvio = pcAtivo && !copiaPcsDefasada && it.pc ? pcParaEnvio(it.pc, fi.pcEscolha, fi.pcJustificativa) : null;
+          const pcEnvio = pcAtivo && !copiaPcsDefasada && it.pc ? pcParaEnvio(it.pc, escolhaFormDoItem(it, fi), justificativaPcDoItem(it), itemNaJustNota(it)) : null;
           return {
             indice: it.indice,
             descricao_fornecedor: it.descricaoFornecedor,
@@ -837,7 +919,11 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
     onError: (e) => {
       const { code, status, retryAfterSeconds, pc: pcRecusado } = e as Error & { code?: string; status?: number; retryAfterSeconds?: number; pc?: PcRef };
       // VINCULO_OMIE_MUDOU: a nota e recarregada logo abaixo; o operador precisa saber que as escolhas voltaram ao que o OMIE traz
-      setErroEnvio(code === 'VINCULO_OMIE_MUDOU' ? `${e.message.replace(/\s*[.!?]*\s*$/, '.')} A nota foi recarregada. Confira o pedido de cada item.` : e.message);
+      setErroEnvio(
+        code === 'VINCULO_OMIE_MUDOU'
+          ? `${e.message.replace(/\s*[.!?]*\s*$/, '.')} A nota foi recarregada. ${pcNfDisponivel ? 'Confira o pedido de compra da nota.' : 'Confira o pedido de cada item.'}`
+          : e.message,
+      );
       // feature 017: o servidor recusou com base em dado que mudou no OMIE — a nota e recarregada junto com a mensagem
       if (code && ERROS_QUE_RECARREGAM_NOTA.has(code)) {
         queryClient.invalidateQueries({ queryKey: ['sb', 'rec-nacional', 'detalhe', chave] });
@@ -852,7 +938,7 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
       if (code === 'PC_VINCULO_INVALIDO') {
         const numero = pcRecusado ? undefined : /\bPC\s+(\S+?)[\s.,;:)]/.exec(`${e.message} `)?.[1];
         const foiRecusado = (it: ItemNf, f: ItemForm): boolean => {
-          const efetiva = it.pc ? pcEscolhaEfetiva(it.pc, f.pcEscolha) : null;
+          const efetiva = it.pc ? pcEscolhaEfetiva(it.pc, escolhaFormDoItem(it, f)) : null;
           if (!it.pc || !efetiva) return false;
           return pcRecusado ? mesmoPc(efetiva, pcRecusado) : numero != null && pcOpcaoEscolhida(it.pc, efetiva)?.pcNumero === numero;
         };
@@ -1121,6 +1207,19 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
             </div>
           )}
 
+          {pcNfDisponivel && (
+            <PedidoCompraNfBloco
+              pcs={pcsDaNf}
+              escolhido={pcEscolhidoNf}
+              totalItens={recebiveis.length}
+              descricaoDoItem={(indice) => nf.itens.find((x) => x.indice === indice)?.descricaoFornecedor.trim() || 'Item da nota'}
+              onEscolher={escolherPcDaNf}
+              justificativaInfo={justNotaInfo}
+              justificativa={justificativaNota}
+              onJustificar={justificarNota}
+            />
+          )}
+
           <div className="flex flex-col gap-3">
             {nf.itens.map((it) => (
               <ItemCard
@@ -1135,6 +1234,14 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
                 pcAtivo={pcAtivo}
                 exigePc={exigePc}
                 copiaPcsDefasada={copiaPcsDefasada}
+                escolhaPcForm={escolhaFormDoItem(it)}
+                justificativaPc={justificativaPcDoItem(it)}
+                pcCompactoNota={
+                  pcEscolhidoNf && atribuicaoNf.has(it.indice)
+                    ? { pcNumero: pcEscolhidoNf.pcNumero, produtoDescricao: atribuicaoNf.get(it.indice)?.produtoDescricao ?? '' }
+                    : null
+                }
+                justificativaNaNota={itemNaJustNota(it)}
               />
             ))}
           </div>
@@ -1397,6 +1504,10 @@ function ItemCard({
   pcAtivo = false,
   exigePc = true,
   copiaPcsDefasada = false,
+  escolhaPcForm,
+  justificativaPc,
+  pcCompactoNota = null,
+  justificativaNaNota = false,
 }: {
   item: ItemNf;
   form: ItemForm;
@@ -1414,6 +1525,14 @@ function ItemCard({
   exigePc?: boolean;
   /** feature 017: lista local de PCs desatualizada — sem sugestao */
   copiaPcsDefasada?: boolean;
+  /** feature 017: escolha do formulario ja com a pre-selecao da nota (`undefined` = ninguem escolheu: vale a pre-selecao do item) */
+  escolhaPcForm: PcRef | null | undefined;
+  /** feature 017: texto de justificativa que vale para o item (o da nota, quando ele segue o pedido escolhido na nota) */
+  justificativaPc: string;
+  /** PC por NF: o item segue o pedido escolhido na nota (linha compacta "PC 306 · produto · Trocar") */
+  pcCompactoNota?: PcCompactoNota | null;
+  /** PC por NF: a justificativa deste item e a unica da nota (o campo por item nao aparece) */
+  justificativaNaNota?: boolean;
 }) {
   const bloqueadoUnidade = item.bloqueio === 'unidade_nao_conversivel' || item.bloqueio === 'unidade_incoerente';
   const recebidoIntegral = item.jaRecebido && (item.quantidadeRestanteKg ?? 0) <= TOLERANCIA_KG;
@@ -1503,12 +1622,14 @@ function ItemCard({
         <PedidoCompraBloco
           pc={pcDoItem}
           descricaoItem={item.descricaoFornecedor.trim()}
-          escolha={pcEscolhaEfetiva(pcDoItem, form.pcEscolha)}
+          escolha={pcEscolhaEfetiva(pcDoItem, escolhaPcForm)}
           onEscolher={(ref) => onChange({ pcEscolha: ref })}
-          justificativa={form.pcJustificativa}
+          justificativa={justificativaPc}
           onJustificar={(texto) => onChange({ pcJustificativa: texto })}
           exigePc={exigePc}
           copiaDefasada={copiaPcsDefasada}
+          compactoNota={pcCompactoNota}
+          justificativaNaNota={justificativaNaNota}
         />
       )}
 

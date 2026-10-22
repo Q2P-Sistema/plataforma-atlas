@@ -113,8 +113,9 @@ const DESC = 'SUCATA PLASTICO';
 
 const PC304: PcCandidato = {
   nCodPed: 8516905979, nCodItem: 8516907022, pcNumero: '304', produtoDescricao: 'PS CRISTAL B', qtdPedidaKg: 18000,
-  saldoKg: 18000, precoUnit: 11.3, dtPrevisao: '2026-10-20', etapa: '15', dentroTolerancia: true, casaNumeroPedidoNf: false,
-  semDadosLocais: false, motivo: 'Quantidade e preço compatíveis',
+  saldoKg: 18000, precoUnit: 11.3, precoNfKgComparado: 11.3, dtPrevisao: '2026-10-20', etapa: '15', dentroTolerancia: true,
+  casaNumeroPedidoNf: false, semDadosLocais: false, motivo: 'Quantidade e preço compatíveis',
+  outroCadastro: false, cnpjCadastro: '', dadosEmCache: false, unidade: 'KG',
 };
 const PC310: PcCandidato = { ...PC304, nCodPed: 8516900310, nCodItem: 8516900311, pcNumero: '310', precoUnit: 11.7, dentroTolerancia: false, motivo: 'Preço da NF 3,4% abaixo do PC' };
 const PC305: PcCandidato = { ...PC304, nCodPed: 8516900305, nCodItem: 8516900306, pcNumero: '305', etapa: '10', motivo: 'Aguardando aprovação' };
@@ -136,23 +137,24 @@ function detalhe(over: Partial<DetalheNfNacional> = {}): DetalheNfNacional {
     dtEmissao: '2026-10-20', diasDesdeEmissao: 1, cfop: '1.102', valorTotalBrl: 203400, valorNotaBrl: 203400, itens: [item()],
     linhasForaDoRecorte: 0, fiscal: 'pendente', nIdReceb: 8517930857, dispensavel: true,
     empresa: 'q2p', exigePc: true, estoqueLancadoPeloOmie: false, copiaPcsDefasada: false, itensSemAvaliacaoPc: [],
+    pcsDaNf: { pcs: [], preSelecionado: null },
     ...over,
   };
 }
 
 const entrada = (o: Partial<ItemParaSugestao> = {}): ItemParaSugestao => ({
-  indice: 0, descricao: DESC, quantidadeKg: 18000, precoNfKg: 11.3, numeroPedidoNf: null, vinculos: [], sequencias: [1],
-  kgPorSequencia: { 1: 18000 }, ...o,
+  indice: 0, descricao: DESC, quantidadeKg: 18000, unidadeNf: 'KG', fatorUnidadeNf: 1, precoNfKg: 11.3, precoItemKg: null,
+  numeroPedidoNf: null, vinculos: [], sequencias: [1], kgPorSequencia: { 1: 18000 }, ...o,
 });
 
 const pcVazio: PcDoItem = {
   vinculoOmie: null, vinculoOmieElegivel: false, alertaVinculoOmie: null, vinculosDivergentes: false, candidatos: [],
-  outrosDoFornecedor: [], aguardandoAprovacao: [], preSelecionado: null, semPcMotivo: null, vinculadoNoOmie: null,
+  outrosDoFornecedor: [], aguardandoAprovacao: [], unidadeIncompativel: [], preSelecionado: null, semPcMotivo: null, vinculadoNoOmie: null,
 };
 
 const comCandidato = (): ResultadoPcItem => ({
   pc: { ...pcVazio, candidatos: [PC304], outrosDoFornecedor: [PC310] },
-  possivel: true, motivoSemPc: null, situacao: 'sugerido', pcsOutroCadastro: [],
+  possivel: true, motivoSemPc: null, situacao: 'sugerido',
 });
 const semPc = (motivo: 'sem_pc' | 'pc_aguardando_aprovacao' | 'vinculo_invalido' = 'sem_pc'): ResultadoPcItem => ({
   pc: {
@@ -162,7 +164,6 @@ const semPc = (motivo: 'sem_pc' | 'pc_aguardando_aprovacao' | 'vinculo_invalido'
     semPcMotivo: 'O fornecedor não tem pedido de compra aprovado com saldo para este item.',
   },
   possivel: false, motivoSemPc: motivo, situacao: motivo === 'pc_aguardando_aprovacao' ? 'aguardando_aprovacao' : 'sem_pc',
-  pcsOutroCadastro: [],
 });
 
 let det: DetalheNfNacional;
@@ -314,6 +315,33 @@ describe('escolha do PC no portao 1 (T023)', () => {
     await processarRecebimentoNacionalPorNf(post({ n_cod_ped: PC310.nCodPed, n_cod_item: PC310.nCodItem, justificativa: 'Preço renegociado com o fornecedor' }));
     const input = spies.fiscal.mock.calls[0]![0] as { vinculos: Array<Record<string, unknown>> };
     expect(input.vinculos[0]).toMatchObject({ origem: 'manual', dentroTolerancia: false, justificativa: 'Preço renegociado com o fornecedor' });
+  });
+
+  // Trava de unidade (22/10/2026): o portao 1 passa a unidade da NF ao validar a escolha, e a escolha validada
+  // leva unidadeNf/fatorUnidadeNf ate o fiscal -> releitura ao vivo (recusa ou conversao).
+  it('a escolha validada leva a unidade da NF e o fator ate o fiscal (a releitura ao vivo decide a trava)', async () => {
+    usarPc(comCandidato(), { unidadeNf: 'TON', fatorUnidadeNf: 1000 });
+    await processarRecebimentoNacionalPorNf(post({ n_cod_ped: PC304.nCodPed, n_cod_item: PC304.nCodItem }));
+    const input = spies.fiscal.mock.calls[0]![0] as { vinculos: Array<Record<string, unknown>> };
+    expect(input.vinculos[0]).toMatchObject({ unidadeNf: 'TON', fatorUnidadeNf: 1000 });
+  });
+
+  it('NF em kg: unidadeNf KG e fator 1 no que vai ao fiscal', async () => {
+    await processarRecebimentoNacionalPorNf(post({ n_cod_ped: PC304.nCodPed, n_cod_item: PC304.nCodItem }));
+    const input = spies.fiscal.mock.calls[0]![0] as { vinculos: Array<Record<string, unknown>> };
+    expect(input.vinculos[0]).toMatchObject({ unidadeNf: 'KG', fatorUnidadeNf: 1 });
+  });
+
+  it('PC da lista de unidade incompativel escolhido (chamada direta): 422 PC_NAO_ELEGIVEL "está em kg e a nota em toneladas", sem fiscal e sem gravar', async () => {
+    const pc306Kg: PcCandidato = { ...PC304, nCodPed: 8516900306, nCodItem: 8516900307, pcNumero: '306', unidade: 'KG', motivo: 'PC em kg e nota em toneladas' };
+    usarPc({ ...comCandidato(), pc: { ...comCandidato().pc, candidatos: [], outrosDoFornecedor: [], unidadeIncompativel: [pc306Kg] } }, { unidadeNf: 'TON', fatorUnidadeNf: 1000 });
+    const err = (await processarRecebimentoNacionalPorNf(post({ n_cod_ped: pc306Kg.nCodPed, n_cod_item: pc306Kg.nCodItem })).catch((e: Error) => e)) as Error;
+    expect(err).toBeInstanceOf(PcNaoElegivelError);
+    expect(err.message).toContain('O PC 306 não pode ser vinculado');
+    expect(err.message).toContain('está em kg e a nota em toneladas');
+    expect(err.message).not.toMatch(/\d{10}/);
+    expect(spies.fiscal).not.toHaveBeenCalled();
+    expect(movOuAprovacao()).toHaveLength(0);
   });
 
   it('PC enviado para NF com fiscal ja feito: ignorado (o fiscal nao roda; o fisico segue)', async () => {
@@ -510,26 +538,160 @@ describe('item pendente que o Atlas nao recebe (unidade) e sem PC no OMIE (FR-01
   });
 });
 
-// ── Achado sugestao-01: PC lancado em outro cadastro do mesmo fornecedor (filial x matriz) ──
-describe('aviso a compras com PC em outro cadastro do mesmo fornecedor (NF 60199 x PC 306)', () => {
-  it('o aviso leva o PC, o CNPJ do cadastro dele e o CNPJ da nota (so digitos)', async () => {
-    const r = semPc('sem_pc');
-    r.pcsOutroCadastro = [{ pcNumero: '306', cnpjCadastroPc: '61827663000179' }];
-    usarPc(r);
+// ── Trava de unidade (22/10/2026): so ha PC em unidade diferente da NF ──
+describe('aviso a compras com PC em unidade diferente da nota (NF 60199 x PC 306)', () => {
+  /** NF em toneladas (8,25 t) e o unico PC do fornecedor em kg: o OMIE baixaria o PC com 8,25, nao 8.250. */
+  const NF_EM_TON = (): void => {
+    det = detalhe({ itens: [item({ unidadeOriginal: 'TON', quantidadeNf: 18, quantidadeNfKg: 18000 })] });
+  };
+  const PC306_KG: PcCandidato = { ...PC304, nCodPed: 8516900306, nCodItem: 8516900307, pcNumero: '306', unidade: 'KG', motivo: 'PC em kg e nota em toneladas' };
+  const semPcDeUnidade = (extra: Partial<PcDoItem> = {}): ResultadoPcItem => ({
+    pc: {
+      ...pcVazio,
+      unidadeIncompativel: [PC306_KG],
+      semPcMotivo: 'O PC 306 está em kg e a nota em toneladas: o OMIE baixaria o pedido na unidade da nota, sem converter.',
+      ...extra,
+    },
+    possivel: false, motivoSemPc: 'unidade_pc', situacao: 'sem_pc',
+  });
+
+  it('o aviso leva a unidade da nota, o PC em unidade diferente e o item; o motivo segue sem_pc', async () => {
+    NF_EM_TON();
+    usarPc(semPcDeUnidade());
     await expect(processarRecebimentoNacionalPorNf(post())).rejects.toBeInstanceOf(NfSemPcError);
+    expect(spies.aviso).toHaveBeenCalledTimes(1);
     expect(spies.aviso.mock.calls[0]![0]).toMatchObject({
       motivo: 'sem_pc',
-      pcsOutroCadastro: [{ itemDescricao: DESC, pcNumero: '306', cnpjCadastroPc: '61827663000179' }],
-      cnpjNf: '11111111000111',
+      unidadeIncompativel: { unidadeNf: 'TON', pcs: ['306'], itens: [DESC] },
     });
+    expect(spies.aviso.mock.calls[0]![0]).not.toHaveProperty('pcsOutroCadastro');
+    expect(spies.aviso.mock.calls[0]![0]).not.toHaveProperty('cnpjNf');
+    expect(spies.fiscal).not.toHaveBeenCalled();
+    expect(movOuAprovacao()).toHaveLength(0);
+  });
+
+  it('a mensagem do NF_SEM_PC pede o pedido na unidade da nota e nunca leva código do OMIE', async () => {
+    NF_EM_TON();
+    usarPc(semPcDeUnidade());
+    const err = (await processarRecebimentoNacionalPorNf(post()).catch((e: Error) => e)) as Error;
+    expect(err).toBeInstanceOf(NfSemPcError);
+    expect(err.message).toContain('em unidade diferente da nota');
+    expect(err.message).toContain(DESC);
+    expect(err.message).toContain('A equipe de Compras foi avisada para lançar o pedido na unidade da nota');
+    expect(err.message).not.toMatch(/\d{10}/);
   });
 
   it('o aviso pedido pela tela leva o mesmo', async () => {
-    const r = semPc('sem_pc');
-    r.pcsOutroCadastro = [{ pcNumero: '306', cnpjCadastroPc: '61827663000179' }];
-    usarPc(r);
-    await avisarComprasNfSemPc({ nfChaveAcesso: CHAVE, userId: USER });
-    expect(spies.aviso.mock.calls[0]![0]).toMatchObject({ pcsOutroCadastro: [{ pcNumero: '306' }], cnpjNf: '11111111000111' });
+    NF_EM_TON();
+    usarPc(semPcDeUnidade());
+    const r = await avisarComprasNfSemPc({ nfChaveAcesso: CHAVE, userId: USER });
+    expect(r.status).toBe('enviado');
+    expect(spies.aviso.mock.calls[0]![0]).toMatchObject({ motivo: 'sem_pc', unidadeIncompativel: { unidadeNf: 'TON', pcs: ['306'], itens: [DESC] } });
+  });
+
+  it('vínculo do OMIE inelegível por unidade (sem outro PC): o PC do vínculo entra na lista do aviso', async () => {
+    NF_EM_TON();
+    usarPc(
+      semPcDeUnidade({
+        unidadeIncompativel: [],
+        vinculoOmie: { ...PC306_KG, motivo: 'Vínculo do OMIE' },
+        vinculoOmieElegivel: false,
+        alertaVinculoOmie: 'O PC 306 vinculado no OMIE está em kg e a nota em toneladas',
+      }),
+    );
+    await expect(processarRecebimentoNacionalPorNf(post())).rejects.toBeInstanceOf(NfSemPcError);
+    expect(spies.aviso.mock.calls[0]![0]).toMatchObject({ unidadeIncompativel: { pcs: ['306'], itens: [DESC] } });
+  });
+
+  it('PC com número em branco não entra na lista de PCs do aviso (a lista pode ir vazia; o e-mail diz "o pedido de compra deste fornecedor")', async () => {
+    NF_EM_TON();
+    usarPc(semPcDeUnidade({ unidadeIncompativel: [{ ...PC306_KG, pcNumero: '' }] }));
+    await expect(processarRecebimentoNacionalPorNf(post())).rejects.toBeInstanceOf(NfSemPcError);
+    expect(spies.aviso.mock.calls[0]![0]).toMatchObject({ unidadeIncompativel: { pcs: [], itens: [DESC] } });
+  });
+
+  /** POST dos dois itens da NF: o 1º (18.000 kg) e o 2º, "SUCATA PP" (9.000 kg). */
+  const postDoisItens = () => ({
+    ...post(),
+    itens: [post().itens[0]!, { indice: 1, descricaoFornecedor: 'SUCATA PP', produtos: [{ produtoCodigoQ2p: 3033097757, quantidadeKg: 9000, localidadeId: LOC_A }] }],
+  });
+
+  it('o mesmo PC em dois itens da NF sai uma vez só e os dois itens ficam na lista', async () => {
+    const item2 = item({ indice: 1, descricaoFornecedor: 'SUCATA PP', descricaoNormalizada: 'SUCATA PP', unidadeOriginal: 'TON', sequenciasRecebimento: [2], quantidadeNfKg: 9000, quantidadeRestanteKg: 9000 });
+    det = detalhe({ itens: [item({ unidadeOriginal: 'TON' }), item2] });
+    interno = {
+      fornecedorCodigo: 1111,
+      espelhoConfirmaConclusao: true,
+      pcPorIndice: new Map([
+        [0, { entrada: entrada({ unidadeNf: 'TON', fatorUnidadeNf: 1000 }), resultado: semPcDeUnidade() }],
+        [1, { entrada: entrada({ indice: 1, descricao: 'SUCATA PP', quantidadeKg: 9000, sequencias: [2], kgPorSequencia: { 2: 9000 }, unidadeNf: 'TON', fatorUnidadeNf: 1000 }), resultado: semPcDeUnidade() }],
+      ]),
+    };
+    await expect(processarRecebimentoNacionalPorNf(postDoisItens())).rejects.toBeInstanceOf(NfSemPcError);
+    expect(spies.aviso.mock.calls[0]![0]).toMatchObject({ unidadeIncompativel: { pcs: ['306'], itens: [DESC, 'SUCATA PP'] } });
+  });
+
+  it('item sem PC de verdade + item com PC em unidade diferente: o aviso e o erro separam os dois (a lista de unidade só leva o segundo)', async () => {
+    const item2 = item({ indice: 1, descricaoFornecedor: 'SUCATA PP', descricaoNormalizada: 'SUCATA PP', unidadeOriginal: 'TON', sequenciasRecebimento: [2], quantidadeNfKg: 9000, quantidadeRestanteKg: 9000 });
+    det = detalhe({ itens: [item(), item2] });
+    interno = {
+      fornecedorCodigo: 1111,
+      espelhoConfirmaConclusao: true,
+      pcPorIndice: new Map([
+        [0, { entrada: entrada(), resultado: semPc('sem_pc') }],
+        [1, { entrada: entrada({ indice: 1, descricao: 'SUCATA PP', quantidadeKg: 9000, sequencias: [2], kgPorSequencia: { 2: 9000 }, unidadeNf: 'TON', fatorUnidadeNf: 1000 }), resultado: semPcDeUnidade() }],
+      ]),
+    };
+    const err = (await processarRecebimentoNacionalPorNf(postDoisItens()).catch((e: Error) => e)) as Error;
+    expect(err).toBeInstanceOf(NfSemPcError);
+    expect(err.message).toContain('tem item sem pedido de compra no OMIE (SUCATA PLASTICO)');
+    expect(err.message).toContain('Para SUCATA PP, o pedido de compra do fornecedor está em unidade diferente da nota');
+    expect(spies.aviso.mock.calls[0]![0]).toMatchObject({ motivo: 'sem_pc', unidadeIncompativel: { itens: ['SUCATA PP'] } });
+    expect((spies.aviso.mock.calls[0]![0] as { itens: unknown[] }).itens).toHaveLength(2);
+  });
+
+  it('sem_pc comum (sem PC nenhum): unidadeIncompativel null', async () => {
+    usarPc(semPc('sem_pc'));
+    await expect(processarRecebimentoNacionalPorNf(post())).rejects.toBeInstanceOf(NfSemPcError);
+    expect(spies.aviso.mock.calls[0]![0]).toMatchObject({ unidadeIncompativel: null });
+  });
+
+  it('EXIGE_PC=false e PC só em unidade diferente (sem vínculo no OMIE): recebe sem vínculo, como qualquer item sem PC possível, e avisa depois', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC = false;
+    NF_EM_TON();
+    usarPc(semPcDeUnidade());
+    spies.fiscal.mockResolvedValue(fiscalOk({ semVinculo: [1] }));
+    await processarRecebimentoNacionalPorNf(post());
+    expect(spies.fiscal.mock.calls[0]![0]).toMatchObject({ vinculos: [], sequenciasSemVinculo: [1] });
+    expect(spies.aviso.mock.calls[0]![0]).toMatchObject({ motivo: 'recebida_sem_vinculo' });
+  });
+
+  // O item que VEIO vinculado no OMIE a um PC de unidade diferente tambem sai com motivoSemPc 'unidade_pc'
+  // (montarPcDoItem, vinculoPorUnidade). "Seguir sem vinculo" ignoraria (IGNORAR) um item com vinculo VIVO no OMIE
+  // (FR-011a) — e o fiscal so barraria depois, com 409 VINCULO_OMIE_MUDOU ("ganhou vínculo no OMIE"), mensagem
+  // enganosa. Recusa no portao 1, como o 'vinculo_invalido', nos dois modos.
+  it.each([true, false])('EXIGE_PC=%s e vínculo do OMIE em PC de unidade diferente: recusa no portão 1 (NF_SEM_PC), sem seguir como "sem vínculo"', async (exige) => {
+    config.STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC = exige;
+    NF_EM_TON();
+    usarPc(
+      semPcDeUnidade({ vinculoOmie: PC306_KG, vinculoOmieElegivel: false, alertaVinculoOmie: 'PC em kg e nota em toneladas' }),
+      { unidadeNf: 'TON', fatorUnidadeNf: 1000, vinculos: [{ nSequencia: 1, nIdPedido: PC306_KG.nCodPed, nIdItPedido: PC306_KG.nCodItem }] },
+    );
+    const err = (await processarRecebimentoNacionalPorNf(post()).catch((e: Error) => e)) as Error;
+    expect(err).toBeInstanceOf(NfSemPcError);
+    expect(spies.fiscal).not.toHaveBeenCalled();
+    expect(movOuAprovacao()).toHaveLength(0);
+    // o aviso a compras sai nos dois modos, com o quadro de unidade
+    expect(spies.aviso.mock.calls[0]![0]).toMatchObject({ motivo: 'sem_pc', unidadeIncompativel: { pcs: ['306'], itens: [DESC] } });
+  });
+
+  it('EXIGE_PC=false e PC de unidade diferente SEM vínculo no OMIE continua seguindo sem vínculo (o caso acima é só o vínculo vivo)', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC = false;
+    NF_EM_TON();
+    usarPc(semPcDeUnidade(), { unidadeNf: 'TON', fatorUnidadeNf: 1000 });
+    spies.fiscal.mockResolvedValue(fiscalOk({ semVinculo: [1] }));
+    await processarRecebimentoNacionalPorNf(post());
+    expect(spies.fiscal.mock.calls[0]![0]).toMatchObject({ vinculos: [], sequenciasSemVinculo: [1] });
   });
 });
 

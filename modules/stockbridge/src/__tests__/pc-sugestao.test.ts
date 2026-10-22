@@ -10,7 +10,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 //  D. validarEscolhaPc: portao 1 e matriz de justificativa (data-model §4);
 //  E. carregarContextoPc / sugerirPcPorItens: SQL e mapeamento com o pool mockado, como em
 //     fila-nacional.test.ts.
-// A releitura ao vivo e a reserva (relerEReservarPcs) ficam em pc-reserva.test.ts.
+// A releitura ao vivo e a reserva (relerEReservarPcs) ficam em pc-reserva.test.ts; a trava de unidade
+// (STOCKBRIDGE_PC_UNIDADE_DIFERENTE) em pc-unidade.test.ts; o PC por NF (montarPcsDaNf) em pc-por-nf.test.ts;
+// o SQL do cache de PCs vistos (0057) em pc-visto.test.ts.
+//
+// Mudancas do T033 (22/10/2026) refletidas aqui: o PC lancado em OUTRO cadastro da mesma raiz de CNPJ
+// (filial x matriz, NF 60199 x PC 306) e OFERECIDO (selo outroCadastro + sufixo no motivo); o cache de PCs
+// vistos entra no carregarContextoPc por import() dinamico, mockado neste arquivo (o pool conta so as
+// consultas da copia, do cadastro e do ledger).
 //
 // Caso de referencia: Replas, fornecedor 1111, PC 304 (18.000 kg a R$ 11,30/kg, etapa 15) e um
 // PC 302 identico — a NF 7813 de 21/10/2026. Os ids do OMIE sao so identificadores de selecao:
@@ -20,10 +27,14 @@ const mocks = vi.hoisted(() => ({
   poolQuery: vi.fn(),
   consultarPedidoCompra: vi.fn(),
   config: {} as Record<string, unknown>,
+  // cache de PCs vistos (0057): o carregarContextoPc o importa por import() dinamico
+  registrarPcsVistosSeVencido: vi.fn(),
+  lerPcsVistos: vi.fn(),
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
 vi.mock('@atlas/core', () => ({
-  createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
+  createLogger: () => mocks.logger,
   getDb: vi.fn(),
   getPool: () => ({ query: (sql: string, params?: unknown[]) => mocks.poolQuery(sql, params) }),
   getConfig: () => mocks.config,
@@ -32,6 +43,13 @@ vi.mock('@atlas/core', () => ({
 // O servico importa o cliente OMIE no carregamento do modulo (releitura ao vivo — pc-reserva.test.ts).
 vi.mock('@atlas/integration-omie', () => ({
   consultarPedidoCompra: (...args: unknown[]) => mocks.consultarPedidoCompra(...args),
+}));
+
+// Cache de PCs vistos (feature 017, 0057): aqui e um dublê, para o pool mockado contar so as consultas da
+// copia, do cadastro e do ledger. O SQL do proprio cache e testado em pc-visto.test.ts.
+vi.mock('../services/pc-visto.service.js', () => ({
+  registrarPcsVistosSeVencido: (...args: unknown[]) => mocks.registrarPcsVistosSeVencido(...args),
+  lerPcsVistos: (...args: unknown[]) => mocks.lerPcsVistos(...args),
 }));
 
 import {
@@ -64,6 +82,12 @@ import {
 beforeEach(() => {
   // a configuração mockada é compartilhada: cada teste começa nos padrões do serviço
   for (const k of Object.keys(mocks.config)) delete mocks.config[k];
+  // cache de PCs vistos vazio por padrão (cada teste de cache declara o seu)
+  mocks.registrarPcsVistosSeVencido.mockReset();
+  mocks.registrarPcsVistosSeVencido.mockResolvedValue(undefined);
+  mocks.lerPcsVistos.mockReset();
+  mocks.lerPcsVistos.mockResolvedValue([]);
+  for (const f of Object.values(mocks.logger)) f.mockClear();
 });
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -104,6 +128,7 @@ function pcCopia(over: Partial<PcCopia> = {}): PcCopia {
     pcEspelho: false,
     cnpjCadastro: CNPJ_REPLAS,
     raizCnpj: CNPJ_REPLAS.slice(0, 8),
+    fonte: 'copia',
     ...over,
   };
 }
@@ -119,6 +144,8 @@ function itemNf(over: Partial<ItemParaSugestao> = {}): ItemParaSugestao {
     indice: 0,
     descricao: 'SUCATA PLASTICO',
     quantidadeKg: 18000,
+    unidadeNf: 'KG',
+    fatorUnidadeNf: 1,
     precoNfKg: 11.3,
     precoItemKg: null,
     numeroPedidoNf: null,
@@ -142,7 +169,7 @@ function montar(item: ItemParaSugestao, pcs: PcCopia[], usos: UsoPcAtlas[] = [],
 
 /** Todo texto que a tela mostra para um item: nenhum pode carregar id de 10 digitos do OMIE (ACXEGDP-313). */
 function textosDaTela(r: ResultadoPcItem): string[] {
-  const todos = [r.pc.vinculoOmie, ...r.pc.candidatos, ...r.pc.outrosDoFornecedor, ...r.pc.aguardandoAprovacao];
+  const todos = [r.pc.vinculoOmie, ...r.pc.candidatos, ...r.pc.outrosDoFornecedor, ...r.pc.aguardandoAprovacao, ...r.pc.unidadeIncompativel];
   return [r.pc.alertaVinculoOmie ?? '', r.pc.semPcMotivo ?? '', ...todos.map((c) => (c ? `${c.motivo} ${c.pcNumero}` : ''))];
 }
 
@@ -724,6 +751,8 @@ function escolher(item: ItemParaSugestao, pcs: PcCopia[], escolha: EscolhaPc | n
     quantidadeKg: item.quantidadeKg ?? 0,
     precoNfKg: item.precoNfKg,
     kgPorSequencia: item.kgPorSequencia,
+    unidadeNf: item.unidadeNf,
+    fatorUnidadeNf: item.fatorUnidadeNf,
   });
 }
 
@@ -1122,6 +1151,9 @@ describe('carregarContextoPc', () => {
     const invalidos = await carregarContextoPc('q2p', { fornecedores: [0, -1, Number.NaN], nCodPedsVinculo: [0, Number.POSITIVE_INFINITY] });
     expect(invalidos.pcs).toEqual([]);
     expect(mocks.poolQuery).not.toHaveBeenCalled();
+    // nem o cache de PCs vistos (0057) e consultado
+    expect(mocks.lerPcsVistos).not.toHaveBeenCalled();
+    expect(mocks.registrarPcsVistosSeVencido).not.toHaveBeenCalled();
   });
 
   it('o SQL da cópia filtra por fornecedor OU pedido de vínculo OU outro cadastro da mesma raiz, e passa a CNPJ da ACXE (sem máscara) como $3', async () => {
@@ -1317,6 +1349,157 @@ describe('carregarContextoPc', () => {
   });
 });
 
+/** Item de PC do cache (stockbridge.pedido_compra_visto) como `lerPcsVistos` o devolve: PcCopia sem `fonte` + vistoEmMs. */
+function pcVisto(over: Partial<PcCopia> & { vistoEmMs?: number } = {}) {
+  const { fonte: _fonte, ...base } = pcCopia({ nCodPed: 7000000306, nCodItem: 7000000999, pcNumero: '306', ...over });
+  return { ...base, vistoEmMs: over.vistoEmMs ?? over.atualizadoEmMs ?? SYNC };
+}
+
+describe('carregarContextoPc — cache de PCs vistos (0057; PC que o OMIE tirou da lista de pendentes)', () => {
+  beforeEach(() => {
+    mocks.poolQuery.mockReset();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(AGORA);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('PC só no cache entra com fonte "cache", com os dados da última vez em que foi visto; o da cópia fica "copia"', async () => {
+    bancoComPcs([linhaPc()]);
+    mocks.lerPcsVistos.mockResolvedValue([pcVisto({ saldoCopiaKg: 8250, atualizadoEmMs: SYNC - 3_600_000 })]);
+    const ctx = await carregarContextoPc('q2p', { fornecedores: [FORNECEDOR], nCodPedsVinculo: [] });
+    expect(ctx.pcs.map((p) => [p.pcNumero, p.fonte])).toEqual([['304', 'copia'], ['306', 'cache']]);
+    expect(ctx.pcs[1]).toMatchObject({ nCodPed: 7000000306, nCodItem: 7000000999, saldoCopiaKg: 8250, atualizadoEmMs: SYNC - 3_600_000, etapa: '15' });
+  });
+
+  it('não duplica: o item que a cópia já trouxe vence o do cache (mesmo nCodItem), mesmo com dados diferentes', async () => {
+    bancoComPcs([linhaPc({ nqtde: 18000, nqtderec: 0 })]);
+    mocks.lerPcsVistos.mockResolvedValue([pcVisto({ nCodPed: NCODPED_304, nCodItem: NCODITEM_304, pcNumero: '304', saldoCopiaKg: 1 })]);
+    const ctx = await carregarContextoPc('q2p', { fornecedores: [FORNECEDOR], nCodPedsVinculo: [] });
+    expect(ctx.pcs).toHaveLength(1);
+    expect(ctx.pcs[0]).toMatchObject({ fonte: 'copia', saldoCopiaKg: 18000 });
+  });
+
+  it('o cache é lido DEPOIS da cópia, pedindo os fornecedores, as raízes de CNPJ e os pedidos de vínculo; registra antes de ler', async () => {
+    bancoComPcs([], [], [{ codigo: String(FORNECEDOR), cnpj: CNPJ_REPLAS }]);
+    await carregarContextoPc('acxe', { fornecedores: [FORNECEDOR, FORNECEDOR], nCodPedsVinculo: [NCODPED_304, NCODPED_304, 0] });
+    expect(mocks.registrarPcsVistosSeVencido).toHaveBeenCalledTimes(1);
+    expect(mocks.registrarPcsVistosSeVencido).toHaveBeenCalledWith('acxe', AGORA);
+    expect(mocks.lerPcsVistos).toHaveBeenCalledTimes(1);
+    expect(mocks.lerPcsVistos).toHaveBeenCalledWith('acxe', { fornecedores: [FORNECEDOR], raizes: ['11111111'], nCodPeds: [NCODPED_304] });
+    const idxCopia = mocks.poolQuery.mock.calls.findIndex((c) => String(c[0]).includes('tbl_pedidosCompras_'));
+    expect(mocks.poolQuery.mock.invocationCallOrder[idxCopia]!).toBeLessThan(mocks.registrarPcsVistosSeVencido.mock.invocationCallOrder[0]!);
+    expect(mocks.registrarPcsVistosSeVencido.mock.invocationCallOrder[0]!).toBeLessThan(mocks.lerPcsVistos.mock.invocationCallOrder[0]!);
+  });
+
+  it('só vínculo (sem fornecedor): o cache é consultado pelo pedido, sem raízes', async () => {
+    bancoComPcs([]);
+    await carregarContextoPc('q2p', { fornecedores: [], nCodPedsVinculo: [NCODPED_304] });
+    expect(mocks.lerPcsVistos).toHaveBeenCalledWith('q2p', { fornecedores: [], raizes: [], nCodPeds: [NCODPED_304] });
+  });
+
+  it('o PC do cache entra na consulta do ledger (usos) e no corte: PC 306 só no cache, copia vazia', async () => {
+    bancoComPcs([], [{ n_cod_item_ped: '7000000999', nf_chave_acesso: OUTRA_CHAVE, status: 'concluido', qtd_nf_kg: 5000, em_ms: SYNC + 1 }]);
+    mocks.lerPcsVistos.mockResolvedValue([pcVisto({ vistoEmMs: SYNC - 120_000, atualizadoEmMs: SYNC - 120_000 })]);
+    const ctx = await carregarContextoPc('q2p', { fornecedores: [FORNECEDOR], nCodPedsVinculo: [] });
+    expect(chamada('stockbridge.recebimento_fiscal_pc')[1]).toEqual(['q2p', [7000000999], SYNC - 120_000, RESERVA_PC_VALIDADE_MIN]);
+    expect(ctx.usos).toHaveLength(1);
+    // o saldo disponivel do item do cache desconta o concluido depois do "visto"
+    expect(saldoDisponivelCopiaKg(ctx.pcs[0]!, ctx, CHAVE_NF)).toBe(13000);
+  });
+
+  it('cache indisponível (a leitura falha): segue só com a cópia, com aviso no log — a sugestão não cai', async () => {
+    bancoComPcs([linhaPc()]);
+    mocks.lerPcsVistos.mockRejectedValue(new Error('relation "stockbridge.pedido_compra_visto" does not exist'));
+    const ctx = await carregarContextoPc('q2p', { fornecedores: [FORNECEDOR], nCodPedsVinculo: [] });
+    expect(ctx.pcs.map((p) => p.fonte)).toEqual(['copia']);
+    expect(mocks.logger.warn).toHaveBeenCalledTimes(1);
+    expect(String(mocks.logger.warn.mock.calls[0]![1])).toContain('Cache de pedidos de compra indisponível');
+  });
+
+  it('registrar o cache falhar (a promessa rejeita) também não derruba o contexto', async () => {
+    bancoComPcs([linhaPc()]);
+    mocks.registrarPcsVistosSeVencido.mockRejectedValue(new Error('timeout'));
+    const ctx = await carregarContextoPc('q2p', { fornecedores: [FORNECEDOR], nCodPedsVinculo: [] });
+    expect(ctx.pcs).toHaveLength(1);
+    expect(mocks.logger.warn).toHaveBeenCalledTimes(1);
+    expect(mocks.lerPcsVistos).not.toHaveBeenCalled();
+  });
+
+  it('o cache vazio não muda o contexto (nem o número de consultas ao banco)', async () => {
+    bancoComPcs([linhaPc()]);
+    const ctx = await carregarContextoPc('q2p', { fornecedores: [FORNECEDOR], nCodPedsVinculo: [] });
+    expect(ctx.pcs).toHaveLength(1);
+    expect(mocks.logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('sugerirPcPorItens: o PC 306 só no cache vira candidato com dadosEmCache true (NF 60199 × PC 306)', async () => {
+    bancoComPcs([]);
+    mocks.lerPcsVistos.mockResolvedValue([pcVisto({ saldoCopiaKg: 18000 })]);
+    const mapa = await sugerirPcPorItens('q2p', FORNECEDOR, CHAVE_NF, [itemNf()]);
+    const r = mapa.get(0)!;
+    expect(r.possivel).toBe(true);
+    expect(r.pc.candidatos.map((c) => [c.pcNumero, c.dadosEmCache])).toEqual([['306', true]]);
+  });
+});
+
+describe('montarPcDoItem — PC vindo do cache de PCs vistos (0057)', () => {
+  const doCache = (over: Partial<PcCopia> = {}) => pcCopia({ fonte: 'cache', pcNumero: '306', ...over });
+
+  it('candidato do cache: dadosEmCache true; o da cópia, false', () => {
+    const r = montar(itemNf(), [doCache(), pc302()]);
+    expect(r.pc.candidatos.map((c) => [c.pcNumero, c.dadosEmCache])).toEqual([['302', false], ['306', true]]);
+  });
+
+  it('vínculo do OMIE em PC só no cache: elegível, avaliado normalmente e pré-selecionado, com o alerta "saiu da lista"', () => {
+    const r = montar(itemNf({ vinculos: [VINCULO_304] }), [doCache()]);
+    expect(r.pc.vinculoOmie?.pcNumero).toBe('306');
+    expect(r.pc.vinculoOmie?.semDadosLocais).toBe(false);
+    expect(r.pc.vinculoOmie?.dadosEmCache).toBe(true);
+    expect(r.pc.vinculoOmie?.saldoKg).toBe(18000);
+    expect(r.pc.vinculoOmieElegivel).toBe(true);
+    expect(r.pc.alertaVinculoOmie).toBe(
+      'O PC 306 saiu da lista de pedidos pendentes do OMIE; os dados mostrados são da última sincronização em que apareceu. A confirmação confere o saldo ao vivo.',
+    );
+    expect(r.pc.preSelecionado).toEqual({ nCodPed: NCODPED_304, nCodItem: NCODITEM_304 });
+    expect(r.situacao).toBe('vinculado_omie');
+  });
+
+  it('vínculo do OMIE em PC da cópia: sem o alerta "saiu da lista"', () => {
+    const r = montar(itemNf({ vinculos: [VINCULO_304] }), [pc304()]);
+    expect(r.pc.vinculoOmie?.dadosEmCache).toBe(false);
+    expect(r.pc.alertaVinculoOmie).toBeNull();
+  });
+
+  it('vínculo em PC do cache fora da tolerância: os dois alertas, justificativa na escolha e nada pré-selecionado', () => {
+    const r = montar(itemNf({ vinculos: [VINCULO_304], quantidadeKg: 19000, kgPorSequencia: { 1: 19000 } }), [doCache()]);
+    expect(r.pc.alertaVinculoOmie).toContain('saiu da lista de pedidos pendentes');
+    expect(r.pc.alertaVinculoOmie).toContain('fora da tolerância');
+    expect(r.pc.preSelecionado).toBeNull();
+    expect(r.situacao).toBe('escolha_necessaria');
+  });
+
+  it('vínculo cujo PC não está nem na cópia nem no cache: segue sem dados locais (a releitura ao vivo decide)', () => {
+    const r = montar(itemNf({ vinculos: [VINCULO_304] }), []);
+    expect(r.pc.vinculoOmie?.semDadosLocais).toBe(true);
+    expect(r.pc.vinculoOmie?.pcNumero).toBe('');
+    expect(r.pc.alertaVinculoOmie).toContain('não está na lista local de pedidos');
+  });
+
+  it('PC do cache na etapa 10 vai para "aguardando aprovação" (sem ser selecionável), com dadosEmCache', () => {
+    const r = montar(itemNf(), [doCache({ etapa: '10' })]);
+    expect(r.pc.aguardandoAprovacao.map((c) => [c.pcNumero, c.dadosEmCache])).toEqual([['306', true]]);
+    expect(r.motivoSemPc).toBe('pc_aguardando_aprovacao');
+  });
+
+  it('divergência de linhas cita o número do PC que só está no cache', () => {
+    const item = itemNf({ vinculos: [VINCULO_304, VINCULO_302], sequencias: [1, 2], kgPorSequencia: { 1: 9000, 2: 9000 } });
+    const r = montar(item, [pc304(), pc302({ fonte: 'cache' })]);
+    expect(r.pc.alertaVinculoOmie).toContain('PCs 304 e 302');
+  });
+});
+
 describe('sugerirPcPorItens', () => {
   beforeEach(() => {
     mocks.poolQuery.mockReset();
@@ -1418,56 +1601,133 @@ describe('montarPcDoItem — duas bases de preço (research D3 revisto; NF 60199
 });
 
 describe('montarPcDoItem — PC em outro cadastro do mesmo fornecedor (filial × matriz, NF 60199 × PC 306)', () => {
+  // T033 (22/10/2026): o ASSOCIAR-PEDIDO entre cadastros da mesma raiz de CNPJ foi aceito pelo OMIE —
+  // o PC lançado na matriz agora é OFERECIDO para a NF da filial, com selo (outroCadastro) e sufixo no motivo.
   const FILIAL = 3098999518;
   const MATRIZ = 7974140605;
   const raizZaraplast = new Map([[FILIAL, '61827663']]);
   const pcMatriz = (over: Partial<PcCopia> = {}) =>
     pcCopia({ nCodFor: MATRIZ, pcNumero: '306', cnpjCadastro: '61827663000179', raizCnpj: '61827663', ...over });
   const montarFilial = (pcs: PcCopia[], item = itemNf()) => montarPcDoItem(item, contexto(pcs, [], raizZaraplast), FILIAL, CHAVE_NF, TOL);
+  const SUFIXO = 'em outro cadastro do fornecedor (CNPJ 61.827.663/0001-79)';
 
-  it('não é oferecido (mesmo fornecedor = mesmo cadastro), mas aparece no motivo com o CNPJ do cadastro do PC', () => {
+  it('é OFERECIDO: candidato com o selo outroCadastro, o CNPJ do cadastro do PC e o sufixo no motivo', () => {
     const r = montarFilial([pcMatriz()]);
-    expect(r.possivel).toBe(false);
-    expect(r.motivoSemPc).toBe('sem_pc');
+    expect(r.possivel).toBe(true);
+    expect(r.motivoSemPc).toBeNull();
+    expect(r.pc.semPcMotivo).toBeNull();
+    expect(r.pc.candidatos).toHaveLength(1);
+    const c = r.pc.candidatos[0]!;
+    expect(c.pcNumero).toBe('306');
+    expect(c.outroCadastro).toBe(true);
+    expect(c.cnpjCadastro).toBe('61827663000179');
+    expect(c.dentroTolerancia).toBe(true);
+    expect(c.motivo).toBe(`Quantidade e preço compatíveis · ${SUFIXO}`);
+    expect(r.situacao).toBe('sugerido');
+  });
+
+  it('PC do próprio cadastro da nota: outroCadastro false e motivo sem sufixo', () => {
+    const r = montarFilial([pcCopia({ nCodFor: FILIAL })]);
+    expect(r.pc.candidatos[0]!.outroCadastro).toBe(false);
+    expect(r.pc.candidatos[0]!.motivo).toBe('Quantidade e preço compatíveis');
+  });
+
+  it('fora da tolerância: vai para "outros do fornecedor" e o motivo (os desvios) leva o sufixo', () => {
+    const r = montarFilial([pcMatriz()], itemNf({ quantidadeKg: 19000, kgPorSequencia: { 1: 19000 } }));
     expect(r.pc.candidatos).toEqual([]);
-    expect(r.pc.outrosDoFornecedor).toEqual([]);
-    expect(r.pcsOutroCadastro).toEqual([{ pcNumero: '306', cnpjCadastroPc: '61827663000179' }]);
-    expect(r.pc.semPcMotivo).toContain('o PC 306 lançado em outro cadastro do mesmo fornecedor (CNPJ 61.827.663/0001-79)');
-    expect(r.pc.semPcMotivo).toContain('ajustar o fornecedor do pedido para o cadastro da nota');
+    expect(r.pc.outrosDoFornecedor).toHaveLength(1);
+    expect(r.pc.outrosDoFornecedor[0]!.outroCadastro).toBe(true);
+    expect(r.pc.outrosDoFornecedor[0]!.motivo).toBe(`Quantidade 5,6% acima do saldo · ${SUFIXO}`);
+    expect(r.situacao).toBe('escolha_necessaria');
   });
 
-  it('um PC com vários itens aparece uma vez só; dois PCs no mesmo cadastro vão no plural', () => {
-    const r = montarFilial([pcMatriz(), pcMatriz({ nCodItem: 99 }), pcMatriz({ nCodPed: 123, nCodItem: 124, pcNumero: '310' })]);
-    expect(r.pcsOutroCadastro.map((p) => p.pcNumero)).toEqual(['306', '310']);
-    expect(r.pc.semPcMotivo).toContain('os PCs 306 e 310 lançados em outro cadastro do mesmo fornecedor (CNPJ 61.827.663/0001-79)');
+  it('número do pedido da NF casando com o PC da matriz: "Número do pedido na NF · …" e pré-seleção', () => {
+    const r = montarFilial([pcMatriz()], itemNf({ numeroPedidoNf: '306' }));
+    expect(r.pc.candidatos[0]!.casaNumeroPedidoNf).toBe(true);
+    expect(r.pc.candidatos[0]!.motivo).toBe(`Número do pedido na NF · ${SUFIXO}`);
+    expect(r.pc.preSelecionado).toEqual({ nCodPed: pcMatriz().nCodPed, nCodItem: pcMatriz().nCodItem });
   });
 
-  it('ficam de fora: outra raiz, sem saldo, fora da etapa 15, PC-espelho e unidade não comparável', () => {
+  it('cadastro do PC sem CNPJ legível: o sufixo perde o "(CNPJ …)" mas o selo fica', () => {
+    const r = montarFilial([pcMatriz({ cnpjCadastro: '' })]);
+    expect(r.pc.candidatos[0]!.outroCadastro).toBe(true);
+    expect(r.pc.candidatos[0]!.motivo).toBe('Quantidade e preço compatíveis · em outro cadastro do fornecedor');
+  });
+
+  it('PC aguardando aprovação em outro cadastro também entra (visível, não selecionável) com o selo', () => {
+    const r = montarFilial([pcMatriz({ etapa: '10' })]);
+    expect(r.possivel).toBe(false);
+    expect(r.pc.candidatos).toEqual([]);
+    expect(r.pc.aguardandoAprovacao.map((c) => [c.pcNumero, c.outroCadastro])).toEqual([['306', true]]);
+    expect(r.motivoSemPc).toBe('pc_aguardando_aprovacao');
+  });
+
+  it('ficam de fora: outra raiz, sem saldo, fora das etapas 10/15, PC-espelho e unidade não comparável', () => {
     const r = montarFilial([
       pcMatriz({ raizCnpj: '99999999' }),
       pcMatriz({ nCodItem: 2, saldoCopiaKg: 0 }),
-      pcMatriz({ nCodItem: 3, etapa: '10' }),
+      pcMatriz({ nCodItem: 3, etapa: '20' }),
       pcMatriz({ nCodItem: 4, pcEspelho: true }),
       pcMatriz({ nCodItem: 5, unidade: 'UN', precoKg: null }),
     ]);
-    expect(r.pcsOutroCadastro).toEqual([]);
+    expect(r.possivel).toBe(false);
+    expect(r.pc.candidatos).toEqual([]);
+    expect(r.pc.outrosDoFornecedor).toEqual([]);
+    expect(r.pc.aguardandoAprovacao).toEqual([]);
+    expect(r.motivoSemPc).toBe('sem_pc');
     expect(r.pc.semPcMotivo).toBe('O fornecedor não tem pedido de compra aprovado com saldo para este item.');
   });
 
-  it('com PC no próprio cadastro, o de outro cadastro não muda nada na tela (só fica no resultado)', () => {
+  it('com PC no próprio cadastro e na matriz: os dois são candidatos, cada um com o seu selo, na ordem D3', () => {
+    // mesmo preço e previsão: desempata pelo nCodPed (o da matriz tem nCodPed 555 < 8516905979)
     const r = montarFilial([pcCopia({ nCodFor: FILIAL }), pcMatriz({ nCodPed: 555, nCodItem: 556 })]);
-    expect(r.possivel).toBe(true);
-    expect(r.pc.semPcMotivo).toBeNull();
-    expect(r.pc.candidatos.map((c) => c.pcNumero)).toEqual(['304']);
+    expect(r.pc.candidatos.map((c) => [c.pcNumero, c.outroCadastro])).toEqual([['306', true], ['304', false]]);
+    expect(r.pc.preSelecionado).toBeNull();
+    expect(r.situacao).toBe('escolha_necessaria');
   });
 
-  it('sem a raiz do fornecedor (CPF, ou fornecedor desconhecido) não há PC de outro cadastro', () => {
+  it('sem a raiz do fornecedor da NF (CPF ou fornecedor desconhecido) o PC de outro cadastro NÃO é oferecido', () => {
     const r = montarPcDoItem(itemNf(), contexto([pcMatriz()]), FILIAL, CHAVE_NF, TOL);
-    expect(r.pcsOutroCadastro).toEqual([]);
+    expect(r.possivel).toBe(false);
+    expect(r.pc.candidatos).toEqual([]);
+    expect(montarPcDoItem(itemNf(), contexto([pcMatriz()], [], raizZaraplast), null, CHAVE_NF, TOL).possivel).toBe(false);
+  });
+
+  it('PC de outro cadastro sem raiz (cadastro de CPF ou sem CNPJ) não é oferecido, mesmo com a raiz da NF conhecida', () => {
+    const r = montarFilial([pcMatriz({ raizCnpj: null, cnpjCadastro: '12345678901' })]);
+    expect(r.possivel).toBe(false);
+  });
+
+  it('o PC de outro cadastro respeita o saldo e as reservas, como qualquer candidato', () => {
+    const uso: UsoPcAtlas = { nCodItemPed: NCODITEM_304, nfChaveAcesso: OUTRA_CHAVE, status: 'confirmado', qtdKg: 18000, emMs: AGORA - 1000 };
+    const r = montarPcDoItem(itemNf(), contexto([pcMatriz()], [uso], raizZaraplast), FILIAL, CHAVE_NF, TOL);
+    expect(r.possivel).toBe(false); // reserva de outra NF zera o saldo do item de PC
+  });
+
+  it('o vínculo do OMIE que aponta o PC da matriz leva o selo, é elegível e pré-selecionado', () => {
+    const r = montarFilial([pcMatriz()], itemNf({ vinculos: [VINCULO_304] }));
+    expect(r.pc.vinculoOmie?.outroCadastro).toBe(true);
+    expect(r.pc.vinculoOmie?.cnpjCadastro).toBe('61827663000179');
+    expect(r.pc.vinculoOmieElegivel).toBe(true);
+    expect(r.situacao).toBe('vinculado_omie');
   });
 
   it('o texto não leva id do OMIE (ACXEGDP-313)', () => {
-    expect(montarFilial([pcMatriz()]).pc.semPcMotivo).not.toMatch(/\d{10}/);
+    const r = montarFilial([pcMatriz(), pcMatriz({ nCodPed: 123, nCodItem: 124, pcNumero: '310', etapa: '10' })]);
+    for (const t of textosDaTela(r)) expect(t).not.toMatch(/\d{10}/);
+  });
+
+  it('a escolha do PC da matriz é aceita (origem sugestão), sem justificativa, e entra no retrato oferecido', () => {
+    const item = itemNf();
+    const v = validarEscolhaPc({
+      notaFiscal: '60199', fornecedorNome: 'Zaraplast S/A', itemDescricao: item.descricao, indice: 0, sequencias: [1], vinculos: [],
+      resultado: montarFilial([pcMatriz()], item), escolha: escolhaDo304(), quantidadeKg: 18000, precoNfKg: item.precoNfKg,
+      kgPorSequencia: item.kgPorSequencia, unidadeNf: 'KG', fatorUnidadeNf: 1,
+    })!;
+    expect(v.origem).toBe('sugestao');
+    expect(v.candidato.outroCadastro).toBe(true);
+    expect(v.justificativa).toBeNull();
+    expect(v.oferecidos.map((o) => o.pcNumero)).toEqual(['306']);
   });
 });
 
@@ -1537,31 +1797,10 @@ describe('NfSemPcError — item que o Atlas não recebe (unidade) e sem PC no OM
   });
 });
 
-describe('NfSemPcError — PC lançado em outro cadastro do mesmo fornecedor (achado sugestao-v03)', () => {
-  const PC_MATRIZ = { pcNumero: '306', cnpjCadastroPc: '61827663000179' };
-
-  it('só itens com PC em outro cadastro: manda ajustar o fornecedor do pedido, nunca lançar PC novo', () => {
-    const e = new NfSemPcError('60199', 'Zaraplast S/A', [{ descricao: 'MC PEAD ES', motivo: 'sem_pc', pcsOutroCadastro: [PC_MATRIZ] }]);
-    expect(e.message).toBe(
-      'A NF 60199 (Zaraplast S/A) tem item sem pedido de compra no cadastro do fornecedor da nota (MC PEAD ES), mas há o PC 306 lançado em outro cadastro do mesmo fornecedor (CNPJ 61.827.663/0001-79). A equipe de Compras foi avisada para ajustar o fornecedor do pedido; a NF fica na fila até o ajuste.',
-    );
-    expect(e.message).not.toContain('até o PC ser lançado');
-  });
-
-  it('mistura com item sem PC nenhum: as duas orientações; o mesmo PC citado uma vez', () => {
-    const e = new NfSemPcError('60199', null, [
-      { descricao: 'MC PEAD ES', motivo: 'sem_pc', pcsOutroCadastro: [PC_MATRIZ] },
-      { descricao: 'MC PEBD LD', motivo: 'sem_pc', pcsOutroCadastro: [PC_MATRIZ] },
-      { descricao: 'TAMPA', motivo: 'sem_pc' },
-    ]);
-    expect(e.message).toContain('tem item sem pedido de compra no OMIE (TAMPA). A equipe de Compras foi avisada.');
-    expect(e.message).toContain('Para MC PEAD ES, MC PEBD LD, há o PC 306 lançado em outro cadastro do mesmo fornecedor (CNPJ 61.827.663/0001-79)');
-    expect(e.message.match(/PC 306/g)).toHaveLength(1);
-    expect(e.message).not.toMatch(/\d{10}/);
-  });
-});
-
-describe('montarPcDoItem — vínculo PARCIAL a PC de outro cadastro (achado fiscal-r01)', () => {
+describe('montarPcDoItem — vínculo PARCIAL a PC de outro cadastro (achado fiscal-r01, revisto após o T033)', () => {
+  // Antes do T033 o vínculo parcial a PC de outro cadastro era inelegível (o Atlas não sabia se o
+  // ASSOCIAR-PEDIDO entre cadastros funcionava). O OMIE aceitou em 22/10/2026: o vínculo segue elegível e
+  // o Atlas associa a linha que falta ao mesmo PC.
   const FILIAL = 3098999518;
   const MATRIZ = 7974140605;
   const pcMatriz = (over: Partial<PcCopia> = {}) => pcCopia({ nCodFor: MATRIZ, pcNumero: '302', cnpjCadastro: '61827663000179', raizCnpj: '61827663', ...over });
@@ -1572,15 +1811,16 @@ describe('montarPcDoItem — vínculo PARCIAL a PC de outro cadastro (achado fis
   const montarFilial = (item: ItemParaSugestao, pcs: PcCopia[]) =>
     montarPcDoItem(item, contexto(pcs, [], new Map([[FILIAL, '61827663']])), FILIAL, CHAVE_NF, TOL);
 
-  it('só uma das linhas ligada ao PC da matriz: o vínculo não pode ser mantido, com alerta; sem outro PC -> vinculo_invalido (NF_SEM_PC + aviso)', () => {
+  it('só uma das linhas ligada ao PC da matriz: o vínculo segue ELEGÍVEL, com o selo de outro cadastro e pré-selecionado', () => {
     const r = montarFilial(item2Linhas([VINC_1]), [pcMatriz()]);
     expect(r.pc.vinculoOmie?.pcNumero).toBe('302');
-    expect(r.pc.vinculoOmieElegivel).toBe(false);
-    expect(r.pc.preSelecionado).toBeNull();
-    expect(r.pc.alertaVinculoOmie).toContain('outro cadastro do fornecedor');
-    expect(r.possivel).toBe(false);
-    expect(r.motivoSemPc).toBe('vinculo_invalido');
-    expect(r.situacao).toBe('sem_pc');
+    expect(r.pc.vinculoOmie?.outroCadastro).toBe(true);
+    expect(r.pc.vinculoOmieElegivel).toBe(true);
+    expect(r.pc.preSelecionado).toEqual({ nCodPed: NCODPED_304, nCodItem: NCODITEM_304 });
+    expect(r.pc.alertaVinculoOmie).toBeNull();
+    expect(r.possivel).toBe(true);
+    expect(r.motivoSemPc).toBeNull();
+    expect(r.situacao).toBe('vinculado_omie');
   });
 
   it('as duas linhas ligadas ao PC da matriz: segue elegível (o OMIE já aceitou o vínculo inteiro)', () => {
@@ -1592,17 +1832,32 @@ describe('montarPcDoItem — vínculo PARCIAL a PC de outro cadastro (achado fis
   it('vínculo parcial a PC do PRÓPRIO cadastro da nota: segue elegível (o Atlas associa a linha que falta)', () => {
     const r = montarFilial(item2Linhas([VINC_1]), [pcCopia({ nCodFor: FILIAL })]);
     expect(r.pc.vinculoOmieElegivel).toBe(true);
+    expect(r.pc.vinculoOmie?.outroCadastro).toBe(false);
   });
 
   it('PC da cópia sem fornecedor (ncodfor nulo -> 0): não marca nada', () => {
     const r = montarFilial(item2Linhas([VINC_1]), [pcMatriz({ nCodFor: 0 })]);
     expect(r.pc.vinculoOmieElegivel).toBe(true);
+    expect(r.pc.vinculoOmie?.outroCadastro).toBe(false);
   });
 
-  it('com outro PC possível do cadastro da nota: o item segue com escolha (o operador troca)', () => {
+  it('com outro PC possível do cadastro da nota: o vínculo continua elegível e o outro vira candidato (o operador pode trocar)', () => {
     const r = montarFilial(item2Linhas([VINC_1]), [pcMatriz(), pcCopia({ nCodFor: FILIAL, nCodPed: 555, nCodItem: 556, pcNumero: '310' })]);
-    expect(r.pc.vinculoOmieElegivel).toBe(false);
+    expect(r.pc.vinculoOmieElegivel).toBe(true);
     expect(r.possivel).toBe(true);
     expect(r.pc.candidatos.map((c) => c.pcNumero)).toEqual(['310']);
+    expect(r.pc.preSelecionado).toEqual({ nCodPed: NCODPED_304, nCodItem: NCODITEM_304 });
+  });
+
+  it('manter o vínculo parcial a PC de outro cadastro não exige justificativa (dentro da tolerância, sem troca)', () => {
+    const item = item2Linhas([VINC_1]);
+    const v = validarEscolhaPc({
+      notaFiscal: '60199', fornecedorNome: 'Zaraplast S/A', itemDescricao: item.descricao, indice: 0, sequencias: [1, 2],
+      vinculos: item.vinculos, resultado: montarFilial(item, [pcMatriz()]), escolha: escolhaDo304(), quantidadeKg: 18000,
+      precoNfKg: item.precoNfKg, kgPorSequencia: item.kgPorSequencia, unidadeNf: 'KG', fatorUnidadeNf: 1,
+    })!;
+    expect(v.origem).toBe('omie');
+    expect(v.justificativa).toBeNull();
+    expect(v.nCodPedOmieAnterior).toBeNull();
   });
 });

@@ -12,11 +12,15 @@ import {
   carregarContextoPc,
   exigePcHabilitado,
   montarPcDoItem,
+  montarPcsDaNf,
+  opcoesPc,
   pcSituacaoDaNf,
   toleranciasPc,
   sugerirPcPorItens,
+  type ItemParaPcsDaNf,
   type ItemParaSugestao,
   type PcDoItem,
+  type PcsDaNf,
   type PcSituacaoItem,
   type PcSituacaoNf,
   type ResultadoPcItem,
@@ -711,7 +715,15 @@ const numOuNull = (v: unknown): number | null => {
  * proprio item (mesma leitura de unidade do detalhe). Linha sem preco deixa aquela
  * base desconhecida. Vinculo do OMIE = linha com `n_id_pedido` (> 0 ja garantido no SQL).
  */
-function entradaSugestaoPc(indice: number, descricao: string, quantidadeKg: number | null, linhas: LinhaPc[]): ItemParaSugestao {
+function entradaSugestaoPc(
+  indice: number,
+  descricao: string,
+  quantidadeKg: number | null,
+  linhas: LinhaPc[],
+  /** unidade da NF normalizada e seu fator para kg (null sem conversao) — trava de unidade da 017 */
+  unidadeNf: string = '',
+  fatorUnidadeNf: number | null = null,
+): ItemParaSugestao {
   let somaPreco = 0;
   let precoConhecido = true;
   let somaValor = 0;
@@ -745,6 +757,8 @@ function entradaSugestaoPc(indice: number, descricao: string, quantidadeKg: numb
     indice,
     descricao,
     quantidadeKg,
+    unidadeNf,
+    fatorUnidadeNf,
     precoNfKg: precoConhecido && quantidadeKg != null && quantidadeKg > 0 ? somaPreco / quantidadeKg : null,
     precoItemKg: valorConhecido && quantidadeKg != null && quantidadeKg > 0 ? somaValor / quantidadeKg : null,
     numeroPedidoNf,
@@ -830,7 +844,7 @@ async function pcSituacaoPorNf(chaves: string[], canceladaExiste: boolean, dataC
           indice++;
           continue;
         }
-        lista.push(entradaSugestaoPc(indice++, linhas[0]!.x_prod, conv.quantidadeKg, linhas));
+        lista.push(entradaSugestaoPc(indice++, linhas[0]!.x_prod, conv.quantidadeKg, linhas, conv.unidade, conv.fator));
       }
       entradas.set(chave, lista);
     }
@@ -839,13 +853,14 @@ async function pcSituacaoPorNf(chaves: string[], canceladaExiste: boolean, dataC
       nCodPedsVinculo: Array.from(entradas.values()).flatMap((l) => l.flatMap((e) => e.vinculos.map((v) => v.nIdPedido))),
     });
     const tol = toleranciasPc();
+    const opcoes = opcoesPc();
     for (const [chave, lista] of entradas) {
       const fornecedor = porNf.get(chave)?.fornecedor ?? null;
       if (fornecedor == null) {
         out.set(chave, 'nao_aplicavel');
         continue;
       }
-      const situacoes: PcSituacaoItem[] = lista.map((e) => montarPcDoItem(e, ctx, fornecedor, chave, tol).situacao);
+      const situacoes: PcSituacaoItem[] = lista.map((e) => montarPcDoItem(e, ctx, fornecedor, chave, tol, opcoes).situacao);
       out.set(chave, pcSituacaoDaNf(situacoes));
     }
   } catch (err) {
@@ -948,6 +963,12 @@ export interface DetalheNfNacional {
    * vinculo e compras e avisado. So com o fluxo de PC (chave da 016 + fiscal pendente).
    */
   itensSemAvaliacaoPc: Array<{ indice: number; descricao: string }>;
+  /**
+   * PC por NF (22/10/2026): os PCs que atendem a nota, com a atribuicao item da NF ->
+   * item do PC, para o operador escolher o pedido UMA vez. Derivado das listas de cada
+   * item (o POST continua por item). Vazio fora do fluxo de PC ou com a copia defasada.
+   */
+  pcsDaNf: PcsDaNf;
 }
 
 /**
@@ -977,6 +998,7 @@ const pcVazio = (): PcDoItem => ({
   candidatos: [],
   outrosDoFornecedor: [],
   aguardandoAprovacao: [],
+  unidadeIncompativel: [],
   preSelecionado: null,
   semPcMotivo: null,
   vinculadoNoOmie: null,
@@ -984,8 +1006,9 @@ const pcVazio = (): PcDoItem => ({
 
 /**
  * Numero legivel dos PCs vinculados (FR-021), por nCodPed: a copia local (PC ainda
- * aberto) e, se o PC ja saiu dela (recebido por inteiro — Rev 1.5), o ledger do
- * Atlas. Best-effort: sem numero, o chamador usa o numero informado na NF.
+ * aberto), o ledger do Atlas e, por ultimo, o cache de PCs vistos (0057 — o PC que
+ * saiu da lista de pendentes ou foi recebido por inteiro). Best-effort: sem numero,
+ * o chamador mostra "PC vinculado no OMIE" sem numero.
  */
 async function numerosDosPcs(peds: number[]): Promise<Map<number, string>> {
   const out = new Map<number, string>();
@@ -997,6 +1020,9 @@ async function numerosDosPcs(peds: number[]): Promise<Map<number, string>> {
        UNION ALL
        SELECT n_cod_ped::text, MIN(btrim(pc_numero)), 2
          FROM stockbridge.recebimento_fiscal_pc WHERE n_cod_ped = ANY($1::bigint[]) AND status = 'concluido' GROUP BY n_cod_ped
+       UNION ALL
+       SELECT n_cod_ped::text, MIN(NULLIF(btrim(pc_numero), '')), 3
+         FROM stockbridge.pedido_compra_visto WHERE empresa = 'q2p' AND n_cod_ped = ANY($1::bigint[]) GROUP BY n_cod_ped
        ORDER BY 3`,
       [peds],
     );
@@ -1302,8 +1328,18 @@ export async function montarDetalheNfNacional(
   // ── Feature 017: pedido de compra por item e estoque ja lancado pelo OMIE ──
   const fornecedorCodigo = elegiveis.map((r) => numOuNull(r.fornecedor_codigo)).find((n) => n != null && n > 0) ?? null;
   const pcPorIndice: DetalheNfNacionalInterno['pcPorIndice'] = new Map();
-  const entradas = itens.map((it) => entradaSugestaoPc(it.indice, it.descricaoFornecedor, it.quantidadeNfKg, linhasPorIndice.get(it.indice) ?? []));
+  const entradas = itens.map((it) =>
+    entradaSugestaoPc(
+      it.indice,
+      it.descricaoFornecedor,
+      it.quantidadeNfKg,
+      linhasPorIndice.get(it.indice) ?? [],
+      it.unidadeOriginal,
+      it.conversao.ok ? it.conversao.fator : null,
+    ),
+  );
   let copiaDefasada = false;
+  let pcsDaNf: PcsDaNf = { pcs: [], preSelecionado: null };
   if (fiscal === 'pendente' && flag) {
     copiaDefasada = await copiaPcsDefasada();
     const resultados = copiaDefasada ? null : await sugerirPcPorItens('q2p', fornecedorCodigo, chave, entradas);
@@ -1311,6 +1347,16 @@ export async function montarDetalheNfNacional(
       const resultado = resultados?.get(it.indice) ?? null;
       it.pc = resultado ? resultado.pc : pcVazio();
       pcPorIndice.set(it.indice, { entrada: entradas[it.indice]!, resultado });
+    }
+    // PC por NF: so os itens a receber (pendentes, com unidade convertida, sem baixa pedida).
+    if (resultados) {
+      const paraNf: ItemParaPcsDaNf[] = itens
+        .filter((it) => itemNfPendente(it) && it.conversao.ok && !it.baixaSolicitada && it.quantidadeNfKg != null)
+        .flatMap((it) => {
+          const r = resultados.get(it.indice);
+          return r ? [{ indice: it.indice, quantidadeKg: it.quantidadeNfKg!, resultado: r }] : [];
+        });
+      pcsDaNf = montarPcsDaNf(paraNf, toleranciasPc());
     }
   } else {
     // Fiscal ja feito: so o PC vinculado a vista, com a chave em qualquer posicao (FR-021).
@@ -1380,6 +1426,7 @@ export async function montarDetalheNfNacional(
     estoqueLancadoPeloOmie,
     copiaPcsDefasada: copiaDefasada,
     itensSemAvaliacaoPc,
+    pcsDaNf,
   };
   return {
     detalhe,

@@ -62,14 +62,31 @@ export interface PcCandidato {
   dentroTolerancia: boolean;
   /** o numero do pedido informado na NF (itensInfoAdic.nNumPedCompra) e o numero deste PC */
   casaNumeroPedidoNf: boolean;
-  /** true so no vinculo do OMIE cujo PC nao esta na copia: produto, saldo e preco desconhecidos (nao comparado) */
+  /** true so no vinculo do OMIE cujo PC nao esta na copia nem no cache: produto, saldo e preco desconhecidos (nao comparado) */
   semDadosLocais: boolean;
   motivo: string;
+  /**
+   * PC lancado em OUTRO cadastro do mesmo fornecedor no OMIE (mesma raiz de CNPJ —
+   * filial x matriz, NF 60199 x PC 306 da Zaraplast). Oferecido desde o T033
+   * (22/10/2026): o ASSOCIAR-PEDIDO entre cadastros foi aceito pelo OMIE.
+   */
+  outroCadastro: boolean;
+  /** CNPJ do cadastro do PC, so digitos ('' sem cadastro) — a tela formata */
+  cnpjCadastro: string;
+  /**
+   * Os dados do pedido vem do cache do Atlas (stockbridge.pedido_compra_visto), nao
+   * da lista de PCs pendentes: o OMIE tira da lista o PC que ja tem item associado a
+   * um recebimento (PC 306, 22/10/2026). O saldo e o da ultima vez em que o PC foi
+   * visto; a confirmacao confere ao vivo (FR-009).
+   */
+  dadosEmCache: boolean;
+  /** unidade do PC no OMIE ('KG', 'TON', …) — a tela a mostra ao lado do saldo */
+  unidade: string;
 }
 
 export interface PcDoItem {
   vinculoOmie: PcCandidato | null;
-  /** false = o vinculo do OMIE aparece mas nao pode ser mantido (ex.: PC-espelho da importacao) */
+  /** false = o vinculo do OMIE aparece mas nao pode ser mantido (ex.: PC-espelho da importacao, unidade incompativel) */
   vinculoOmieElegivel: boolean;
   alertaVinculoOmie: string | null;
   /** linhas do item vinculadas a PCs diferentes no OMIE: vinculoOmie null, alerta preenchido; qualquer escolha e troca (justificativa) */
@@ -77,21 +94,24 @@ export interface PcDoItem {
   candidatos: PcCandidato[];
   outrosDoFornecedor: PcCandidato[];
   aguardandoAprovacao: PcCandidato[];
+  /**
+   * PCs do fornecedor (etapa 15, com saldo) em unidade DIFERENTE da unidade da NF —
+   * nao selecionaveis: o OMIE grava no PC a quantidade recebida na unidade da NF, sem
+   * converter (PC 306 em kg baixado com 8,25 da NF em toneladas, 22/10/2026).
+   */
+  unidadeIncompativel: PcCandidato[];
   preSelecionado: { nCodPed: number; nCodItem: number } | null;
   semPcMotivo: string | null;
   /** NF com fiscal ja feito: PC vinculado a vista (FR-021) */
   vinculadoNoOmie: { pcNumero: string } | null;
 }
 
-/** Motivo interno de "sem PC possivel" — vira o `motivo` do aviso a compras (D6). */
-export type MotivoSemPc = 'sem_pc' | 'pc_aguardando_aprovacao' | 'vinculo_invalido' | 'unidade';
-
-/** PC aprovado e com saldo lancado em OUTRO cadastro do OMIE com a mesma raiz de CNPJ do fornecedor da NF. */
-export interface PcOutroCadastro {
-  pcNumero: string;
-  /** CNPJ do cadastro do PC, so digitos */
-  cnpjCadastroPc: string;
-}
+/**
+ * Motivo interno de "sem PC possivel" — vira o `motivo` do aviso a compras (D6).
+ * 'unidade_pc' = so ha PC em unidade diferente da NF (vai ao aviso como 'sem_pc',
+ * com a orientacao de lancar o pedido na unidade da nota).
+ */
+export type MotivoSemPc = 'sem_pc' | 'pc_aguardando_aprovacao' | 'vinculo_invalido' | 'unidade' | 'unidade_pc';
 
 export interface ResultadoPcItem {
   pc: PcDoItem;
@@ -99,12 +119,51 @@ export interface ResultadoPcItem {
   possivel: boolean;
   motivoSemPc: MotivoSemPc | null;
   situacao: PcSituacaoItem;
-  /**
-   * PCs da mesma empresa (raiz do CNPJ) lancados em outro cadastro do OMIE — nao
-   * sao oferecidos (FR-002a: mesmo fornecedor = mesmo cadastro; NF 60199 x PC 306,
-   * Zaraplast filial x matriz), so citados no motivo e no aviso a compras.
-   */
-  pcsOutroCadastro: PcOutroCadastro[];
+}
+
+// ── PC por NF (22/10/2026, pedido do usuario apos a NF 60199) ───────────────
+//
+// O operador escolhe o pedido de compra UMA vez para a nota inteira (na NF 60199
+// seriam 3 confirmacoes do mesmo PC 306). O servidor monta, a partir das listas de
+// cada item, os PCs que atendem a nota e a atribuicao item da NF -> item do PC; a
+// tela aplica a escolha em todos os itens e manda o POST por item, como antes.
+
+export interface PcDaNfItem {
+  /** item agregado da NF */
+  indice: number;
+  /** item do PC atribuido (id de selecao, nunca texto) */
+  nCodItem: number;
+  produtoDescricao: string;
+  dentroTolerancia: boolean;
+  motivo: string;
+  /** de onde o item do PC veio nas listas do item: vinculo do OMIE, candidato ou "outro do fornecedor" */
+  origem: 'omie' | 'sugestao' | 'manual';
+  /** manter/escolher este item exige justificativa (fora da tolerancia, manual, troca do vinculo ou nao comparado) */
+  justificativaNecessaria: boolean;
+}
+
+export interface PcDaNf {
+  nCodPed: number;
+  pcNumero: string;
+  outroCadastro: boolean;
+  cnpjCadastro: string;
+  dadosEmCache: boolean;
+  /** um por item da NF que este PC atende (itens sem item compativel neste PC ficam de fora) */
+  itens: PcDaNfItem[];
+  /** atende todos os itens a receber com PC possivel */
+  cobreTodos: boolean;
+  /** todas as atribuicoes dentro da tolerancia */
+  dentroTolerancia: boolean;
+  /** e o PC que o OMIE ja tem vinculado em algum item da NF */
+  vinculoOmie: boolean;
+  /** alguma atribuicao exige justificativa (uma so para a nota inteira) */
+  justificativaNecessaria: boolean;
+}
+
+export interface PcsDaNf {
+  pcs: PcDaNf[];
+  /** PC pre-selecionado para a nota inteira: o unico que cobre todos dentro da tolerancia, ou o vinculo do OMIE que cobre todos */
+  preSelecionado: number | null;
 }
 
 /** Vinculo do OMIE de UMA linha (sequencia) do item agregado. */
@@ -119,6 +178,13 @@ export interface ItemParaSugestao {
   descricao: string;
   /** quantidade do item agregado em kg; null = unidade nao conversivel (sem sugestao) */
   quantidadeKg: number | null;
+  /**
+   * Unidade da NF ('KG', 'TON', 'TL' normalizada) e seu fator para kg (1 ou 1000);
+   * null sem conversao. Base da trava de unidade: PC em unidade diferente nao e
+   * oferecido (o OMIE grava no PC a quantidade recebida na unidade da NF).
+   */
+  unidadeNf: string;
+  fatorUnidadeNf: number | null;
   /** preco COMERCIAL por kg (Σ preco comercial × qtd ÷ Σ kg); null quando alguma linha nao tem preco */
   precoNfKg: number | null;
   /** valor do item por kg (Σ valor do item, com tributos ÷ Σ kg) — segunda base de preco (D3); null sem valor */
@@ -158,6 +224,35 @@ export function exigePcHabilitado(): boolean {
   return cfg.STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC !== false;
 }
 
+export type ModoUnidadeDiferentePc = 'bloquear' | 'converter';
+
+/**
+ * STOCKBRIDGE_PC_UNIDADE_DIFERENTE (default 'bloquear'): o que fazer com PC em
+ * unidade diferente da NF. Na conclusao do recebimento o OMIE grava em nQtdeRec do
+ * PC a quantidade recebida do item NA UNIDADE DA NF, sem converter — a NF 60199
+ * (toneladas) baixou o PC 306 (kg) com 8,25 / 13,75 / 5,5 em vez de 8.250 / 13.750 /
+ * 5.500 kg (22/10/2026). 'bloquear' = o PC nao e oferecido; 'converter' = o EDITAR
+ * manda itensAjustes.nQtdeRecebida ja na unidade do PC (o campo que, editado no
+ * portal, corrigiu o PC 306 — a baixa saiu certa e a quantidade da NF nao mudou).
+ */
+export function modoUnidadeDiferentePc(): ModoUnidadeDiferentePc {
+  const cfg = getConfig() as { STOCKBRIDGE_PC_UNIDADE_DIFERENTE?: string };
+  return cfg.STOCKBRIDGE_PC_UNIDADE_DIFERENTE === 'converter' ? 'converter' : 'bloquear';
+}
+
+/** true = PC em unidade diferente da NF nao pode ser vinculado (modo 'bloquear'). */
+export function exigeMesmaUnidadePc(): boolean {
+  return modoUnidadeDiferentePc() === 'bloquear';
+}
+
+/** Rotulo legivel da unidade: KG -> "kg", TON/TL/T -> "toneladas", outra como veio. */
+export function rotuloUnidade(unidade: string | null | undefined): string {
+  const u = (unidade ?? '').trim().toUpperCase();
+  if (u === 'KG') return 'kg';
+  if (u === 'T' || u === 'TON' || u === 'TL') return 'toneladas';
+  return u || 'unidade desconhecida';
+}
+
 /** Validade de uma reserva (linha confirmado/associado) — a mesma do lock fiscal orfao (LOCK_FISCAL_ORFAO_MIN da 016). */
 export const RESERVA_PC_VALIDADE_MIN = 15;
 
@@ -189,6 +284,12 @@ export interface PcCopia {
   cnpjCadastro: string;
   /** 8 primeiros digitos do CNPJ (empresa); null para CPF ou cadastro sem CNPJ */
   raizCnpj: string | null;
+  /**
+   * 'copia' = lista de PCs pendentes do n8n; 'cache' = stockbridge.pedido_compra_visto
+   * (PC que saiu da lista — item ja associado a um recebimento — ou ainda nao
+   * sincronizado). O saldo do cache e o da ultima vez em que o PC foi visto.
+   */
+  fonte: 'copia' | 'cache';
 }
 
 /** Vinculo gravado pelo Atlas que pesa no saldo (concluido depois do sync, ou reserva viva de outra NF). */
@@ -220,16 +321,36 @@ export function fatorUnidadePc(unidade: string | null | undefined): number | nul
   return null;
 }
 
-const tabelaPcs = (empresa: EmpresaPc): string => (empresa === 'acxe' ? '"tbl_pedidosCompras_ACXE"' : '"tbl_pedidosCompras_Q2P"');
-const tabelaCadastro = (empresa: EmpresaPc): string =>
+export const tabelaPcs = (empresa: EmpresaPc): string => (empresa === 'acxe' ? '"tbl_pedidosCompras_ACXE"' : '"tbl_pedidosCompras_Q2P"');
+export const tabelaCadastro = (empresa: EmpresaPc): string =>
   empresa === 'acxe' ? '"tbl_cadastroFornecedoresClientes_ACXE"' : '"tbl_cadastroFornecedoresClientes_Q2P"';
 
+/** Raiz do CNPJ (8 digitos) dos cadastros de fornecedor pedidos; sem CNPJ, fica de fora do mapa. */
+export async function raizesDosCadastros(empresa: EmpresaPc, codigos: number[]): Promise<Map<number, string>> {
+  const out = new Map<number, string>();
+  const lista = Array.from(new Set(codigos.filter((n) => Number.isFinite(n) && n > 0)));
+  if (lista.length === 0) return out;
+  const rf = await getPool().query<{ codigo: string; cnpj: string | null }>(
+    `SELECT c.codigo_cliente_omie::text AS codigo, regexp_replace(COALESCE(c.cnpj_cpf, ''), '\\D', '', 'g') AS cnpj
+       FROM public.${tabelaCadastro(empresa)} c
+      WHERE c.codigo_cliente_omie = ANY($1::bigint[])`,
+    [lista],
+  );
+  for (const x of rf.rows) {
+    const raiz = raizCnpj(x.cnpj);
+    if (raiz) out.set(Number(x.codigo), raiz);
+  }
+  return out;
+}
+
 /**
- * Carrega da copia local os PCs dos fornecedores informados (e os PCs apontados
- * por vinculos do OMIE, mesmo de outro fornecedor, e os de OUTROS cadastros com a
- * mesma raiz de CNPJ — so para citar no motivo, nunca oferecidos), mais os usos do
- * Atlas que pesam no saldo: vinculos `concluido` recentes (a copia pode ainda nao
- * te-los visto) e reservas vivas (`confirmado`/`associado` ha menos de 15 min).
+ * Carrega da copia local os PCs dos fornecedores informados, os de OUTROS cadastros
+ * com a mesma raiz de CNPJ (filial x matriz — oferecidos desde o T033) e os PCs
+ * apontados por vinculos do OMIE, mesmo de outro fornecedor. PC que nao esta na
+ * copia e esta no cache do Atlas (pedido_compra_visto) entra com `fonte: 'cache'`.
+ * Mais os usos do Atlas que pesam no saldo: vinculos `concluido` recentes (a copia
+ * pode ainda nao te-los visto) e reservas vivas (`confirmado`/`associado` ha menos
+ * de 15 min).
  */
 export async function carregarContextoPc(
   empresa: EmpresaPc,
@@ -238,24 +359,12 @@ export async function carregarContextoPc(
   const fornecedores = Array.from(new Set(params.fornecedores.filter((n) => Number.isFinite(n) && n > 0)));
   const peds = Array.from(new Set(params.nCodPedsVinculo.filter((n) => Number.isFinite(n) && n > 0)));
   const agoraMs = Date.now();
-  const raizPorFornecedor = new Map<number, string>();
-  if (fornecedores.length === 0 && peds.length === 0) return { pcs: [], usos: [], agoraMs, raizPorFornecedor };
+  if (fornecedores.length === 0 && peds.length === 0) return { pcs: [], usos: [], agoraMs, raizPorFornecedor: new Map() };
 
   const pool = getPool();
   // Raiz do CNPJ de cada fornecedor da NF: a mesma empresa pode ter um cadastro por
   // filial no OMIE, e compras pode lancar o PC no da matriz (NF 60199 x PC 306).
-  if (fornecedores.length > 0) {
-    const rf = await pool.query<{ codigo: string; cnpj: string | null }>(
-      `SELECT c.codigo_cliente_omie::text AS codigo, regexp_replace(COALESCE(c.cnpj_cpf, ''), '\\D', '', 'g') AS cnpj
-         FROM public.${tabelaCadastro(empresa)} c
-        WHERE c.codigo_cliente_omie = ANY($1::bigint[])`,
-      [fornecedores],
-    );
-    for (const x of rf.rows) {
-      const raiz = raizCnpj(x.cnpj);
-      if (raiz) raizPorFornecedor.set(Number(x.codigo), raiz);
-    }
-  }
+  const raizPorFornecedor = await raizesDosCadastros(empresa, fornecedores);
   const raizes = Array.from(new Set(raizPorFornecedor.values()));
   interface PcRow {
     ncodped: string;
@@ -319,7 +428,22 @@ export async function carregarContextoPc(
       pcEspelho: x.fornecedor_acxe === true && valorTotal < PC_ESPELHO_VALOR_MAX_BRL,
       cnpjCadastro: x.cnpj_cadastro ?? '',
       raizCnpj: raizCnpj(x.cnpj_cadastro),
+      fonte: 'copia',
     });
+  }
+
+  // Cache do Atlas: PCs que sairam da lista de pendentes (item ja associado a um
+  // recebimento) ou ainda nao sincronizados — so os que a copia NAO trouxe.
+  try {
+    const naCopia = new Set(pcs.map((p) => p.nCodItem));
+    const { lerPcsVistos, registrarPcsVistosSeVencido } = await import('./pc-visto.service.js');
+    await registrarPcsVistosSeVencido(empresa, agoraMs);
+    for (const v of await lerPcsVistos(empresa, { fornecedores, raizes, nCodPeds: peds })) {
+      if (naCopia.has(v.nCodItem)) continue;
+      pcs.push({ ...v, fonte: 'cache' });
+    }
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, 'Cache de pedidos de compra indisponível — só a cópia');
   }
 
   const itensPc = Array.from(new Set(pcs.map((p) => p.nCodItem)));
@@ -390,17 +514,27 @@ const juntarE = (xs: string[]): string => (xs.length <= 1 ? (xs[0] ?? '') : `${x
 export const rotuloPcs = (numeros: string[]): string =>
   numeros.length === 1 ? `PC ${numeros[0] || '(sem número)'}` : `PCs ${juntarE(numeros.map((n) => n || '(sem número)'))}`;
 
-/** "o PC 306 lançado em outro cadastro do mesmo fornecedor (CNPJ 61.827.663/0001-79)" e variantes. */
-function textoPcsOutroCadastro(pcs: PcOutroCadastro[]): string {
-  const doc = (cnpj: string): string => (fmtCnpj(cnpj) ? ` (CNPJ ${fmtCnpj(cnpj)})` : '');
-  const cnpjs = Array.from(new Set(pcs.map((p) => p.cnpjCadastroPc)));
-  if (cnpjs.length === 1) {
-    return pcs.length === 1
-      ? `o ${rotuloPcs([pcs[0]!.pcNumero])} lançado em outro cadastro do mesmo fornecedor${doc(cnpjs[0]!)}`
-      : `os ${rotuloPcs(pcs.map((p) => p.pcNumero))} lançados em outro cadastro do mesmo fornecedor${doc(cnpjs[0]!)}`;
-  }
-  const lista = juntarE(pcs.map((p) => `${p.pcNumero || '(sem número)'}${doc(p.cnpjCadastroPc)}`));
-  return `os PCs ${lista} lançados em outros cadastros do mesmo fornecedor`;
+/** "em outro cadastro do fornecedor (CNPJ 61.827.663/0001-79)" — sufixo do motivo de um candidato. */
+function sufixoOutroCadastro(pc: PcCopia): string {
+  const doc = fmtCnpj(pc.cnpjCadastro);
+  return doc ? `em outro cadastro do fornecedor (CNPJ ${doc})` : 'em outro cadastro do fornecedor';
+}
+
+/**
+ * "PC em kg e nota em toneladas: o OMIE baixaria o pedido com 8,25 em vez de 8.250 kg" —
+ * motivo de um PC em unidade diferente da NF (trava de unidade, 22/10/2026).
+ */
+function motivoUnidadeIncompativel(item: ItemParaSugestao, pc: PcCopia): string {
+  const fatorPc = fatorUnidadePc(pc.unidade);
+  const naUnidadeDaNf = item.quantidadeKg != null && item.fatorUnidadeNf ? item.quantidadeKg / item.fatorUnidadeNf : null;
+  const naUnidadeDoPc = item.quantidadeKg != null && fatorPc ? item.quantidadeKg / fatorPc : null;
+  const fmt = (v: number): string => v.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+  // "com 8,25 em vez de 8.250 kg" (nota em t, PC em kg) ou "com 8.250 em vez de 8,25 toneladas" (nota em kg, PC em t)
+  const exemplo =
+    naUnidadeDaNf != null && naUnidadeDoPc != null
+      ? `: o OMIE baixaria o pedido com ${fmt(naUnidadeDaNf)} em vez de ${fmt(naUnidadeDoPc)} ${rotuloUnidade(pc.unidade)}`
+      : '';
+  return `PC em ${rotuloUnidade(pc.unidade)} e nota em ${rotuloUnidade(item.unidadeNf)}${exemplo}`;
 }
 
 interface Avaliacao {
@@ -447,7 +581,7 @@ function avaliar(item: ItemParaSugestao, pc: PcCopia, saldoKg: number, tol: Tole
   return { dentroTolerancia: qtdOk && precoOk, difPreco, precoNfKgUsado, excessoQtd, saldoKg, desvios };
 }
 
-function paraCandidato(item: ItemParaSugestao, pc: PcCopia, av: Avaliacao, motivo: string): PcCandidato {
+function paraCandidato(item: ItemParaSugestao, pc: PcCopia, av: Avaliacao, motivo: string, fornecedorCodigo: number | null): PcCandidato {
   return {
     nCodPed: pc.nCodPed,
     nCodItem: pc.nCodItem,
@@ -463,7 +597,18 @@ function paraCandidato(item: ItemParaSugestao, pc: PcCopia, av: Avaliacao, motiv
     casaNumeroPedidoNf: casaNumero(item, pc),
     semDadosLocais: false,
     motivo,
+    outroCadastro: fornecedorCodigo != null && pc.nCodFor > 0 && pc.nCodFor !== fornecedorCodigo,
+    cnpjCadastro: pc.cnpjCadastro,
+    dadosEmCache: pc.fonte === 'cache',
+    unidade: pc.unidade,
   };
+}
+
+/** PC em unidade diferente da NF (trava de unidade): so com as duas unidades conhecidas e a chave ligada. */
+function unidadeIncompativel(item: ItemParaSugestao, pc: PcCopia, exigeMesmaUnidade: boolean): boolean {
+  if (!exigeMesmaUnidade || item.fatorUnidadeNf == null) return false;
+  const fatorPc = fatorUnidadePc(pc.unidade);
+  return fatorPc != null && fatorPc !== item.fatorUnidadeNf;
 }
 
 function casaNumero(item: ItemParaSugestao, pc: PcCopia): boolean {
@@ -495,9 +640,20 @@ const VAZIO: Omit<PcDoItem, 'semPcMotivo'> = {
   candidatos: [],
   outrosDoFornecedor: [],
   aguardandoAprovacao: [],
+  unidadeIncompativel: [],
   preSelecionado: null,
   vinculadoNoOmie: null,
 };
+
+/** Opcoes de montagem — as chaves de ambiente, lidas uma vez por NF (testes passam explicitamente). */
+export interface OpcoesPc {
+  /** true = STOCKBRIDGE_PC_UNIDADE_DIFERENTE em 'bloquear' (default): PC em unidade diferente da NF nao e oferecido */
+  exigeMesmaUnidade: boolean;
+}
+
+export function opcoesPc(): OpcoesPc {
+  return { exigeMesmaUnidade: exigeMesmaUnidadePc() };
+}
 
 /**
  * Monta o PcDoItem de um item agregado com fiscal PENDENTE (data-model §8).
@@ -510,6 +666,7 @@ export function montarPcDoItem(
   fornecedorCodigo: number | null,
   chaveNf: string,
   tol: ToleranciasPc,
+  opcoes: OpcoesPc = { exigeMesmaUnidade: true },
 ): ResultadoPcItem {
   if (item.quantidadeKg == null) {
     return {
@@ -517,7 +674,6 @@ export function montarPcDoItem(
       possivel: false,
       motivoSemPc: 'unidade',
       situacao: 'sem_pc',
-      pcsOutroCadastro: [],
     };
   }
 
@@ -532,7 +688,7 @@ export function montarPcDoItem(
   let pcDoVinculo: PcCopia | null = null;
 
   if (divergentes) {
-    // Numeros legiveis so quando todos estao na copia (vinculo fora dela nao tem numero confiavel).
+    // Numeros legiveis so quando todos estao na copia ou no cache (vinculo fora deles nao tem numero confiavel).
     const numeros = Array.from(chavesVinculo.values()).map(
       (v) => ctx.pcs.find((p) => p.nCodPed === v.nIdPedido && (v.nIdItPedido == null || p.nCodItem === v.nIdItPedido))?.pcNumero ?? '',
     );
@@ -544,9 +700,9 @@ export function montarPcDoItem(
     pcDoVinculo =
       ctx.pcs.find((p) => p.nCodPed === v.nIdPedido && (v.nIdItPedido == null || p.nCodItem === v.nIdItPedido)) ?? null;
     if (!pcDoVinculo) {
-      // PC fora da copia: recebido por inteiro (sai da copia na Rev 1.5), cancelado/excluido
-      // ou ainda nao sincronizado. A releitura ao vivo decide (FR-009); sem dado local,
-      // manter o vinculo exige justificativa (nao da para afirmar que esta na tolerancia).
+      // PC fora da copia E do cache: cancelado/excluido, ou nunca visto pelo Atlas. A
+      // releitura ao vivo decide (FR-009); sem dado local, manter o vinculo exige
+      // justificativa (nao da para afirmar que esta na tolerancia).
       vinculoOmie = {
         nCodPed: v.nIdPedido,
         nCodItem: v.nIdItPedido ?? 0,
@@ -563,33 +719,36 @@ export function montarPcDoItem(
         casaNumeroPedidoNf: false,
         semDadosLocais: true,
         motivo: 'Vínculo do OMIE',
+        outroCadastro: false,
+        cnpjCadastro: '',
+        dadosEmCache: false,
+        unidade: '',
       };
       vinculoOmieElegivel = v.nIdItPedido != null;
       alertas.push(
-        'O pedido vinculado no OMIE não está na lista local de pedidos (pode ter sido recebido por inteiro, cancelado ou ainda não sincronizado). Se mantiver o vínculo, a confirmação confere a situação no OMIE.',
+        'O pedido vinculado no OMIE não está na lista local de pedidos (pode ter sido cancelado, excluído ou ainda não sincronizado). Se mantiver o vínculo, a confirmação confere a situação no OMIE.',
       );
     } else {
       const saldo = saldoDisponivelCopiaKg(pcDoVinculo, ctx, chaveNf);
       const av = avaliar(item, pcDoVinculo, saldo, tol);
-      vinculoOmie = paraCandidato(item, pcDoVinculo, av, 'Vínculo do OMIE');
-      // Vinculo PARCIAL a PC de OUTRO cadastro do fornecedor (filial x matriz): manter o vinculo
-      // obriga o Atlas a ASSOCIAR as demais linhas a um PC de outro cadastro — o que ele nao faz
-      // (FR-009; ASSOCIAR entre cadastros nao testado). O vinculo nao pode ser mantido: o
-      // operador troca por outro PC, ou a NF vai para "sem PC" e compras e avisado (achado
-      // fiscal-r01 — antes o detalhe pre-selecionava e o POST dava 409 em laco).
-      const linhasSemVinculo = item.sequencias.filter((seq) => !item.vinculos.some((v) => v.nSequencia === seq));
-      const outroCadastroParcial =
-        linhasSemVinculo.length > 0 && fornecedorCodigo != null && pcDoVinculo.nCodFor > 0 && pcDoVinculo.nCodFor !== fornecedorCodigo;
+      vinculoOmie = paraCandidato(item, pcDoVinculo, av, 'Vínculo do OMIE', fornecedorCodigo);
       if (pcDoVinculo.pcEspelho) {
         vinculoOmieElegivel = false;
         alertas.push('O item está vinculado no OMIE a um pedido de importação (pedido-espelho), que não pode ser usado aqui. Escolha outro pedido.');
-      } else if (outroCadastroParcial) {
+      } else if (unidadeIncompativel(item, pcDoVinculo, opcoes.exigeMesmaUnidade)) {
+        // Trava de unidade (22/10/2026): concluir com este vinculo baixaria o PC na unidade da NF.
         vinculoOmieElegivel = false;
         alertas.push(
-          `O PC ${pcDoVinculo.pcNumero} foi lançado em outro cadastro do fornecedor e está vinculado no OMIE só a parte das linhas deste item. Peça à equipe de Compras para ajustar o fornecedor do pedido, ou ao fiscal para vincular as demais linhas no OMIE.`,
+          `O PC ${pcDoVinculo.pcNumero} vinculado no OMIE está em ${rotuloUnidade(pcDoVinculo.unidade)} e a nota em ${rotuloUnidade(item.unidadeNf)}: ` +
+            'o OMIE baixaria o pedido na unidade da nota, sem converter. Peça à equipe de Compras um pedido na unidade da nota, ou ao fiscal para concluir pelo portal.',
         );
       } else {
         vinculoOmieElegivel = pcDoVinculo.precoKg != null || fatorUnidadePc(pcDoVinculo.unidade) != null;
+        if (pcDoVinculo.fonte === 'cache') {
+          // PC que saiu da lista de pendentes (o proprio vinculo o tira de la — PC 306, 22/10/2026):
+          // os dados sao da ultima vez em que o Atlas o viu; a confirmacao confere o saldo ao vivo.
+          alertas.push(`O PC ${pcDoVinculo.pcNumero} saiu da lista de pedidos pendentes do OMIE; os dados mostrados são da última sincronização em que apareceu. A confirmação confere o saldo ao vivo.`);
+        }
         if (pcDoVinculo.etapa !== '15') {
           alertas.push(
             pcDoVinculo.etapa === '10'
@@ -605,12 +764,19 @@ export function montarPcDoItem(
     }
   }
 
-  // ── Candidatos, outros e aguardando (PCs do fornecedor) ──
-  const doFornecedor = fornecedorCodigo != null ? ctx.pcs.filter((p) => p.nCodFor === fornecedorCodigo && !p.pcEspelho) : [];
+  // ── Candidatos, outros, aguardando e unidade incompativel (PCs do fornecedor) ──
+  // "Do fornecedor" = mesmo cadastro OU outro cadastro com a mesma raiz de CNPJ (filial x
+  // matriz, NF 60199 x PC 306): o ASSOCIAR-PEDIDO entre cadastros foi aceito no T033 (22/10/2026).
+  const raiz = fornecedorCodigo != null ? (ctx.raizPorFornecedor.get(fornecedorCodigo) ?? null) : null;
+  const doFornecedor =
+    fornecedorCodigo != null
+      ? ctx.pcs.filter((p) => !p.pcEspelho && (p.nCodFor === fornecedorCodigo || (raiz != null && p.raizCnpj === raiz)))
+      : [];
   const ehVinculo = (p: PcCopia) => pcDoVinculo != null && p.nCodPed === pcDoVinculo.nCodPed && p.nCodItem === pcDoVinculo.nCodItem;
   const dentro: Array<{ pc: PcCopia; av: Avaliacao }> = [];
   const fora: Array<{ pc: PcCopia; av: Avaliacao }> = [];
   const aguardando: Array<{ pc: PcCopia; av: Avaliacao }> = [];
+  const incompativeis: Array<{ pc: PcCopia; av: Avaliacao }> = [];
   for (const p of doFornecedor) {
     if (ehVinculo(p)) continue;
     if (fatorUnidadePc(p.unidade) == null) {
@@ -622,14 +788,24 @@ export function montarPcDoItem(
     if (p.etapa === '10') {
       if (p.saldoCopiaKg > 0) aguardando.push({ pc: p, av });
     } else if (p.etapa === '15' && saldo > 0) {
-      (av.dentroTolerancia ? dentro : fora).push({ pc: p, av });
+      if (unidadeIncompativel(item, p, opcoes.exigeMesmaUnidade)) incompativeis.push({ pc: p, av });
+      else (av.dentroTolerancia ? dentro : fora).push({ pc: p, av });
     }
   }
-  const candidatos = ordenar(item, dentro).map(({ pc, av }) =>
-    paraCandidato(item, pc, av, casaNumero(item, pc) ? 'Número do pedido na NF' : 'Quantidade e preço compatíveis'),
+  const motivoCandidato = (pc: PcCopia): string => {
+    const base = casaNumero(item, pc) ? 'Número do pedido na NF' : 'Quantidade e preço compatíveis';
+    return fornecedorCodigo != null && pc.nCodFor > 0 && pc.nCodFor !== fornecedorCodigo ? `${base} · ${sufixoOutroCadastro(pc)}` : base;
+  };
+  const motivoFora = (pc: PcCopia, av: Avaliacao): string => {
+    const base = av.desvios.join(' · ');
+    return fornecedorCodigo != null && pc.nCodFor > 0 && pc.nCodFor !== fornecedorCodigo ? `${base} · ${sufixoOutroCadastro(pc)}` : base;
+  };
+  const candidatos = ordenar(item, dentro).map(({ pc, av }) => paraCandidato(item, pc, av, motivoCandidato(pc), fornecedorCodigo));
+  const outrosDoFornecedor = ordenar(item, fora).map(({ pc, av }) => paraCandidato(item, pc, av, motivoFora(pc, av), fornecedorCodigo));
+  const aguardandoAprovacao = ordenar(item, aguardando).map(({ pc, av }) => paraCandidato(item, pc, av, 'Aguardando aprovação', fornecedorCodigo));
+  const unidadeIncompativelLista = ordenar(item, incompativeis).map(({ pc, av }) =>
+    paraCandidato(item, pc, av, motivoUnidadeIncompativel(item, pc), fornecedorCodigo),
   );
-  const outrosDoFornecedor = ordenar(item, fora).map(({ pc, av }) => paraCandidato(item, pc, av, av.desvios.join(' · ')));
-  const aguardandoAprovacao = ordenar(item, aguardando).map(({ pc, av }) => paraCandidato(item, pc, av, 'Aguardando aprovação'));
 
   // ── Pre-selecao (D3): vinculo do OMIE sem alerta, ou candidato unico pelo numero do pedido ──
   let preSelecionado: PcDoItem['preSelecionado'] = null;
@@ -640,23 +816,22 @@ export function montarPcDoItem(
     if (peloNumero.length === 1) preSelecionado = { nCodPed: peloNumero[0]!.nCodPed, nCodItem: peloNumero[0]!.nCodItem };
   }
 
-  // ── PCs da mesma empresa em OUTRO cadastro do OMIE (filial x matriz): so informativos ──
-  const raiz = fornecedorCodigo != null ? (ctx.raizPorFornecedor.get(fornecedorCodigo) ?? null) : null;
-  const outroCadastro = new Map<number, PcOutroCadastro>();
-  if (raiz) {
-    for (const p of ctx.pcs) {
-      if (p.nCodFor === fornecedorCodigo || p.raizCnpj !== raiz || p.pcEspelho || p.etapa !== '15' || ehVinculo(p)) continue;
-      if (fatorUnidadePc(p.unidade) == null || saldoDisponivelCopiaKg(p, ctx, chaveNf) <= 0) continue;
-      if (!outroCadastro.has(p.nCodPed)) outroCadastro.set(p.nCodPed, { pcNumero: p.pcNumero, cnpjCadastroPc: p.cnpjCadastro });
-    }
-  }
-  const pcsOutroCadastro = Array.from(outroCadastro.values());
-
   const possivel = (vinculoOmie != null && vinculoOmieElegivel) || candidatos.length > 0 || outrosDoFornecedor.length > 0;
+  const vinculoPorUnidade = vinculoOmie != null && !vinculoOmieElegivel && pcDoVinculo != null && unidadeIncompativel(item, pcDoVinculo, opcoes.exigeMesmaUnidade);
   let motivoSemPc: MotivoSemPc | null = null;
   let semPcMotivo: string | null = null;
+  // Trava de unidade: o vinculo do OMIE esta em unidade diferente, ou so ha PC em unidade
+  // diferente (PC aguardando aprovacao vem antes: aprovado, ele seria avaliado de novo).
+  const soUnidade = unidadeIncompativelLista.length > 0 && !divergentes && !(vinculoOmie && !vinculoOmieElegivel) && aguardandoAprovacao.length === 0;
   if (!possivel) {
-    if ((vinculoOmie && !vinculoOmieElegivel) || divergentes) {
+    if (vinculoPorUnidade || soUnidade) {
+      motivoSemPc = 'unidade_pc';
+      const pcs = Array.from(new Set([...(vinculoPorUnidade && pcDoVinculo ? [pcDoVinculo.pcNumero] : []), ...unidadeIncompativelLista.map((c) => c.pcNumero)]));
+      const unidadesPc = Array.from(new Set([...(vinculoPorUnidade && pcDoVinculo ? [pcDoVinculo.unidade] : []), ...unidadeIncompativelLista.map((c) => c.unidade)]));
+      semPcMotivo =
+        `${pcs.length === 1 ? `O ${rotuloPcs(pcs)} está` : `Os ${rotuloPcs(pcs)} estão`} em ${unidadesPc.map(rotuloUnidade).join('/')} e a nota em ${rotuloUnidade(item.unidadeNf)}: ` +
+        'o OMIE baixaria o pedido na unidade da nota, sem converter. Peça à equipe de Compras um pedido na unidade da nota.';
+    } else if ((vinculoOmie && !vinculoOmieElegivel) || divergentes) {
       // FR-011a: item que veio vinculado no OMIE nunca e ignorado — sem PC possivel, a NF e
       // recusada nos dois modos (inclusive com as linhas ligadas a pedidos diferentes).
       motivoSemPc = 'vinculo_invalido';
@@ -672,10 +847,7 @@ export function montarPcDoItem(
           : `Os pedidos de compra deste fornecedor ainda estão aguardando aprovação no OMIE (${nums}). Eles só podem ser vinculados depois de aprovados.`;
     } else {
       motivoSemPc = 'sem_pc';
-      semPcMotivo =
-        pcsOutroCadastro.length > 0
-          ? `O cadastro do fornecedor desta nota não tem pedido de compra aprovado com saldo para este item, mas há ${textoPcsOutroCadastro(pcsOutroCadastro)}. Peça à equipe de Compras para ajustar o fornecedor do pedido para o cadastro da nota.`
-          : 'O fornecedor não tem pedido de compra aprovado com saldo para este item.';
+      semPcMotivo = 'O fornecedor não tem pedido de compra aprovado com saldo para este item.';
     }
   }
 
@@ -695,6 +867,7 @@ export function montarPcDoItem(
       candidatos,
       outrosDoFornecedor,
       aguardandoAprovacao,
+      unidadeIncompativel: unidadeIncompativelLista,
       preSelecionado,
       semPcMotivo,
       vinculadoNoOmie: null,
@@ -702,8 +875,119 @@ export function montarPcDoItem(
     possivel,
     motivoSemPc,
     situacao,
-    pcsOutroCadastro,
   };
+}
+
+// ── PC por NF (pura — testada sem banco) ────────────────────────────────────
+
+/** Entrada de `montarPcsDaNf`: um item a receber com PC possivel ou nao (o resultado por item). */
+export interface ItemParaPcsDaNf {
+  indice: number;
+  quantidadeKg: number;
+  resultado: ResultadoPcItem;
+}
+
+/**
+ * Monta a lista de PCs da NOTA a partir das listas de cada item: todo PC que aparece
+ * em algum item (vinculo do OMIE elegivel, candidato ou "outro do fornecedor"), com a
+ * atribuicao item da NF -> item do PC. A atribuicao e gulosa, do item maior para o
+ * menor: cada item da NF fica com a primeira opcao daquele PC (na ordem do item)
+ * cujo saldo restante ainda cabe; se nenhuma cabe, com a primeira opcao (o POST
+ * decide com o saldo ao vivo). Duas linhas da NF podem apontar para o mesmo item do
+ * PC (itens 3 e 4 da NF 60199 -> PELBD 07/21). Itens sem PC possivel ficam de fora
+ * de todos os PCs (e nenhum PC "cobre todos").
+ */
+export function montarPcsDaNf(itens: ItemParaPcsDaNf[], tol: ToleranciasPc): PcsDaNf {
+  const comPc = itens.filter((i) => i.resultado.possivel);
+  const semPcPossivel = itens.length - comPc.length;
+  // Opcoes de cada item, na ordem de preferencia do proprio item: vinculo do OMIE, candidatos, outros.
+  type Opcao = { c: PcCandidato; origem: 'omie' | 'sugestao' | 'manual' };
+  const opcoesPorItem = new Map<number, Opcao[]>();
+  const pcsVistos = new Map<number, { pcNumero: string; outroCadastro: boolean; cnpjCadastro: string; dadosEmCache: boolean; vinculoOmie: boolean }>();
+  for (const it of comPc) {
+    const pc = it.resultado.pc;
+    const lista: Opcao[] = [];
+    if (pc.vinculoOmie && pc.vinculoOmieElegivel) lista.push({ c: pc.vinculoOmie, origem: 'omie' });
+    for (const c of pc.candidatos) if (!lista.some((o) => o.c.nCodPed === c.nCodPed && o.c.nCodItem === c.nCodItem)) lista.push({ c, origem: 'sugestao' });
+    for (const c of pc.outrosDoFornecedor) if (!lista.some((o) => o.c.nCodPed === c.nCodPed && o.c.nCodItem === c.nCodItem)) lista.push({ c, origem: 'manual' });
+    opcoesPorItem.set(it.indice, lista);
+    for (const o of lista) {
+      const visto = pcsVistos.get(o.c.nCodPed);
+      const vinculo = o.origem === 'omie';
+      if (!visto) {
+        pcsVistos.set(o.c.nCodPed, {
+          pcNumero: o.c.pcNumero,
+          outroCadastro: o.c.outroCadastro,
+          cnpjCadastro: o.c.cnpjCadastro,
+          dadosEmCache: o.c.dadosEmCache,
+          vinculoOmie: vinculo,
+        });
+      } else {
+        if (!visto.pcNumero && o.c.pcNumero) visto.pcNumero = o.c.pcNumero;
+        if (vinculo) visto.vinculoOmie = true;
+      }
+    }
+  }
+
+  const pcs: PcDaNf[] = [];
+  for (const [nCodPed, meta] of pcsVistos) {
+    // saldo restante por item do PC, consumido na ordem dos itens maiores
+    const restante = new Map<number, number>();
+    const atribuicoes: PcDaNfItem[] = [];
+    const ordem = [...comPc].sort((a, b) => b.quantidadeKg - a.quantidadeKg || a.indice - b.indice);
+    for (const it of ordem) {
+      const opcoes = (opcoesPorItem.get(it.indice) ?? []).filter((o) => o.c.nCodPed === nCodPed);
+      if (opcoes.length === 0) continue;
+      for (const o of opcoes) if (!restante.has(o.c.nCodItem)) restante.set(o.c.nCodItem, o.c.saldoKg);
+      const cabe = (o: Opcao): boolean => it.quantidadeKg <= (restante.get(o.c.nCodItem) ?? 0) * (1 + tol.qtd) + EPS;
+      const escolhida = opcoes.find(cabe) ?? opcoes[0]!;
+      const cabia = cabe(escolhida);
+      restante.set(escolhida.c.nCodItem, Math.max(0, (restante.get(escolhida.c.nCodItem) ?? 0) - it.quantidadeKg));
+      const pcItem = it.resultado.pc;
+      const trocaDoVinculo =
+        pcItem.vinculosDivergentes || (pcItem.vinculoOmie != null && !(pcItem.vinculoOmie.nCodPed === nCodPed && pcItem.vinculoOmie.nCodItem === escolhida.c.nCodItem));
+      const naoComparado = escolhida.c.semDadosLocais;
+      const dentroTolerancia = escolhida.origem !== 'manual' && escolhida.c.dentroTolerancia && cabia && !naoComparado;
+      atribuicoes.push({
+        indice: it.indice,
+        nCodItem: escolhida.c.nCodItem,
+        produtoDescricao: escolhida.c.produtoDescricao,
+        dentroTolerancia,
+        motivo: escolhida.c.motivo,
+        origem: escolhida.origem,
+        justificativaNecessaria: !dentroTolerancia || trocaDoVinculo,
+      });
+    }
+    atribuicoes.sort((a, b) => a.indice - b.indice);
+    pcs.push({
+      nCodPed,
+      pcNumero: meta.pcNumero,
+      outroCadastro: meta.outroCadastro,
+      cnpjCadastro: meta.cnpjCadastro,
+      dadosEmCache: meta.dadosEmCache,
+      itens: atribuicoes,
+      cobreTodos: semPcPossivel === 0 && comPc.length > 0 && atribuicoes.length === comPc.length,
+      dentroTolerancia: atribuicoes.every((a) => a.dentroTolerancia),
+      vinculoOmie: meta.vinculoOmie,
+      justificativaNecessaria: atribuicoes.some((a) => a.justificativaNecessaria),
+    });
+  }
+  // Ordem: cobre todos primeiro; depois vinculo do OMIE; depois quem atende mais itens; dentro da tolerancia; numero.
+  pcs.sort(
+    (a, b) =>
+      Number(b.cobreTodos) - Number(a.cobreTodos) ||
+      Number(b.vinculoOmie) - Number(a.vinculoOmie) ||
+      b.itens.length - a.itens.length ||
+      Number(b.dentroTolerancia) - Number(a.dentroTolerancia) ||
+      a.pcNumero.localeCompare(b.pcNumero, 'pt-BR', { numeric: true }) ||
+      a.nCodPed - b.nCodPed,
+  );
+  // Pre-selecao da nota: o vinculo do OMIE que cobre todos (sem justificativa), senao o UNICO PC que cobre todos dentro da tolerancia.
+  const cobrem = pcs.filter((p) => p.cobreTodos);
+  const doOmie = cobrem.filter((p) => p.vinculoOmie && !p.justificativaNecessaria);
+  const limpos = cobrem.filter((p) => p.dentroTolerancia && !p.justificativaNecessaria);
+  const preSelecionado = doOmie.length === 1 ? doOmie[0]!.nCodPed : limpos.length === 1 ? limpos[0]!.nCodPed : null;
+  return { pcs, preSelecionado };
 }
 
 const ORDEM_SITUACAO: readonly PcSituacaoItem[] = Object.freeze(['sem_pc', 'aguardando_aprovacao', 'escolha_necessaria', 'sugerido', 'vinculado_omie']);
@@ -729,8 +1013,9 @@ export async function sugerirPcPorItens(
     nCodPedsVinculo: itens.flatMap((i) => i.vinculos.map((v) => v.nIdPedido)),
   });
   const tol = toleranciasPc();
+  const opcoes = opcoesPc();
   const out = new Map<number, ResultadoPcItem>();
-  for (const it of itens) out.set(it.indice, montarPcDoItem(it, ctx, fornecedorCodigo, chaveNf, tol));
+  for (const it of itens) out.set(it.indice, montarPcDoItem(it, ctx, fornecedorCodigo, chaveNf, tol, opcoes));
   return out;
 }
 
@@ -774,6 +1059,9 @@ export interface EscolhaPcValidada {
   kgPorSequencia: Record<number, number>;
   /** descricao do item (mensagens) */
   itemDescricao: string;
+  /** unidade da NF e seu fator para kg — a releitura ao vivo recusa PC em unidade diferente (trava de unidade) */
+  unidadeNf: string;
+  fatorUnidadeNf: number | null;
 }
 
 const rotuloNf = (notaFiscal: string, fornecedorNome: string | null): string =>
@@ -812,15 +1100,15 @@ export class NfSemPcError extends Error {
   constructor(
     public readonly notaFiscal: string,
     public readonly fornecedorNome: string | null,
-    public readonly itens: Array<{ descricao: string; motivo: MotivoSemPc; pcsOutroCadastro?: PcOutroCadastro[] }>,
+    public readonly itens: Array<{ descricao: string; motivo: MotivoSemPc }>,
   ) {
     const nf = rotuloNf(notaFiscal, fornecedorNome);
     const lista = (xs: Array<{ descricao: string }>) => xs.map((i) => i.descricao.trim()).join(', ');
     const deUnidade = itens.filter((i) => i.motivo === 'unidade');
-    // Item sem PC no cadastro da nota mas com PC em OUTRO cadastro do mesmo fornecedor (filial x
-    // matriz): a orientacao e ajustar o fornecedor do pedido, nao lancar outro (achado sugestao-v03).
-    const comOutroCadastro = itens.filter((i) => i.motivo === 'sem_pc' && (i.pcsOutroCadastro?.length ?? 0) > 0);
-    const outros = itens.filter((i) => i.motivo !== 'unidade' && !comOutroCadastro.includes(i));
+    // Trava de unidade (22/10/2026): so ha PC em unidade diferente da NF — o OMIE baixaria o
+    // pedido na unidade da nota (PC 306 em kg com 8,25 da NF 60199 em toneladas).
+    const deUnidadePc = itens.filter((i) => i.motivo === 'unidade_pc');
+    const outros = itens.filter((i) => i.motivo !== 'unidade' && i.motivo !== 'unidade_pc');
     const partes: string[] = [];
     if (outros.length > 0) {
       const soAguardando = outros.every((i) => i.motivo === 'pc_aguardando_aprovacao');
@@ -833,21 +1121,18 @@ export class NfSemPcError extends Error {
             : `A ${nf} tem item sem pedido de compra no OMIE (${lista(outros)}). A equipe de Compras foi avisada. A NF fica na fila até o PC ser lançado e aprovado.`,
       );
     }
-    if (comOutroCadastro.length > 0) {
-      const vistos = new Set<string>();
-      const pcs = comOutroCadastro
-        .flatMap((i) => i.pcsOutroCadastro ?? [])
-        .filter((p) => (vistos.has(`${p.pcNumero}|${p.cnpjCadastroPc}`) ? false : (vistos.add(`${p.pcNumero}|${p.cnpjCadastroPc}`), true)));
+    if (deUnidadePc.length > 0) {
+      const um = deUnidadePc.length === 1;
       partes.push(
         outros.length > 0
-          ? `Para ${lista(comOutroCadastro)}, há ${textoPcsOutroCadastro(pcs)}: a equipe de Compras foi avisada para ajustar o fornecedor do pedido.`
-          : `A ${nf} tem item sem pedido de compra no cadastro do fornecedor da nota (${lista(comOutroCadastro)}), mas há ${textoPcsOutroCadastro(pcs)}. A equipe de Compras foi avisada para ajustar o fornecedor do pedido; a NF fica na fila até o ajuste.`,
+          ? `Para ${lista(deUnidadePc)}, o pedido de compra do fornecedor está em unidade diferente da nota: o OMIE baixaria o pedido na unidade da nota, sem converter. A equipe de Compras foi avisada para lançar o pedido na unidade da nota.`
+          : `A ${nf} tem ${um ? 'item cujo' : 'itens cujos'} pedido${um ? '' : 's'} de compra ${um ? 'está' : 'estão'} em unidade diferente da nota (${lista(deUnidadePc)}): o OMIE baixaria o pedido na unidade da nota, sem converter. A equipe de Compras foi avisada para lançar o pedido na unidade da nota; a NF fica na fila até o ajuste.`,
       );
     }
     if (deUnidade.length > 0) {
       const um = deUnidade.length === 1;
       partes.push(
-        outros.length > 0 || comOutroCadastro.length > 0
+        outros.length > 0 || deUnidadePc.length > 0
           ? `Além disso, ${um ? 'o item' : 'os itens'} ${lista(deUnidade)} ${um ? 'não pode ser recebido' : 'não podem ser recebidos'} pelo Atlas (unidade não convertida para kg) e ${um ? 'não tem' : 'não têm'} pedido de compra vinculado no OMIE: peça ao fiscal para corrigir a unidade ou concluir o recebimento desta NF no OMIE, vinculando o pedido.`
           : `A ${nf} tem ${um ? 'item' : 'itens'} que o Atlas não recebe (unidade não convertida para kg) e sem pedido de compra vinculado no OMIE (${lista(deUnidade)}). Peça ao fiscal para corrigir a unidade ou concluir o recebimento desta NF no OMIE, vinculando o pedido.`,
       );
@@ -884,6 +1169,9 @@ export function validarEscolhaPc(args: {
   quantidadeKg: number;
   precoNfKg: number | null;
   kgPorSequencia: Record<number, number>;
+  /** unidade da NF e fator para kg (trava de unidade na releitura ao vivo) */
+  unidadeNf?: string;
+  fatorUnidadeNf?: number | null;
 }): EscolhaPcValidada | null {
   const { resultado, escolha } = args;
   const pc = resultado.pc;
@@ -907,11 +1195,16 @@ export function validarEscolhaPc(args: {
     origem = 'manual';
   } else {
     const aguardando = pc.aguardandoAprovacao.find(mesmo);
+    const incompativel = (pc.unidadeIncompativel ?? []).find(mesmo);
     throw new PcNaoElegivelError(
       args.notaFiscal,
-      aguardando?.pcNumero ?? null,
+      aguardando?.pcNumero ?? incompativel?.pcNumero ?? null,
       args.itemDescricao,
-      aguardando ? 'está aguardando aprovação' : 'não é um pedido aprovado, com saldo, do fornecedor da nota',
+      aguardando
+        ? 'está aguardando aprovação'
+        : incompativel
+          ? `está em ${rotuloUnidade(incompativel.unidade)} e a nota em ${rotuloUnidade(args.unidadeNf)} (o OMIE baixaria o pedido na unidade da nota)`
+          : 'não é um pedido aprovado, com saldo, do fornecedor da nota',
     );
   }
 
@@ -951,6 +1244,8 @@ export function validarEscolhaPc(args: {
     precoNfKg: candidato.precoNfKgComparado ?? args.precoNfKg ?? 0,
     kgPorSequencia: args.kgPorSequencia,
     itemDescricao: args.itemDescricao,
+    unidadeNf: args.unidadeNf ?? '',
+    fatorUnidadeNf: args.fatorUnidadeNf ?? null,
   };
 }
 
@@ -1008,6 +1303,12 @@ export interface ReservaPc {
   nCodItemPed: number;
   pcNumero: string;
   origem: OrigemVinculoPc;
+  /**
+   * Quantidade recebida desta sequencia NA UNIDADE DO PC, para o EDITAR mandar em
+   * itensAjustes.nQtdeRecebida — so quando a unidade do PC difere da NF (modo
+   * 'converter'); null = nao se aplica (mesma unidade, ou modo 'bloquear').
+   */
+  nQtdeRecebida: number | null;
 }
 
 interface LeituraPc {
@@ -1053,6 +1354,7 @@ export async function relerEReservarPcs(args: {
 }): Promise<ReservaPc[]> {
   if (args.escolhas.length === 0) return [];
   const tol = toleranciasPc();
+  const modoUnidade = modoUnidadeDiferentePc();
 
   // 1. Leitura ao vivo — uma por PC distinto, fora da transacao (chamada externa nao segura trava).
   const leituras = new Map<number, LeituraPc>();
@@ -1060,6 +1362,21 @@ export async function relerEReservarPcs(args: {
     const pedido = await consultarPedidoCompra(args.empresa, { nCodPed: ped });
     leituras.set(ped, { pedido });
   }
+  // Mesmo fornecedor = mesmo cadastro OU outro cadastro com a mesma raiz de CNPJ (filial x
+  // matriz): o ASSOCIAR-PEDIDO entre cadastros foi aceito no T033 (22/10/2026). A raiz so e
+  // lida quando algum PC esta em outro cadastro (no caso comum nao ha consulta extra).
+  const outrosCadastros = Array.from(new Set(Array.from(leituras.values()).map((l) => l.pedido.nCodFor))).filter(
+    (n) => n > 0 && args.fornecedorCodigo != null && n !== args.fornecedorCodigo,
+  );
+  const raizes =
+    outrosCadastros.length > 0 && args.fornecedorCodigo != null
+      ? await raizesDosCadastros(args.empresa, [args.fornecedorCodigo, ...outrosCadastros])
+      : new Map<number, string>();
+  const mesmoFornecedor = (nCodForPc: number): boolean => {
+    if (args.fornecedorCodigo == null || nCodForPc === args.fornecedorCodigo) return true;
+    const raizNf = raizes.get(args.fornecedorCodigo);
+    return raizNf != null && raizes.get(nCodForPc) === raizNf;
+  };
 
   // Quanto cada item de PC precisa nesta NF (dois itens da NF podem apontar o mesmo item de PC).
   const porItemPc = new Map<number, EscolhaPcValidada[]>();
@@ -1086,7 +1403,7 @@ export async function relerEReservarPcs(args: {
       [args.nfChaveAcesso],
     );
 
-    const lidos = new Map<number, { saldoKg: number; precoKg: number | null; etapa: string; pcNumero: string }>();
+    const lidos = new Map<number, { saldoKg: number; precoKg: number | null; etapa: string; pcNumero: string; fatorPc: number }>();
     for (const item of itensOrdenados) {
       const escolhas = porItemPc.get(item)!;
       const c = escolhas[0]!.candidato;
@@ -1128,13 +1445,26 @@ export async function relerEReservarPcs(args: {
             return v != null && v.nIdPedido === e.candidato.nCodPed && v.nIdItPedido === e.candidato.nCodItem;
           }),
       );
-      if (args.fornecedorCodigo != null && pedido.nCodFor !== args.fornecedorCodigo && !omieJaAceitou) {
+      if (!mesmoFornecedor(pedido.nCodFor) && !omieJaAceitou) {
         throw new PcVinculoInvalidoError(args.notaFiscal, numeroVivo, 'é de outro fornecedor', idPc);
       }
       const linha = pedido.produtos.find((p) => p.nCodItem === item);
       if (!linha) throw new PcVinculoInvalidoError(args.notaFiscal, numeroVivo, 'o item escolhido não existe mais no pedido', idPc);
       const fator = fatorUnidadePc(linha.cUnidade);
       if (fator == null) throw new PcVinculoInvalidoError(args.notaFiscal, numeroVivo, `a unidade do pedido (${linha.cUnidade ?? '—'}) não é comparável em kg`, idPc);
+      // Trava de unidade (22/10/2026): o OMIE grava em nQtdeRec do PC a quantidade do item na
+      // unidade da NF, sem converter. Vale tambem para o vinculo que o OMIE ja fez: concluir
+      // com ele baixaria o PC errado do mesmo jeito. Modo 'converter': o EDITAR manda a
+      // quantidade ja na unidade do PC (nQtdeRecebida) e o vinculo segue.
+      const unidadeDiferente = escolhas.find((e) => e.fatorUnidadeNf != null && fator !== e.fatorUnidadeNf);
+      if (unidadeDiferente && modoUnidade === 'bloquear') {
+        throw new PcVinculoInvalidoError(
+          args.notaFiscal,
+          numeroVivo,
+          `está em ${rotuloUnidade(linha.cUnidade)} e a nota em ${rotuloUnidade(unidadeDiferente.unidadeNf)} — o OMIE baixaria o pedido na unidade da nota, sem converter`,
+          idPc,
+        );
+      }
 
       const reservas = await client.query<{ kg: number | string }>(
         `SELECT COALESCE(SUM(qtd_nf_kg), 0)::float8 AS kg
@@ -1166,6 +1496,8 @@ export async function relerEReservarPcs(args: {
         etapa,
         // numero lido AO VIVO: o vinculo do OMIE fora da copia chega aqui com pcNumero ''
         pcNumero: numeroVivo,
+        // fator da unidade do PC: a reserva devolve a quantidade recebida nessa unidade quando difere da NF
+        fatorPc: fator,
       });
     }
 
@@ -1198,6 +1530,9 @@ export async function relerEReservarPcs(args: {
           nCodItemPed: e.candidato.nCodItem,
           pcNumero: l.pcNumero || e.candidato.pcNumero,
           origem: e.origem,
+          // So com a unidade do PC diferente da NF (modo 'converter'): kg da linha na unidade do PC
+          // (8.250 kg -> 8250 em PC de KG; 8,25 em PC de TON). Mesma unidade: null (nada a mandar).
+          nQtdeRecebida: e.fatorUnidadeNf != null && l.fatorPc !== e.fatorUnidadeNf ? Math.round((kg / l.fatorPc) * 1e6) / 1e6 : null,
         });
       }
     }

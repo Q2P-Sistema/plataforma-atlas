@@ -3,6 +3,7 @@ import { createLogger } from '@atlas/core';
 import { processarAlertasComodatoVencido } from '../services/cron-comodato.service.js';
 import { reprocessarBaixasAguardandoVinculo } from '../services/baixa-pedido.service.js';
 import { verificarCopiaPcs, verificarEspelhoRecebimentos } from '../services/alerta-espelho-recebimentos.service.js';
+import { registrarPcsVistos } from '../services/pc-visto.service.js';
 
 const logger = createLogger('stockbridge:cron');
 
@@ -63,8 +64,11 @@ export function iniciarCronsStockBridge(): void {
     () => {
       verificarEspelhoRecebimentos().catch((err) => logger.error({ err }, 'Falha ao verificar o espelho de recebimentos de NF-e'));
       verificarCopiaPcs().catch((err) => logger.error({ err }, 'Falha ao verificar a cópia de pedidos de compra'));
+      // 017 (0057): cache de PCs vistos — o OMIE tira da lista de pendentes o PC com item
+      // associado a um recebimento aberto; o cache guarda a ultima versao vista (so o que mudou).
+      void registrarPcsVistos('q2p');
     },
     { timezone: 'America/Sao_Paulo' },
   );
-  logger.info('Cron registrado: alerta-espelho-recebimentos + cópia de PCs (5,35 * * * * BR)');
+  logger.info('Cron registrado: alerta-espelho-recebimentos + cópia de PCs + cache de PCs vistos (5,35 * * * * BR)');
 }

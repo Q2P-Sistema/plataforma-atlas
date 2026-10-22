@@ -142,6 +142,15 @@ const envSchema = z.object({
   // modo seguro (503 COPIA_PCS_DEFASADA). PROD: 120 (n8n a cada 10 min + aviso
   // por evento). UAT: calibrar pela frequencia com que a copia chega la.
   STOCKBRIDGE_COPIA_PCS_MAX_MIN: z.coerce.number().int().min(10).max(10080).default(120),
+  // Feature 017 (22/10/2026, NF 60199 x PC 306): na conclusao do recebimento o OMIE
+  // grava em nQtdeRec do PC a quantidade recebida do item NA UNIDADE DA NF, sem
+  // converter (NF em toneladas baixou o PC em kg com 8,25 em vez de 8.250). Com PC
+  // em unidade diferente da NF: 'bloquear' (default) = o PC nao e oferecido e a NF e
+  // recusada (NF_SEM_PC, aviso a compras pedindo o pedido na unidade da nota);
+  // 'converter' = o Atlas manda no EDITAR a quantidade recebida ja na unidade do PC
+  // (itensAjustes.nQtdeRecebida — o mesmo campo que, editado no portal, corrigiu o
+  // PC 306). Ligar 'converter' depois de testar com NF real (quickstart cenario 8).
+  STOCKBRIDGE_PC_UNIDADE_DIFERENTE: z.enum(['bloquear', 'converter']).default('bloquear'),
   // ACXEGDP-344: baixa automatica do pedido de compra Q2P (AlteraPedCompra)
   // apos recebimento de importacao. Default LIGADO. 'false' desliga o disparo no
   // fluxo — as movimentacoes ficam 'pendente' e podem ser processadas depois
