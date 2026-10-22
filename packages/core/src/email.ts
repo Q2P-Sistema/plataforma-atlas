@@ -3,6 +3,9 @@ import { createLogger } from './logger.js';
 
 const logger = createLogger('email');
 
+/** Tempo maximo de uma chamada ao SendGrid; estouro = envio nao entregue (quem chama trata como falha). */
+export const SENDGRID_TIMEOUT_MS = 20_000;
+
 export interface EmailOptions {
   to: string;
   cc?: string | string[];
@@ -87,6 +90,9 @@ export async function sendEmail(original: EmailOptions): Promise<void> {
 
   const sgMail = await import('@sendgrid/mail');
   sgMail.default.setApiKey(apiKey);
+  // Sem limite, o axios do @sendgrid espera para sempre um socket meio-aberto — e quem chama
+  // pode estar segurando conexao/trava do banco (aviso a compras da 017, achado infra-v01).
+  sgMail.default.setTimeout(SENDGRID_TIMEOUT_MS);
 
   await sgMail.default.send({
     to: options.to,

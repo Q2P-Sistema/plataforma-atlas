@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // OMIE em modo leitura com NODE_ENV=production, proíbe o modo real e impede que
 // e-mail chegue a usuário real (desvio para EMAIL_DESVIO_PARA ou só log).
 
-const sendgrid = { setApiKey: vi.fn(), send: vi.fn() };
+const sendgrid = { setApiKey: vi.fn(), setTimeout: vi.fn(), send: vi.fn() };
 vi.mock('@sendgrid/mail', () => ({ default: sendgrid }));
 vi.mock('../logger.js', () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
@@ -81,6 +81,7 @@ describe('sendEmail — desvio fora de produção', () => {
   beforeEach(() => {
     sendgrid.send.mockReset();
     sendgrid.setApiKey.mockReset();
+    sendgrid.setTimeout.mockReset();
   });
   afterEach(() => {
     process.env = { ...ENV_ORIGINAL };
@@ -109,6 +110,8 @@ describe('sendEmail — desvio fora de produção', () => {
     await sendEmail(email);
 
     expect(sendgrid.setApiKey).toHaveBeenCalledWith('SG.desvio');
+    // sem limite, um socket meio-aberto prenderia quem chama (e a conexao/trava que ele segura)
+    expect(sendgrid.setTimeout).toHaveBeenCalledWith(20_000);
     expect(sendgrid.send).toHaveBeenCalledTimes(1);
     const enviado = sendgrid.send.mock.calls[0]![0];
     expect(enviado.to).toBe('testes@acxe-polimeros.com.br');
