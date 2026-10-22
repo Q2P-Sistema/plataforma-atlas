@@ -221,3 +221,111 @@ DROP TABLE IF EXISTS public."tb_movimentacao_q2p_legado";
 > operações feitas lá não terão validade e podem gerar lançamento duplicado no ERP.
 > Gestores e diretores: no primeiro acesso será solicitada a configuração do
 > segundo fator de autenticação (2FA).
+
+## Ativação da feature 017 — recebimento nacional com pedido de compra (ACXEGDP-437)
+
+Desde 21/10/2026 a chave `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED` está `false` em PROD
+(contenção). A receita da 016 (`EDITAR → IGNORAR → Concluir`) desfaz o vínculo do item com
+o pedido de compra (PC) que compras lança no OMIE. A 017 conclui o fiscal mantendo ou
+gravando o vínculo e só usa o `IGNORAR` em item sem PC.
+
+**Pré-requisitos já atendidos**
+
+- Cópia de PCs na Rev 1.5 (`qPJFEIY1PQ2LDQG2`), no ar desde 21/10/2026.
+- Espelho de recebimentos da Q2P gravando o vínculo (`CJWpHyJEXoHCGkOt` Rev 1.1, no ar desde
+  21/10/2026 22:40). As 4 colunas de pedido foram aplicadas em PROD com o mesmo texto da 0056.
+
+**Ordem** (não inverter os passos 1 e 3):
+
+1. **Migration 0056** em PROD. É aditiva (`IF NOT EXISTS`, CHECK ampliado), então convive com a
+   imagem atual. Precisa vir **antes** da imagem: a 017 lê as colunas de pedido do espelho na fila
+   e grava `empresa` no ledger fiscal e as linhas de `recebimento_fiscal_pc`. Sem a 0056, onde o
+   espelho não tem as 4 colunas (UAT sem a cópia do PROD) a fila responde
+   `503 FILA_NACIONAL_NAO_CONFIGURADA`; em PROD (colunas já criadas) a fila abre, mas o fiscal com
+   PC falha ao gravar o ledger e o PC vinculado pelo Atlas some do detalhe.
+
+   O repo não usa o runner do drizzle-kit, e o `scripts/apply-migrations-prod.sh` reaplica tudo
+   (e recusa banco que já tem schema Atlas): aplicar **só o arquivo da 0056**, com o `PROD_USER`
+   da janela de go-live (o dono dos objetos: em 22/10/2026 as tabelas `stockbridge.*` e as do
+   espelho `tbl_recebimentoNFe_*` são do usuário `postgres`, e a migration altera
+   `stockbridge.recebimento_fiscal`, o que exige ser dono). Host e porta de PROD são os de
+   sempre; o psql pede a senha:
+
+   ```bash
+   export PROD_USER=<usuario-prod>
+   PGOPTIONS='-c lock_timeout=5s' psql -h db.manager01.q2p.com.br -p 5432 -U "$PROD_USER" -d acxe_q2p \
+     -1 -q -v ON_ERROR_STOP=1 -f packages/db/migrations/0056_stockbridge_recebimento_nacional_pc.sql
+   echo "exit=$?"
+   ```
+
+   - `-1` aplica tudo numa transação (ou tudo, ou nada). `ON_ERROR_STOP=1` faz o erro virar
+     `exit 3`; sem ele o psql desfaz tudo e ainda sai com 0. `lock_timeout=5s` evita ficar preso
+     atrás de uma transação longa.
+   - **Esperado**: `exit=0` e nenhuma linha `ERROR`. `NOTICE` é normal: `trigger ... does not
+     exist, skipping` na 1ª execução e, do bloco `DO` do começo da migration, `as 4 colunas de
+     pedido do espelho ... já existem — tabela não alterada`. Em PROD as 4 colunas já existem
+     (aplicadas em 21/10/2026, ver os pré-requisitos), então a migration **não altera** a tabela
+     do espelho que a fila lê ao vivo; o `ALTER` só roda onde faltar coluna (ex.: UAT sem a
+     cópia PROD→UAT).
+   - **`exit=3` ou `ERROR: canceling statement due to lock timeout`**: nada foi aplicado. Achar
+     quem segura o lock (`SELECT pid, state, xact_start, left(query, 80) FROM pg_stat_activity
+     WHERE datname = 'acxe_q2p' AND xact_start IS NOT NULL ORDER BY xact_start;`), esperar a
+     transação terminar (ou combinar o encerramento com o dono da sessão) e **repetir o mesmo
+     comando**: a migration é idempotente. Outro `ERROR` (permissão, objeto ausente): corrigir a
+     causa e repetir; não seguir para a imagem.
+   - **Conferência obrigatória, logo depois e antes da imagem** (somente leitura):
+
+     ```sql
+     SELECT to_regclass('stockbridge.recebimento_fiscal_pc'),
+            to_regclass('stockbridge.nf_aviso_compras'),
+            (SELECT count(*) FROM information_schema.columns
+              WHERE table_schema = 'stockbridge' AND table_name = 'recebimento_fiscal'
+                AND column_name IN ('empresa', 'itens_vinculados')) AS colunas_ledger,
+            (SELECT count(*) FROM pg_trigger
+              WHERE tgname IN ('trg_audit_sb_recebimento_fiscal_pc', 'trg_audit_sb_nf_aviso_compras')
+                AND NOT tgisinternal) AS triggers;
+     ```
+
+     Esperado: os dois `to_regclass` **não nulos**, `colunas_ledger = 2` e `triggers = 2`. Qualquer
+     outro resultado: **não subir a imagem**; reaplicar a migration. E as 4 colunas de pedido do
+     espelho (em PROD já eram 4 em 22/10/2026):
+     `SELECT count(*) FROM pg_attribute WHERE attrelid = to_regclass('public."tbl_recebimentoNFe_itens_Q2P"') AND attname IN ('n_id_pedido', 'n_id_it_pedido', 'n_num_ped_compra', 'c_num_it_ped_compra') AND NOT attisdropped;`
+     deve dar 4.
+2. **Variáveis** no Portainer: o `atlas.stack.yml` já lista as cinco.
+   - `STOCKBRIDGE_COMPRAS_EMAILS` deve ter os destinatários de compras, separados por
+     **vírgula** (sem ponto e vírgula): valor inválido derruba a API no boot. Vazio, o aviso vai
+     para o `STOCKBRIDGE_OPS_EMAIL`.
+   - Os defaults das outras são `EXIGE_PC=true`, 2%/1% e cópia de PCs 120 min.
+3. **Imagem com a 017** (nova `ATLAS_VERSION`), **com a chave da 016 ainda `false`**.
+4. **Conferir**:
+   - `GET /api/v1/stockbridge/health`: com a chave desligada, `pedidosCompraCopia.status` é
+     `desligado`; depois de religar, `pedidosCompraCopiaIdadeMin` deve ficar abaixo de 120;
+   - o detalhe de uma NF com fiscal já feito mostra, por item, o selo de PC vinculado no OMIE. O
+     número só entra no texto ("PC 304 vinculado no OMIE") quando o PC ainda está na cópia de PCs
+     ou foi vinculado pelo próprio Atlas; a NF 7813 mostra "PC vinculado no OMIE" **sem número**,
+     porque o PC 304 já saiu da cópia (recebido por inteiro) e o fiscal dela foi feito pelo teste do
+     n8n. Critério de aceite: a presença do selo, não o número;
+   - NF concluída no portal sem "não movimentar estoque" aparece com "Estoque já lançado pelo
+     OMIE" e não pode ser recebida.
+5. **Teste do vínculo novo** (`ASSOCIAR-PEDIDO`) com uma NF real sem vínculo, com
+   autorização, como foi feito na NF 7813 (tarefa T033). Registrar o resultado na
+   ACXEGDP-437 e na research D2 da 017.
+6. **Religar** `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED=true`: primeiro no UAT, depois em
+   PROD, em dia útil e com o fiscal avisado. Acompanhar as primeiras NFs reais (SC-007).
+
+**Atenção**: religar a chave com uma imagem anterior à 017 traz de volta o `IGNORAR`, que é o
+problema original.
+
+**Rollback**: voltar `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED` para `false` na stack e atualizar a
+stack. A chave é lida uma vez, na subida do processo, então o container é recriado: é um redeploy
+rápido, sem trocar a imagem nem mexer em migration. Com a imagem da 017 e a chave `false`, as
+dispensas e o bloqueio de estoque já lançado continuam valendo. A 0056 pode ficar, porque é
+aditiva e convive também com a imagem anterior.
+
+**UAT**:
+- a 0056 vai por `psql -1 -f`, como a 0053: o comando do passo 1 com `-p 5437 -U postgres`, e a
+  mesma conferência depois;
+- as colunas do espelho chegam pela cópia PROD→UAT ou pela própria 0056 (o bloco `DO` do começo
+  da migration só as cria se faltar alguma);
+- `STOCKBRIDGE_COPIA_PCS_MAX_MIN=1440`, porque a cópia de PCs também chega pela cópia PROD→UAT.
+  Com um limite curto, o modo seguro recusaria toda NF com fiscal pendente.

@@ -19,7 +19,7 @@ Base: o modelo da feature 016 (`specs/016-recebimento-fiscal-nf/data-model.md`).
 
 Colunas que já existem e passam a ser usadas: `c_associar_existente`, `c_ignorar_item`, `c_nao_gerar_mov_estoque`, `n_id_produto` e `n_preco_unit`.
 
-**Vínculo do OMIE** (derivado): `c_associar_existente = 'S' AND n_id_pedido > 0`.
+**Vínculo do OMIE** (derivado): `n_id_pedido > 0` (o `c_associar_existente` não entra: confirmado com a sessão do n8n em 21/10/2026; o `n_num_ped_compra` é o xPed do fornecedor e nunca é o vínculo).
 
 **Estoque lançado pelo OMIE** (derivado, D7): recebimento com `c_recebido = 'S'` e algum item com `c_ignorar_item = 'N' AND c_nao_gerar_mov_estoque = 'N'`.
 
@@ -34,7 +34,7 @@ Caso real, NF 7813 na etapa 40 em 21/10/2026: `n_id_pedido` 8516905979, `n_id_it
 | Mudança | Detalhe |
 |---|---|
 | `empresa varchar(4) NOT NULL DEFAULT 'q2p'` | `CHECK (empresa IN ('q2p','acxe'))`. As linhas existentes ficam `q2p` |
-| `passo_falha` | o `CHECK` passa a aceitar também `'associar'` |
+| `passo_falha` | o `CHECK` passa a aceitar também `'associar'` (escrita) e `'consultar_pc'` (releitura ao vivo do PC, sem escrita — recusa de PC fecha o ledger com ele) |
 | `itens_vinculados integer` | itens que terminaram com vínculo de PC (nulo = fiscal sem vínculo, receita da 016) |
 
 Máquina de estados e índice único parcial: os mesmos da 016.
@@ -53,14 +53,14 @@ Vínculo item de NF → item de PC, uma linha por item e por tentativa (D5). FR-
 | `origem` | `varchar(10) NOT NULL` | `omie` (vínculo que veio do OMIE) \| `sugestao` (candidato dentro da tolerância) \| `manual` (fora da tolerância, com justificativa) — CHECK |
 | `n_cod_ped` | `bigint NOT NULL` | PC escolhido (`nCodPed`) |
 | `n_cod_item_ped` | `bigint NOT NULL` | item do PC (`nCodItem`) |
-| `pc_numero` | `varchar(15) NOT NULL` | número legível do PC, para mensagens |
-| `n_cod_ped_omie_anterior` | `bigint` | vínculo do OMIE substituído pelo operador (nulo se não houve troca) |
+| `pc_numero` | `varchar(50) NOT NULL` | número legível do PC, para mensagens (`cnumero` da cópia tem 50 posições) |
+| `n_cod_ped_omie_anterior` | `bigint` | vínculo do OMIE substituído pelo operador **nesta linha**: o que a sequência tinha no portão 1, quando difere do escolhido (nulo se a linha não foi trocada) |
 | `n_cod_item_ped_omie_anterior` | `bigint` | idem |
 | `dentro_tolerancia` | `boolean NOT NULL` | se o PC confirmado estava dentro da tolerância do FR-002, calculada na confirmação |
 | `justificativa` | `text` | obrigatória quando `dentro_tolerancia = false` ou há troca do vínculo do OMIE (`n_cod_ped_omie_anterior IS NOT NULL`), por CHECK. Ver a matriz abaixo |
 | `candidatos` | `jsonb NOT NULL` | retrato do que foi oferecido: `[{nCodPed, nCodItem, pcNumero, saldoKg, precoUnit, motivo, dentroTolerancia}]` |
 | `qtd_nf_kg` | `numeric(14,3) NOT NULL` | quantidade do item da NF, em kg |
-| `preco_nf` | `numeric(14,6) NOT NULL` | preço comercial unitário do item da NF, por kg |
+| `preco_nf` | `numeric(14,6) NOT NULL` | preço do item da NF por kg, na base comparada com o PC escolhido: comercial ou valor do item (research D3) |
 | `saldo_pc_kg_lido` | `numeric(14,3)` | saldo do item do PC relido ao vivo na confirmação |
 | `preco_pc_lido` | `numeric(14,6)` | preço do item do PC relido |
 | `etapa_pc_lida` | `varchar(2)` | etapa do PC relida (precisa ser 15) |
@@ -109,12 +109,12 @@ Aviso a compras sobre NF sem PC (D6), deduplicado.
 | `nf_chave_acesso` | `varchar(44) NOT NULL` | — |
 | `nota_fiscal`, `fornecedor_nome` | `varchar` | exibição |
 | `motivo` | `varchar(30) NOT NULL` | `sem_pc` \| `pc_aguardando_aprovacao` \| `recebida_sem_vinculo` — CHECK |
-| `itens` | `jsonb NOT NULL` | `[{nSequencia, descricao, qtdKg, precoUnit}]` |
+| `itens` | `jsonb NOT NULL` | `[{nSequencia, descricao, qtdKg, precoUnit, quantidadeTexto?}]` — `qtdKg` nulo para item de unidade não convertida, com `quantidadeTexto` ("40 UN") |
 | `enviado_para` | `text NOT NULL` | destinatários efetivos |
 | `enviado_em` | `timestamptz NOT NULL DEFAULT now()` | — |
 | `disparado_por` | `uuid` → `atlas.users(id)` | operador que tentou receber |
 
-**Deduplicação**: não enviar se houver linha com o mesmo `(nf_chave_acesso, motivo)` nas últimas 24 h. **Trigger**: padrão `audit_*`.
+**Deduplicação** (revista em 22/10/2026): por destinatário. Numa transação com trava consultiva por `(nf_chave_acesso, motivo)`, o envio vai só a quem ainda não consta no `enviado_para` das linhas das últimas 24 h; sem ninguém pendente, `deduplicado`. A linha grava em `enviado_para` só os destinatários **entregues**: quem falhou fica pendente para a próxima tentativa. Duas chamadas simultâneas não enviam duas vezes. **Trigger**: padrão `audit_*`.
 
 ## 6. `stockbridge.fornecedor_exclusao`: empresa (0057, História 5)
 
@@ -145,15 +145,21 @@ interface PcCandidato {
   qtdPedidaKg: number;
   saldoKg: number;                     // nqtde - nqtderec
   precoUnit: number;                   // R$/kg do PC (nvalunit em KG, ou ÷ 1000 em T/TON)
+  precoNfKgComparado: number | null;   // R$/kg da NF na base usada com este PC: comercial ou valor do item, a mais próxima (D3)
   dtPrevisao: string | null;
-  etapa: '15' | '10';
+  etapa: string;                       // '15' ou '10'; outra etapa só aparece num vínculo do OMIE, com alerta
   dentroTolerancia: boolean;
   casaNumeroPedidoNf: boolean;         // n_num_ped_compra = cnumero
-  motivo: string;                      // "Número do pedido na NF", "Quantidade e preço compatíveis", "Preço 3,2% acima", …
+  motivo: string;                      // "Número do pedido na NF", "Quantidade e preço compatíveis", "Preço da NF 3,2% acima do PC", …
+  semDadosLocais: boolean;             // true só no vínculo do OMIE cujo PC não está na cópia: produto, saldo e preço desconhecidos
 }
 
 interface PcDoItem {
   vinculoOmie: PcCandidato | null;     // FR-000 (pode vir com alerta: PC sem saldo, etapa ≠ 15, PC-espelho)
+  vinculoOmieElegivel: boolean;        // false = aparece mas não pode ser mantido (PC-espelho); o operador troca ou a NF é recusada (FR-011a)
+  vinculosDivergentes: boolean;        // linhas do item vinculadas a PCs diferentes no OMIE: vinculoOmie null, alerta preenchido (com os números, se estão na cópia);
+                                       // qualquer escolha é troca (justificativa) e a base do 409 é, por linha, o vínculo lido no portão 1;
+                                       // sem PC possível: motivo vinculo_invalido (recusa nos dois modos, FR-011a)
   alertaVinculoOmie: string | null;
   candidatos: PcCandidato[];           // dentro da tolerância, ordenados (D3)
   outrosDoFornecedor: PcCandidato[];   // etapa 15 com saldo, fora da tolerância (escolha manual, FR-002a)
@@ -162,6 +168,9 @@ interface PcDoItem {
   semPcMotivo: string | null;          // FR-019, quando não há nada selecionável
   vinculadoNoOmie: { pcNumero: string } | null; // fiscal já feito: PC vinculado à vista (FR-021)
 }
+// pcNumero vem da cópia de PCs ou, se o PC já saiu dela (recebido por inteiro), do ledger do Atlas;
+// sem nenhum dos dois fica '' ("PC vinculado no OMIE"). Nunca do n_num_ped_compra, que é o xPed do
+// fornecedor (vem até em NF sem PC — confirmado pela sessão do n8n em 21/10/2026).
 
 interface ItemNfNacional {
   // …campos da 015/016: indice, descricaoFornecedor, quantidadeNfKg, valorUnitarioBrl, sequenciasRecebimento[], …
@@ -175,12 +184,15 @@ interface DetalheNfNacional {
   exigePc: boolean;                    // STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC (só relevante com fiscal pendente)
   estoqueLancadoPeloOmie: boolean;     // D7 — bloqueia o POST
   copiaPcsDefasada: boolean;           // D13 — cópia de PCs acima de STOCKBRIDGE_COPIA_PCS_MAX_MIN: sem sugestão confiável; POST com fiscal pendente dá 503
+  itensSemAvaliacaoPc: Array<{ indice: number; descricao: string }>; // pendentes que o Atlas não recebe (unidade não convertida) e sem PC no OMIE;
+                                       // modo bloquear: POST → 422 NF_SEM_PC (orienta o fiscal, sem aviso a compras); sem vínculo: seguem sem PC
+                                       // e compras é avisado. Só com o fluxo de PC (chave da 016 + fiscal pendente); senão []
 }
 ```
 
-Os candidatos são calculados por item agregado: quantidade = soma das linhas (`quantidadeNfKg`); preço = preço comercial unitário (`n_preco_unit` / `v_un_com`) convertido para R$/kg. Os vínculos do OMIE são lidos por sequência. Se as sequências de um mesmo item agregado apontarem para itens de PC diferentes, o item mostra `alertaVinculoOmie` e exige escolha (`escolha_necessaria`).
+Os candidatos são calculados por item agregado: quantidade = soma das linhas (`quantidadeNfKg`); preço em duas bases por kg, o comercial (`n_preco_unit` / `v_un_com`) e o valor do item (`v_total_item` / `v_prod`), valendo a mais próxima do PC (D3). Os vínculos do OMIE são lidos por sequência. Se as sequências de um mesmo item agregado apontarem para itens de PC diferentes, o item mostra `alertaVinculoOmie` e exige escolha (`escolha_necessaria`); a escolha troca todas as linhas pelo PC escolhido. PCs aprovados e com saldo de **outro cadastro com a mesma raiz de CNPJ** do fornecedor (filial × matriz) não são oferecidos; sem PC possível, o `semPcMotivo` e o aviso a compras os citam.
 
-`pcSituacao` da NF é o pior caso entre os itens a receber, nesta ordem: `sem_pc` > `aguardando_aprovacao` > `escolha_necessaria` (empate, só fora da tolerância ou vínculos divergentes) > `sugerido` > `vinculado_omie`. `nao_aplicavel` = fiscal já feito ou fiscal pelo Atlas desligado.
+`pcSituacao` da NF é o pior caso entre os itens a receber (pendentes e com unidade convertida — item bloqueado por unidade não conta; NF sem fornecedor cadastrado no OMIE é `nao_aplicavel`), nesta ordem: `sem_pc` > `aguardando_aprovacao` > `escolha_necessaria` (empate, só fora da tolerância ou vínculos divergentes) > `sugerido` > `vinculado_omie`. `nao_aplicavel` = fiscal já feito ou fiscal pelo Atlas desligado.
 
 ## 9. POST por-nf: corpo e resultado, extensões
 

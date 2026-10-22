@@ -4,22 +4,47 @@
 
 ## Pré-requisitos
 
-1. Migration `0056` aplicada. No UAT vivo vai por `psql -1 -f`, como a 0053.
+1. Migration `0056` aplicada, só o arquivo dela (o repo não usa o runner do drizzle-kit, e `scripts/apply-migrations-*.sh` reaplicam todas as migrations e não servem num banco em uso). Num banco de dev, `psql` local. No UAT vivo e em PROD, com o dono dos objetos `stockbridge.*`; o psql pede a senha:
+
+   ```bash
+   # UAT:  -h db.manager01.q2p.com.br -p 5437 -U postgres
+   # PROD: -h db.manager01.q2p.com.br -p 5432 -U "$PROD_USER"   (o PROD_USER da janela de go-live; em 22/10/2026 o dono é `postgres`)
+   PGOPTIONS='-c lock_timeout=5s' psql -h <host> -p <porta> -U <usuario> -d acxe_q2p \
+     -1 -q -v ON_ERROR_STOP=1 -f packages/db/migrations/0056_stockbridge_recebimento_nacional_pc.sql
+   echo "exit=$?"
+   ```
+
+   - Esperado: `exit=0` e nenhuma linha `ERROR`. `NOTICE` é normal: `trigger ... does not exist, skipping` na 1ª execução e, do bloco `DO` do começo da migration, `as 4 colunas de pedido do espelho ... já existem — tabela não alterada`. O bloco só faz o `ALTER` da tabela do espelho quando falta alguma das 4 colunas (em PROD já existem, e um `ALTER` mesmo sem efeito pediria `ACCESS EXCLUSIVE` na tabela que a fila lê ao vivo).
+   - `exit=3` ou `ERROR: canceling statement due to lock timeout`: nada foi aplicado (`-1` = tudo ou nada; sem `ON_ERROR_STOP=1` o psql desfaria tudo e sairia com 0). Achar quem segura o lock em `pg_stat_activity`, esperar a transação terminar e repetir o mesmo comando: a migration é idempotente.
+   - Conferir (somente leitura): os dois `to_regclass` não nulos, `colunas_ledger = 2`, `triggers = 2`.
+
+     ```sql
+     SELECT to_regclass('stockbridge.recebimento_fiscal_pc'),
+            to_regclass('stockbridge.nf_aviso_compras'),
+            (SELECT count(*) FROM information_schema.columns
+              WHERE table_schema = 'stockbridge' AND table_name = 'recebimento_fiscal'
+                AND column_name IN ('empresa', 'itens_vinculados')) AS colunas_ledger,
+            (SELECT count(*) FROM pg_trigger
+              WHERE tgname IN ('trg_audit_sb_recebimento_fiscal_pc', 'trg_audit_sb_nf_aviso_compras')
+                AND NOT tgisinternal) AS triggers;
+     ```
+
+   - Em PROD, esta conferência vem antes de subir a imagem (`docs/prod-golive-runbook.md`, seção "Ativação da feature 017", passo 1).
 2. Workflow "Q2P - Exporta Recebimentos NF-e" com as colunas de pedido (`contracts/espelhos-n8n.md` §1), validado na NF 7813.
 3. Cópia de PCs na Rev 1.5 (`qPJFEIY1PQ2LDQG2`), no ar desde 21/10/2026.
 4. Variáveis de ambiente:
    - `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED=true`, **só** com a imagem que contém a 017;
    - `STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC=true`;
-   - `STOCKBRIDGE_COMPRAS_EMAILS`, com os destinatários de compras;
+   - `STOCKBRIDGE_COMPRAS_EMAILS`, com os destinatários de compras, separados por vírgula (sem ponto e vírgula): valor inválido derruba a API no boot;
    - `STOCKBRIDGE_COPIA_PCS_MAX_MIN` (default 120), a idade máxima da cópia de PCs antes do alerta e do modo seguro (research D13). No UAT, calibrar pela frequência com que a cópia chega lá (o espelho de recebimentos usa 360): com o limite curto demais, o modo seguro recusa toda NF com fiscal pendente.
 5. Teste do vínculo novo (research D2) feito com NF real e autorização do usuário **antes** de ligar a chave em PROD.
 6. No UAT (`OMIE_MODE=leitura`): as escritas são simuladas. A sombra precisa refletir a associação e o `nQtdeRec` do PC.
 
-> **Ordem de deploy em PROD**: imagem com a 017 → 0056 → n8n com as colunas → teste D2 → religar `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED`. Religar a chave com uma imagem anterior à 017 volta o `IGNORAR`, que é o problema original.
+> **Ordem de deploy em PROD**: 0056 → imagem com a 017 → teste D2 → religar `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED`. A 0056 vem antes da imagem: é aditiva e convive com a imagem atual, e a 017 lê as colunas novas (sem elas, a fila responde 503). O n8n com as colunas está no ar desde 21/10/2026. Religar a chave com uma imagem anterior à 017 volta o `IGNORAR`, que é o problema original. Passo a passo em `docs/prod-golive-runbook.md`, seção "Ativação da feature 017".
 
 ## Cenário 1 — Item com vínculo do OMIE (História 1 e 2, P1)
 
-Base: o caso da NF 7813 × PC 304.
+Base: uma NF de teste (UAT, sombra do modo leitura, ou mock) com o item já vinculado a um PC aprovado com saldo — o modelo é o caso da NF 7813 × PC 304, que em PROD já foi concluída no teste de 21/10/2026 e não serve mais como NF pendente.
 
 1. Abrir a fila: a NF aparece com o selo "PC vinculado no OMIE".
 2. Abrir o detalhe: o item mostra o PC 304 como vínculo do OMIE e pré-selecionado.
@@ -62,7 +87,7 @@ Base: o caso da NF 7813 × PC 304.
 1. Desligar `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED` (contenção).
 2. Usar uma NF concluída no portal **sem** "não movimentar estoque". No UAT, injetar no espelho `c_recebido='S'`, `c_ignorar_item='N'`, `c_nao_gerar_mov_estoque='N'`.
 3. O detalhe mostra o aviso, e o POST responde `409 ESTOQUE_JA_LANCADO_PELO_OMIE` sem gravar nada.
-4. NF concluída no portal **com** "não movimentar estoque" e vínculo: o detalhe mostra "PC 304 vinculado no OMIE" e o recebimento faz só o estoque.
+4. NF concluída no portal **com** "não movimentar estoque" e vínculo: o detalhe mostra o selo de PC vinculado no OMIE — com o número quando o PC ainda está na cópia ou foi vinculado pelo Atlas; a NF 7813 mostra "PC vinculado no OMIE" sem número, porque o PC 304 já saiu da cópia — e o recebimento faz só o estoque.
 5. Com a chave ligada: NF que a tela mostrava com fiscal pendente e foi concluída no portal **sem** "não movimentar estoque" antes da confirmação (no UAT, mock de `ConsultarRecebimento` com `cRecebido='S'` e o item sem "não movimentar estoque"): o POST responde `409 ESTOQUE_JA_LANCADO_PELO_OMIE` sem gravar nada (ramo `ja_concluido`, research D7).
 
 ## Cenário 6 — Falhas e repetições (História 4)
