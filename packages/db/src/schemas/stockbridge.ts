@@ -523,7 +523,16 @@ export const baixaPedidoQ2p = stockbridgeSchema.table(
 // como "fiscal ja feito" antes de o espelho refletir; 'falha' fica como
 // historico. erro_omie_* e tecnico — nunca vai a UI (ACXEGDP-313).
 export type RecebimentoFiscalStatus = 'em_andamento' | 'concluido' | 'ja_concluido' | 'falha';
-export type RecebimentoFiscalPasso = 'consultar' | 'editar' | 'ignorar' | 'concluir' | 'reconsultar';
+/** 'consultar_pc' e 'associar' entraram com a feature 017 (migration 0056). */
+export type RecebimentoFiscalPasso =
+  | 'consultar'
+  | 'consultar_pc'
+  | 'associar'
+  | 'editar'
+  | 'ignorar'
+  | 'concluir'
+  | 'reconsultar';
+export type EmpresaRecebimento = 'q2p' | 'acxe';
 
 export const recebimentoFiscal = stockbridgeSchema.table(
   'recebimento_fiscal',
@@ -540,6 +549,9 @@ export const recebimentoFiscal = stockbridgeSchema.table(
     erroOmieCodigo: varchar('erro_omie_codigo', { length: 60 }),
     erroOmieMensagem: text('erro_omie_mensagem'),
     itensTotal: integer('itens_total'),
+    /** Feature 017 (0056): empresa da NF e itens que terminaram vinculados a PC (null = receita da 016). */
+    empresa: varchar('empresa', { length: 4 }).notNull().default('q2p').$type<EmpresaRecebimento>(),
+    itensVinculados: integer('itens_vinculados'),
     confirmadoPor: uuid('confirmado_por').notNull().references(() => users.id),
     iniciadoEm: timestamp('iniciado_em', { withTimezone: true }).notNull().defaultNow(),
     finalizadoEm: timestamp('finalizado_em', { withTimezone: true }),
@@ -552,6 +564,104 @@ export const recebimentoFiscal = stockbridgeSchema.table(
       .where(sql`status IN ('em_andamento', 'concluido', 'ja_concluido')`),
     index('recebimento_fiscal_status_idx').on(t.status, t.iniciadoEm),
   ],
+);
+
+// ── Vínculo item da NF -> item de PC (feature 017, migration 0056) ────────────
+// Uma linha por item da NF e por tentativa do fiscal (filha do ledger acima).
+// confirmado -> associado -> concluido | falha; o vínculo do OMIE mantido vai de
+// confirmado direto a associado. As linhas confirmado/associado de outra NF,
+// iniciadas há menos de 15 min, são a reserva de saldo do item de PC (research
+// D4). Justificativa obrigatória por CHECK fora da tolerância, na escolha manual
+// e na troca do vínculo do OMIE (data-model §4). erro_omie_* nunca vai à UI.
+export type RecebimentoFiscalPcStatus = 'confirmado' | 'associado' | 'concluido' | 'falha';
+export type RecebimentoFiscalPcOrigem = 'omie' | 'sugestao' | 'manual';
+
+/** Retrato do que foi oferecido ao operador para o item (jsonb `candidatos`). */
+export interface RecebimentoFiscalPcCandidato {
+  nCodPed: number;
+  nCodItem: number;
+  pcNumero: string;
+  saldoKg: number;
+  precoUnit: number;
+  motivo: string;
+  dentroTolerancia: boolean;
+}
+
+export const recebimentoFiscalPc = stockbridgeSchema.table(
+  'recebimento_fiscal_pc',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    recebimentoFiscalId: uuid('recebimento_fiscal_id')
+      .notNull()
+      .references(() => recebimentoFiscal.id),
+    empresa: varchar('empresa', { length: 4 }).notNull().default('q2p').$type<EmpresaRecebimento>(),
+    nfChaveAcesso: varchar('nf_chave_acesso', { length: 44 }).notNull(),
+    nSequencia: integer('n_sequencia').notNull(),
+    origem: varchar('origem', { length: 10 }).notNull().$type<RecebimentoFiscalPcOrigem>(),
+    nCodPed: bigint('n_cod_ped', { mode: 'number' }).notNull(),
+    nCodItemPed: bigint('n_cod_item_ped', { mode: 'number' }).notNull(),
+    pcNumero: varchar('pc_numero', { length: 50 }).notNull(),
+    nCodPedOmieAnterior: bigint('n_cod_ped_omie_anterior', { mode: 'number' }),
+    nCodItemPedOmieAnterior: bigint('n_cod_item_ped_omie_anterior', { mode: 'number' }),
+    dentroTolerancia: boolean('dentro_tolerancia').notNull(),
+    justificativa: text('justificativa'),
+    candidatos: jsonb('candidatos').notNull().default([]).$type<RecebimentoFiscalPcCandidato[]>(),
+    qtdNfKg: numeric('qtd_nf_kg', { precision: 14, scale: 3 }).notNull(),
+    precoNf: numeric('preco_nf', { precision: 14, scale: 6 }).notNull(),
+    saldoPcKgLido: numeric('saldo_pc_kg_lido', { precision: 14, scale: 3 }),
+    precoPcLido: numeric('preco_pc_lido', { precision: 14, scale: 6 }),
+    etapaPcLida: varchar('etapa_pc_lida', { length: 2 }),
+    status: varchar('status', { length: 12 }).notNull().$type<RecebimentoFiscalPcStatus>(),
+    erroOmieCodigo: varchar('erro_omie_codigo', { length: 60 }),
+    erroOmieMensagem: text('erro_omie_mensagem'),
+    confirmadoPor: uuid('confirmado_por').notNull().references(() => users.id),
+    confirmadoEm: timestamp('confirmado_em', { withTimezone: true }).notNull().defaultNow(),
+    concluidoEm: timestamp('concluido_em', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('recebimento_fiscal_pc_item_vivo_uq')
+      .on(t.nfChaveAcesso, t.nSequencia)
+      .where(sql`status IN ('confirmado', 'associado', 'concluido')`),
+    index('recebimento_fiscal_pc_item_pc_concluido_idx').on(t.nCodItemPed, t.concluidoEm),
+    index('recebimento_fiscal_pc_reserva_idx')
+      .on(t.nCodItemPed)
+      .where(sql`status IN ('confirmado', 'associado')`),
+    index('recebimento_fiscal_pc_ledger_idx').on(t.recebimentoFiscalId),
+  ],
+);
+
+// ── Aviso a compras sobre NF sem PC (feature 017, migration 0056) ─────────────
+// Um aviso por (NF, motivo, destinatário) a cada 24 h — o serviço consulta esta
+// tabela antes de enviar (research D6); quem falhou fica pendente.
+export type MotivoAvisoCompras = 'sem_pc' | 'pc_aguardando_aprovacao' | 'recebida_sem_vinculo';
+
+export interface NfAvisoComprasItem {
+  nSequencia: number | null;
+  descricao: string;
+  /** null = unidade que o Atlas nao converte para kg (ver quantidadeTexto) */
+  qtdKg: number | null;
+  precoUnit: number | null;
+  /** quantidade nativa da NF ("40 UN") quando qtdKg e null */
+  quantidadeTexto?: string | null;
+}
+
+export const nfAvisoCompras = stockbridgeSchema.table(
+  'nf_aviso_compras',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    empresa: varchar('empresa', { length: 4 }).notNull().default('q2p').$type<EmpresaRecebimento>(),
+    nfChaveAcesso: varchar('nf_chave_acesso', { length: 44 }).notNull(),
+    notaFiscal: varchar('nota_fiscal', { length: 50 }),
+    fornecedorNome: varchar('fornecedor_nome', { length: 255 }),
+    motivo: varchar('motivo', { length: 30 }).notNull().$type<MotivoAvisoCompras>(),
+    itens: jsonb('itens').notNull().$type<NfAvisoComprasItem[]>(),
+    enviadoPara: text('enviado_para').notNull(),
+    enviadoEm: timestamp('enviado_em', { withTimezone: true }).notNull().defaultNow(),
+    disparadoPor: uuid('disparado_por').references(() => users.id),
+  },
+  (t) => [index('nf_aviso_compras_dedup_idx').on(t.nfChaveAcesso, t.motivo, t.enviadoEm)],
 );
 
 // ── Dispensa de NF pelo gestor (feature 016, migration 0053) ──────────────────
@@ -620,3 +730,7 @@ export type RecebimentoFiscal = typeof recebimentoFiscal.$inferSelect;
 export type NewRecebimentoFiscal = typeof recebimentoFiscal.$inferInsert;
 export type NfDispensa = typeof nfDispensa.$inferSelect;
 export type NewNfDispensa = typeof nfDispensa.$inferInsert;
+export type RecebimentoFiscalPc = typeof recebimentoFiscalPc.$inferSelect;
+export type NewRecebimentoFiscalPc = typeof recebimentoFiscalPc.$inferInsert;
+export type NfAvisoCompras = typeof nfAvisoCompras.$inferSelect;
+export type NewNfAvisoCompras = typeof nfAvisoCompras.$inferInsert;

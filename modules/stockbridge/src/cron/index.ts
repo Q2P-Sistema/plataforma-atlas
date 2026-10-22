@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import { createLogger } from '@atlas/core';
 import { processarAlertasComodatoVencido } from '../services/cron-comodato.service.js';
 import { reprocessarBaixasAguardandoVinculo } from '../services/baixa-pedido.service.js';
-import { verificarEspelhoRecebimentos } from '../services/alerta-espelho-recebimentos.service.js';
+import { verificarCopiaPcs, verificarEspelhoRecebimentos } from '../services/alerta-espelho-recebimentos.service.js';
 
 const logger = createLogger('stockbridge:cron');
 
@@ -54,13 +54,17 @@ export function iniciarCronsStockBridge(): void {
 
   // Feature 016: alerta de espelho de recebimentos de NF-e defasado (fonte "fiscal
   // pendente" da fila nacional). Em :05/:35 — depois das rodadas do n8n (:23/:53).
-  // Com STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED desligada, nao faz nada.
+  // Feature 017 (D13): o mesmo job vigia a copia de pedidos de compra, que decide a
+  // sugestao de PC. Com STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED desligada, nao faz nada.
+  // O reaviso de 6 h conta a partir da ENTREGA do e-mail: se o envio falhar, o desfecho e
+  // 'falha' e a rodada seguinte (30 min depois) tenta de novo.
   cron.schedule(
     '5,35 * * * *',
     () => {
       verificarEspelhoRecebimentos().catch((err) => logger.error({ err }, 'Falha ao verificar o espelho de recebimentos de NF-e'));
+      verificarCopiaPcs().catch((err) => logger.error({ err }, 'Falha ao verificar a cópia de pedidos de compra'));
     },
     { timezone: 'America/Sao_Paulo' },
   );
-  logger.info('Cron registrado: alerta-espelho-recebimentos (5,35 * * * * BR)');
+  logger.info('Cron registrado: alerta-espelho-recebimentos + cópia de PCs (5,35 * * * * BR)');
 }

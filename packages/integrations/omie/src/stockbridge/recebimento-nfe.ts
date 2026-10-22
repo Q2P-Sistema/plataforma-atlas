@@ -1,11 +1,14 @@
 import { callOmie, getOmieMode, logEscritaSimulada, type OmieCnpj } from '../client.js';
 import {
+  leituraRecentePedidoCompra,
   leituraRecenteRecebimentoNfe,
   lembrarLeituraRecebimentoNfe,
   mockAlterarRecebimentoNfeItens,
   mockConcluirRecebimentoNfe,
   mockConsultarRecebimentoNfe,
+  registrarSombraPedidoCompra,
   registrarSombraRecebimentoNfe,
+  sombraPedidoCompra,
   sombraRecebimentoNfe,
 } from './mock.js';
 
@@ -22,6 +25,13 @@ import {
  *    recebimento FISCAL sem movimentar estoque, reproduzindo o "Ignorar" da
  *    tela: EDITAR (cNaoGerarMovEstoque=S, cNaoGerarFinanceiro=N) -> IGNORAR ->
  *    Concluir (cEtapa 60). Testado em producao na NF 6842 (02/10/2026).
+ *  - Feature 017 (ACXEGDP-437), dentro da mesma excecao: a acao
+ *    `ASSOCIAR-PEDIDO` de `AlterarRecebimento` vincula o item a um item de
+ *    pedido de compra (nIdPedidoExistente/nIdItPedidoExistente). Item com PC
+ *    nunca recebe IGNORAR (que desfaz o vinculo): a receita passa a ser
+ *    [ASSOCIAR-PEDIDO ->] EDITAR -> Concluir. Item ja vinculado + EDITAR +
+ *    Concluir validado na NF 7813 (21/10/2026); o OMIE atualiza sozinho o
+ *    nQtdeRec do PC ao concluir.
  *
  * Gotchas medidos:
  *  - IGNORAR com `itensAjustes` no mesmo item devolve SOAP-ENV:Client-151 e nao
@@ -53,6 +63,20 @@ export interface ItemRecebimentoNfe {
   cAdicionarNovo: SimNao | null;
   nIdItem: number | null;
   nIdProduto: number | null;
+  /**
+   * Item de pedido de compra vinculado (itensCabec.nIdPedido). null = sem
+   * vinculo (o OMIE devolve 0 ou nada).
+   */
+  nIdPedido: number | null;
+  /**
+   * itensCabec.nIdItPedido, so quando ha nIdPedido: sem vinculo o OMIE repete
+   * o nIdItem neste campo (NF 7736), entao o parser devolve null.
+   */
+  nIdItPedido: number | null;
+  /** itensInfoAdic.nNumPedCompra — numero do pedido informado pelo fornecedor na NF. */
+  nNumPedCompra: string | null;
+  /** itensInfoAdic.cNumItPedCompra — item do pedido informado na NF. */
+  cNumItPedCompra: number | null;
   cNaoGerarMovEstoque: SimNao | null;
   cNaoGerarFinanceiro: SimNao | null;
 }
@@ -86,7 +110,7 @@ export interface RecebimentoNfeConsultado {
 
 export type RecebimentoNfeRef = { nIdReceb: number } | { cChaveNfe: string };
 
-export type AcaoItemRecebimento = 'EDITAR' | 'IGNORAR';
+export type AcaoItemRecebimento = 'EDITAR' | 'IGNORAR' | 'ASSOCIAR-PEDIDO';
 
 export interface AjustesItemRecebimento {
   cNaoGerarMovEstoque?: SimNao;
@@ -96,8 +120,11 @@ export interface AjustesItemRecebimento {
 export interface ItemRecebimentoEditar {
   nSequencia: number;
   cAcao: AcaoItemRecebimento;
-  /** So com cAcao='EDITAR' — com 'IGNORAR' o OMIE recusa (erro 151). */
+  /** So com cAcao='EDITAR' — com outra acao o OMIE recusa (erro 151). */
   itensAjustes?: AjustesItemRecebimento;
+  /** Obrigatorios (e exclusivos) do 'ASSOCIAR-PEDIDO': nCodPed e nCodItem do item de PC. */
+  nIdPedidoExistente?: number;
+  nIdItPedidoExistente?: number;
 }
 
 export interface AlterarRecebimentoNfeItensInput {
@@ -120,7 +147,11 @@ export interface RecebimentoNfeStatusResponse {
 type RawRecebimento = {
   cabec?: Record<string, unknown>;
   infoCadastro?: Record<string, unknown>;
-  itensRecebimento?: Array<{ itensCabec?: Record<string, unknown>; itensAjustes?: Record<string, unknown> }>;
+  itensRecebimento?: Array<{
+    itensCabec?: Record<string, unknown>;
+    itensAjustes?: Record<string, unknown>;
+    itensInfoAdic?: Record<string, unknown>;
+  }>;
 };
 
 const str = (v: unknown): string | null => (v == null || v === '' ? null : String(v));
@@ -151,6 +182,9 @@ export function parseRecebimentoNfeConsultado(raw: RawRecebimento): RecebimentoN
   const itens: ItemRecebimentoNfe[] = (raw.itensRecebimento ?? []).map((it) => {
     const ic = it.itensCabec ?? {};
     const aj = it.itensAjustes ?? {};
+    const ad = it.itensInfoAdic ?? {};
+    const nIdPedido = num(ic.nIdPedido);
+    const temPedido = nIdPedido != null && nIdPedido > 0;
     return {
       nSequencia: num(ic.nSequencia) ?? 0,
       cDescricaoProduto: str(ic.cDescricaoProduto) ?? '',
@@ -167,6 +201,10 @@ export function parseRecebimentoNfeConsultado(raw: RawRecebimento): RecebimentoN
       cAdicionarNovo: simNao(ic.cAdicionarNovo),
       nIdItem: num(ic.nIdItem),
       nIdProduto: num(ic.nIdProduto),
+      nIdPedido: temPedido ? nIdPedido : null,
+      nIdItPedido: temPedido ? num(ic.nIdItPedido) : null,
+      nNumPedCompra: str(typeof ad.nNumPedCompra === 'string' ? ad.nNumPedCompra.trim() : ad.nNumPedCompra),
+      cNumItPedCompra: num(ad.cNumItPedCompra),
       cNaoGerarMovEstoque: simNao(aj.cNaoGerarMovEstoque),
       cNaoGerarFinanceiro: simNao(aj.cNaoGerarFinanceiro),
     };
@@ -226,11 +264,25 @@ export async function consultarRecebimentoNfe(cnpj: OmieCnpj, ref: RecebimentoNf
  */
 export function validarItensRecebimentoEditar(itens: ItemRecebimentoEditar[]): void {
   if (itens.length === 0) throw new Error('alterarRecebimentoNfeItens exige ao menos um item');
+  const idValido = (v: number | undefined): boolean => v != null && Number.isInteger(v) && v > 0;
   for (const it of itens) {
     if (it.cAcao !== 'EDITAR' && it.itensAjustes !== undefined) {
       throw new Error(
         `alterarRecebimentoNfeItens: item ${it.nSequencia} com cAcao='${it.cAcao}' nao pode levar itensAjustes ` +
-          '(o OMIE recusa com SOAP-ENV:Client-151). Faca EDITAR com ajustes e depois IGNORAR sem ajustes.',
+          '(o OMIE recusa com SOAP-ENV:Client-151). Faca EDITAR com ajustes e a outra acao numa chamada separada.',
+      );
+    }
+    if (it.cAcao === 'ASSOCIAR-PEDIDO') {
+      if (!idValido(it.nIdPedidoExistente) || !idValido(it.nIdItPedidoExistente)) {
+        throw new Error(
+          `alterarRecebimentoNfeItens: item ${it.nSequencia} com cAcao='ASSOCIAR-PEDIDO' exige ` +
+            'nIdPedidoExistente e nIdItPedidoExistente positivos.',
+        );
+      }
+    } else if (it.nIdPedidoExistente !== undefined || it.nIdItPedidoExistente !== undefined) {
+      throw new Error(
+        `alterarRecebimentoNfeItens: item ${it.nSequencia} com cAcao='${it.cAcao}' nao pode levar ` +
+          'nIdPedidoExistente/nIdItPedidoExistente (so com ASSOCIAR-PEDIDO).',
       );
     }
   }
@@ -244,8 +296,31 @@ async function garantirSombraRecebimento(cnpj: OmieCnpj, nIdReceb: number): Prom
 }
 
 /**
- * Altera os itens de um recebimento (cAcao EDITAR | IGNORAR). Escrita — SEM retry.
- * Endpoint produtos/recebimentonfe/ -> AlterarRecebimento.
+ * Modo leitura: ao concluir, o OMIE real soma a quantidade do item no `nQtdeRec` do
+ * item de PC vinculado (NF 7813). Para a sombra refletir isso, o PC precisa estar
+ * nela: ele nasce da leitura real RECENTE do PC (o fluxo le o PC antes de escrever —
+ * ver `leituraRecentePedidoCompra`). NUNCA consulta o OMIE daqui: reler o PC com o
+ * mesmo corpo dispararia a trava de consumo redundante (que vale tambem para a chave
+ * do PROD). Sem sombra e sem leitura recente nao ha o que refletir: o PC segue o do
+ * OMIE real.
+ */
+function semearSombraPedidosVinculados(cnpj: OmieCnpj, nIdReceb: number): void {
+  const rec = sombraRecebimentoNfe(cnpj, { nIdReceb });
+  // Recebimento ja concluido: a simulacao vai recusar o Concluir, nao ha PC a refletir.
+  if (!rec || rec.cRecebido === 'S') return;
+  for (const it of rec.itens) {
+    // Mesmos itens que mockConcluirRecebimentoNfe atualiza no PC.
+    if (it.cIgnorarItem === 'S' || it.nIdPedido == null || it.nIdItPedido == null) continue;
+    const ref = { nCodPed: it.nIdPedido };
+    if (sombraPedidoCompra(cnpj, ref)) continue;
+    const lido = leituraRecentePedidoCompra(cnpj, ref);
+    if (lido) registrarSombraPedidoCompra(cnpj, lido);
+  }
+}
+
+/**
+ * Altera os itens de um recebimento (cAcao EDITAR | IGNORAR | ASSOCIAR-PEDIDO).
+ * Escrita — SEM retry. Endpoint produtos/recebimentonfe/ -> AlterarRecebimento.
  */
 export async function alterarRecebimentoNfeItens(
   cnpj: OmieCnpj,
@@ -260,14 +335,25 @@ export async function alterarRecebimentoNfeItens(
     await garantirSombraRecebimento(cnpj, input.nIdReceb);
     logEscritaSimulada(cnpj, 'AlterarRecebimento', {
       nIdReceb: input.nIdReceb,
-      acoes: input.itens.map((it) => `${it.nSequencia}:${it.cAcao}`).join(','),
+      acoes: input.itens
+        .map((it) =>
+          it.cAcao === 'ASSOCIAR-PEDIDO'
+            ? `${it.nSequencia}:${it.cAcao}(${it.nIdPedidoExistente}/${it.nIdItPedidoExistente})`
+            : `${it.nSequencia}:${it.cAcao}`,
+        )
+        .join(','),
     });
     return mockAlterarRecebimentoNfeItens(cnpj, input);
   }
   const params = {
     ide: { nIdReceb: input.nIdReceb },
     itensRecebimentoEditar: input.itens.map((it) => {
-      const item: Record<string, unknown> = { itensIde: { nSequencia: it.nSequencia, cAcao: it.cAcao } };
+      const ide: Record<string, unknown> = { nSequencia: it.nSequencia, cAcao: it.cAcao };
+      if (it.cAcao === 'ASSOCIAR-PEDIDO') {
+        ide.nIdPedidoExistente = it.nIdPedidoExistente;
+        ide.nIdItPedidoExistente = it.nIdItPedidoExistente;
+      }
+      const item: Record<string, unknown> = { itensIde: ide };
       if (it.itensAjustes !== undefined) item.itensAjustes = it.itensAjustes;
       return item;
     }),
@@ -298,6 +384,7 @@ export async function concluirRecebimentoNfe(
   }
   if (modo === 'leitura') {
     await garantirSombraRecebimento(cnpj, input.nIdReceb);
+    semearSombraPedidosVinculados(cnpj, input.nIdReceb);
     logEscritaSimulada(cnpj, 'ConcluirRecebimento', { nIdReceb: input.nIdReceb, cEtapa: input.cEtapa ?? '60' });
     return mockConcluirRecebimentoNfe(cnpj, input);
   }

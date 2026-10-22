@@ -363,12 +363,15 @@ export async function getCockpit(filtros: CockpitFiltros = {}): Promise<CockpitD
             ped.produto_codigo_acxe,
             GREATEST(ped.qtde_pedido - COALESCE(rec.recebido_kg, 0), 0) AS saldo_kg
           FROM (
-            -- qtde do pedido por (mapa, produto), somando múltiplas linhas do mesmo produto
+            -- qtde do pedido por (mapa, produto), somando múltiplas linhas do mesmo produto.
+            -- Feature 017 (ACXEGDP-437): é o SALDO do PC (nqtde - nqtderec; NULL conta 0), não a
+            -- quantidade cheia — a cópia de PCs (n8n Rev 1.5) mantém PC recebido em parte, e o
+            -- já recebido no PC contaria como pendente. PC sem saldo (> 0) fica de fora.
             SELECT mapa.id AS mapa_id, pc.ncodprod AS produto_codigo_acxe,
-                   SUM(pc.nqtde)::numeric AS qtde_pedido
+                   SUM(pc.nqtde - COALESCE(pc.nqtderec, 0))::numeric AS qtde_pedido
             FROM stockbridge.nf_pedido_mapa mapa
             JOIN public."tbl_pedidosCompras_ACXE" pc ON pc.cnumero = mapa.pedido_acxe_omie
-            WHERE mapa.ativo = true AND pc.nqtde > 0 AND $4::bool = true
+            WHERE mapa.ativo = true AND (pc.nqtde - COALESCE(pc.nqtderec, 0)) > 0 AND $4::bool = true
             GROUP BY mapa.id, pc.ncodprod
           ) ped
           LEFT JOIN (

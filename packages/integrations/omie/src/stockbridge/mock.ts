@@ -360,9 +360,17 @@ interface MockRecebimentoRegistrado {
 /**
  * Recebimentos de NF-e em memoria: ConsultarRecebimento le daqui, AlterarRecebimento
  * aplica cAcao/ajustes nos itens e ConcluirRecebimento move 40 -> 60 — o ciclo
- * consultar -> EDITAR -> IGNORAR -> concluir -> consultar e verificavel sem OMIE.
- * Faults reproduzem os do OMIE real (erro 151 ao juntar IGNORAR + ajustes;
- * recusa de alterar/concluir recebimento ja concluido).
+ * consultar -> [ASSOCIAR-PEDIDO ->] EDITAR -> [IGNORAR ->] concluir -> consultar e
+ * verificavel sem OMIE. Faults reproduzem os do OMIE real (erro 151 ao juntar
+ * IGNORAR/ASSOCIAR-PEDIDO + ajustes; recusa de alterar/concluir recebimento ja
+ * concluido; ASSOCIAR-PEDIDO so com o recebimento aberto na etapa 40).
+ *
+ * Vinculo item x pedido de compra (feature 017, ACXEGDP-437 — testes em PROD nas
+ * NFs 7813 e 7736, 21/10/2026):
+ *  - ASSOCIAR-PEDIDO grava o vinculo (substitui o anterior) e EDITAR o preserva;
+ *  - IGNORAR DESFAZ o vinculo (nIdPedido/nIdItPedido voltam a null);
+ *  - ConcluirRecebimento soma a quantidade do item no nQtdeRec do item de PC
+ *    vinculado — o OMIE faz isso sozinho; o PC vive no store de pedidos acima.
  */
 const recebimentosRegistrados: MockRecebimentoRegistrado[] = [];
 
@@ -469,6 +477,10 @@ export function mockConsultarRecebimentoNfe(cnpj: OmieCnpj, ref: RecebimentoNfeR
         cAdicionarNovo: 'S',
         nIdItem: 0,
         nIdProduto: 0,
+        nIdPedido: null,
+        nIdItPedido: null,
+        nNumPedCompra: null,
+        cNumItPedCompra: null,
         cNaoGerarMovEstoque: 'N',
         cNaoGerarFinanceiro: 'N',
       },
@@ -489,7 +501,9 @@ export function mockAlterarRecebimentoNfeItens(
   if (found.rec.cRecebido === 'S') {
     throw faultRecebimento(cnpj, 'AlterarRecebimento', 'SOAP-ENV:Client-5002', 'ERROR: O recebimento ja esta concluido e nao pode ser alterado! (mock)');
   }
-  for (const it of input.itens) {
+  // Valida a chamada inteira ANTES de aplicar qualquer item: chamada recusada nao
+  // deixa o recebimento pela metade (o mock e atomico por chamada).
+  const alvos = input.itens.map((it) => {
     if (it.cAcao !== 'EDITAR' && it.itensAjustes !== undefined) {
       throw faultRecebimento(
         cnpj,
@@ -502,16 +516,54 @@ export function mockAlterarRecebimentoNfeItens(
     if (!item) {
       throw faultRecebimento(cnpj, 'AlterarRecebimento', 'SOAP-ENV:Client-5003', `ERROR: Item [nSequencia=${it.nSequencia}] nao encontrado no recebimento! (mock)`);
     }
+    if (it.cAcao === 'ASSOCIAR-PEDIDO') {
+      // So faz sentido com o recebimento aberto na caixa "Recebimento de NF-e" (etapa 40, nao recebido).
+      if (found.rec.cEtapa !== '40') {
+        throw faultRecebimento(
+          cnpj,
+          'AlterarRecebimento',
+          'SOAP-ENV:Client-5005',
+          `ERROR: A acao ASSOCIAR-PEDIDO so e permitida com o recebimento aberto na etapa 40 (etapa atual: ${found.rec.cEtapa || 'desconhecida'}) - tag [nSequencia=${it.nSequencia}]! (mock)`,
+        );
+      }
+      if (it.nIdPedidoExistente == null || it.nIdItPedidoExistente == null) {
+        throw faultRecebimento(
+          cnpj,
+          'AlterarRecebimento',
+          'SOAP-ENV:Client-5006',
+          `ERROR: As tags [nIdPedidoExistente] e [nIdItPedidoExistente] sao obrigatorias com cAcao 'ASSOCIAR-PEDIDO' - tag [nSequencia=${it.nSequencia}]! (mock)`,
+        );
+      }
+    }
+    return { it, item };
+  });
+
+  for (const { it, item } of alvos) {
     if (it.cAcao === 'EDITAR') {
+      // EDITAR preserva o vinculo com o PC (NF 7813).
       if (it.itensAjustes?.cNaoGerarMovEstoque) item.cNaoGerarMovEstoque = it.itensAjustes.cNaoGerarMovEstoque;
       if (it.itensAjustes?.cNaoGerarFinanceiro) item.cNaoGerarFinanceiro = it.itensAjustes.cNaoGerarFinanceiro;
+    } else if (it.cAcao === 'ASSOCIAR-PEDIDO') {
+      // Substitui o vinculo anterior, se houver.
+      item.cAssociarExistente = 'S';
+      item.cIgnorarItem = 'N';
+      item.nIdPedido = it.nIdPedidoExistente ?? null;
+      item.nIdItPedido = it.nIdItPedidoExistente ?? null;
     } else {
+      // IGNORAR desfaz o vinculo com o PC (NF 7736).
       item.cIgnorarItem = 'S';
       item.cAssociarExistente = 'N';
       item.nIdProduto = 0;
+      item.nIdPedido = null;
+      item.nIdItPedido = null;
     }
   }
   return { nIdReceb: found.rec.nIdReceb, cCodStatus: '0', cDescStatus: 'Recebimento alterado com sucesso!' };
+}
+
+/** Soma de quantidades sem o ruido de ponto flutuante (0.1 + 0.2). */
+function somarQtde(a: number, b: number): number {
+  return Math.round((a + b) * 1e6) / 1e6;
 }
 
 export function mockConcluirRecebimentoNfe(
@@ -533,6 +585,17 @@ export function mockConcluirRecebimentoNfe(
   found.rec.hRec = now.toTimeString().slice(0, 8);
   for (const it of found.rec.itens) {
     if (it.nIdItem === 0 || it.nIdItem == null) it.nIdItem = Number(nextMockId());
+  }
+  // Item vinculado a PC: o OMIE atualiza sozinho o nQtdeRec do item do pedido ao
+  // concluir (NF 7813: 0 -> 18.000). Item ignorado nao conta; PC que o mock nao
+  // conhece (nao injetado nem na sombra do modo leitura) nao e criado nem tocado.
+  // O mock nao modela estoque — concluir nunca mexe nele.
+  for (const it of found.rec.itens) {
+    if (it.cIgnorarItem === 'S' || it.nIdPedido == null || it.nIdItPedido == null) continue;
+    const itemPc = acharPedidoMock(cnpj, { nCodPed: it.nIdPedido })?.pedido.produtos.find(
+      (p) => p.nCodItem === it.nIdItPedido,
+    );
+    if (itemPc) itemPc.nQtdeRec = somarQtde(itemPc.nQtdeRec ?? 0, it.nQtdeNFe);
   }
   return { nIdReceb: found.rec.nIdReceb, cCodStatus: '0', cDescStatus: 'Recebimento concluído com sucesso!' };
 }

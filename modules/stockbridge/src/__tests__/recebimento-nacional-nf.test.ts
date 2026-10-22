@@ -79,7 +79,15 @@ vi.mock('../services/correlacao-produto.service.js', () => ({
 const detalheMock = vi.fn();
 vi.mock('../services/fila-nacional.service.js', async () => {
   const real = await vi.importActual<typeof import('../services/fila-nacional.service.js')>('../services/fila-nacional.service.js');
-  return { ...real, getDetalheNfNacional: (c: string) => detalheMock(c) };
+  return {
+    ...real,
+    getDetalheNfNacional: (c: string) => detalheMock(c),
+    // 017: o POST usa o detalhe com o bloco interno do PC — neutro aqui (NF no espelho, sem PC)
+    montarDetalheNfNacional: async (c: string) => ({
+      detalhe: await detalheMock(c),
+      interno: { fornecedorCodigo: null, espelhoConfirmaConclusao: true, pcPorIndice: new Map() },
+    }),
+  };
 });
 
 import {
@@ -120,7 +128,7 @@ function detalhe(itens: ItemNfNacional[]): DetalheNfNacional {
     dtEmissao: '2026-08-06', diasDesdeEmissao: 42, cfop: '1.102',
     valorTotalBrl: itens.reduce((s, i) => s + i.valorTotalItemBrl, 0), itens, linhasForaDoRecorte: 0,
     // feature 016: a fixture da 015 representa NF com fiscal ja feito (fonte do espelho de NF)
-    fiscal: 'concluido', nIdReceb: null, dispensavel: false, valorNotaBrl: itens.reduce((s, i) => s + i.valorTotalItemBrl, 0),
+    fiscal: 'concluido', nIdReceb: null, dispensavel: false, valorNotaBrl: itens.reduce((s, i) => s + i.valorTotalItemBrl, 0), itensSemAvaliacaoPc: [],
   };
 }
 

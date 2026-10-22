@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { callOmie, getOmieMode, OmieEscritaBloqueadaError } from '../client.js';
+import { callOmie, getOmieMode, OmieApiError, OmieEscritaBloqueadaError } from '../client.js';
 import { incluirAjusteEstoque } from '../stockbridge/ajuste-estoque.js';
 import { listarAjusteEstoque } from '../stockbridge/listar-ajuste-estoque.js';
 import { alterarPedidoCompra, consultarPedidoCompra } from '../stockbridge/pedido-compra.js';
@@ -7,8 +7,9 @@ import {
   alterarRecebimentoNfeItens,
   concluirRecebimentoNfe,
   consultarRecebimentoNfe,
+  parseRecebimentoNfeConsultado,
 } from '../stockbridge/recebimento-nfe.js';
-import { __resetMockState } from '../stockbridge/mock.js';
+import { __resetMockState, registrarSombraRecebimentoNfe, sombraPedidoCompra } from '../stockbridge/mock.js';
 
 // ACXEGDP-405: o UAT virou ambiente de testes, mas tem chaves OMIE de produção.
 // OMIE_MODE=leitura: leituras vão ao OMIE real, escritas são simuladas e nunca
@@ -250,5 +251,263 @@ describe('OMIE_MODE=leitura — escritas simuladas com sombra (ACXEGDP-405)', ()
 
     // Só a consulta inicial saiu: a sombra nasceu dela.
     expect(metodosEnviados()).toEqual(['ConsultarRecebimento']);
+  });
+});
+
+// Feature 017 (ACXEGDP-437): o ASSOCIAR-PEDIDO do AlterarRecebimento também é escrita
+// — fica simulado no UAT. A sombra do recebimento guarda o vínculo item x PC e, ao
+// concluir, o nQtdeRec do PC (que o OMIE real atualiza sozinho — NF 7813) é
+// refletido na sombra do PC. Nada disso relê o OMIE: reler o mesmo corpo dispararia a
+// trava de consumo redundante, que vale para a chave do PROD.
+describe('OMIE_MODE=leitura — vínculo do item com o PC na sombra (ACXEGDP-437)', () => {
+  // Ids do vínculo = os reais da NF 7813 (PC 304); chaves, nIdReceb e valores são sintéticos.
+  const CHAVE = '35261014555032000753550010000078131827355174';
+  const CHAVE_B = '35261014555032000753550010000078141827355175';
+  const NID_RECEB = 8516900001;
+  const NID_RECEB_B = 8516900002;
+  const PC = 8516905979;
+  const ITEM_PC = 8516907022;
+
+  const ASSOCIAR = { nSequencia: 1, cAcao: 'ASSOCIAR-PEDIDO' as const, nIdPedidoExistente: PC, nIdItPedidoExistente: ITEM_PC };
+  const EDITAR = {
+    nSequencia: 1,
+    cAcao: 'EDITAR' as const,
+    itensAjustes: { cNaoGerarMovEstoque: 'S' as const, cNaoGerarFinanceiro: 'N' as const },
+  };
+
+  /** Bloco de ConsultarRecebimento: 1 item de `qtd` kg, com ou sem o vínculo do OMIE ao PC 304. */
+  function blocoRecebimento(
+    o: {
+      nIdReceb?: number;
+      chave?: string;
+      etapa?: string;
+      recebido?: 'S' | 'N';
+      vinculado?: boolean;
+      /** Vínculo com nIdPedido mas sem nIdItPedido. */
+      semItemDePedido?: boolean;
+      /** Item marcado como ignorado (cIgnorarItem 'S'). */
+      ignorado?: boolean;
+      qtd?: number;
+    } = {},
+  ) {
+    const {
+      nIdReceb = NID_RECEB, chave = CHAVE, etapa = '40', recebido = 'N', vinculado = false, semItemDePedido = false,
+      ignorado = false, qtd = 18000,
+    } = o;
+    return {
+      cabec: { cChaveNFe: chave, cEtapa: etapa, cNumeroNFe: '000007813', nIdFornecedor: 8498397152, nIdReceb, nValorNFe: 203400 },
+      infoCadastro: { cCancelada: 'N', cRecebido: recebido },
+      itensRecebimento: [
+        {
+          itensCabec: {
+            cDescricaoProduto: 'SUCATA PLASTICO', cIgnorarItem: ignorado ? 'S' : 'N', cAssociarExistente: vinculado ? 'S' : 'N',
+            nSequencia: 1, nQtdeNFe: qtd, vTotalItem: 203400, nIdPedido: vinculado ? PC : 0,
+            ...(vinculado && !semItemDePedido ? { nIdItPedido: ITEM_PC } : {}),
+          },
+          itensAjustes: { cCFOPEntrada: '1.102', cNaoGerarFinanceiro: 'N', cNaoGerarMovEstoque: 'N' },
+        },
+      ],
+    };
+  }
+
+  /** Bloco de ConsultarPedCompra: PC 304 aberto, 1 item de 18.000 kg com `nQtdeRec` já recebido. */
+  function blocoPedido(nQtdeRec = 0) {
+    return {
+      cabecalho_consulta: { nCodPed: PC, cCodIntPed: 'ITG304', cNumero: '304', cEtapa: '15', nCodFor: 8498397152 },
+      produtos_consulta: [
+        { nCodItem: ITEM_PC, nCodProd: 8123584999, cProduto: 'PSCRIST-001', cDescricao: 'PS CRISTAL B', cUnidade: 'KG', nQtde: 18000, nQtdeRec, nValUnit: 11.3 },
+      ],
+    };
+  }
+
+  type Resposta = Record<string, unknown> | ((param: Record<string, unknown>) => Record<string, unknown>);
+  /** Responde cada método OMIE pelo nome; método fora do mapa é chamada inesperada à rede (falha o teste). */
+  function responder(respostas: Record<string, Resposta>): void {
+    mockFetch.mockImplementation((_url: string, init: { body: string }) => {
+      const { call, param } = JSON.parse(init.body) as { call: string; param: Array<Record<string, unknown>> };
+      const resposta = respostas[call];
+      if (resposta === undefined) return Promise.reject(new Error(`chamada inesperada ao OMIE: ${call}`));
+      return Promise.resolve(respostaOk(typeof resposta === 'function' ? resposta(param[0] ?? {}) : resposta));
+    });
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', mockFetch);
+    mockFetch.mockReset();
+    ambienteUat();
+    __resetMockState();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    process.env = { ...ENV_ORIGINAL };
+  });
+
+  it('AlterarRecebimento ASSOCIAR-PEDIDO não chega ao transporte: é bloqueado antes da rede', async () => {
+    await expect(
+      callOmie('q2p', {
+        endpoint: 'produtos/recebimentonfe/',
+        method: 'AlterarRecebimento',
+        params: { itensRecebimentoEditar: [{ itensIde: { cAcao: 'ASSOCIAR-PEDIDO' } }] },
+      }),
+    ).rejects.toBeInstanceOf(OmieEscritaBloqueadaError);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('ASSOCIAR-PEDIDO é simulado: a sombra guarda o vínculo, o EDITAR o preserva e só a leitura que semeou a sombra sai pela rede', async () => {
+    responder({ ConsultarRecebimento: blocoRecebimento() });
+
+    const rec = await consultarRecebimentoNfe('q2p', { cChaveNfe: CHAVE });
+    expect(rec.itens[0]).toMatchObject({ cAssociarExistente: 'N', nIdPedido: null, nIdItPedido: null });
+
+    const res = await alterarRecebimentoNfeItens('q2p', { nIdReceb: rec.nIdReceb, itens: [ASSOCIAR] });
+    expect(res.cCodStatus).toBe('0');
+    await alterarRecebimentoNfeItens('q2p', { nIdReceb: rec.nIdReceb, itens: [EDITAR] });
+
+    const porId = await consultarRecebimentoNfe('q2p', { nIdReceb: rec.nIdReceb });
+    const porChave = await consultarRecebimentoNfe('q2p', { cChaveNfe: CHAVE });
+    for (const sombra of [porId, porChave]) {
+      expect(sombra.itens[0]).toMatchObject({
+        cAssociarExistente: 'S', cIgnorarItem: 'N', nIdPedido: PC, nIdItPedido: ITEM_PC, cNaoGerarMovEstoque: 'S',
+      });
+    }
+    // O ASSOCIAR/EDITAR não saíram: só a leitura inicial foi ao OMIE.
+    expect(metodosEnviados()).toEqual(['ConsultarRecebimento']);
+  });
+
+  it('com a sombra do recebimento já semeada, ASSOCIAR-PEDIDO não faz nenhuma chamada HTTP', async () => {
+    registrarSombraRecebimentoNfe('q2p', parseRecebimentoNfeConsultado(blocoRecebimento()));
+
+    await alterarRecebimentoNfeItens('q2p', { nIdReceb: NID_RECEB, itens: [ASSOCIAR] });
+
+    const depois = await consultarRecebimentoNfe('q2p', { nIdReceb: NID_RECEB });
+    expect(depois.itens[0]).toMatchObject({ cAssociarExistente: 'S', nIdPedido: PC, nIdItPedido: ITEM_PC });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('ASSOCIAR-PEDIDO em recebimento que o OMIE real já concluiu: a simulação recusa como o OMIE, sem rede', async () => {
+    responder({ ConsultarRecebimento: blocoRecebimento({ etapa: '60', recebido: 'S' }) });
+    const rec = await consultarRecebimentoNfe('q2p', { nIdReceb: NID_RECEB });
+
+    await expect(alterarRecebimentoNfeItens('q2p', { nIdReceb: rec.nIdReceb, itens: [ASSOCIAR] })).rejects.toBeInstanceOf(
+      OmieApiError,
+    );
+    expect(metodosEnviados()).toEqual(['ConsultarRecebimento']);
+  });
+
+  const receitas: Array<[string, boolean]> = [
+    ['item sem vínculo: ASSOCIAR-PEDIDO, EDITAR e concluir', false],
+    ['item já vinculado pelo OMIE: EDITAR e concluir', true],
+  ];
+  it.each(receitas)(
+    'Concluir soma a quantidade no nQtdeRec da sombra do PC lido há pouco, sem reler o PC — %s',
+    async (_rotulo, vinculado) => {
+      responder({ ConsultarRecebimento: blocoRecebimento({ vinculado }), ConsultarPedCompra: blocoPedido() });
+
+      // O fluxo lê o PC (confirmação do vínculo) antes de escrever.
+      const antes = await consultarPedidoCompra('q2p', { nCodPed: PC });
+      expect(antes.produtos[0]).toMatchObject({ nCodItem: ITEM_PC, nQtde: 18000, nQtdeRec: 0 });
+
+      const rec = await consultarRecebimentoNfe('q2p', { cChaveNfe: CHAVE });
+      if (!vinculado) await alterarRecebimentoNfeItens('q2p', { nIdReceb: rec.nIdReceb, itens: [ASSOCIAR] });
+      await alterarRecebimentoNfeItens('q2p', { nIdReceb: rec.nIdReceb, itens: [EDITAR] });
+      await concluirRecebimentoNfe('q2p', { nIdReceb: rec.nIdReceb, cEtapa: '60' });
+
+      const depois = await consultarPedidoCompra('q2p', { nCodPed: PC });
+      expect(depois.produtos[0]).toMatchObject({ nCodItem: ITEM_PC, nQtde: 18000, nQtdeRec: 18000 });
+      expect(depois.cEtapa).toBe('15');
+      // O Concluir não releu o PC (nem a consulta seguinte, que respondeu pela sombra).
+      expect(metodosEnviados()).toEqual(['ConsultarPedCompra', 'ConsultarRecebimento']);
+    },
+  );
+
+  it('Concluir soma sobre a sombra do PC que já existe, em vez de semeá-la de novo da leitura antiga', async () => {
+    responder({
+      ConsultarRecebimento: (param) =>
+        param.cChaveNfe === CHAVE_B
+          ? blocoRecebimento({ nIdReceb: NID_RECEB_B, chave: CHAVE_B, vinculado: true, qtd: 5000 })
+          : blocoRecebimento({ vinculado: true }),
+      ConsultarPedCompra: blocoPedido(),
+    });
+    await consultarPedidoCompra('q2p', { nCodPed: PC }); // leitura real: nQtdeRec 0
+
+    for (const chave of [CHAVE, CHAVE_B]) {
+      const rec = await consultarRecebimentoNfe('q2p', { cChaveNfe: chave });
+      await alterarRecebimentoNfeItens('q2p', { nIdReceb: rec.nIdReceb, itens: [EDITAR] });
+      await concluirRecebimentoNfe('q2p', { nIdReceb: rec.nIdReceb });
+    }
+
+    expect((await consultarPedidoCompra('q2p', { nCodPed: PC })).produtos[0]!.nQtdeRec).toBe(23000);
+    expect(metodosEnviados()).toEqual(['ConsultarPedCompra', 'ConsultarRecebimento', 'ConsultarRecebimento']);
+  });
+
+  it('Concluir sem leitura recente do PC não cria sombra nem consulta o PC: o PC segue o do OMIE real', async () => {
+    responder({ ConsultarRecebimento: blocoRecebimento({ vinculado: true }), ConsultarPedCompra: blocoPedido() });
+    const rec = await consultarRecebimentoNfe('q2p', { cChaveNfe: CHAVE });
+    await alterarRecebimentoNfeItens('q2p', { nIdReceb: rec.nIdReceb, itens: [EDITAR] });
+
+    await concluirRecebimentoNfe('q2p', { nIdReceb: rec.nIdReceb });
+
+    expect(metodosEnviados()).toEqual(['ConsultarRecebimento']);
+    expect(sombraPedidoCompra('q2p', { nCodPed: PC })).toBeNull();
+    // A simulação não tocou o PC: a leitura seguinte vai ao OMIE real e traz o saldo de lá.
+    expect((await consultarPedidoCompra('q2p', { nCodPed: PC })).produtos[0]!.nQtdeRec).toBe(0);
+    expect(metodosEnviados()).toEqual(['ConsultarRecebimento', 'ConsultarPedCompra']);
+  });
+
+  it('vínculo com nIdPedido mas sem nIdItPedido: não há item de PC a atualizar, então Concluir não cria sombra do PC', async () => {
+    responder({
+      ConsultarRecebimento: blocoRecebimento({ vinculado: true, semItemDePedido: true }),
+      ConsultarPedCompra: blocoPedido(),
+    });
+    await consultarPedidoCompra('q2p', { nCodPed: PC });
+    const rec = await consultarRecebimentoNfe('q2p', { cChaveNfe: CHAVE });
+    expect(rec.itens[0]).toMatchObject({ nIdPedido: PC, nIdItPedido: null });
+    await alterarRecebimentoNfeItens('q2p', { nIdReceb: rec.nIdReceb, itens: [EDITAR] });
+
+    await concluirRecebimentoNfe('q2p', { nIdReceb: rec.nIdReceb });
+
+    expect(sombraPedidoCompra('q2p', { nCodPed: PC })).toBeNull();
+  });
+
+  it('item ignorado, mesmo com vínculo registrado: Concluir não cria sombra do PC', async () => {
+    responder({
+      ConsultarRecebimento: blocoRecebimento({ vinculado: true, ignorado: true }),
+      ConsultarPedCompra: blocoPedido(),
+    });
+    await consultarPedidoCompra('q2p', { nCodPed: PC });
+    const rec = await consultarRecebimentoNfe('q2p', { cChaveNfe: CHAVE });
+
+    await concluirRecebimentoNfe('q2p', { nIdReceb: rec.nIdReceb });
+
+    expect(sombraPedidoCompra('q2p', { nCodPed: PC })).toBeNull();
+  });
+
+  it('Concluir de recebimento que o OMIE real já concluiu: a simulação recusa e não cria sombra do PC', async () => {
+    responder({
+      ConsultarRecebimento: blocoRecebimento({ etapa: '60', recebido: 'S', vinculado: true }),
+      ConsultarPedCompra: blocoPedido(18000),
+    });
+    await consultarPedidoCompra('q2p', { nCodPed: PC });
+    const rec = await consultarRecebimentoNfe('q2p', { cChaveNfe: CHAVE });
+
+    await expect(concluirRecebimentoNfe('q2p', { nIdReceb: rec.nIdReceb })).rejects.toBeInstanceOf(OmieApiError);
+
+    expect(sombraPedidoCompra('q2p', { nCodPed: PC })).toBeNull();
+    expect(metodosEnviados()).toEqual(['ConsultarPedCompra', 'ConsultarRecebimento']);
+  });
+
+  it('leitura do PC com mais de 10 min está expirada: Concluir também não cria a sombra', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    responder({ ConsultarRecebimento: blocoRecebimento({ vinculado: true }), ConsultarPedCompra: blocoPedido() });
+    await consultarPedidoCompra('q2p', { nCodPed: PC });
+    vi.setSystemTime(Date.now() + 11 * 60_000);
+    const rec = await consultarRecebimentoNfe('q2p', { cChaveNfe: CHAVE }); // leitura fresca do recebimento
+    await alterarRecebimentoNfeItens('q2p', { nIdReceb: rec.nIdReceb, itens: [EDITAR] });
+
+    await concluirRecebimentoNfe('q2p', { nIdReceb: rec.nIdReceb });
+
+    expect(sombraPedidoCompra('q2p', { nCodPed: PC })).toBeNull();
+    expect(metodosEnviados()).toEqual(['ConsultarPedCompra', 'ConsultarRecebimento']);
   });
 });

@@ -763,6 +763,9 @@ export async function rejeitar(input: RejeitarInput): Promise<{ id: string }> {
     // operador NAO e desfeito aqui — nem o ledger `recebimento_fiscal` nem o OMIE
     // sao tocados; a NF reaparece como "fiscal ja feito" e o operador refaz so o
     // fisico. Desfazer o fiscal e decisao do fiscal, fora do Atlas.
+    // Feature 017 (FR-018, ACXEGDP-437): o mesmo vale para o vinculo com o pedido
+    // de compra — `recebimento_fiscal_pc` fica como esta e a NF volta mostrando o
+    // PC vinculado no OMIE (vinculadoNoOmie).
     if (ap.movimentacaoId) {
       await tx
         .update(reservaSaldo)

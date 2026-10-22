@@ -1,4 +1,7 @@
-import { sendEmail, createLogger, getConfig, getDb, buildEmailLayout, escapeHtml, emailDataList, emailActionBox } from '@atlas/core';
+import { sendEmail, createLogger, getConfig, getDb, getPool, buildEmailLayout, escapeHtml, emailDataList, emailActionBox } from '@atlas/core';
+import { fmtCnpj } from './cnpj.js';
+
+export { fmtCnpj };
 import { users, userModules } from '@atlas/db';
 import { eq, inArray, and, isNull, sql } from 'drizzle-orm';
 import { fmtQtdUnidade } from './motor.service.js';
@@ -404,6 +407,12 @@ export async function enviarAlertaNfDispensada(args: {
   motivo: string;
   dispensadoPorNome: string | null;
   dispensadoEm?: string;
+  /**
+   * Feature 017 (T044): PC vinculado a cada item, quando houver — o fiscal fica
+   * sabendo qual PC ficou com quantidade recebida no OMIE. Número vazio = vínculo
+   * sem número conhecido (nunca id interno — ACXEGDP-313).
+   */
+  pcsPorItem?: Array<{ descricao: string; pcNumero: string }>;
 }): Promise<void> {
   const destinatarios = getFiscalEmails();
   if (destinatarios.length === 0) {
@@ -430,6 +439,12 @@ export async function enviarAlertaNfDispensada(args: {
       { label: 'Valor da nota', valor: valor },
       { label: 'Recebimento fiscal no OMIE', valor: args.situacaoFiscalNaDispensa === 'pendente' ? 'Pendente (não concluído)' : 'Concluído' },
       { label: 'Motivo da dispensa', valor: args.motivo },
+      {
+        label: 'Pedido de compra vinculado',
+        valor: (args.pcsPorItem ?? [])
+          .map((p) => `${p.descricao.trim()}: ${p.pcNumero ? `PC ${p.pcNumero}` : 'PC vinculado no OMIE'}`)
+          .join('; '),
+      },
       { label: 'Dispensada por', valor: args.dispensadoPorNome ?? '' },
       { label: 'Quando', valor: quandoFmt },
     ])}
@@ -453,16 +468,342 @@ export async function enviarAlertaNfDispensada(args: {
   }
 }
 
+/** Motivo do aviso a compras (feature 017, research D6) — CHECK de stockbridge.nf_aviso_compras. */
+export type MotivoAvisoCompras = 'sem_pc' | 'pc_aguardando_aprovacao' | 'recebida_sem_vinculo';
+
+/**
+ * Janela de deduplicacao do aviso a compras: um por NF, motivo e DESTINATARIO a
+ * cada 24 h (D6). Quem ja recebeu nao recebe de novo; quem falhou segue pendente.
+ */
+export const AVISO_COMPRAS_DEDUP_HORAS = 24;
+
+/**
+ * Espera maxima pela trava do aviso (outro envio da mesma NF e motivo em curso)
+ * antes de desistir com 'falha': um envio travado no SendGrid nao pode prender
+ * conexoes do pool de quem chega depois.
+ */
+const AVISO_COMPRAS_LOCK_TIMEOUT = '10s';
+
+/**
+ * Pedido de compra do MESMO fornecedor lancado em OUTRO cadastro (CNPJ) do OMIE —
+ * ex.: PC no cadastro da matriz e NF emitida pela filial (NF 60199 x PC 306).
+ * `itemDescricao` e a descricao do item da NF, igual a `itens[].descricao`;
+ * `pcNumero` e o numero legivel do PC (nunca o codigo interno do OMIE);
+ * `cnpjCadastroPc` e o CNPJ do cadastro onde o PC foi lancado, so digitos.
+ */
+export interface PcOutroCadastroAviso {
+  itemDescricao: string;
+  pcNumero: string;
+  cnpjCadastroPc: string;
+}
+
+export interface ArgsAvisoComprasNfSemPc {
+  empresa: 'q2p' | 'acxe';
+  nfChaveAcesso: string;
+  notaFiscal: string;
+  fornecedorNome: string | null;
+  /**
+   * `qtdKg` null = unidade que o Atlas nao converte para kg; nesse caso `quantidadeTexto` traz a
+   * quantidade nativa da NF ("40 UN") e o e-mail nunca mostra "0 kg" (achado fila-v04).
+   */
+  itens: Array<{ nSequencia: number | null; descricao: string; qtdKg: number | null; precoUnit: number | null; quantidadeTexto?: string | null }>;
+  /** numeros dos PCs do fornecedor aguardando aprovacao (FR-002b), se houver */
+  pcsAguardandoAprovacao: string[];
+  motivo: MotivoAvisoCompras;
+  disparadoPor: string | null;
+  /** PCs do mesmo fornecedor lancados em OUTRO cadastro do OMIE; omitido ou vazio = nenhum */
+  pcsOutroCadastro?: PcOutroCadastroAviso[];
+  /** CNPJ do cadastro da nota (so digitos), citado junto de pcsOutroCadastro */
+  cnpjNf?: string | null;
+}
+
+
+/** Compara descricao de item da NF x item do aviso sem depender de caixa, acento ou espacos repetidos. */
+function chaveDescricaoItem(descricao: string): string {
+  return descricao.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/** "a", "a e b", "a, b e c". */
+function listaPtBr(itens: string[]): string {
+  if (itens.length <= 1) return itens.join('');
+  return `${itens.slice(0, -1).join(', ')} e ${itens[itens.length - 1]}`;
+}
+
+/**
+ * Texto do quadro "PC em outro cadastro": agrupa os itens por PC e cadastro do PC.
+ * So o numero legivel do PC e o CNPJ mascarado aparecem — numero vazio ou com cara
+ * de codigo interno do OMIE (10+ digitos) vira "um pedido de compra" (ACXEGDP-313).
+ */
+function textoPcsOutroCadastro(pcs: PcOutroCadastroAviso[], cnpjNf: string | null | undefined): string {
+  const grupos = new Map<string, { pc: string; cnpj: string; itens: string[] }>();
+  for (const p of pcs) {
+    const numero = String(p.pcNumero ?? '').trim();
+    const pc = numero && !/^\d{10,}$/.test(numero) ? `PC ${numero}` : 'um pedido de compra';
+    const cnpj = fmtCnpj(p.cnpjCadastroPc);
+    const item = String(p.itemDescricao ?? '').trim();
+    const chave = `${pc}|${cnpj}`;
+    const grupo = grupos.get(chave) ?? { pc, cnpj, itens: [] };
+    if (item && !grupo.itens.includes(item)) grupo.itens.push(item);
+    grupos.set(chave, grupo);
+  }
+  const lista = Array.from(grupos.values())
+    .map((g) => {
+      const cadastro = g.cnpj ? ` (CNPJ ${g.cnpj})` : '';
+      const itens = g.itens.length > 0 ? ` para ${g.itens.length === 1 ? 'o item' : 'os itens'} ${listaPtBr(g.itens.map((i) => `"${i}"`))}` : '';
+      return `${g.pc}${cadastro}${itens}`;
+    })
+    .join('; ');
+  const plural = grupos.size > 1;
+  const cadastroNota = fmtCnpj(cnpjNf);
+  return [
+    `Há ${plural ? 'pedidos' : 'pedido'} de compra deste fornecedor ${plural ? 'lançados' : 'lançado'} em OUTRO cadastro do OMIE: ${lista}.`,
+    cadastroNota ? `A nota é do cadastro ${cadastroNota}.` : '',
+    `Ajuste o fornecedor ${plural ? 'dos pedidos' : 'do pedido'} para o cadastro da nota (ou peça ao fiscal para concluir o recebimento no OMIE) em vez de lançar ${plural ? 'pedidos novos' : 'um pedido novo'}.`,
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+/**
+ * "O que fazer" do motivo sem_pc. Item com PC em outro cadastro nao recebe a ordem
+ * de lancar PC novo (duplicaria o pedido); so os demais itens da NF recebem.
+ */
+function oQueFazerSemPc(itens: Array<{ descricao: string }>, pcsOutro: PcOutroCadastroAviso[]): string {
+  if (pcsOutro.length === 0) {
+    return 'Lance e aprove no OMIE o pedido de compra deste item para este fornecedor. A NF fica na fila do StockBridge até o PC existir.';
+  }
+  const cobertos = new Set(pcsOutro.map((p) => chaveDescricaoItem(String(p.itemDescricao ?? ''))));
+  const descobertos = Array.from(
+    new Set(itens.map((it) => it.descricao.trim()).filter((d) => d && !cobertos.has(chaveDescricaoItem(d)))),
+  );
+  if (descobertos.length === 0) {
+    return 'Siga a orientação acima e não lance pedido de compra novo para estes itens. A NF fica na fila do StockBridge até o pedido estar no cadastro da nota.';
+  }
+  return `Para os itens com pedido em outro cadastro, siga a orientação acima e não lance pedido novo. Para ${descobertos.length === 1 ? 'o item' : 'os itens'} ${listaPtBr(descobertos.map((d) => `"${d}"`))}, lance e aprove no OMIE o pedido de compra deste fornecedor. A NF fica na fila do StockBridge até o PC existir.`;
+}
+
+/**
+ * Destinatarios do aviso a compras: STOCKBRIDGE_COMPRAS_EMAILS (sem repeticao, sem
+ * diferenciar caixa); vazio, a caixa do ops (`viaOps`) — o aviso nunca se perde.
+ */
+function destinatariosAvisoCompras(): { destinatarios: string[]; viaOps: boolean } {
+  const bruto: unknown = getConfig().STOCKBRIDGE_COMPRAS_EMAILS;
+  const lista: unknown[] = Array.isArray(bruto) ? bruto : typeof bruto === 'string' ? bruto.split(',') : [];
+  const unicos = new Map<string, string>();
+  for (const item of lista) {
+    const endereco = typeof item === 'string' ? item.trim() : '';
+    if (endereco && !unicos.has(endereco.toLowerCase())) unicos.set(endereco.toLowerCase(), endereco);
+  }
+  if (unicos.size > 0) return { destinatarios: Array.from(unicos.values()), viaOps: false };
+  return { destinatarios: [getOpsEmail()], viaOps: true };
+}
+
+/** Assunto e corpo do aviso a compras — o mesmo e-mail vai a todos os destinatarios pendentes. */
+function montarEmailAvisoCompras(args: ArgsAvisoComprasNfSemPc): { subject: string; html: string; text: string } {
+  const config = getConfig();
+  const pcsOutro = (args.pcsOutroCadastro ?? []).filter(Boolean);
+  const fornecedor = args.fornecedorNome && args.fornecedorNome.trim() ? args.fornecedorNome.trim() : 'Fornecedor não identificado no OMIE';
+  const empresaRotulo = args.empresa === 'acxe' ? 'ACXE' : 'Q2P';
+  const subject =
+    args.motivo === 'recebida_sem_vinculo'
+      ? `StockBridge — NF ${args.notaFiscal} de ${fornecedor} recebida sem pedido de compra no OMIE`
+      : args.motivo === 'pc_aguardando_aprovacao'
+        ? `StockBridge — NF ${args.notaFiscal} de ${fornecedor} com pedido de compra aguardando aprovação no OMIE`
+        : `StockBridge — NF ${args.notaFiscal} de ${fornecedor} sem pedido de compra no OMIE`;
+  const abertura =
+    args.motivo === 'recebida_sem_vinculo'
+      ? `A <strong>NF ${escapeHtml(args.notaFiscal)}</strong> de <strong>${escapeHtml(fornecedor)}</strong> (${empresaRotulo}) foi recebida pelo StockBridge com item <strong>sem pedido de compra</strong> no OMIE: o recebimento fiscal foi concluído sem vínculo com PC nesse item.`
+      : args.motivo === 'pc_aguardando_aprovacao'
+        ? `O recebimento da <strong>NF ${escapeHtml(args.notaFiscal)}</strong> de <strong>${escapeHtml(fornecedor)}</strong> (${empresaRotulo}) está bloqueado: o pedido de compra do item ainda está <strong>aguardando aprovação</strong> no OMIE.`
+        : `O recebimento da <strong>NF ${escapeHtml(args.notaFiscal)}</strong> de <strong>${escapeHtml(fornecedor)}</strong> (${empresaRotulo}) está bloqueado: há item <strong>sem pedido de compra</strong> aprovado e com saldo no OMIE.`;
+  const fmtPreco = (v: number | null) =>
+    v == null ? '—' : `${v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2, maximumFractionDigits: 4 })}/kg`;
+  const linhas = args.itens
+    .map(
+      (it) => `<tr>
+        <td style="padding:6px 12px 6px 0;font-size:13px;color:#111827;">${escapeHtml(it.descricao.trim())}</td>
+        <td style="padding:6px 12px;font-size:13px;color:#111827;text-align:right;white-space:nowrap;">${it.qtdKg != null ? fmtKg(it.qtdKg) : escapeHtml((it.quantidadeTexto ?? '').trim() || '—')}</td>
+        <td style="padding:6px 0 6px 12px;font-size:13px;color:#6b7280;text-align:right;white-space:nowrap;">${escapeHtml(fmtPreco(it.precoUnit))}</td>
+      </tr>`,
+    )
+    .join('');
+  const aguardando =
+    args.pcsAguardandoAprovacao.length > 0
+      ? `<p style="margin:12px 0 0;">PC do fornecedor aguardando aprovação no OMIE: <strong>${escapeHtml(args.pcsAguardandoAprovacao.map((n) => `PC ${n}`).join(', '))}</strong>.</p>`
+      : '';
+  const oQueFazer =
+    args.motivo === 'recebida_sem_vinculo'
+      ? 'Se havia pedido de compra para este item, confira com o fiscal o ajuste do PC no OMIE: o recebimento não foi contado nele.'
+      : args.motivo === 'pc_aguardando_aprovacao'
+        ? 'Aprove o pedido de compra no OMIE. A NF fica na fila do StockBridge e pode ser recebida assim que o PC estiver aprovado e a lista de pedidos for atualizada.'
+        : oQueFazerSemPc(args.itens, pcsOutro);
+  // PC do mesmo fornecedor em OUTRO cadastro (sugestao-01): sem este quadro compras
+  // lancaria um PC novo e duplicaria o pedido que ja existe.
+  const blocoOutroCadastro =
+    pcsOutro.length > 0
+      ? emailActionBox(`<p style="margin:0;">${escapeHtml(textoPcsOutroCadastro(pcsOutro, args.cnpjNf))}</p>`, 'Pedido de compra em outro cadastro do OMIE')
+      : '';
+  const corpoHtml = `
+    <p>${abertura}</p>
+    ${emailDataList([
+      { label: 'Nota fiscal', valor: args.notaFiscal },
+      { label: 'Fornecedor', valor: fornecedor },
+      { label: 'Empresa', valor: empresaRotulo },
+    ])}
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 16px;margin:16px 0;">
+      <table role="presentation" width="100%" style="border-collapse:collapse;">
+        <thead><tr>
+          <th style="text-align:left;padding:4px 12px 8px 0;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Item da NF</th>
+          <th style="text-align:right;padding:4px 12px 8px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Quantidade</th>
+          <th style="text-align:right;padding:4px 0 8px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Preço unitário</th>
+        </tr></thead>
+        <tbody>${linhas}</tbody>
+      </table>
+    </div>
+    ${blocoOutroCadastro}
+    ${emailActionBox(`<p style="margin:0;">${escapeHtml(oQueFazer)}</p>${aguardando}`, 'O que fazer')}
+  `;
+  const { html, text } = buildEmailLayout({
+    titulo: args.motivo === 'recebida_sem_vinculo' ? 'NF recebida sem pedido de compra' : 'NF sem pedido de compra no OMIE',
+    variante: 'alerta',
+    corpoHtml,
+    ctaLabel: 'Abrir o StockBridge',
+    ctaUrl: `${config.APP_URL}/stockbridge/fila`,
+  });
+  return { subject, html, text };
+}
+
+/**
+ * Feature 017 (ACXEGDP-437, research D6, FR-020): avisa COMPRAS que uma NF nacional
+ * tem item sem pedido de compra (PC) possivel no OMIE — bloqueada (`sem_pc`,
+ * `pc_aguardando_aprovacao`) ou recebida sem vinculo (`recebida_sem_vinculo`).
+ *
+ * Deduplicado por NF, motivo e DESTINATARIO em stockbridge.nf_aviso_compras (24 h).
+ * Numa transacao com trava consultiva por (NF, motivo): le quem ja foi avisado, envia
+ * so aos pendentes e grava SO os enderecos entregues. Duas chamadas simultaneas nao
+ * duplicam o e-mail (a segunda espera a trava e ve a linha da primeira) e quem falhou
+ * numa falha parcial recebe na proxima tentativa. Falha total: nada e gravado
+ * ('falha') e a proxima tentativa reenvia. Se o envio der certo e o COMMIT falhar, a
+ * proxima tentativa tambem reenvia — um e-mail enviado nao se desfaz.
+ *
+ * Destino: STOCKBRIDGE_COMPRAS_EMAILS; vazio, STOCKBRIDGE_OPS_EMAIL com aviso no log.
+ * `pcsOutroCadastro`: PC do mesmo fornecedor lancado em OUTRO cadastro do OMIE — o
+ * e-mail diz isso e manda ajustar o fornecedor do pedido em vez de lancar um novo.
+ * Sem codigo OMIE (ACXEGDP-313). Best-effort: nunca lanca — quem chama nao espera
+ * (o recebimento nao depende do e-mail).
+ */
+/**
+ * Avisos a compras em envio ao mesmo tempo no processo. Cada um segura uma conexao do pool
+ * (trava + envio, ate o limite do SendGrid); acima disto o aviso devolve 'falha' na hora, sem
+ * tocar no pool, e a proxima tentativa reenvia — um SendGrid pendurado nunca toma o pool da API
+ * (achado infra-r04).
+ */
+export const AVISO_COMPRAS_MAX_SIMULTANEOS = 3;
+let avisosComprasEmEnvio = 0;
+
+export async function enviarAvisoComprasNfSemPc(args: ArgsAvisoComprasNfSemPc): Promise<'enviado' | 'deduplicado' | 'falha'> {
+  if (avisosComprasEmEnvio >= AVISO_COMPRAS_MAX_SIMULTANEOS) {
+    logger.warn(
+      { notaFiscal: args.notaFiscal, motivo: args.motivo, emEnvio: avisosComprasEmEnvio },
+      'Aviso a compras não enviado agora: limite de envios simultâneos — a próxima tentativa reenvia',
+    );
+    return 'falha';
+  }
+  avisosComprasEmEnvio++;
+  try {
+    return await enviarAvisoComprasNfSemPcSemLimite(args);
+  } finally {
+    avisosComprasEmEnvio--;
+  }
+}
+
+async function enviarAvisoComprasNfSemPcSemLimite(args: ArgsAvisoComprasNfSemPc): Promise<'enviado' | 'deduplicado' | 'falha'> {
+  const ctx = { notaFiscal: args.notaFiscal, motivo: args.motivo };
+  try {
+    const { destinatarios, viaOps } = destinatariosAvisoCompras();
+    const client = await getPool().connect();
+    let descartarConexao = false;
+    const rollback = async (): Promise<void> => {
+      try {
+        await client.query('ROLLBACK');
+      } catch (err) {
+        // Estado da transacao desconhecido: a trava poderia ficar presa nesta conexao.
+        // Descartar (release(true)) em vez de devolver ao pool encerra a sessao e solta a trava.
+        descartarConexao = true;
+        logger.warn({ err, ...ctx }, 'ROLLBACK do aviso a compras falhou — conexão descartada');
+      }
+    };
+    try {
+      await client.query('BEGIN');
+      await client.query(`SET LOCAL lock_timeout = '${AVISO_COMPRAS_LOCK_TIMEOUT}'`);
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`sb:aviso-compras:${args.nfChaveAcesso}:${args.motivo}`]);
+
+      // Quem ja foi avisado nas ultimas 24 h (enviado_para guarda a lista separada por ', ').
+      const previos = await client.query<{ enviado_para: string | null }>(
+        `SELECT enviado_para FROM stockbridge.nf_aviso_compras
+          WHERE nf_chave_acesso = $1 AND motivo = $2 AND enviado_em > now() - make_interval(hours => $3)`,
+        [args.nfChaveAcesso, args.motivo, AVISO_COMPRAS_DEDUP_HORAS],
+      );
+      const jaAvisados = new Set<string>();
+      for (const linha of previos.rows) {
+        for (const endereco of (linha.enviado_para ?? '').split(',')) {
+          const normalizado = endereco.trim().toLowerCase();
+          if (normalizado) jaAvisados.add(normalizado);
+        }
+      }
+      const pendentes = destinatarios.filter((d) => !jaAvisados.has(d.toLowerCase()));
+      if (pendentes.length === 0) {
+        await rollback();
+        logger.info(ctx, 'Aviso a compras já enviado a todos os destinatários nas últimas 24 h — não reenviado');
+        return 'deduplicado';
+      }
+      if (viaOps) logger.warn({ notaFiscal: args.notaFiscal }, 'STOCKBRIDGE_COMPRAS_EMAILS vazio — aviso de NF sem PC vai para STOCKBRIDGE_OPS_EMAIL');
+
+      const { subject, html, text } = montarEmailAvisoCompras(args);
+      const results = await Promise.allSettled(pendentes.map((to) => sendEmail({ to, subject, html, text })));
+      const falhas = logFalhasEnvio(results, pendentes, { notaFiscal: args.notaFiscal, tipo: 'aviso_compras_nf_sem_pc' });
+      const entregues = pendentes.filter((_, i) => results[i]?.status === 'fulfilled');
+      if (entregues.length === 0) {
+        await rollback();
+        logger.warn(ctx, 'Aviso a compras não entregue a nenhum destinatário — nada registrado, a próxima tentativa reenvia');
+        return 'falha';
+      }
+      await client.query(
+        `INSERT INTO stockbridge.nf_aviso_compras
+           (empresa, nf_chave_acesso, nota_fiscal, fornecedor_nome, motivo, itens, enviado_para, disparado_por)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)`,
+        [
+          args.empresa, args.nfChaveAcesso, args.notaFiscal, args.fornecedorNome, args.motivo,
+          JSON.stringify(args.itens), entregues.join(', '), args.disparadoPor,
+        ],
+      );
+      await client.query('COMMIT');
+      logger.info({ ...ctx, enviados: entregues.length, falhas }, 'Aviso a compras de NF sem PC enviado');
+      return 'enviado';
+    } catch (err) {
+      await rollback();
+      throw err;
+    } finally {
+      client.release(descartarConexao);
+    }
+  } catch (err) {
+    logger.error({ err, ...ctx }, 'Falha no aviso a compras de NF sem PC');
+    return 'falha';
+  }
+}
+
 /**
  * Feature 016 (revisão pré-UAT, ROT-6): o espelho de recebimentos de NF-e (fonte
  * "fiscal pendente" da fila nacional) está sem atualização além do limite, vazio
  * ou inacessível. Vai para STOCKBRIDGE_OPS_EMAIL — quem cuida do n8n e da cópia.
+ * Devolve true se o sendEmail resolveu e false se falhou (nunca lanca): o job do cron
+ * so passa a suprimir o reaviso depois de uma entrega (infra-03).
  */
 export async function enviarAlertaEspelhoRecebimentosDefasado(args: {
   status: 'degraded' | 'sem_dados' | 'indisponivel';
   idadeMin: number | null;
   limiteMin: number;
-}): Promise<void> {
+}): Promise<boolean> {
   const to = getOpsEmail();
   const config = getConfig();
   const situacao =
@@ -487,8 +828,54 @@ export async function enviarAlertaEspelhoRecebimentosDefasado(args: {
   try {
     await sendEmail({ to, subject, html, text });
     logger.info({ status: args.status, idadeMin: args.idadeMin }, 'Alerta de espelho de recebimentos defasado enviado');
+    return true;
   } catch (err) {
     logger.error({ err }, 'Falha ao enviar alerta de espelho de recebimentos defasado');
+    return false;
+  }
+}
+
+/**
+ * Feature 017 (ACXEGDP-437, research D13, FR-030): a cópia local de pedidos de
+ * compra (tbl_pedidosCompras_Q2P) passou do limite, ficou vazia ou não pôde ser
+ * lida. Enquanto durar, o recebimento de NF nacional com fiscal pendente fica em
+ * modo seguro (503 COPIA_PCS_DEFASADA) — por isso o aviso vai ao ops.
+ * Devolve true se o sendEmail resolveu e false se falhou (nunca lanca): o job do cron
+ * so passa a suprimir o reaviso depois de uma entrega (infra-03).
+ */
+export async function enviarAlertaCopiaPcsDefasada(args: {
+  status: 'degraded' | 'sem_dados' | 'indisponivel';
+  idadeMin: number | null;
+  limiteMin: number;
+}): Promise<boolean> {
+  const to = getOpsEmail();
+  const config = getConfig();
+  const situacao =
+    args.status === 'sem_dados'
+      ? 'A cópia local de pedidos de compra está vazia.'
+      : args.status === 'indisponivel'
+        ? 'A cópia local de pedidos de compra não pôde ser lida (tabela ausente ou erro de banco).'
+        : `A cópia local de pedidos de compra não é atualizada há ${Math.round(args.idadeMin ?? 0)} minutos (limite: ${args.limiteMin} minutos).`;
+  const subject = 'StockBridge — Cópia de pedidos de compra sem atualização';
+  const corpoHtml = `
+    <p>${escapeHtml(situacao)}</p>
+    <p>Enquanto isso, o recebimento de notas de compra nacional com o recebimento fiscal pendente fica bloqueado no StockBridge, porque a sugestão do pedido de compra de cada item depende dessa cópia. Notas com o recebimento fiscal já feito seguem normalmente.</p>
+    ${emailActionBox('<ol style="margin:0;padding-left:18px;"><li>Confira no n8n o workflow "ACXE e Q2P - Espelho de Pedidos de Compra (Materiais a chegar)": se está ativo e se as últimas execuções terminaram sem erro.</li><li>No UAT, confira também a cópia de produção para o UAT.</li></ol>', 'O que verificar')}
+  `;
+  const { html, text } = buildEmailLayout({
+    titulo: 'Cópia de pedidos de compra sem atualização',
+    variante: 'alerta',
+    corpoHtml,
+    ctaLabel: 'Abrir o StockBridge',
+    ctaUrl: `${config.APP_URL}/stockbridge/fila`,
+  });
+  try {
+    await sendEmail({ to, subject, html, text });
+    logger.info({ status: args.status, idadeMin: args.idadeMin }, 'Alerta de cópia de pedidos de compra defasada enviado');
+    return true;
+  } catch (err) {
+    logger.error({ err }, 'Falha ao enviar alerta de cópia de pedidos de compra defasada');
+    return false;
   }
 }
 

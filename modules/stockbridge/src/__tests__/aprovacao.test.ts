@@ -490,6 +490,24 @@ describe('aprovacao.service#rejeitar', () => {
     await expect(rejeitar({ id: 'apr-1', usuarioId: 'u1', perfilUsuario: 'gestor', motivo: '' })).rejects.toThrow(/motivo/i);
     await expect(rejeitar({ id: 'apr-1', usuarioId: 'u1', perfilUsuario: 'gestor', motivo: '   ' })).rejects.toThrow(/motivo/i);
   });
+
+  // Feature 016 (FR-016) e 017 (FR-018, T040): rejeitar a entrada nacional por NF so
+  // desativa a movimentacao (o item volta a fila). Fiscal, vinculo com o PC
+  // (recebimento_fiscal_pc) e OMIE ficam como estao.
+  it('entrada nacional por NF: so aprovacao, reserva e movimentacao sao tocadas — nada de OMIE, fiscal ou vinculo com PC', async () => {
+    const { getDb } = await import('@atlas/core');
+    const omie = await import('@atlas/integration-omie');
+    const db = criarDbComTabelas(await tabelas({
+      id: 'apr-nf', loteId: null, movimentacaoId: 'mov-1', status: 'pendente',
+      precisaNivel: 'gestor', tipoAprovacao: 'entrada_manual', lancadoPor: 'op-1',
+    }));
+    vi.mocked(getDb).mockReturnValue(db as never);
+    await rejeitar({ id: 'apr-nf', usuarioId: 'u1', perfilUsuario: 'gestor', motivo: 'Peso divergente sem explicação' });
+    const tabelasAtualizadas = db.update.mock.calls.map((c) => c[0]);
+    expect(new Set(tabelasAtualizadas)).toEqual(new Set([dbMod.aprovacao, dbMod.reservaSaldo, dbMod.movimentacao]));
+    expect(db.insert).not.toHaveBeenCalled();
+    expect(omie.incluirAjusteEstoque).not.toHaveBeenCalled();
+  });
 });
 
 describe('aprovacao.service#resubmeter', () => {

@@ -3,9 +3,36 @@ import Decimal from 'decimal.js';
 import { getDb, getPool, createLogger } from '@atlas/core';
 import { movimentacao, aprovacao } from '@atlas/db';
 import { converterParaKg } from './motor.service.js';
-import { enviarAlertaRecebimentoNacionalLote } from './notificacao.service.js';
-import { getDetalheNfNacional, recebimentoFiscalHabilitado, NfNacionalDispensadaError, type DetalheNfNacional, type ItemNfNacional } from './fila-nacional.service.js';
-import { concluirRecebimentoFiscal, RecebimentoFiscalSemFornecedorError } from './recebimento-fiscal.service.js';
+import { consultarRecebimentoNfe } from '@atlas/integration-omie';
+import { enviarAlertaRecebimentoNacionalLote, enviarAvisoComprasNfSemPc, type MotivoAvisoCompras } from './notificacao.service.js';
+import {
+  montarDetalheNfNacional,
+  itemNfPendente,
+  recebimentoFiscalHabilitado,
+  EstoqueJaLancadoPeloOmieError,
+  NfNacionalDispensadaError,
+  type DetalheNfNacional,
+  type DetalheNfNacionalInterno,
+  type ItemNfNacional,
+} from './fila-nacional.service.js';
+import {
+  concluirRecebimentoFiscal,
+  estoqueLancadoNoRecebimento,
+  RecebimentoFiscalSemFornecedorError,
+  type VinculoFiscalConcluido,
+} from './recebimento-fiscal.service.js';
+import {
+  validarEscolhaPc,
+  exigePcHabilitado,
+  NfSemPcError,
+  CopiaPcsDefasadaError,
+  type EscolhaPc,
+  type EscolhaPcValidada,
+  type ItemParaSugestao,
+  type MotivoSemPc,
+  type PcOutroCadastro,
+  type ResultadoPcItem,
+} from './pc-sugestao.service.js';
 import { normalizarDescricaoNf } from './descricao-nf.js';
 import { registrarUsoCorrelacao } from './correlacao-produto.service.js';
 import type { UnidadeMedida, SubtipoMovimento } from '../types.js';
@@ -531,7 +558,8 @@ export type CodigoValidacaoPorNf =
   | 'MOTIVO_DIVERGENCIA_OBRIGATORIO'
   | 'PRODUTO_REPETIDO_NO_ITEM'
   | 'ITEM_NAO_ENCONTRADO'
-  | 'QUANTIDADE_INVALIDA';
+  | 'QUANTIDADE_INVALIDA'
+  | 'NF_INCOMPLETA';
 
 export class ValidacaoRecebimentoNacionalError extends Error {
   constructor(public readonly code: CodigoValidacaoPorNf, message: string) {
@@ -561,6 +589,8 @@ export interface ItemPorNfInput {
   motivoDivergencia?: string | null;
   observacoes?: string | null;
   produtos: ProdutoDistribuicaoInput[];
+  /** Feature 017: PC escolhido para o item (so pesa com fiscal pendente e o fiscal pelo Atlas ligado) */
+  pc?: EscolhaPc | null;
 }
 
 export interface ProcessarRecebimentoPorNfInput {
@@ -609,6 +639,28 @@ export interface FiscalPorNfResult {
   concluidoEm: string | null;
   /** pt-BR, com NF e fornecedor; sem codigo OMIE */
   mensagem: string;
+  /** Feature 017: itens vinculados a PC no OMIE neste fiscal (contrato §3) */
+  vinculos: VinculoFiscalConcluido[];
+  /** Feature 017: sequencias recebidas sem vinculo com PC (modo "receber sem vinculo") */
+  semVinculo: number[];
+  /** Feature 017: um aviso a compras foi disparado neste clique */
+  avisoCompras: boolean;
+}
+
+/**
+ * Feature 017 (research D7): a leitura ao vivo do recebimento de uma NF "fiscal ja
+ * feito" cuja conclusao o espelho nao confirma (ausente, defasado ou nao casado) falhou —
+ * sem saber se o estoque ja entrou pelo OMIE, o Atlas nao grava nada (502).
+ */
+export class VerificacaoEstoqueOmieError extends Error {
+  constructor(public readonly notaFiscal: string, options?: { cause?: unknown }) {
+    super(
+      `Não foi possível conferir no OMIE se o estoque da NF ${notaFiscal} já entrou pelo recebimento fiscal. ` +
+        'Nada foi registrado. Tente de novo em instantes; se persistir, avise o fiscal.',
+      options,
+    );
+    this.name = 'VerificacaoEstoqueOmieError';
+  }
 }
 
 export interface ProcessarRecebimentoPorNfResult {
@@ -664,8 +716,12 @@ export async function processarRecebimentoNacionalPorNf(
   }
 
   // Lanca NfNacionalNaoEncontrada / NfNacionalCancelada / FornecedorExcluido.
-  const detalhe: DetalheNfNacional = await getDetalheNfNacional(input.nfChaveAcesso);
+  const { detalhe, interno } = await montarDetalheNfNacional(input.nfChaveAcesso);
   const obsBase = input.observacoes?.trim() ?? '';
+  // Feature 017: o PC so entra quando o Atlas faz o fiscal (chave da 016 ligada e fiscal pendente).
+  const fluxoPc = recebimentoFiscalHabilitado() && detalhe.fiscal === 'pendente';
+  const escolhasPc: EscolhaPcValidada[] = [];
+  const semPc: ItemSemPc[] = [];
 
   // ── Portao 1: validacao ─────────────────────────────────────────────────
   const resultados: ProdutoPorNfResult[] = [];
@@ -812,6 +868,49 @@ export async function processarRecebimentoNacionalPorNf(
         .filter(Boolean)
         .join(' | ');
     }
+
+    // Feature 017 (T023): escolha do PC do item que sera gravado, contra o detalhe
+    // recalculado — fora da lista, sem escolha com PC possivel ou sem justificativa
+    // exigida pela matriz (data-model §4) recusa a NF inteira, sem escrita.
+    if (fluxoPc) {
+      const info = interno.pcPorIndice.get(item.indice);
+      if (info?.resultado) {
+        const validada = validarEscolhaPc({
+          notaFiscal: detalhe.notaFiscal,
+          fornecedorNome: detalhe.fornecedorNome,
+          itemDescricao: item.descricaoFornecedor,
+          indice: item.indice,
+          sequencias: info.entrada.sequencias,
+          vinculos: info.entrada.vinculos,
+          resultado: info.resultado,
+          escolha: it.pc,
+          quantidadeKg: quantidadeNfKg,
+          precoNfKg: info.entrada.precoNfKg,
+          kgPorSequencia: info.entrada.kgPorSequencia,
+        });
+        if (validada) escolhasPc.push(validada);
+        else {
+          semPc.push(itemSemPc(item, info.entrada, info.resultado));
+        }
+      }
+    } else if (it.pc) {
+      logger.info({ nf: detalhe.notaFiscal, indice: it.indice }, 'PC enviado para NF sem fiscal pelo Atlas — ignorado');
+    }
+  }
+
+  // D27 + FR-011a (revisao de 22/10/2026, achado fila-v03): com o fiscal pelo Atlas a NF e
+  // recebida por inteiro — o fiscal conclui TODOS os itens, e item a receber fora do POST seria
+  // concluido sem avaliacao de PC (IGNORAR). A tela sempre manda todos (itemRecebivel); so uma
+  // chamada direta com subconjunto cai aqui.
+  if (fluxoPc) {
+    const faltando = detalhe.itens.filter((d) => itemNfPendente(d) && d.conversao.ok && !d.baixaSolicitada && !indicesVistos.has(d.indice));
+    if (faltando.length > 0) {
+      throw new ValidacaoRecebimentoNacionalError(
+        'NF_INCOMPLETA',
+        `A NF ${detalhe.notaFiscal} é recebida por inteiro: informe também ${faltando.length === 1 ? 'o item' : 'os itens'} ` +
+          `${faltando.map((d) => `"${d.descricaoFornecedor.trim()}"`).join(', ')}. Recarregue a nota e confira todos os itens.`,
+      );
+    }
   }
 
   if (preparados.length === 0) {
@@ -825,6 +924,51 @@ export async function processarRecebimentoNacionalPorNf(
       resultados,
       fiscalSemAcao(`Nenhum item da NF ${detalhe.notaFiscal} pôde ser recebido; o recebimento fiscal não foi alterado.`),
     );
+  }
+
+  // ── Feature 017: estoque ja lancado pelo OMIE (D7, FR-021a) — chave em qualquer posicao ──
+  if (detalhe.estoqueLancadoPeloOmie) throw new EstoqueJaLancadoPeloOmieError(detalhe.notaFiscal, detalhe.fornecedorNome);
+  // FR-021a: sem a conclusao CONFIRMADA localmente (espelho ausente, defasado ou nao casado),
+  // le o recebimento ao vivo antes de gravar.
+  if (detalhe.fiscal === 'concluido' && !interno.espelhoConfirmaConclusao) await verificarEstoqueLancadoAoVivo(detalhe);
+
+  // ── Feature 017: regras de PC do portao 1 (so com o fiscal pelo Atlas) ──
+  let sequenciasSemVinculo: number[] = [];
+  // Itens que o Atlas nao recebe (unidade) e sem PC no OMIE: o fiscal da NF inteira os
+  // concluiria sem PC (IGNORAR) — so permitido no modo "receber sem vinculo" (FR-011a/FR-020).
+  const semAvaliacao: ItemSemPc[] = fluxoPc
+    ? detalhe.itensSemAvaliacaoPc.flatMap((x) => {
+        const item = detalhe.itens.find((i) => i.indice === x.indice);
+        const info = interno.pcPorIndice.get(x.indice);
+        return item ? [{ item, motivo: 'unidade' as const, sequencias: info?.entrada.sequencias ?? item.sequenciasRecebimento, precoNfKg: null, pcsAguardando: [], pcsOutroCadastro: [] }] : [];
+      })
+    : [];
+  if (fluxoPc) {
+    // NF sem fornecedor cadastrado no OMIE (n_id_fornecedor 0, NF 1257): o fiscal da 016 a
+    // recusa de qualquer jeito. Recusa ANTES das regras de PC, sem aviso a compras — o problema
+    // e o cadastro, nao o PC (revisao de 22/10/2026, achados sugestao-v02/fila-v02).
+    if (!detalhe.fornecedorCnpj || interno.fornecedorCodigo == null) throw new RecebimentoFiscalSemFornecedorError(detalhe.notaFiscal);
+    // D13: copia de PCs defasada nao decide nada — nem NF_SEM_PC, nem aviso.
+    if (detalhe.copiaPcsDefasada) throw new CopiaPcsDefasadaError();
+    if (semPc.length > 0 || semAvaliacao.length > 0) {
+      // FR-011a: vinculo do OMIE que nao serve, sem outro PC, e recusado nos dois modos.
+      const vinculoInvalido = semPc.some((x) => x.motivo === 'vinculo_invalido');
+      if (vinculoInvalido || exigePcHabilitado()) {
+        if (semPc.length > 0) {
+          const motivo: MotivoAvisoCompras = semPc.every((x) => x.motivo === 'pc_aguardando_aprovacao') ? 'pc_aguardando_aprovacao' : 'sem_pc';
+          dispararAvisoCompras(detalhe, semPc, motivo, input.userId);
+        }
+        // Item de unidade nao e problema de compras (sem aviso): a mensagem orienta o fiscal.
+        const recusados = [...semPc, ...(exigePcHabilitado() ? semAvaliacao : [])];
+        throw new NfSemPcError(
+          detalhe.notaFiscal,
+          detalhe.fornecedorNome,
+          recusados.map((x) => ({ descricao: x.item.descricaoFornecedor, motivo: x.motivo, pcsOutroCadastro: x.pcsOutroCadastro })),
+        );
+      }
+      // Modo "receber sem vinculo": essas sequencias seguem a receita da 016 (EDITAR + IGNORAR).
+      sequenciasSemVinculo = [...semPc, ...semAvaliacao].flatMap((x) => x.sequencias);
+    }
   }
 
   // Localidades (nao espelhadas — defesa em profundidade, FR-011) e produtos (catalogo Q2P).
@@ -859,8 +1003,19 @@ export async function processarRecebimentoNacionalPorNf(
   // FR-012); `ja_concluido` e `concluido` seguem para o portao 2 (FR-011, FR-014).
   // Feature 016 (revisao pre-UAT, ROT-3): o gestor pode ter dispensado a NF depois
   // que este POST leu o detalhe — confere de novo antes de escrever no OMIE/estoque.
-  if (recebimentoFiscalHabilitado()) await garantirNaoDispensada(detalhe);
-  const fiscal = await executarFiscalSeNecessario(detalhe, input.userId);
+  // A dispensa vale com a chave em qualquer posicao (achado fila-v01).
+  await garantirNaoDispensada(detalhe);
+  const fiscal = await executarFiscalSeNecessario(detalhe, input.userId, { interno, escolhas: escolhasPc, sequenciasSemVinculo });
+  // Feature 017 (D6): modo "receber sem vinculo" — compras e avisado depois que o fiscal concluiu
+  // (tambem em ja_concluido: o Concluir de uma tentativa anterior pode ter passado sem resposta).
+  if ((fiscal.status === 'concluido' || fiscal.status === 'ja_concluido') && fiscal.semVinculo.length > 0) {
+    const semVinc = new Set(fiscal.semVinculo);
+    const recebidosSemPc = [...semPc, ...semAvaliacao].filter((x) => x.sequencias.some((sq) => semVinc.has(sq)));
+    if (recebidosSemPc.length > 0) {
+      dispararAvisoCompras(detalhe, recebidosSemPc, 'recebida_sem_vinculo', input.userId);
+      fiscal.avisoCompras = true;
+    }
+  }
 
   // ── Portao 2: escrita por produto, uma transacao cada ──────────────────
   const db = getDb();
@@ -997,9 +1152,109 @@ function fiscalSemAcao(mensagemNaoAplicavel: string): FiscalPorNfResult {
       status: 'desligado',
       concluidoEm: null,
       mensagem: 'O recebimento fiscal pelo Atlas está desligado neste ambiente — o fiscal segue sendo concluído no OMIE.',
+      vinculos: [],
+      semVinculo: [],
+      avisoCompras: false,
     };
   }
-  return { status: 'nao_aplicavel', concluidoEm: null, mensagem: mensagemNaoAplicavel };
+  return { status: 'nao_aplicavel', concluidoEm: null, mensagem: mensagemNaoAplicavel, vinculos: [], semVinculo: [], avisoCompras: false };
+}
+
+/**
+ * Feature 017 (research D7, FR-021a): NF "fiscal ja feito" cuja conclusao o espelho de
+ * recebimentos nao confirma (NF ausente, linha defasada com c_recebido='N' ou nao casada,
+ * e sem fiscal concluido pelo Atlas no ledger) — le o recebimento AO VIVO uma vez antes de gravar.
+ * EXCECAO AO PRINCIPIO II (specs/007-stockbridge-module/research.md secao 2,
+ * ACXEGDP-437): sem essa leitura o Atlas nao sabe se o OMIE ja lancou o estoque
+ * no recebimento fiscal, e receber aqui lancaria em dobro (SC-009). Recebimento
+ * inexistente no OMIE = nada foi lancado por ele.
+ */
+const RE_RECEBIMENTO_INEXISTENTE = /n[ãa]o (foi |foram )?(encontrad|localizad|cadastrad)|n[ãa]o exist|inexistent/i;
+
+async function verificarEstoqueLancadoAoVivo(detalhe: DetalheNfNacional): Promise<void> {
+  let rec;
+  try {
+    rec = await consultarRecebimentoNfe('q2p', { cChaveNfe: detalhe.nfChaveAcesso });
+  } catch (err) {
+    const msg = (err as Error)?.message ?? '';
+    if (RE_RECEBIMENTO_INEXISTENTE.test(msg)) {
+      logger.info({ nf: detalhe.notaFiscal }, 'NF sem recebimento de NF-e no OMIE — nenhum estoque lançado por ele');
+      return;
+    }
+    logger.error({ err, nf: detalhe.notaFiscal, chave: detalhe.nfChaveAcesso }, 'Leitura ao vivo do recebimento (estoque já lançado?) falhou');
+    throw new VerificacaoEstoqueOmieError(detalhe.notaFiscal, { cause: err });
+  }
+  if (estoqueLancadoNoRecebimento(rec)) {
+    logger.warn({ nf: detalhe.notaFiscal }, 'Recebimento concluído fora do Atlas com movimento de estoque — físico bloqueado');
+    throw new EstoqueJaLancadoPeloOmieError(detalhe.notaFiscal, detalhe.fornecedorNome);
+  }
+}
+
+/** Aviso a compras (D6) — best-effort, nunca segura a resposta. */
+function dispararAvisoCompras(detalhe: DetalheNfNacional, itens: ItemSemPc[], motivo: MotivoAvisoCompras, userId: string): void {
+  void enviarAvisoComprasNfSemPc(argsAvisoCompras(detalhe, itens, motivo, userId)).catch((err) =>
+    logger.error({ err, nf: detalhe.notaFiscal }, 'Falha no aviso a compras'),
+  );
+}
+
+/** Item sem PC possivel no portao 1 (ou nao avaliavel, motivo 'unidade') — entrada do aviso a compras. */
+interface ItemSemPc {
+  item: ItemNfNacional;
+  motivo: MotivoSemPc;
+  sequencias: number[];
+  precoNfKg: number | null;
+  pcsAguardando: string[];
+  /** PCs da mesma empresa lancados em outro cadastro do OMIE (filial x matriz) — so citados */
+  pcsOutroCadastro: PcOutroCadastro[];
+}
+
+function itemSemPc(item: ItemNfNacional, entrada: ItemParaSugestao, resultado: ResultadoPcItem): ItemSemPc {
+  return {
+    item,
+    motivo: resultado.motivoSemPc ?? 'sem_pc',
+    sequencias: entrada.sequencias,
+    precoNfKg: entrada.precoNfKg,
+    pcsAguardando: resultado.pc.aguardandoAprovacao.map((c) => c.pcNumero).filter((n) => n.length > 0),
+    pcsOutroCadastro: resultado.pcsOutroCadastro,
+  };
+}
+
+function argsAvisoCompras(
+  detalhe: DetalheNfNacional,
+  itens: ItemSemPc[],
+  motivo: MotivoAvisoCompras,
+  userId: string,
+): Parameters<typeof enviarAvisoComprasNfSemPc>[0] {
+  return {
+    empresa: detalhe.empresa,
+    nfChaveAcesso: detalhe.nfChaveAcesso,
+    notaFiscal: detalhe.notaFiscal,
+    fornecedorNome: detalhe.fornecedorNome,
+    itens: itens.map((x) => ({
+      nSequencia: x.sequencias[0] ?? null,
+      descricao: x.item.descricaoFornecedor,
+      qtdKg: x.item.quantidadeNfKg,
+      precoUnit: x.precoNfKg,
+      // item de unidade nao convertida: a quantidade nativa da NF, nunca "0 kg"
+      quantidadeTexto:
+        x.item.quantidadeNfKg == null ? `${x.item.quantidadeNf.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} ${x.item.unidadeOriginal}`.trim() : null,
+    })),
+    pcsAguardandoAprovacao: Array.from(new Set(itens.flatMap((x) => x.pcsAguardando))),
+    pcsOutroCadastro: itens.flatMap((x) =>
+      x.pcsOutroCadastro.map((p) => ({ itemDescricao: x.item.descricaoFornecedor, pcNumero: p.pcNumero, cnpjCadastroPc: p.cnpjCadastroPc })),
+    ),
+    cnpjNf: detalhe.fornecedorCnpj.replace(/\D/g, '') || null,
+    motivo,
+    disparadoPor: userId,
+  };
+}
+
+/** "vinculado ao PC 304" / "vinculado aos PCs 304 e 305" — so o numero legivel (ACXEGDP-313). */
+function textoVinculos(vinculos: VinculoFiscalConcluido[]): string {
+  const nums = Array.from(new Set(vinculos.map((v) => v.pcNumero).filter((n) => n.length > 0)));
+  if (nums.length === 0) return vinculos.length > 0 ? ', com os itens vinculados aos pedidos de compra' : '';
+  if (nums.length === 1) return `, vinculado ao PC ${nums[0]}`;
+  return `, vinculado aos PCs ${nums.slice(0, -1).join(', ')} e ${nums[nums.length - 1]}`;
 }
 
 /**
@@ -1007,24 +1262,41 @@ function fiscalSemAcao(mensagemNaoAplicavel: string): FiscalPorNfResult {
  * "fiscal pendente" na fila e com ao menos um produto preparado para gravar
  * (quem chama ja garantiu isto). Erros propagam — nada foi escrito ainda.
  */
-async function executarFiscalSeNecessario(detalhe: DetalheNfNacional, userId: string): Promise<FiscalPorNfResult> {
+async function executarFiscalSeNecessario(
+  detalhe: DetalheNfNacional,
+  userId: string,
+  pc: { interno: DetalheNfNacionalInterno; escolhas: EscolhaPcValidada[]; sequenciasSemVinculo: number[] },
+): Promise<FiscalPorNfResult> {
   if (!recebimentoFiscalHabilitado() || detalhe.fiscal !== 'pendente') {
     return fiscalSemAcao(`O recebimento fiscal da NF ${detalhe.notaFiscal} já estava concluído no OMIE.`);
   }
   // Fornecedor nao cadastrado no OMIE: o espelho ja sabe (sem CNPJ). Recusa aqui,
   // sem abrir o ledger nem consultar o OMIE (revisao pre-UAT, FISC-1/NF 1257).
   if (!detalhe.fornecedorCnpj) throw new RecebimentoFiscalSemFornecedorError(detalhe.notaFiscal);
+  // Feature 017 (T030): a releitura/reserva dos PCs roda DENTRO de concluirRecebimentoFiscal,
+  // depois da trava da NF (precisa do id do ledger) e da ConsultarRecebimento (NF ja concluida
+  // nao rele o PC — achado fiscal-02), antes de qualquer escrita.
   const r = await concluirRecebimentoFiscal({
     nfChaveAcesso: detalhe.nfChaveAcesso,
     nIdReceb: detalhe.nIdReceb,
     notaFiscal: detalhe.notaFiscal,
     fornecedorNome: detalhe.fornecedorNome,
     userId,
+    empresa: detalhe.empresa,
+    fornecedorCodigo: pc.interno.fornecedorCodigo,
+    vinculos: pc.escolhas,
+    sequenciasSemVinculo: pc.sequenciasSemVinculo,
   });
   const rotulo = `NF ${detalhe.notaFiscal} (${detalhe.fornecedorNome})`;
+  const comum = { vinculos: r.vinculos, semVinculo: r.semVinculo, avisoCompras: false };
   return r.status === 'concluido'
-    ? { status: 'concluido', concluidoEm: r.concluidoEm, mensagem: `Recebimento fiscal da ${rotulo} concluído no OMIE.` }
-    : { status: 'ja_concluido', concluidoEm: r.concluidoEm, mensagem: `O recebimento fiscal da ${rotulo} já estava concluído no OMIE — nada a fazer.` };
+    ? { status: 'concluido', concluidoEm: r.concluidoEm, mensagem: `Recebimento fiscal da ${rotulo} concluído no OMIE${textoVinculos(r.vinculos)}.`, ...comum }
+    : {
+        status: 'ja_concluido',
+        concluidoEm: r.concluidoEm,
+        mensagem: `O recebimento fiscal da ${rotulo} já estava concluído no OMIE${textoVinculos(r.vinculos)} — nada a fazer.`,
+        ...comum,
+      };
 }
 
 function montarResultado(detalhe: DetalheNfNacional, produtos: ProdutoPorNfResult[], fiscal: FiscalPorNfResult): ProcessarRecebimentoPorNfResult {
@@ -1041,4 +1313,63 @@ function montarResultado(detalhe: DetalheNfNacional, produtos: ProdutoPorNfResul
     },
     fiscal,
   };
+}
+
+// ── Feature 017 — aviso a compras sem o formulario (achado A1 da revisao de UI) ──
+
+/** 422 AVISO_COMPRAS_NAO_APLICAVEL: a nota nao esta aguardando pedido de compra. */
+export class AvisoComprasNaoAplicavelError extends Error {
+  constructor(public readonly notaFiscal: string, motivo: string) {
+    super(`Não há aviso a enviar para a NF ${notaFiscal}: ${motivo}.`);
+    this.name = 'AvisoComprasNaoAplicavelError';
+  }
+}
+
+export interface AvisoComprasResult {
+  status: 'enviado' | 'deduplicado' | 'falha';
+  motivo: MotivoAvisoCompras;
+  /** descricoes dos itens sem PC citados no aviso */
+  itens: string[];
+  /** pt-BR, para a tela */
+  mensagem: string;
+}
+
+/**
+ * Feature 017 (research D6, US3.2): avisa a equipe de Compras que a NF esta aguardando
+ * pedido de compra SEM exigir o formulario do recebimento — antes o aviso so saia no POST
+ * por-nf, que valida produto, estoque e peso de todos os itens antes de chegar ao NF_SEM_PC
+ * (achado A1 da revisao de UI de 21/10/2026). Mesma regra do portao 1: chave da 016 ligada,
+ * fiscal pendente, copia de PCs em dia, item a receber sem PC possivel e modo bloquear (ou
+ * vinculo do OMIE que nao serve, nos dois modos). Deduplicado por NF, motivo e destinatario em 24 h.
+ */
+export async function avisarComprasNfSemPc(input: { nfChaveAcesso: string; userId: string }): Promise<AvisoComprasResult> {
+  const { detalhe, interno } = await montarDetalheNfNacional(input.nfChaveAcesso);
+  if (!recebimentoFiscalHabilitado() || detalhe.fiscal !== 'pendente') {
+    throw new AvisoComprasNaoAplicavelError(detalhe.notaFiscal, 'o recebimento fiscal desta nota não é feito pelo Atlas');
+  }
+  if (!detalhe.fornecedorCnpj || interno.fornecedorCodigo == null) {
+    throw new AvisoComprasNaoAplicavelError(detalhe.notaFiscal, 'o fornecedor da nota não está cadastrado no OMIE (peça ao fiscal para cadastrá-lo)');
+  }
+  if (detalhe.copiaPcsDefasada) throw new CopiaPcsDefasadaError();
+  const semPc: ItemSemPc[] = [];
+  for (const it of detalhe.itens) {
+    // So itens que este recebimento gravaria: pendentes e com unidade convertida.
+    if (!itemNfPendente(it) || !it.conversao.ok) continue;
+    const info = interno.pcPorIndice.get(it.indice);
+    const r = info?.resultado;
+    if (!info || !r || r.possivel) continue;
+    semPc.push(itemSemPc(it, info.entrada, r));
+  }
+  const bloqueia = semPc.length > 0 && (exigePcHabilitado() || semPc.some((x) => x.motivo === 'vinculo_invalido'));
+  if (!bloqueia) throw new AvisoComprasNaoAplicavelError(detalhe.notaFiscal, 'ela não está aguardando pedido de compra');
+  const motivo: MotivoAvisoCompras = semPc.every((x) => x.motivo === 'pc_aguardando_aprovacao') ? 'pc_aguardando_aprovacao' : 'sem_pc';
+  const status = await enviarAvisoComprasNfSemPc(argsAvisoCompras(detalhe, semPc, motivo, input.userId));
+  const mensagem =
+    status === 'enviado'
+      ? `A equipe de Compras foi avisada de que a NF ${detalhe.notaFiscal} está aguardando pedido de compra.`
+      : status === 'deduplicado'
+        ? `A equipe de Compras já foi avisada desta NF nas últimas 24 horas.`
+        : `Não foi possível avisar a equipe de Compras agora. Tente de novo em instantes.`;
+  logger.info({ nf: detalhe.notaFiscal, motivo, status, userId: input.userId }, 'Aviso a compras pedido pela tela (NF aguardando PC)');
+  return { status, motivo, itens: semPc.map((x) => x.item.descricaoFornecedor), mensagem };
 }

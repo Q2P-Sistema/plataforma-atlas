@@ -13,7 +13,19 @@ import {
   ProdutoNaoEncontradoError,
   ValidacaoRecebimentoNacionalError,
   NfNacionalJaProcessadaError,
+  VerificacaoEstoqueOmieError,
+  AvisoComprasNaoAplicavelError,
+  avisarComprasNfSemPc,
 } from '../services/recebimento-nacional.service.js';
+import {
+  PcNaoElegivelError,
+  PcNaoEscolhidoError,
+  PcJustificativaObrigatoriaError,
+  PcVinculoInvalidoError,
+  PcRecemUsadoAguardeError,
+  NfSemPcError,
+  CopiaPcsDefasadaError,
+} from '../services/pc-sugestao.service.js';
 import {
   getFilaNacional,
   getDetalheNfNacional,
@@ -24,6 +36,7 @@ import {
   NfNacionalCanceladaError,
   FornecedorExcluidoError,
   FilaNacionalIncompletaError,
+  EstoqueJaLancadoPeloOmieError,
   ehTabelaAusente,
 } from '../services/fila-nacional.service.js';
 import { definirConjuntoCorrelacao } from '../services/correlacao-produto.service.js';
@@ -34,6 +47,7 @@ import {
   RecebimentoFiscalSemFornecedorError,
   RecebimentoFiscalNfCanceladaError,
   RecebimentoFiscalEtapaInesperadaError,
+  VinculoOmieMudouError,
   segundosAteNovaTentativa,
   listarLedgerFiscal,
 } from '../services/recebimento-fiscal.service.js';
@@ -260,6 +274,25 @@ function responderErroFilaNacional(res: Response, err: unknown): boolean {
     res.status(422).json({ data: null, error: { code: 'FORNECEDOR_EXCLUIDO', userMessage: err.message, message: err.message } });
     return true;
   }
+  // ── Feature 017 (contrato §3): pedido de compra e estoque ja lancado — nada gravado ──
+  const erro017 = (status: number, code: string, e: Error, extra: Record<string, unknown> = {}): true => {
+    res.status(status).json({ data: null, error: { code, userMessage: e.message, message: e.message, ...extra } });
+    return true;
+  };
+  if (err instanceof EstoqueJaLancadoPeloOmieError) return erro017(409, 'ESTOQUE_JA_LANCADO_PELO_OMIE', err);
+  if (err instanceof CopiaPcsDefasadaError) return erro017(503, 'COPIA_PCS_DEFASADA', err);
+  if (err instanceof NfSemPcError) return erro017(422, 'NF_SEM_PC', err);
+  if (err instanceof PcNaoEscolhidoError) return erro017(422, 'PC_NAO_ESCOLHIDO', err);
+  if (err instanceof PcNaoElegivelError) return erro017(422, 'PC_NAO_ELEGIVEL', err);
+  if (err instanceof PcJustificativaObrigatoriaError) return erro017(422, 'PC_JUSTIFICATIVA_OBRIGATORIA', err);
+  // `pc`: o item de PC recusado, para a tela desmarcar a escolha (id de selecao, nunca exibido).
+  if (err instanceof PcVinculoInvalidoError) return erro017(409, 'PC_VINCULO_INVALIDO', err, err.pc ? { pc: err.pc } : {});
+  if (err instanceof VinculoOmieMudouError) return erro017(409, 'VINCULO_OMIE_MUDOU', err);
+  if (err instanceof PcRecemUsadoAguardeError) return erro017(409, 'PC_RECEM_USADO_AGUARDE', err, { retryAfterSeconds: err.segundos });
+  if (err instanceof VerificacaoEstoqueOmieError) {
+    logger.error({ err }, 'Leitura ao vivo do recebimento falhou — nada gravado');
+    return erro017(502, 'VERIFICACAO_ESTOQUE_OMIE_FAIL', err, { retryAfterSeconds: 0 });
+  }
   return false;
 }
 
@@ -330,6 +363,18 @@ const ProdutoDistribuicaoSchema = z
   })
   .strict();
 
+// Feature 017 (contrato §3, data-model §9): PC escolhido para o item. Os ids do OMIE
+// sao so identificadores de selecao (a tela mostra o numero do PC); `.strict()` como
+// o resto do corpo. `n_cod_item_omie_visto` = vinculo do OMIE que a tela mostrou.
+const PcEscolhaSchema = z
+  .object({
+    n_cod_ped: z.number().int().positive(),
+    n_cod_item: z.number().int().positive(),
+    justificativa: z.string().trim().min(1).max(500).optional().nullable(),
+    n_cod_item_omie_visto: z.number().int().positive().optional().nullable(),
+  })
+  .strict();
+
 const ItemPorNfSchema = z
   .object({
     indice: z.number().int().min(0),
@@ -338,6 +383,7 @@ const ItemPorNfSchema = z
     motivo_divergencia: z.string().max(1000).optional().nullable(),
     observacoes: z.string().max(1000).optional().nullable(),
     produtos: z.array(ProdutoDistribuicaoSchema).min(1).max(20),
+    pc: PcEscolhaSchema.optional().nullable(),
   })
   .strict();
 
@@ -385,6 +431,7 @@ router.post(
             quantidadeKg: p.quantidade_kg,
             localidadeId: p.localidade_id,
           })),
+          pc: it.pc ?? null,
         })),
         userId,
       });
@@ -444,6 +491,45 @@ router.post(
       }
       logger.error({ err, chave: parsed.data.nf_chave_acesso }, 'Erro inesperado em recebimento nacional por NF');
       res.status(500).json({ data: null, error: { code: 'RECEBIMENTO_NACIONAL_NF_FAIL', message: (err as Error).message } });
+    }
+  },
+);
+
+// ── Feature 017 — aviso a compras sem o formulario (contrato §3b) ─────────────
+// A NF "aguardando pedido de compra" nao pode ser recebida; o operador avisa a equipe
+// de Compras com um clique, sem preencher produto/estoque/peso (achado A1 da revisao de UI).
+const AvisoComprasBodySchema = z.object({ nf_chave_acesso: ChaveAcessoSchema }).strict();
+
+router.post(
+  '/api/v1/stockbridge/recebimento/nacional/aviso-compras',
+  requireOperador,
+  requireArmazemVinculado,
+  async (req: Request, res: Response) => {
+    const parsed = AvisoComprasBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', userMessage: USER_MSG_INVALID, message: parsed.error.issues.map((i) => i.message).join('; ') } });
+      return;
+    }
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({ data: null, error: { code: 'UNAUTHENTICATED', message: 'Sessão sem usuário' } });
+      return;
+    }
+    try {
+      const r = await avisarComprasNfSemPc({ nfChaveAcesso: parsed.data.nf_chave_acesso, userId });
+      if (r.status === 'falha') {
+        res.status(502).json({ data: null, error: { code: 'AVISO_COMPRAS_FALHOU', userMessage: r.mensagem, message: 'envio do aviso a compras falhou', retryAfterSeconds: 0 } });
+        return;
+      }
+      res.json({ data: r, error: null });
+    } catch (err) {
+      if (responderErroFilaNacional(res, err)) return;
+      if (err instanceof AvisoComprasNaoAplicavelError) {
+        res.status(422).json({ data: null, error: { code: 'AVISO_COMPRAS_NAO_APLICAVEL', userMessage: err.message, message: err.message } });
+        return;
+      }
+      logger.error({ err, chave: parsed.data.nf_chave_acesso }, 'Erro no aviso a compras');
+      res.status(500).json({ data: null, error: { code: 'AVISO_COMPRAS_FAIL', message: (err as Error).message } });
     }
   },
 );
@@ -695,16 +781,12 @@ router.post(
   },
 );
 
-// GET /api/v1/stockbridge/recebimento/nacional/dispensas — gestor+ (contrato §5)
+// GET /api/v1/stockbridge/recebimento/nacional/dispensas — gestor+ (contrato §5). Com a chave da
+// 016 em qualquer posicao: a dispensa ativa vale mesmo com ela desligada (017, achado portao-r01).
 router.get(
   '/api/v1/stockbridge/recebimento/nacional/dispensas',
   requireGestor,
   async (req: Request, res: Response) => {
-    if (!recebimentoFiscalHabilitado()) {
-      const err = new RecebimentoFiscalDesabilitadoError();
-      res.status(403).json({ data: null, error: { code: 'RECEBIMENTO_FISCAL_DESABILITADO', userMessage: err.message, message: err.message } });
-      return;
-    }
     const parsed = DispensasQuerySchema.safeParse(req.query);
     if (!parsed.success) {
       res.status(400).json({ data: null, error: { code: 'INVALID_QUERY', userMessage: USER_MSG_INVALID, message: parsed.error.issues.map((i) => i.message).join('; ') } });
@@ -721,16 +803,12 @@ router.get(
   },
 );
 
-// POST /api/v1/stockbridge/recebimento/nacional/dispensas/:id/reverter — gestor+ (contrato §6)
+// POST /api/v1/stockbridge/recebimento/nacional/dispensas/:id/reverter — gestor+ (contrato §6). Com a
+// chave em qualquer posicao, como a listagem; so CRIAR dispensa exige a chave.
 router.post(
   '/api/v1/stockbridge/recebimento/nacional/dispensas/:id/reverter',
   requireGestor,
   async (req: Request, res: Response) => {
-    if (!recebimentoFiscalHabilitado()) {
-      const err = new RecebimentoFiscalDesabilitadoError();
-      res.status(403).json({ data: null, error: { code: 'RECEBIMENTO_FISCAL_DESABILITADO', userMessage: err.message, message: err.message } });
-      return;
-    }
     const id = String(req.params.id ?? '');
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
       res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', userMessage: USER_MSG_INVALID, message: 'id inválido' } });

@@ -197,10 +197,40 @@ export async function dispensarNf(input: DispensarNfInput): Promise<DispensarNfR
       motivo,
       dispensadoPorNome: nome,
       dispensadoEm,
+      pcsPorItem: await pcsVinculadosPorItem(detalhe),
     });
   })().catch((err) => logger.error({ err, nf: detalhe.notaFiscal }, 'Falha ao avisar o fiscal da dispensa (a dispensa foi gravada)'));
 
   return { id, notaFiscal: detalhe.notaFiscal, fornecedorNome: detalhe.fornecedorNome, situacaoFiscalNaDispensa: detalhe.fiscal, dispensadoEm };
+}
+
+/**
+ * Feature 017 (T044, caso de borda "Dispensa de NF"): PC vinculado a cada item —
+ * o vínculo à vista (fiscal já feito), o vínculo do OMIE no recebimento (fiscal
+ * pendente) e, se o espelho ainda não trouxe, o vínculo concluído pelo Atlas
+ * (recebimento_fiscal_pc). A dispensa não desfaz nada disso no OMIE: o fiscal
+ * precisa saber qual PC ficou com quantidade recebida. Best-effort.
+ */
+async function pcsVinculadosPorItem(detalhe: DetalheNfNacional): Promise<Array<{ descricao: string; pcNumero: string }>> {
+  const porItem = new Map<number, { descricao: string; pcNumero: string }>();
+  for (const it of detalhe.itens) {
+    const v = it.pc?.vinculadoNoOmie ?? it.pc?.vinculoOmie ?? null;
+    if (v) porItem.set(it.indice, { descricao: it.descricaoFornecedor, pcNumero: v.pcNumero });
+  }
+  try {
+    const r = await getPool().query<{ n_sequencia: number; pc_numero: string }>(
+      `SELECT DISTINCT n_sequencia, pc_numero FROM stockbridge.recebimento_fiscal_pc
+        WHERE nf_chave_acesso = $1 AND status = 'concluido'`,
+      [detalhe.nfChaveAcesso],
+    );
+    for (const row of r.rows) {
+      const it = detalhe.itens.find((i) => i.sequenciasRecebimento.includes(Number(row.n_sequencia)));
+      if (it && !porItem.get(it.indice)?.pcNumero) porItem.set(it.indice, { descricao: it.descricaoFornecedor, pcNumero: row.pc_numero });
+    }
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, nf: detalhe.notaFiscal }, 'Vínculos com PC da NF dispensada indisponíveis — aviso segue sem eles');
+  }
+  return Array.from(porItem.values());
 }
 
 async function nomeUsuario(userId: string): Promise<string | null> {
@@ -273,9 +303,12 @@ export interface ReverterDispensaInput {
   perfilUsuario: Perfil;
 }
 
-/** Desfaz a dispensa (FR-025): a NF volta a fila na situacao fiscal em que estiver. Nunca DELETE. */
+/**
+ * Desfaz a dispensa (FR-025): a NF volta a fila na situacao fiscal em que estiver. Nunca DELETE.
+ * Vale com a chave da 016 em qualquer posicao: a dispensa ativa tira a NF da fila mesmo com a chave
+ * desligada (017), entao desfaze-la tambem precisa funcionar (achado portao-r01).
+ */
 export async function reverterDispensa(input: ReverterDispensaInput): Promise<{ id: string; notaFiscal: string }> {
-  exigirFlag();
   exigirGestor(input.perfilUsuario);
   const motivo = input.motivo?.trim() ?? '';
   if (motivo.length === 0) throw new MotivoDispensaObrigatorioError('reverter');

@@ -125,6 +125,8 @@ let fechamentoAcha = true;
 /** O UPDATE de fechamento lanca (banco fora)? */
 let fechamentoLanca = false;
 let ledgerRows: Record<string, unknown>[] = [];
+/** 017 (T042): linhas de recebimento_fiscal_pc devolvidas para a listagem do ledger */
+let vinculoRows: Record<string, unknown>[] = [];
 
 function responderLedger(sql: string, params?: unknown[]) {
   if (sql.includes("status = 'falha'") && sql.includes('make_interval(secs')) {
@@ -152,6 +154,7 @@ function responderLedger(sql: string, params?: unknown[]) {
     if (fechamentoLanca) throw new Error('connection terminated');
     return { rows: fechamentoAcha ? [{ finalizado_em: '2026-10-02 10:00:00+00' }] : [] };
   }
+  if (sql.includes('FROM stockbridge.recebimento_fiscal_pc pc')) return { rows: vinculoRows };
   if (sql.includes('FROM stockbridge.recebimento_fiscal rf')) return { rows: ledgerRows };
   return { rows: [] };
 }
@@ -170,6 +173,7 @@ beforeEach(() => {
   fechamentoAcha = true;
   fechamentoLanca = false;
   ledgerRows = [];
+  vinculoRows = [];
   for (const f of Object.values(loggerMock)) f.mockClear();
   poolQuerySpy.mockReset();
   poolQuerySpy.mockImplementation(async (sql: string, params?: unknown[]) => responderLedger(sql, params));
@@ -209,14 +213,15 @@ describe('concluirRecebimentoFiscal — caminho feliz (US1)', () => {
     const ins = poolQuerySpy.mock.calls.find((c) => String(c[0]).includes('INSERT INTO stockbridge.recebimento_fiscal'))!;
     expect(ins[0]).toContain("'em_andamento'");
     expect(ins[0]).toContain('RETURNING id, iniciado_em::text AS token');
-    expect(ins[1]).toEqual([CHAVE, null, '6842', 'REPLAS COMERCIAL LTDA', USER]);
+    expect(ins[1]).toEqual([CHAVE, null, '6842', 'REPLAS COMERCIAL LTDA', USER, 'q2p']);  // 017: empresa
 
     expect(consultarSpy).toHaveBeenCalledWith('q2p', { cChaveNfe: CHAVE });
 
     // fechamento: so a linha deste dono (status em_andamento + mesmo iniciado_em)
     const upd = poolQuerySpy.mock.calls.find((c) => String(c[0]).includes('SET status = $2'))!;
     expect(String(upd[0])).toContain("WHERE id = $1 AND status = 'em_andamento' AND iniciado_em = $10::timestamptz");
-    expect(fechamentos[0]).toEqual(['ledger-1', 'concluido', N_ID_RECEB, '40', 'N', 2, null, null, null, TOKEN]);
+    // 017: $11 itens_vinculados — null = receita da 016 (nenhum item com PC)
+    expect(fechamentos[0]).toEqual(['ledger-1', 'concluido', N_ID_RECEB, '40', 'N', 2, null, null, null, TOKEN, null]);
   });
 
   it('EDITAR leva cNaoGerarMovEstoque S + cNaoGerarFinanceiro N (nSequencia da consulta); IGNORAR vai sem itensAjustes; Concluir na etapa 60', async () => {
@@ -276,7 +281,12 @@ describe('concluirRecebimentoFiscal — passos ja feitos sao pulados (revisao pr
 
 describe('concluirRecebimentoFiscal — ja concluido (FR-011)', () => {
   it('OMIE ja mostra cRecebido=S: nenhuma escrita, ledger ja_concluido', async () => {
-    consultaUnica({ cRecebido: 'S', cEtapa: '60', cUsuarioRec: 'gustavo' });
+    // concluido no portal SEM movimentar estoque (item com "nao movimentar" ou ignorado) — com
+    // estoque seria ESTOQUE_JA_LANCADO_PELO_OMIE (017, D7; ver recebimento-fiscal-pc.test.ts)
+    consultaUnica({
+      cRecebido: 'S', cEtapa: '60', cUsuarioRec: 'gustavo',
+      itens: [itemRec(3, { cNaoGerarMovEstoque: 'S' }), itemRec(7, { cIgnorarItem: 'S' })],
+    });
     const r = await concluirRecebimentoFiscal(input());
     expect(r.status).toBe('ja_concluido');
     expect(r.itensTotal).toBe(0);
@@ -319,7 +329,7 @@ describe('concluirRecebimentoFiscal — lock e espera (research D6, revisao pre-
     const ret = poolQuerySpy.mock.calls.find((c) => String(c[0]).includes('make_interval(mins'))!;
     expect((ret[1] as unknown[])[3]).toBe(LOCK_FISCAL_ORFAO_MIN);
     expect(LOCK_FISCAL_ORFAO_MIN).toBeGreaterThanOrEqual(15);
-    expect(fechamentos[0]!.at(-1)).toBe('TOKEN-RETOMADA');
+    expect(fechamentos[0]![9]).toBe('TOKEN-RETOMADA');  // $10 = token (017 acrescentou $11 itens_vinculados)
   });
 
   it('23505 de OUTRO indice nao e tratado como lock — propaga', async () => {
@@ -341,7 +351,7 @@ describe('concluirRecebimentoFiscal — lock e espera (research D6, revisao pre-
     expect(ordem).toEqual(['ledger:espera?']);
     expect(consultarSpy).not.toHaveBeenCalled();
     const sel = poolQuerySpy.mock.calls[0]!;
-    expect(String(sel[0])).toContain("passo_falha IN ('editar', 'ignorar', 'concluir')");
+    expect(String(sel[0])).toContain("passo_falha IN ('associar', 'editar', 'ignorar', 'concluir')");  // 017: associar e escrita
     expect(sel[1]).toEqual([CHAVE, ESPERA_APOS_FALHA_SEG]);
   });
 
@@ -417,7 +427,11 @@ describe('concluirRecebimentoFiscal — falhas (FR-012, STK-23 sem retry)', () =
       })
       .mockImplementationOnce(async () => {
         ordem.push('omie:reconsultar');
-        return recebimento({ cRecebido: 'S', cEtapa: '60', cUsuarioRec: 'WEBSERVICE' });
+        // o EDITAR do Atlas ja tinha marcado "nao movimentar estoque" antes do Concluir
+        return recebimento({
+          cRecebido: 'S', cEtapa: '60', cUsuarioRec: 'WEBSERVICE',
+          itens: [itemRec(3, { cNaoGerarMovEstoque: 'S', cIgnorarItem: 'S' }), itemRec(7, { cNaoGerarMovEstoque: 'S', cIgnorarItem: 'S' })],
+        });
       });
     const r = await concluirRecebimentoFiscal(input());
     expect(r.status).toBe('ja_concluido');
@@ -495,7 +509,11 @@ describe('concluirRecebimentoFiscal — falhas (FR-012, STK-23 sem retry)', () =
       })
       .mockImplementationOnce(async () => {
         ordem.push('omie:reconsultar');
-        return recebimento({ cRecebido: 'S', cEtapa: '60', cUsuarioRec: 'gustavo' });
+        // concluido no portal com "nao movimentar estoque" (com estoque: ESTOQUE_JA_LANCADO — 017, D7)
+        return recebimento({
+          cRecebido: 'S', cEtapa: '60', cUsuarioRec: 'gustavo',
+          itens: [itemRec(3, { cNaoGerarMovEstoque: 'S' }), itemRec(7, { cNaoGerarMovEstoque: 'S' })],
+        });
       });
     const r = await concluirRecebimentoFiscal(input());
     expect(r.status).toBe('ja_concluido');
@@ -604,11 +622,56 @@ describe('listarLedgerFiscal (contrato §7)', () => {
       },
     ];
     const lista = await listarLedgerFiscal({ status: 'concluido', limit: 10 });
-    const sql = String(poolQuerySpy.mock.calls.at(-1)![0]);
+    const chamada = poolQuerySpy.mock.calls.find((c) => String(c[0]).includes('FROM stockbridge.recebimento_fiscal rf'))!;
+    const sql = String(chamada[0]);
     expect(sql).not.toContain('erro_omie');
     expect(sql).toContain('rf.status = $2');
-    expect(poolQuerySpy.mock.calls.at(-1)![1]).toEqual([10, 'concluido']);
+    expect(chamada[1]).toEqual([10, 'concluido']);
+    // 017 (T042): os vinculos da pagina vem numa segunda consulta, tambem sem erro_omie_*
+    const vinc = poolQuerySpy.mock.calls.find((c) => String(c[0]).includes('FROM stockbridge.recebimento_fiscal_pc pc'))!;
+    expect(String(vinc[0])).not.toContain('erro_omie');
+    expect(vinc[1]).toEqual([['l1']]);
+    expect(lista[0]).toMatchObject({ empresa: 'q2p', vinculos: [] });
     expect(lista[0]).toMatchObject({ id: 'l1', notaFiscal: '6842', status: 'concluido', itensTotal: 1, confirmadoPor: { id: USER, nome: 'Gustavo' } });
     expect(lista[0]!.finalizadoEm).toBe(new Date('2026-10-02 10:00:04+00').toISOString());
+  });
+});
+
+describe('listarLedgerFiscal — vinculos com PC (017, T042)', () => {
+  it('cada tentativa traz empresa e vinculos[] legiveis (numero do PC, origem, justificativa, quem e quando) — sem erro_omie_*', async () => {
+    ledgerRows = [
+      {
+        id: 'l1', nf_chave_acesso: CHAVE, nota_fiscal: '7813', fornecedor_nome: 'REPLAS COMERCIAL LTDA', status: 'concluido',
+        passo_falha: null, itens_total: 1, confirmado_por: USER, confirmado_por_nome: 'Gustavo',
+        iniciado_em: '2026-10-22 10:00:00+00', finalizado_em: '2026-10-22 10:00:06+00', empresa: 'q2p',
+      },
+      {
+        id: 'l2', nf_chave_acesso: CHAVE, nota_fiscal: '7813', fornecedor_nome: 'REPLAS COMERCIAL LTDA', status: 'falha',
+        passo_falha: 'associar', itens_total: 1, confirmado_por: USER, confirmado_por_nome: 'Gustavo',
+        iniciado_em: '2026-10-22 09:58:00+00', finalizado_em: '2026-10-22 09:58:03+00', empresa: 'q2p',
+      },
+    ];
+    vinculoRows = [
+      { recebimento_fiscal_id: 'l2', n_sequencia: 1, pc_numero: '302', origem: 'manual', justificativa: 'PC certo era o 302', status: 'falha', confirmado_por: USER, confirmado_por_nome: 'Gustavo', confirmado_em: '2026-10-22 09:58:00+00' },
+      { recebimento_fiscal_id: 'l1', n_sequencia: 1, pc_numero: '302', origem: 'manual', justificativa: 'PC certo era o 302', status: 'concluido', confirmado_por: USER, confirmado_por_nome: 'Gustavo', confirmado_em: '2026-10-22 10:00:00+00' },
+    ];
+    const lista = await listarLedgerFiscal({ limit: 10 });
+    expect(lista[0]).toMatchObject({ id: 'l1', empresa: 'q2p' });
+    expect(lista[0]!.vinculos).toEqual([
+      {
+        nSequencia: 1, pcNumero: '302', origem: 'manual', justificativa: 'PC certo era o 302', status: 'concluido',
+        confirmadoPor: { id: USER, nome: 'Gustavo' }, confirmadoEm: new Date('2026-10-22 10:00:00+00').toISOString(),
+      },
+    ]);
+    expect(lista[1]).toMatchObject({ id: 'l2', passoFalha: 'associar', vinculos: [expect.objectContaining({ status: 'falha' })] });
+    expect(JSON.stringify(lista)).not.toContain('erro_omie');
+    const vinc = poolQuerySpy.mock.calls.find((c) => String(c[0]).includes('FROM stockbridge.recebimento_fiscal_pc pc'))!;
+    expect(vinc[1]).toEqual([['l1', 'l2']]);
+  });
+
+  it('pagina vazia: nenhuma consulta de vinculos', async () => {
+    ledgerRows = [];
+    expect(await listarLedgerFiscal({})).toEqual([]);
+    expect(poolQuerySpy.mock.calls.some((c) => String(c[0]).includes('recebimento_fiscal_pc'))).toBe(false);
   });
 });

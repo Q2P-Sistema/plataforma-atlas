@@ -31,7 +31,13 @@ vi.mock('@atlas/core', () => ({
 }));
 vi.mock('@atlas/db', () => ({ users: {}, userModules: {} }));
 
-import { enviarAlertaNfDispensada, enviarAlertaDispensaRevertida, enviarAlertaEspelhoRecebimentosDefasado, getFiscalEmails } from '../services/notificacao.service.js';
+import {
+  enviarAlertaNfDispensada,
+  enviarAlertaDispensaRevertida,
+  enviarAlertaEspelhoRecebimentosDefasado,
+  enviarAlertaCopiaPcsDefasada,
+  getFiscalEmails,
+} from '../services/notificacao.service.js';
 
 const base = {
   notaFiscal: '6842',
@@ -110,6 +116,27 @@ describe('enviarAlertaNfDispensada', () => {
     expect(html).not.toContain('[Dispensada por:');
   });
 
+  // Feature 017 (T044, caso de borda "Dispensa de NF"): o fiscal fica sabendo qual PC
+  // ficou com quantidade recebida no OMIE — so o numero legivel, nunca id interno.
+  it('017: cita o PC vinculado a cada item; numero desconhecido vira "PC vinculado no OMIE"', async () => {
+    await enviarAlertaNfDispensada({
+      ...base,
+      situacaoFiscalNaDispensa: 'concluido',
+      pcsPorItem: [
+        { descricao: 'SUCATA PLASTICO', pcNumero: '304' },
+        { descricao: 'SUCATA PP', pcNumero: '' },
+      ],
+    });
+    const html = emails()[0]!.html;
+    expect(html).toContain('[Pedido de compra vinculado: SUCATA PLASTICO: PC 304; SUCATA PP: PC vinculado no OMIE]');
+    expect(html).not.toMatch(/\d{10}/);
+  });
+
+  it('017: sem PC vinculado, a linha de pedido de compra nao aparece', async () => {
+    await enviarAlertaNfDispensada({ ...base, pcsPorItem: [] });
+    expect(emails()[0]!.html).not.toContain('Pedido de compra vinculado');
+  });
+
   it('lista vazia: nenhum envio e warn', async () => {
     configMock.STOCKBRIDGE_FISCAL_EMAILS = [];
     await enviarAlertaNfDispensada(base);
@@ -160,7 +187,8 @@ describe('enviarAlertaDispensaRevertida (revisao pre-UAT, ROT-4)', () => {
 
 describe('enviarAlertaEspelhoRecebimentosDefasado (revisao pre-UAT, ROT-6)', () => {
   it('vai para STOCKBRIDGE_OPS_EMAIL com a idade, o limite, o impacto na fila e o que verificar (n8n e copia do UAT)', async () => {
-    await enviarAlertaEspelhoRecebimentosDefasado({ status: 'degraded', idadeMin: 185.4, limiteMin: 120 });
+    // devolve true quando o e-mail foi entregue ao provedor (o job so suprime o reaviso depois disso)
+    expect(await enviarAlertaEspelhoRecebimentosDefasado({ status: 'degraded', idadeMin: 185.4, limiteMin: 120 })).toBe(true);
     const enviados = emails();
     expect(enviados).toHaveLength(1);
     expect(enviados[0]!.to).toBe('ops@q2p.local');
@@ -179,6 +207,32 @@ describe('enviarAlertaEspelhoRecebimentosDefasado (revisao pre-UAT, ROT-6)', () 
     await enviarAlertaEspelhoRecebimentosDefasado({ status: 'indisponivel', idadeMin: null, limiteMin: 120 });
     expect(emails().at(-1)!.html).toContain('não pôde ser lido');
     sendEmailMock.mockRejectedValueOnce(new Error('smtp down'));
-    await expect(enviarAlertaEspelhoRecebimentosDefasado({ status: 'degraded', idadeMin: 300, limiteMin: 120 })).resolves.toBeUndefined();
+    await expect(enviarAlertaEspelhoRecebimentosDefasado({ status: 'degraded', idadeMin: 300, limiteMin: 120 })).resolves.toBe(false);
+  });
+});
+
+// Feature 017 (research D13, FR-030) e revisao pos-017 (infra-03): alerta da copia de pedidos
+// de compra ao ops; devolve se o e-mail foi entregue, sem nunca lancar.
+describe('enviarAlertaCopiaPcsDefasada (feature 017, D13)', () => {
+  it('vai para STOCKBRIDGE_OPS_EMAIL com a idade, o limite e o impacto (modo seguro), e devolve true', async () => {
+    expect(await enviarAlertaCopiaPcsDefasada({ status: 'degraded', idadeMin: 240.2, limiteMin: 120 })).toBe(true);
+    const enviados = emails();
+    expect(enviados).toHaveLength(1);
+    expect(enviados[0]!.to).toBe('ops@q2p.local');
+    expect(enviados[0]!.subject).toBe('StockBridge — Cópia de pedidos de compra sem atualização');
+    const { html } = enviados[0]!;
+    expect(html).toContain('[alerta:Cópia de pedidos de compra sem atualização]');
+    expect(html).toContain('não é atualizada há 240 minutos (limite: 120 minutos)');
+    expect(html).toContain('fica bloqueado no StockBridge');
+  });
+
+  it('vazia e inacessivel tem texto proprio; falha de envio nao propaga, e logada e devolve false', async () => {
+    await enviarAlertaCopiaPcsDefasada({ status: 'sem_dados', idadeMin: null, limiteMin: 120 });
+    expect(emails().at(-1)!.html).toContain('está vazia');
+    await enviarAlertaCopiaPcsDefasada({ status: 'indisponivel', idadeMin: null, limiteMin: 120 });
+    expect(emails().at(-1)!.html).toContain('não pôde ser lida');
+    sendEmailMock.mockRejectedValueOnce(new Error('smtp down'));
+    await expect(enviarAlertaCopiaPcsDefasada({ status: 'degraded', idadeMin: 300, limiteMin: 120 })).resolves.toBe(false);
+    expect(loggerMock.error).toHaveBeenCalled();
   });
 });

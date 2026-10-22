@@ -77,7 +77,9 @@ const envSchema = z.object({
   // POST por-nf e as rotas de dispensa de NF. Default DESLIGADO (research D12):
   // escreve em documento fiscal e muda o processo da equipe (ninguem mais
   // conclui recebimento de compra nacional no portal) — liga-se por ambiente,
-  // UAT primeiro; desligada, tudo volta ao comportamento da feature 015.
+  // UAT primeiro; desligada, tudo volta ao comportamento da feature 015 — exceto a
+  // dispensa ativa, o PC vinculado a vista e o bloqueio de estoque ja lancado pelo
+  // OMIE, que valem com a chave em qualquer posicao (feature 017).
   STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED: z
     .enum(['true', 'false', '1', '0', ''])
     .default('false')
@@ -104,6 +106,42 @@ const envSchema = z.object({
       }
       return lista;
     }),
+  // Feature 017 (ACXEGDP-437): regra para NF nacional com item sem pedido de
+  // compra (PC) possivel, quando o fiscal e feito pelo Atlas (chave da 016
+  // ligada e fiscal pendente). true (padrao) = a NF inteira e recusada com
+  // 422 NF_SEM_PC e fica na fila "aguardando PC de compras"; false = o item sem
+  // PC segue a receita da 016 (EDITAR + IGNORAR) e o resto da NF e vinculado.
+  // Nos dois modos compras e avisado (STOCKBRIDGE_COMPRAS_EMAILS).
+  STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC: z
+    .enum(['true', 'false', '1', '0', ''])
+    .default('true')
+    .transform((v) => v !== 'false' && v !== '0'),
+  // Feature 017 (research D3): tolerancias da sugestao de PC, em %. Quantidade da
+  // NF ate QTD% acima do saldo do PC; preco por kg da NF ate PRECO% do preco do PC.
+  STOCKBRIDGE_PC_TOLERANCIA_QTD_PCT: z.coerce.number().min(0).max(100).default(2),
+  STOCKBRIDGE_PC_TOLERANCIA_PRECO_PCT: z.coerce.number().min(0).max(100).default(1),
+  // Feature 017 (research D6): destinatarios do aviso "NF sem pedido de compra no
+  // OMIE" (lista separada por virgula, cada endereco validado). Vazia/ausente =
+  // vai para STOCKBRIDGE_OPS_EMAIL, com aviso no log.
+  STOCKBRIDGE_COMPRAS_EMAILS: z
+    .string()
+    .default('')
+    .transform((v, ctx) => {
+      const lista = v.split(',').map((e) => e.trim()).filter((e) => e.length > 0);
+      for (const email of lista) {
+        if (!z.string().email().safeParse(email).success) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `e-mail invalido em STOCKBRIDGE_COMPRAS_EMAILS: "${email}"` });
+          return z.NEVER;
+        }
+      }
+      return lista;
+    }),
+  // Feature 017 (research D13): idade maxima (min) da copia de PCs
+  // (tbl_pedidosCompras_*, n8n Rev 1.5) antes de o health marcar degraded, o cron
+  // alertar STOCKBRIDGE_OPS_EMAIL e o recebimento com fiscal pendente entrar em
+  // modo seguro (503 COPIA_PCS_DEFASADA). PROD: 120 (n8n a cada 10 min + aviso
+  // por evento). UAT: calibrar pela frequencia com que a copia chega la.
+  STOCKBRIDGE_COPIA_PCS_MAX_MIN: z.coerce.number().int().min(10).max(10080).default(120),
   // ACXEGDP-344: baixa automatica do pedido de compra Q2P (AlteraPedCompra)
   // apos recebimento de importacao. Default LIGADO. 'false' desliga o disparo no
   // fluxo — as movimentacoes ficam 'pendente' e podem ser processadas depois

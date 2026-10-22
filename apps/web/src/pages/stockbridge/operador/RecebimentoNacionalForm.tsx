@@ -59,17 +59,31 @@ export function useApiFetch() {
       ...(opts.headers as Record<string, string>),
     };
     if (csrfToken) headers['x-csrf-token'] = csrfToken;
+    type RefPc = { nCodPed: number; nCodItem: number };
     type Corpo = {
       data: unknown;
-      error: { code?: string; userMessage?: string; message?: string; retryAfterSeconds?: number } | null;
+      error: { code?: string; userMessage?: string; message?: string; retryAfterSeconds?: number; pc?: unknown } | null;
       meta?: Record<string, unknown>;
     };
-    const falhar = (msg: string, status: number, code?: string, retryAfterSeconds?: number): never => {
-      const err = new Error(msg) as Error & { code?: string; status?: number; retryAfterSeconds?: number };
+    const falhar = (msg: string, status: number, code?: string, retryAfterSeconds?: number, pc?: RefPc): never => {
+      const err = new Error(msg) as Error & { code?: string; status?: number; retryAfterSeconds?: number; pc?: RefPc };
       err.code = code;
       err.status = status;
       err.retryAfterSeconds = retryAfterSeconds;
+      err.pc = pc;
       throw err;
+    };
+    // feature 017: o 409 PC_VINCULO_INVALIDO traz `error.pc` = item de PC recusado. Ids so de selecao (o Panel
+    // desmarca a escolha que bate com eles): nunca viram texto. Ausente ou malformado = undefined (servidor anterior).
+    const refPcDoErro = (v: unknown): RefPc | undefined => {
+      if (typeof v !== 'object' || v === null) return undefined;
+      const id = (x: unknown): number | undefined => {
+        const n = typeof x === 'string' && x.trim() !== '' ? Number(x) : x;
+        return typeof n === 'number' && Number.isFinite(n) ? n : undefined;
+      };
+      const nCodPed = id((v as Record<string, unknown>).nCodPed);
+      const nCodItem = id((v as Record<string, unknown>).nCodItem);
+      return nCodPed !== undefined && nCodItem !== undefined ? { nCodPed, nCodItem } : undefined;
     };
     const semResposta = 'Não foi possível falar com o servidor. Verifique a conexão e tente novamente em instantes.';
     let res: Response;
@@ -96,10 +110,17 @@ export function useApiFetch() {
     }
     // Prefere userMessage (pt-BR, sem codigo OMIE) quando a rota o fornece.
     // `code`/`status` vao no erro para a UI decidir a acao (feature 016: 409 em
-    // andamento -> recarregar a nota; 502 fiscal -> tentar de novo).
+    // andamento -> recarregar a nota; 502 fiscal -> tentar de novo); `pc` (feature 017)
+    // identifica o item de PC recusado no 409 PC_VINCULO_INVALIDO.
     const respostaInvalida = `O servidor não respondeu corretamente (HTTP ${res.status}). Tente novamente em instantes.`;
     if (!res.ok) {
-      return falhar(body?.error?.userMessage ?? body?.error?.message ?? respostaInvalida, res.status, body?.error?.code, body?.error?.retryAfterSeconds);
+      return falhar(
+        body?.error?.userMessage ?? body?.error?.message ?? respostaInvalida,
+        res.status,
+        body?.error?.code,
+        body?.error?.retryAfterSeconds,
+        refPcDoErro(body?.error?.pc),
+      );
     }
     // 2xx sem JSON (ex.: HTML do fallback de SPA numa janela de deploy) NAO e sucesso:
     // nenhuma rota usada por este hook responde corpo vazio (revisao pre-UAT, R1).
