@@ -1618,7 +1618,9 @@ function ItemCard({
         </div>
       )}
 
-      {editavel && pcAtivo && pcDoItem && (
+      {/* Item coberto pelo pedido da nota: o bloco "Pedido de compra da nota" ja mostra a ligacao item -> item do PC, e cada
+          NF e de um PC so (usuario, 22/10/2026). O bloco por item fica so para o item que o pedido da nota nao cobre. */}
+      {editavel && pcAtivo && pcDoItem && !pcCompactoNota && (
         <PedidoCompraBloco
           pc={pcDoItem}
           descricaoItem={item.descricaoFornecedor.trim()}
