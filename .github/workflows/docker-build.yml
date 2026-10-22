@@ -20,6 +20,13 @@ jobs:
       - name: Checkout do código
         uses: actions/checkout@v5
         with:
+          # workflow_run NAO herda o branch que disparou a "Create Release Tag": ele roda
+          # com a definicao deste arquivo na branch padrao do repo e, sem `ref` explicito,
+          # faz checkout da PONTA dessa branch padrao — nao do commit que foi taggeado.
+          # Quando a branch que gerou a tag (ex.: a main, num PR direto) esta a frente da
+          # branch padrao (hoje a uat), a imagem construida e a da branch padrao, nao a da
+          # tag (ACXEGDP-437: v1.1.19 saiu com o codigo da uat, sem a feature 017).
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
           fetch-depth: 0
 
       - name: Buscar última tag criada
