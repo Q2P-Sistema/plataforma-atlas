@@ -56,7 +56,8 @@ Vínculo item de NF → item de PC, uma linha por item e por tentativa (D5). FR-
 | `pc_numero` | `varchar(15) NOT NULL` | número legível do PC, para mensagens |
 | `n_cod_ped_omie_anterior` | `bigint` | vínculo do OMIE substituído pelo operador (nulo se não houve troca) |
 | `n_cod_item_ped_omie_anterior` | `bigint` | idem |
-| `justificativa` | `text` | obrigatória quando `origem = 'manual'` ou há troca do vínculo do OMIE (CHECK) |
+| `dentro_tolerancia` | `boolean NOT NULL` | se o PC confirmado estava dentro da tolerância do FR-002, calculada na confirmação |
+| `justificativa` | `text` | obrigatória quando `dentro_tolerancia = false` ou há troca do vínculo do OMIE (`n_cod_ped_omie_anterior IS NOT NULL`), por CHECK. Ver a matriz abaixo |
 | `candidatos` | `jsonb NOT NULL` | retrato do que foi oferecido: `[{nCodPed, nCodItem, pcNumero, saldoKg, precoUnit, motivo, dentroTolerancia}]` |
 | `qtd_nf_kg` | `numeric(14,3) NOT NULL` | quantidade do item da NF, em kg |
 | `preco_nf` | `numeric(14,6) NOT NULL` | preço comercial unitário do item da NF, por kg |
@@ -73,7 +74,18 @@ Vínculo item de NF → item de PC, uma linha por item e por tentativa (D5). FR-
 **Índices**:
 
 - único parcial `(nf_chave_acesso, n_sequencia) WHERE status IN ('confirmado','associado','concluido')`: um vínculo vivo por item (FR-015);
-- `(n_cod_item_ped, concluido_em)` para a regra "PC recém-usado" (D4) e o saldo efetivo.
+- `(n_cod_item_ped, concluido_em)` para a regra "PC recém-usado" (D4) e para o desconto, na cópia local, dos vínculos concluídos depois de `data_atualizacao` (D3);
+- parcial `(n_cod_item_ped) WHERE status IN ('confirmado','associado')` para as **reservas** em andamento (D4). Na releitura ao vivo, o saldo disponível é `nQtde − nQtdeRec` menos as reservas de outras NFs iniciadas há menos de 15 min; vínculos concluídos não são descontados, porque o OMIE já os mostra.
+
+**Quando a justificativa é obrigatória** (FR-007, matriz única para o CHECK, o portão 1, a releitura e a tela):
+
+| Origem | Dentro da tolerância | Troca do vínculo do OMIE | Justificativa |
+|---|---|---|---|
+| `omie` (vínculo mantido) | sim | não | não |
+| `omie` (vínculo mantido) | não | não | **sim** |
+| `sugestao` (candidato) | sim | não | não |
+| `sugestao` ou `manual`, no lugar de um vínculo do OMIE | qualquer | sim | **sim** |
+| `manual` (outros do fornecedor) | não, por definição | qualquer | **sim** |
 
 **Máquina de estados**:
 
@@ -106,11 +118,11 @@ Aviso a compras sobre NF sem PC (D6), deduplicado.
 
 ## 6. `stockbridge.fornecedor_exclusao`: empresa (0057, História 5)
 
-`empresa varchar(4) NOT NULL DEFAULT 'q2p'`, com `CHECK (empresa IN ('q2p','acxe'))`. Linha nova com a Q2P como fornecedor excluído na ACXE (intercompany). O índice único passa a incluir `empresa`.
+`empresa varchar(4) NOT NULL DEFAULT 'q2p'`, com `CHECK (empresa IN ('q2p','acxe'))`. Linhas novas com a Q2P como fornecedor excluído na ACXE (intercompany): as duas CNPJs da Q2P no cadastro da ACXE, `27.019.059/0001-88` (matriz) e `27.019.059/0002-69` (filial), com máscara, como já está gravada a ACXE (`42.672.052/0001-54`). Não há constante de CNPJ da Q2P em `types.ts` (`CNPJ_Q2P_MATRIZ` é um rótulo). O índice único passa a incluir `empresa`, e `fornecedor.service.ts` passa a filtrar por empresa.
 
-## 7. Função `stockbridge.refresh_lotes_em_transito_se_stale` (0056)
+## 7. Função `stockbridge.refresh_lotes_em_transito_se_stale`: não muda
 
-Recriada a partir da versão da 0037, com uma única mudança: `pc.nqtde` → `pc.nqtde - COALESCE(pc.nqtderec, 0)` em `quantidade_fisica_kg`, `quantidade_fiscal_kg` e no filtro `> 0` (D10).
+Continua como na 0037 (decisão de 21/10/2026, research D10). Ela usa `pc.nqtde` em vez do saldo, mas é PL/pgSQL que escreve em `stockbridge.lote`, e reeditá-la reforçaria um desvio ao Princípio III. Como não existe PC de importação recebido em parte, ela não erra hoje. A limitação fica registrada para um card próprio (trânsito em TypeScript).
 
 ## 8. Shapes de leitura (fila e detalhe), extensões
 
@@ -132,7 +144,7 @@ interface PcCandidato {
   produtoDescricao: string;            // produto do PC (referência; não substitui a correlação)
   qtdPedidaKg: number;
   saldoKg: number;                     // nqtde - nqtderec
-  precoUnit: number;                   // R$/kg
+  precoUnit: number;                   // R$/kg do PC (nvalunit em KG, ou ÷ 1000 em T/TON)
   dtPrevisao: string | null;
   etapa: '15' | '10';
   dentroTolerancia: boolean;
@@ -162,6 +174,7 @@ interface DetalheNfNacional {
   empresa: Empresa;
   exigePc: boolean;                    // STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC (só relevante com fiscal pendente)
   estoqueLancadoPeloOmie: boolean;     // D7 — bloqueia o POST
+  copiaPcsDefasada: boolean;           // D13 — cópia de PCs acima de STOCKBRIDGE_COPIA_PCS_MAX_MIN: sem sugestão confiável; POST com fiscal pendente dá 503
 }
 ```
 
@@ -176,8 +189,10 @@ Os candidatos são calculados por item agregado: quantidade = soma das linhas (`
 pc?: {
   n_cod_ped: number;                   // > 0
   n_cod_item: number;                  // > 0
-  justificativa?: string | null;       // 1..500; obrigatória fora da tolerância ou na troca do vínculo do OMIE
-} | null;                              // ausente/null = sem PC (só aceito no modo "receber sem vínculo" ou com fiscal já feito)
+  justificativa?: string | null;       // 1..500; obrigatória conforme a matriz do §4
+  n_cod_item_omie_visto?: number | null; // vínculo do OMIE que a tela mostrou para o item (null = nenhum); base do 409 VINCULO_OMIE_MUDOU
+} | null;                              // ausente/null = sem PC: aceito só para item sem PC possível no modo "receber sem vínculo", ou com fiscal já feito.
+                                       // Item com PC possível e sem `pc` → 422 PC_NAO_ESCOLHIDO.
 
 // resultado, acrescido:
 fiscal: {
@@ -197,5 +212,6 @@ fiscal: {
 | `STOCKBRIDGE_PC_TOLERANCIA_PRECO_PCT` | `1` | D3: diferença de preço unitário |
 | `STOCKBRIDGE_COMPRAS_EMAILS` | vazio (cai em `STOCKBRIDGE_OPS_EMAIL`) | D6: aviso de NF sem PC |
 | `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED` | `false` | D11: História 5 |
+| `STOCKBRIDGE_COPIA_PCS_MAX_MIN` | `120` | D13: idade máxima da cópia de PCs antes do alerta e do modo seguro |
 
 Reaproveitada: `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED` (D8).

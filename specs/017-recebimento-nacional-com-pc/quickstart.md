@@ -10,7 +10,8 @@
 4. Variáveis de ambiente:
    - `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED=true`, **só** com a imagem que contém a 017;
    - `STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC=true`;
-   - `STOCKBRIDGE_COMPRAS_EMAILS`, com os destinatários de compras.
+   - `STOCKBRIDGE_COMPRAS_EMAILS`, com os destinatários de compras;
+   - `STOCKBRIDGE_COPIA_PCS_MAX_MIN` (default 120), a idade máxima da cópia de PCs antes do alerta e do modo seguro (research D13). No UAT, calibrar pela frequência com que a cópia chega lá (o espelho de recebimentos usa 360): com o limite curto demais, o modo seguro recusa toda NF com fiscal pendente.
 5. Teste do vínculo novo (research D2) feito com NF real e autorização do usuário **antes** de ligar a chave em PROD.
 6. No UAT (`OMIE_MODE=leitura`): as escritas são simuladas. A sombra precisa refletir a associação e o `nQtdeRec` do PC.
 
@@ -42,6 +43,7 @@ Base: o caso da NF 7813 × PC 304.
 
 1. NF 4% acima do saldo do único PC: o PC aparece em "Outros PCs do fornecedor". Escolher sem justificativa → `422 PC_JUSTIFICATIVA_OBRIGATORIA`. Com justificativa → `origem = 'manual'`, com a justificativa gravada.
 2. Item com vínculo do OMIE trocado para outro PC: justificativa obrigatória. `n_cod_ped_omie_anterior` fica gravado e o OMIE termina vinculado ao PC escolhido.
+3. Item com vínculo do OMIE fora da tolerância (quantidade ou preço) e mantido pelo operador: sem justificativa → `422 PC_JUSTIFICATIVA_OBRIGATORIA`; com justificativa, gravado com `origem = 'omie'` e `dentro_tolerancia = false` (matriz do `data-model.md` §4).
 
 ## Cenário 4 — NF sem PC (História 3)
 
@@ -53,6 +55,7 @@ Base: o caso da NF 7813 × PC 304.
    - uma segunda tentativa no mesmo dia não manda outro e-mail.
 2. PC do fornecedor só na etapa 10: o item mostra "PC aguardando aprovação" e não pode ser selecionado.
 3. `EXIGE_PC=false`: o recebimento conclui o fiscal com `IGNORAR` só nesse item, os itens com PC mantêm o vínculo, e compras é avisado com o motivo `recebida_sem_vinculo`.
+4. Item com PC possível (vínculo do OMIE, candidato ou outro PC do fornecedor) enviado sem escolha: `422 PC_NAO_ESCOLHIDO` nos dois modos de `EXIGE_PC`, sem gravar nada e sem e-mail a compras.
 
 ## Cenário 5 — Estoque já lançado pelo OMIE (FR-021a, vale com a chave desligada)
 
@@ -60,6 +63,7 @@ Base: o caso da NF 7813 × PC 304.
 2. Usar uma NF concluída no portal **sem** "não movimentar estoque". No UAT, injetar no espelho `c_recebido='S'`, `c_ignorar_item='N'`, `c_nao_gerar_mov_estoque='N'`.
 3. O detalhe mostra o aviso, e o POST responde `409 ESTOQUE_JA_LANCADO_PELO_OMIE` sem gravar nada.
 4. NF concluída no portal **com** "não movimentar estoque" e vínculo: o detalhe mostra "PC 304 vinculado no OMIE" e o recebimento faz só o estoque.
+5. Com a chave ligada: NF que a tela mostrava com fiscal pendente e foi concluída no portal **sem** "não movimentar estoque" antes da confirmação (no UAT, mock de `ConsultarRecebimento` com `cRecebido='S'` e o item sem "não movimentar estoque"): o POST responde `409 ESTOQUE_JA_LANCADO_PELO_OMIE` sem gravar nada (ramo `ja_concluido`, research D7).
 
 ## Cenário 6 — Falhas e repetições (História 4)
 
@@ -70,13 +74,15 @@ Base: o caso da NF 7813 × PC 304.
 5. PC consumido entre abrir a tela e confirmar (mock de `ConsultarPedCompra` com saldo 0): `409 PC_VINCULO_INVALIDO`.
 6. Vínculo mudado no OMIE entre abrir e confirmar: `409 VINCULO_OMIE_MUDOU`.
 7. Rejeição do gestor por divergência: o fiscal e o vínculo continuam, e a NF volta como "fiscal já feito".
+8. Cópia de PCs defasada (mais velha que `STOCKBRIDGE_COPIA_PCS_MAX_MIN`, ou vazia): o health do módulo fica `degraded` com `pedidosCompraCopiaIdadeMin`, o cron alerta `STOCKBRIDGE_OPS_EMAIL`, o detalhe mostra "lista de pedidos de compra desatualizada" sem sugestão, e o POST de NF com fiscal pendente responde `503 COPIA_PCS_DEFASADA`, sem gravar nada e sem e-mail a compras.
+9. Duas NFs confirmadas ao mesmo tempo no mesmo item de PC, com saldo que não cobre as duas: a segunda vê a reserva da primeira e recebe `409 PC_VINCULO_INVALIDO`. Com saldo para as duas, as duas concluem.
 
 ## Cenário 7 — Regressões
 
 1. Baixa do PC Q2P da importação (ACXEGDP-344): receber uma NF filhote em UAT e conferir a baixa no PC-espelho certo. Nenhum PC nacional pode aparecer como candidato.
 2. PC-espelho de importação (fornecedor ACXE, abaixo de R$ 200) nunca aparece na sugestão.
 3. Com a chave da 016 desligada, a fila, o detalhe e o POST se comportam como na contenção, mais os cenários 5.1 e 5.4.
-4. Cockpit, pendências fiscais e trânsito: com um PC da ACXE recebido em parte injetado na cópia, contam o saldo e não a quantidade cheia.
+4. Cockpit e pendências fiscais: com um PC da ACXE recebido em parte injetado na cópia, contam o saldo e não a quantidade cheia. O trânsito (função `refresh_lotes_em_transito_se_stale` da 0037) não muda nesta feature e segue contando a quantidade cheia (limitação registrada em research D10).
 
 ## Cenário 8 — Compra nacional pela ACXE (História 5, fase 2)
 
@@ -93,8 +99,9 @@ Pré-requisitos: 0057, workflow "ACXE - Exporta Recebimentos NF-e" e `STOCKBRIDG
 - `packages/integrations/omie/src/__tests__/recebimento-nfe.test.ts`: `ASSOCIAR-PEDIDO`, parse de `nIdPedido`/`itensInfoAdic`, mock com associação e `nQtdeRec`.
 - `modules/stockbridge/src/__tests__/`:
   - `pc-sugestao.test.ts` (novo): tolerâncias, ordenação, empates, número do pedido, PC-espelho, etapa 10, vínculos divergentes por sequência;
-  - `recebimento-fiscal-pc.test.ts` (novo): receitas D1/D2, `IGNORAR` só em item sem PC, idempotência, releitura, "PC recém-usado", `VINCULO_OMIE_MUDOU`;
-  - `recebimento-nacional-pc.test.ts` (novo): portão 1 com `NF_SEM_PC` nos dois modos, estoque já lançado, aviso deduplicado;
+  - `recebimento-fiscal-pc.test.ts` (novo): receitas D1/D2, `IGNORAR` só em item sem PC, idempotência, releitura com o saldo ao vivo, reserva entre duas NFs, "PC recém-usado", `VINCULO_OMIE_MUDOU` só quando o vivo difere do visto e do escolhido, `ESTOQUE_JA_LANCADO_PELO_OMIE` no ramo `ja_concluido`;
+  - `recebimento-nacional-pc.test.ts` (novo): portão 1 com `NF_SEM_PC` nos dois modos, `PC_NAO_ESCOLHIDO`, `COPIA_PCS_DEFASADA`, estoque já lançado, aviso deduplicado;
+  - `alerta-espelho-recebimentos.test.ts` (estender): cópia de PCs velha, vazia e em dia;
   - `recebimento-nacional-nf.routes.test.ts` (estender): o schema `.strict()` aceita `itens[].pc` e recusa campos extras;
   - `fila-nacional-unificada.test.ts` (estender): `pcSituacao`, `estoqueLancadoPeloOmie`;
   - `recebimento-nacional-flag-off.test.ts` (estender): contenção + FR-021/021a;

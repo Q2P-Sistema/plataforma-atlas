@@ -48,6 +48,8 @@ Até o teste, a implementação fica atrás da chave da 016, que está desligada
 
 **Alternativas**: `EDITAR` antes de `ASSOCIAR-PEDIDO`. Ficou como plano B, se o teste mostrar que a associação zera os ajustes.
 
+**Plano B da troca de vínculo**: se o OMIE recusar o `ASSOCIAR-PEDIDO` sobre um item que já tem vínculo, a troca deixa de ser oferecida na tela. O item mantém o vínculo do OMIE ou, se ele não servir, a NF é recusada com a orientação de pedir a troca ao fiscal no portal. Em nenhum caso o item é ignorado (FR-011a).
+
 ## D3. A sugestão vem de duas fontes locais, sem chamar o OMIE ao abrir a tela
 
 **Decisão**: a sugestão de cada item é montada só a partir de dados que já estão no Postgres:
@@ -59,9 +61,9 @@ Até o teste, a implementação fica atrás da chave da 016, que está desligada
 
 - mesmo fornecedor: `pc.ncodfor` = `nIdFornecedor` do recebimento, ou o código do fornecedor no cadastro pela CNPJ, para a fonte "fiscal já feito";
 - `cetapa = '15'`;
-- quantidade do item, em kg, até 2% acima do saldo do PC (`nqtde − nqtderec`), com a conversão de unidade da 015 (`converterItemNfParaKg`);
-- preço unitário da NF até 1% diferente do preço do PC (`nvalunit`). O preço da NF é o preço comercial: `n_preco_unit` no espelho de recebimentos e `v_un_com` em `tbl_nf_itens_<empresa>`. Não é `v_prod`, que inclui tributos;
-- **nunca** PC de fornecedor ACXE com valor total abaixo de R$ 200 (PCs-espelho da importação). A regra é defensiva: como o candidato precisa ser do fornecedor da NF e a ACXE já fica fora da fila da Q2P por `fornecedor_exclusao`, o caso só aparece num vínculo do OMIE que aponte para PC-espelho.
+- quantidade do item, em kg, até 2% acima do saldo do PC: `qtdKg ≤ saldoKg × 1,02`. Na cópia local, o saldo é `nqtde − nqtderec`, menos os vínculos `concluido` do Atlas no mesmo item de PC depois de `data_atualizacao` da cópia (ela ainda não os viu) e menos as reservas em andamento de outras NFs (D4). A quantidade em kg usa a conversão de unidade da 015;
+- preço da NF por kg até 1% diferente do preço do PC por kg, com o preço do PC como base: `|preçoNfKg − preçoPcKg| ≤ preçoPcKg × 0,01`. O preço da NF é o **comercial**, sem tributos: `n_preco_unit` no espelho de recebimentos e `v_un_com` em `tbl_nf_itens_<empresa>`, nunca `v_prod`. Para o item agregado por descrição, `preçoNfKg = Σ(preço comercial × qtd) ÷ Σ kg`, chamando `converterItemNfParaKg(qtd, unidade, preço comercial × qtd)` por linha, porque a função recebe o valor **total**. O preço do PC por kg é `nvalunit` com `cunidade = 'KG'` (todos os PCs hoje) ou `nvalunit ÷ 1000` com `'T'`/`'TON'`; outra unidade deixa o PC fora, com o motivo. Item com unidade não conversível fica sem sugestão (já é bloqueado na 015 e vai ao formulário manual);
+- **nunca** PC de fornecedor ACXE com valor total abaixo de R$ 200 (PCs-espelho da importação). A ACXE é reconhecida pela CNPJ do fornecedor no cadastro, comparada sem máscara com `CNPJ_ACXE_NUMERICO` (`types.ts`); `CNPJ_ACXE` é um rótulo, não a CNPJ. A regra é defensiva: como o candidato precisa ser do fornecedor da NF e a ACXE já fica fora da fila da Q2P por `fornecedor_exclusao`, o caso só aparece num vínculo do OMIE que aponte para PC-espelho.
 
 **Ordenação**: (1) o número do pedido informado na NF (`n_num_ped_compra`) igual a `pc.cnumero`; (2) menor diferença de preço; (3) previsão de entrega mais antiga; (4) `ncodped`. Empates aparecem todos, e nada é pré-selecionado. Só o vínculo do OMIE, ou um único candidato que case pelo número do pedido, vem pré-selecionado. O operador confirma sempre (FR-007).
 
@@ -77,14 +79,22 @@ Até o teste, a implementação fica atrás da chave da 016, que está desligada
 
 1. lê o recebimento com `ConsultarRecebimento`, que já existe na 016;
 2. lê cada PC escolhido com `ConsultarPedCompra`, cliente da ACXEGDP-344;
-3. recusa o vínculo (`409 PC_VINCULO_INVALIDO`) se o PC não estiver na etapa 15, não tiver o item, for de outro fornecedor ou não tiver saldo, ou se a quantidade passar da tolerância sem justificativa;
-4. recusa com `409 VINCULO_OMIE_MUDOU` se o vínculo no recebimento for diferente do que a tela mostrou.
+3. recusa o vínculo (`409 PC_VINCULO_INVALIDO`) se o PC não estiver na etapa 15, não tiver o item, for de outro fornecedor ou não tiver saldo disponível, ou se a quantidade passar da tolerância sem justificativa;
+4. recusa com `409 VINCULO_OMIE_MUDOU` se o vínculo vivo no recebimento for diferente do que a tela mostrou (o corpo do POST leva `n_cod_item_omie_visto`) e diferente do PC escolhido. Vínculo vivo igual ao escolhido nunca é conflito, o que evita recusas em série enquanto o n8n ainda não preenche as colunas de pedido.
 
-**Cache do OMIE**: `ConsultarPedCompra` com corpo idêntico em menos de cerca de 1 min devolve resposta antiga (ACXEGDP-406). Se duas NFs consumirem o mesmo item de PC em sequência, a segunda pode ler o saldo de antes. Para evitar isso:
+**Saldo disponível na releitura**: é o que o OMIE devolve (`nQtde − nQtdeRec`), **sem** descontar vínculos concluídos pelo Atlas, porque o OMIE atualiza `nQtdeRec` ao concluir (teste da NF 7813). Desconta só as **reservas em andamento** de outras NFs no mesmo item de PC: linhas de `recebimento_fiscal_pc` em `confirmado` ou `associado`, de outra NF, iniciadas há menos de 15 min.
 
-- trava consultiva por item de PC (`pg_advisory_xact_lock` no `nIdItPedido`), no padrão da baixa da 344;
-- se houver vínculo concluído pelo Atlas no mesmo item de PC há menos de 75 s, o POST responde `409 PC_RECEM_USADO_AGUARDE` com `retryAfterSeconds`;
-- o saldo usado na checagem desconta os vínculos concluídos pelo Atlas no mesmo item depois da última atualização da cópia local.
+**Cache e concorrência**: `ConsultarPedCompra` com corpo idêntico em menos de cerca de 1 min devolve resposta antiga (ACXEGDP-406). A ordem no POST é:
+
+1. a trava da NF (ledger da 016);
+2. `ConsultarPedCompra` de cada PC escolhido, fora de transação;
+3. numa transação com `pg_advisory_xact_lock` por item de PC (`n_cod_item_ped`), em ordem crescente para não travar em ciclo:
+   - se houver vínculo `concluido` pelo Atlas no mesmo item de PC há menos de 75 s, `409 PC_RECEM_USADO_AGUARDE` com `retryAfterSeconds` (a leitura do passo 2 pode ter vindo do cache);
+   - checa o saldo disponível;
+   - grava as linhas `confirmado`, que são a **reserva**;
+4. só então `ConsultarRecebimento` e as escritas no OMIE.
+
+A trava solta no fim da transação, mas a reserva continua valendo para as outras NFs até a linha virar `concluido` ou `falha`. Isso fecha a janela de duas NFs simultâneas no mesmo item de PC sem segurar a trava durante as chamadas ao OMIE.
 
 **Alternativas**: confiar só na cópia local foi rejeitado, porque ela pode estar minutos atrás e outra NF pode ter consumido o PC.
 
@@ -94,12 +104,12 @@ Até o teste, a implementação fica atrás da chave da 016, que está desligada
 
 - origem: `omie`, `sugestao` ou `manual`;
 - o PC e o item de PC escolhidos, e o PC original do OMIE quando o operador troca;
-- a justificativa;
+- se o PC estava dentro da tolerância (`dentro_tolerancia`) e a justificativa, obrigatória fora dela ou na troca do vínculo do OMIE;
 - o retrato dos candidatos oferecidos (`jsonb`);
 - quantidade e preço da NF, saldo e preço do PC relidos;
 - o passo e o resultado.
 
-Status: `confirmado → associado → concluido | falha`. Há índice único parcial por `(nf_chave_acesso, n_sequencia)` para os status vivos. Tem trigger de auditoria (Princípio IV).
+Status: `confirmado → associado → concluido | falha`. Há índice único parcial por `(nf_chave_acesso, n_sequencia)` para os status vivos, e índice parcial `(n_cod_item_ped) WHERE status IN ('confirmado','associado')` para as reservas de D4. Tem trigger de auditoria (Princípio IV).
 
 O ledger da 016 ganha:
 
@@ -118,10 +128,11 @@ O ledger da 016 ganha:
 
 **Decisão**: a variável `STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC` (default `true`) define o modo.
 
-- **`true` (bloquear)**: se algum item a gravar não tem PC possível (nem vínculo do OMIE, nem candidato, nem PC da etapa 15 com saldo para escolha manual), o POST responde `422 NF_SEM_PC` sem escrever nada, e a NF continua na fila como "aguardando PC de compras".
-- **`false` (receber sem vínculo)**: os itens sem PC seguem a receita da 016 (`EDITAR` + `IGNORAR`), e os itens com PC seguem D1 ou D2. As duas receitas cabem na mesma NF, porque `AlterarRecebimento` aceita uma ação por item.
+- **`true` (bloquear)**: se algum item a gravar não tem PC possível (definição antes do FR-019 da spec), o POST responde `422 NF_SEM_PC` sem escrever nada, e a NF continua na fila como "aguardando PC de compras".
+- **`false` (receber sem vínculo)**: os itens sem PC possível seguem a receita da 016 (`EDITAR` + `IGNORAR`), e os itens com PC seguem D1 ou D2. As duas receitas cabem na mesma NF, porque `AlterarRecebimento` aceita uma ação por item.
+- **Item com PC possível e sem escolha**, nos dois modos: `422 PC_NAO_ESCOLHIDO` ("escolha o pedido de compra do item …"). Ele nunca vira "sem PC" nem gera aviso a compras. Item com vínculo do OMIE nunca segue o `IGNORAR` (FR-011a).
 
-Nos dois modos, compras recebe um aviso com a NF, o fornecedor e os itens sem PC. O aviso vai para `STOCKBRIDGE_COMPRAS_EMAILS`; se a variável estiver vazia, vai para `STOCKBRIDGE_OPS_EMAIL` e fica registrado no log. Ele é deduplicado em `stockbridge.nf_aviso_compras`: no máximo um por NF e motivo a cada 24 h.
+Nos dois modos, compras recebe um aviso com a NF, o fornecedor e os itens sem PC. O aviso vai para `STOCKBRIDGE_COMPRAS_EMAILS`; se a variável estiver vazia, vai para `STOCKBRIDGE_OPS_EMAIL` e fica registrado no log. Ele é deduplicado em `stockbridge.nf_aviso_compras`: no máximo um por NF e motivo a cada 24 h. Com a cópia de PCs defasada (D13), a regra não é aplicada: o POST responde `503 COPIA_PCS_DEFASADA` e nada é avisado.
 
 **A regra só vale quando o fiscal é feito pelo Atlas.** Com o fiscal já feito no portal, ou com a chave da 016 desligada (contenção), não há o que bloquear: o fiscal já existe, e o Atlas faz só o físico.
 
@@ -131,7 +142,9 @@ Nos dois modos, compras recebe um aviso com a NF, o fornecedor e os itens sem PC
 
 **Decisão**: uma NF com o fiscal concluído fora do Atlas é marcada como `estoqueLancadoPeloOmie` quando algum item está recebido, não ignorado e sem "não movimentar estoque". No espelho de recebimentos, isso é `c_recebido = 'S'`, `c_ignorar_item = 'N'` e `c_nao_gerar_mov_estoque = 'N'`.
 
-Com essa marca, o detalhe mostra o motivo e o POST responde `409 ESTOQUE_JA_LANCADO_PELO_OMIE` sem escrever nada. Quando o espelho de recebimentos não tem a NF, o POST de uma NF "fiscal já feito" lê o recebimento ao vivo uma vez (`ConsultarRecebimento` por chave) antes de gravar.
+Com essa marca, o detalhe mostra o motivo e o POST responde `409 ESTOQUE_JA_LANCADO_PELO_OMIE` sem escrever nada. Quando o espelho de recebimentos não tem a NF, o POST de uma NF "fiscal já feito" lê o recebimento ao vivo uma vez (`ConsultarRecebimento` por chave) antes de gravar. Essa leitura é uma exceção ao Princípio II e fica documentada no comentário do código e na seção 2 da 007.
+
+**Também no ramo `ja_concluido` e na reconsulta depois de falha.** Se a NF ainda aparecia com fiscal pendente e o fiscal foi concluído no portal entre a abertura da tela e a confirmação, a `ConsultarRecebimento` do fiscal (016) volta com `cRecebido = 'S'`. Antes de seguir para o físico, o Atlas aplica a mesma checagem aos itens lidos ao vivo: item não ignorado com `cNaoGerarMovEstoque = 'N'` dá `409 ESTOQUE_JA_LANCADO_PELO_OMIE`. O mesmo vale para a reconsulta depois de falha.
 
 **Vale com a chave da 016 desligada.** É justamente o cenário da contenção, com o fiscal concluindo no portal.
 
@@ -147,10 +160,10 @@ Com essa marca, o detalhe mostra o motivo e o POST responde `409 ESTOQUE_JA_LANC
 
 ## D9. Espelhos de recebimento: colunas de pedido e espelho novo da ACXE, com DDL na migration e mudança no n8n
 
-**Decisão**: a migration `0056` faz duas coisas:
+**Decisão**:
 
-- acrescenta `n_id_pedido bigint`, `n_id_it_pedido bigint`, `n_num_ped_compra varchar(15)` e `c_num_it_ped_compra integer` em `public."tbl_recebimentoNFe_itens_Q2P"` (`ADD COLUMN IF NOT EXISTS`);
-- cria `public."tbl_recebimentoNFe_ACXE"` e `"_itens_ACXE"` com a mesma DDL (`IF NOT EXISTS`), já com essas colunas.
+- a migration `0056` (Fase 1) acrescenta `n_id_pedido bigint`, `n_id_it_pedido bigint`, `n_num_ped_compra varchar(15)` e `c_num_it_ped_compra integer` em `public."tbl_recebimentoNFe_itens_Q2P"` (`ADD COLUMN IF NOT EXISTS`);
+- a migration `0057` (Fase 2, História 5) cria `public."tbl_recebimentoNFe_ACXE"` e `"_itens_ACXE"` com a mesma DDL (`IF NOT EXISTS`), já com essas colunas.
 
 O workflow n8n "Q2P - Exporta Recebimentos NF-e" passa a gravar os quatro campos, que vêm de `itensCabec.nIdPedido` e `nIdItPedido` e de `itensInfoAdic.nNumPedCompra` e `cNumItPedCompra`. Um workflow novo, "ACXE - Exporta Recebimentos NF-e", copia o da Q2P com as chaves da ACXE.
 
@@ -158,9 +171,11 @@ O contrato para a sessão dos workflows está em `contracts/espelhos-n8n.md`.
 
 **Rationale**: é o mesmo padrão da 016 (D4). A DDL canônica fica no repositório do Atlas, porque a fila e os testes dependem dela.
 
-## D10. Leitores da cópia de PCs passam a descontar o recebido
+## D10. Leitores da cópia de PCs passam a descontar o recebido (menos a função de trânsito)
 
-**Decisão**: `cockpit.service.ts`, `pendencias-fiscais.service.ts` e a função `stockbridge.refresh_lotes_em_transito_se_stale` (migration 0037, recriada na 0056) trocam `pc.nqtde` por `pc.nqtde - COALESCE(pc.nqtderec, 0)` como saldo, e `pc.nqtde > 0` por saldo `> 0`.
+**Decisão**: `cockpit.service.ts` e `pendencias-fiscais.service.ts` trocam `pc.nqtde` por `pc.nqtde - COALESCE(pc.nqtderec, 0)` como saldo, e `pc.nqtde > 0` por saldo `> 0`.
+
+**A função `stockbridge.refresh_lotes_em_transito_se_stale` (migration 0037) fica como está** (decisão do usuário em 21/10/2026, achado C2 do `/speckit-analyze`). Ela também usa `pc.nqtde`, mas é PL/pgSQL que faz UPSERT e soft-delete em `stockbridge.lote`, uma tabela de domínio. O Princípio III reserva essa escrita ao TypeScript, e reeditá-la nesta feature reforçaria o desvio herdado da 0037. Como hoje não existe PC de importação recebido em parte em nenhuma das empresas, a função não erra na prática. A limitação fica registrada para um card próprio: levar o refresh do trânsito para TypeScript, já com o saldo.
 
 **Rationale**: com a Rev 1.5, um PC recebido em parte passa a ficar na cópia local; sem a correção, ele seria contado pela quantidade cheia. Hoje não existe nenhum caso nas duas empresas, então a correção é preventiva. A baixa da ACXEGDP-344 não é afetada: ela só usa PCs com "Pedido original ACXE" casando com a NF filhote.
 
@@ -169,7 +184,7 @@ O contrato para a sessão dos workflows está em `contracts/espelhos-n8n.md`.
 **Decisão**:
 
 - a fila e o detalhe ganham `empresa` (`q2p` | `acxe`) nas duas fontes, com os espelhos da ACXE (`tbl_nf_header_ACXE` e `tbl_nf_itens_ACXE`, que já existem, e o espelho de recebimentos novo de D9);
-- `stockbridge.fornecedor_exclusao` ganha `empresa`. Na ACXE fica excluída a Q2P (intercompany);
+- `stockbridge.fornecedor_exclusao` ganha `empresa`. Na ACXE ficam excluídas as duas CNPJs da Q2P no cadastro da ACXE, `27.019.059/0001-88` (matriz) e `27.019.059/0002-69` (filial), gravadas com máscara como o caso inverso (`42.672.052/0001-54`). Não há constante de CNPJ da Q2P em `types.ts`: `CNPJ_Q2P_MATRIZ` é um rótulo. `fornecedor.service.ts`, que lista, exclui e reinclui por CNPJ, passa a considerar a empresa;
 - o fiscal e o vínculo usam `callOmie('acxe', …)`, com a mesma receita de D1 e D2;
 - **não há PC na Q2P.** O n8n `RDa9ilL3tbx5ETIk` só espelha PC de fornecedor estrangeiro (gate `gate_internacional_ativo`, ACXEGDP-376; o nacional cai em `Pedido_Nacional_Ignorado`). Logo, não há baixa de PC na Q2P (FR-029);
 - **estoque**: o operador escolhe o local entre os mesmos oferecidos na importação. Os locais espelhados vêm de `listarLocalidadesEspelhadas` (`localidade.service.ts`, a mesma lista do `ConferenciaModal` da importação), com a correspondência ACXE↔Q2P em `stockbridge.localidade_correlacao`. A entrada é sempre nas duas empresas: no local escolhido da ACXE e no local correlato da Q2P. **Não há entrada só na ACXE.** Não há trânsito: o lado da ACXE é `ENT`, e não `TRF`. Os sufixos de idempotência ficam `acxe-ent` e `q2p-ent`; falha só no lado da Q2P reaproveita `pendente_q2p` e o painel de retentativa;
@@ -190,7 +205,19 @@ O contrato para a sessão dos workflows está em `contracts/espelhos-n8n.md`.
 - a escrita continua sem retry (STK-23);
 - `ASSOCIAR-PEDIDO` entra na lista de escritas bloqueadas em `OMIE_MODE=leitura` (ACXEGDP-405), porque não está em `METODOS_LEITURA`: o método é `AlterarRecebimento`, já bloqueado.
 
-**Exceção ao Princípio II**: a escrita em `produtos/recebimentonfe/` já é exceção documentada (016). A ação `ASSOCIAR-PEDIDO` é acrescentada ao texto da seção 2 de `specs/007-stockbridge-module/research.md`.
+**Exceção ao Princípio II**: a escrita em `produtos/recebimentonfe/` já é exceção documentada (016). A ação `ASSOCIAR-PEDIDO` é acrescentada ao texto da seção 2 de `specs/007-stockbridge-module/research.md`, junto com as leituras ao vivo desta feature: `ConsultarPedCompra` na confirmação (D4) e `ConsultarRecebimento` por chave para NF "fiscal já feito" fora do espelho (D7).
+
+## D13. Frescor da cópia de PCs: monitorada, e defasada não decide nada
+
+**Decisão**: com esta feature, a cópia `tbl_pedidosCompras_<empresa>` passa a decidir a sugestão, o bloqueio de NF sem PC e o aviso a compras, e vira tabela crítica para o Princípio II ("Monitoramento DEVE alertar se MAX(dDtAlt) das tabelas críticas ficar defasado"). Então:
+
+- **idade** da cópia = `now() − max(data_atualizacao)` (a Rev 1.5 grava o início do sync em todas as linhas, na troca atômica);
+- **health** do módulo ganha `pedidosCompraCopiaIdadeMin`, `degraded` acima de `STOCKBRIDGE_COPIA_PCS_MAX_MIN` (default 120: com aviso por evento e agenda de 10 min, passar de 2 h significa pipeline quebrado);
+- **alerta** no cron que já vigia o espelho de recebimentos (`alerta-espelho-recebimentos.service.ts`), para `STOCKBRIDGE_OPS_EMAIL`, com o mesmo reaviso;
+- **modo seguro**: com a cópia defasada, o detalhe mostra "lista de pedidos de compra desatualizada" e o POST com fiscal pendente responde `503 COPIA_PCS_DEFASADA`, sem gravar nada, sem aplicar `NF_SEM_PC` e sem avisar compras. NF com fiscal já feito não depende da cópia e segue normal;
+- na Fase 2, o mesmo para a cópia da ACXE e o espelho de recebimentos da ACXE.
+
+**Alternativas**: tratar cópia defasada como "sem PC" foi rejeitado, porque bloquearia NFs e mandaria avisos falsos a compras justamente quando o problema é do pipeline.
 
 ---
 

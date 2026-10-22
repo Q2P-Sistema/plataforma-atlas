@@ -63,10 +63,16 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
 - [ ] T005 Criar `packages/db/migrations/0056_stockbridge_recebimento_nacional_pc.sql`, com cabeçalho Antes/Agora/Porque (skill `stockbridge-migration`) e estas seções:
   1. `ALTER TABLE public."tbl_recebimentoNFe_itens_Q2P" ADD COLUMN IF NOT EXISTS` para `n_id_pedido bigint`, `n_id_it_pedido bigint`, `n_num_ped_compra varchar(15)` e `c_num_it_ped_compra integer`, com o mesmo texto de `contracts/espelhos-n8n.md` §1;
   2. em `stockbridge.recebimento_fiscal`: `ADD COLUMN empresa varchar(4) NOT NULL DEFAULT 'q2p' CHECK (empresa IN ('q2p','acxe'))`, `ADD COLUMN itens_vinculados integer`, e recriar `recebimento_fiscal_passo_falha_check` incluindo `'associar'`;
-  3. `stockbridge.recebimento_fiscal_pc` conforme `data-model.md` §4: CHECKs de `origem` e `status`, e CHECK de justificativa obrigatória quando `origem = 'manual'` ou `n_cod_ped_omie_anterior IS NOT NULL`. Índice único parcial `(nf_chave_acesso, n_sequencia) WHERE status IN ('confirmado','associado','concluido')` e índice `(n_cod_item_ped, concluido_em)`;
+  3. `stockbridge.recebimento_fiscal_pc` conforme `data-model.md` §4: CHECKs de `origem` e `status`, coluna `dentro_tolerancia boolean NOT NULL` e CHECK de justificativa obrigatória quando `dentro_tolerancia = false` ou `n_cod_ped_omie_anterior IS NOT NULL` (matriz do `data-model.md` §4). Índice único parcial `(nf_chave_acesso, n_sequencia) WHERE status IN ('confirmado','associado','concluido')`, índice `(n_cod_item_ped, concluido_em)` e índice parcial `(n_cod_item_ped) WHERE status IN ('confirmado','associado')` para as reservas (research D4);
   4. `stockbridge.nf_aviso_compras` conforme `data-model.md` §5, com índice `(nf_chave_acesso, motivo, enviado_em)`
-- [ ] T006 Na mesma migration `0056`, adicionar `stockbridge.audit_recebimento_fiscal_pc()` + `trg_audit_sb_recebimento_fiscal_pc` e `stockbridge.audit_nf_aviso_compras()` + `trg_audit_sb_nf_aviso_compras` (AFTER INSERT OR UPDATE OR DELETE, padrão da 0053, linhas ~160-193)
-- [ ] T007 Na mesma migration `0056`, recriar `stockbridge.refresh_lotes_em_transito_se_stale(integer)` copiando a versão de `packages/db/migrations/0037_stockbridge_pipeline_5_estagios.sql` (linhas ~59-180). A única mudança é `pc.nqtde` → `pc.nqtde - COALESCE(pc.nqtderec, 0)` em `quantidade_fisica_kg`, `quantidade_fiscal_kg` e no filtro `> 0` (research D10). Manter o `COMMENT ON FUNCTION`
+- [ ] T006 Na mesma migration `packages/db/migrations/0056_stockbridge_recebimento_nacional_pc.sql`, adicionar `stockbridge.audit_recebimento_fiscal_pc()` + `trg_audit_sb_recebimento_fiscal_pc` e `stockbridge.audit_nf_aviso_compras()` + `trg_audit_sb_nf_aviso_compras` (AFTER INSERT OR UPDATE OR DELETE, padrão da 0053, linhas ~160-193)
+- [ ] T007 Monitorar a cópia de PCs (research D13, FR-030, Princípio II), depois da T010, no mesmo padrão do espelho de recebimentos da 016 (status `desligado` com `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED` desligada):
+  - em `modules/stockbridge/src/services/fila-nacional.service.ts`, ao lado de `idadeEspelhoRecebimentos()`, criar `idadeCopiaPcs()`: `now() − max(data_atualizacao)` de `public."tbl_pedidosCompras_Q2P"`, com o mesmo retorno (`status`, `idadeMin`, `limiteMin`), defasada acima de `STOCKBRIDGE_COPIA_PCS_MAX_MIN` ou com a tabela vazia ou inacessível. Exportar também `copiaPcsDefasada()` e fazer `statusHealthModulo` considerar a cópia;
+  - em `modules/stockbridge/src/routes/stockbridge.routes.ts` (~l.44-49), expor `pedidosCompraCopiaIdadeMin` no `GET /api/v1/health` do módulo, `degraded` com a cópia defasada;
+  - em `modules/stockbridge/src/services/alerta-espelho-recebimentos.service.ts`, o cron existente (`5,35 * * * *`) passa a verificar também a cópia e alertar `STOCKBRIDGE_OPS_EMAIL`, com o mesmo reaviso de 6 h (`REALERTA_ESPELHO_MS`) e controle de reaviso separado do espelho;
+  - `copiaPcsDefasada()` é usada no modo seguro pela sugestão (T018), pelo detalhe (T020) e pelo portão 1 (T034);
+  - estender `modules/stockbridge/src/__tests__/alerta-espelho-recebimentos.test.ts` com cópia velha, vazia e em dia, e com a chave desligada.
+  Substitui a antiga T007 (recriar a função de trânsito da 0037), tirada do escopo em 21/10/2026 (achado C2 do `/speckit-analyze`, research D10)
 - [ ] T008 Estender `packages/db/src/schemas/stockbridge.ts`:
   - em `recebimentoFiscal`, `empresa` (`$type<'q2p'|'acxe'>()`) e `itensVinculados`;
   - nova `recebimentoFiscalPc` (status `$type<'confirmado'|'associado'|'concluido'|'falha'>()`, origem `$type<'omie'|'sugestao'|'manual'>()`, `candidatos` jsonb tipado);
@@ -77,12 +83,12 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
   - `recebimento_fiscal.empresa`;
   - 2 tabelas e 2 triggers novas (`pg_trigger`);
   - índices parciais (`pg_indexes`);
-  - a função recriada (`\df+`);
   - reaplicação sem erro onde houver `IF NOT EXISTS`
 - [ ] T010 [P] Adicionar ao schema Zod de `packages/core/src/config.ts`, com comentários:
   - `STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC` (enum `'true'|'false'|'1'|'0'|''`, default `'true'`, transform boolean);
   - `STOCKBRIDGE_PC_TOLERANCIA_QTD_PCT` e `STOCKBRIDGE_PC_TOLERANCIA_PRECO_PCT` (número ≥ 0, defaults 2 e 1);
-  - `STOCKBRIDGE_COMPRAS_EMAILS` (CSV → `string[]` de e-mails, default vazio, mesmo padrão de `STOCKBRIDGE_FISCAL_EMAILS`)
+  - `STOCKBRIDGE_COMPRAS_EMAILS` (CSV → `string[]` de e-mails, default vazio, mesmo padrão de `STOCKBRIDGE_FISCAL_EMAILS`);
+  - `STOCKBRIDGE_COPIA_PCS_MAX_MIN` (`z.coerce.number().int().min(10).max(10080).default(120)`, mesmo padrão de `STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN`), usada pela T007
 - [ ] T011 [P] Estender `packages/integrations/omie/src/stockbridge/recebimento-nfe.ts`:
   - `AcaoItemRecebimento` passa a ser `'EDITAR' | 'IGNORAR' | 'ASSOCIAR-PEDIDO'`, com `nIdPedidoExistente` e `nIdItPedidoExistente` obrigatórios no `ASSOCIAR-PEDIDO`;
   - `validarItensRecebimentoEditar` passa a recusar `itensAjustes` também nele e a exigir os dois ids;
@@ -97,13 +103,13 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
   - `packages/integrations/omie/src/__tests__/recebimento-nfe.test.ts`: parse com e sem vínculo, incluindo o caso da NF 7736 em que `nIdItPedido` repete `nIdItem` sem `nIdPedido`; `ASSOCIAR-PEDIDO` sem ids lança; `ASSOCIAR-PEDIDO` + `itensAjustes` lança;
   - `packages/integrations/omie/src/__tests__/mock.test.ts`: associação, seguida de `EDITAR`, preserva o vínculo; concluir atualiza `nQtdeRec`;
   - `packages/integrations/omie/src/__tests__/modo-leitura.test.ts`: `AlterarRecebimento` com `ASSOCIAR-PEDIDO` é simulado
-- [ ] T014 [P] Estender `specs/007-stockbridge-module/research.md` seção 2 (exceções ao Princípio II) com a ação `ASSOCIAR-PEDIDO` de `AlterarRecebimento` e a leitura de `ConsultarPedCompra` antes do vínculo, citando ACXEGDP-437
+- [ ] T014 [P] Estender `specs/007-stockbridge-module/research.md` seção 2 (exceções ao Princípio II) com a ação `ASSOCIAR-PEDIDO` de `AlterarRecebimento` e as leituras ao vivo desta feature: `ConsultarPedCompra` na confirmação (D4) e `ConsultarRecebimento` por chave para NF "fiscal já feito" fora do espelho (D7), citando ACXEGDP-437. Os pontos do código que fazem essas leituras levam comentário apontando para essa seção (DEVE do Princípio II)
 - [ ] T015 [P] Corrigir os leitores da cópia de PCs em `modules/stockbridge/src/services/cockpit.service.ts` e `modules/stockbridge/src/services/pendencias-fiscais.service.ts` para usar o saldo (research D10), sem mudar o formato das respostas:
   - em `modules/stockbridge/src/services/cockpit.service.ts` (~l.370) e `modules/stockbridge/src/services/pendencias-fiscais.service.ts` (~l.164), `pc.nqtde > 0` → `(pc.nqtde - COALESCE(pc.nqtderec, 0)) > 0`, e quantidade = saldo;
   - criar `modules/stockbridge/src/__tests__/leitores-pc-saldo.test.ts`, com pool mockado e inspeção do SQL gerado como em `fila-nacional.test.ts`: as duas queries usam `nqtde - COALESCE(nqtderec, 0)`, e um PC da ACXE recebido em parte entra com o saldo, não com a quantidade cheia
 - [ ] T016 [P] Criar ou estender o teste de integração de auditoria (`ATLAS_DB_INTEGRATION=1`) em `modules/stockbridge/src/__tests__/auditoria-recebimento-fiscal.test.ts`: INSERT/UPDATE em `recebimento_fiscal_pc` e `nf_aviso_compras` gravam em `shared.audit_log`
 
-**Checkpoint**: 0056 aplicada, cliente OMIE testado em mock, config disponível, leitores corrigidos. As histórias podem começar.
+**Checkpoint**: 0056 aplicada, cliente OMIE testado em mock, config disponível, cópia de PCs monitorada, leitores corrigidos. As histórias podem começar.
 
 ---
 
@@ -121,11 +127,12 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
   - na `fonteNfSql` (~l.273): os mesmos campos de vínculo por LEFT JOIN no espelho de recebimentos (chave + sequência, como `sequenciaItemNfSql`), `v_un_com` como preço comercial, e o código do fornecedor via `tbl_cadastroFornecedoresClientes_Q2P` pela CNPJ.
   Manter `fornecedorNaoExcluidoSql` e o recorte de CFOP intactos
 - [ ] T018 [US1] Criar `modules/stockbridge/src/services/pc-sugestao.service.ts` com `sugerirPcPorItens(empresa, fornecedorCodigo, itens[])`, que devolve `PcDoItem` por item agregado (`data-model.md` §8):
-  - lê `public."tbl_pedidosCompras_Q2P"` por `ncodfor` (`getPool()`, raw SQL) e calcula `saldoKg = nqtde - COALESCE(nqtderec,0)`;
-  - tolerâncias da config, com o preço comparado em R$/kg via `converterItemNfParaKg`;
+  - lê `public."tbl_pedidosCompras_Q2P"` por `ncodfor` (`getPool()`, raw SQL) e calcula o saldo da cópia: `nqtde - COALESCE(nqtderec,0)`, menos os vínculos `concluido` de `recebimento_fiscal_pc` no mesmo item de PC com `concluido_em > data_atualizacao` da cópia (ela ainda não os viu), menos as reservas de outras NFs (`confirmado`/`associado` há menos de 15 min) (research D3, D4);
+  - tolerâncias da config: `qtdKg ≤ saldoKg × (1 + tolQtd)` e `|preçoNfKg − preçoPcKg| ≤ preçoPcKg × tolPreço`. O preço da NF é o comercial (`n_preco_unit` ou `v_un_com`, nunca `v_prod`): `preçoNfKg = Σ(preço comercial × qtd) ÷ Σ kg`, chamando `converterItemNfParaKg(qtd, unidade, preço comercial × qtd)` por linha, porque a função recebe o valor total. `preçoPcKg` = `nvalunit` em KG ou `nvalunit ÷ 1000` em T/TON; outra unidade deixa o PC fora, com motivo. Item com unidade não conversível fica sem sugestão (research D3);
+  - com a cópia defasada (`copiaPcsDefasada()` da T007), não monta candidatos (D13);
   - ordenação (número do pedido na NF, menor diferença de preço, previsão, `ncodped`);
   - separa `candidatos`, `outrosDoFornecedor` (etapa 15 com saldo, fora da tolerância) e `aguardandoAprovacao` (etapa 10);
-  - exclui PC de fornecedor ACXE com valor total < R$ 200, reconhecendo a ACXE pela CNPJ do fornecedor no cadastro (`CNPJ_ACXE` em `modules/stockbridge/src/types.ts`);
+  - exclui PC de fornecedor ACXE com valor total < R$ 200, reconhecendo a ACXE pela CNPJ do fornecedor no cadastro, comparada sem máscara com `CNPJ_ACXE_NUMERICO` (`modules/stockbridge/src/types.ts`; `CNPJ_ACXE` é rótulo, não CNPJ);
   - monta `vinculoOmie` a partir das sequências, com `alertaVinculoOmie` quando o PC não serve ou quando as sequências apontam para itens diferentes;
   - `preSelecionado` = vínculo do OMIE válido ou candidato único pelo número do pedido;
   - `semPcMotivo`
@@ -141,7 +148,7 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
   - fornecedor sem PC → `semPcMotivo`
 - [ ] T020 [US1] Em `modules/stockbridge/src/services/fila-nacional.service.ts`:
   - `getDetalheNfNacional` (~l.661) anexa `pc` a cada `ItemNfNacional` quando a chave da 016 está ligada e o fiscal está pendente (chama `sugerirPcPorItens`). Com fiscal já feito, anexa só `vinculadoNoOmie` (FR-021, inclusive com a chave desligada);
-  - acrescentar `empresa: 'q2p'` e `exigePc`;
+  - acrescentar `empresa: 'q2p'`, `exigePc` e `copiaPcsDefasada` (T007);
   - `getFilaNacional` (~l.404) acrescenta `empresa` e `pcSituacao` (pior caso entre os itens, regra do `data-model.md` §8), calculado em TypeScript só para as NFs com fiscal pendente; as demais ficam `nao_aplicavel`
 - [ ] T021 [P] [US1] Estender `modules/stockbridge/src/__tests__/fila-nacional-unificada.test.ts`:
   - as colunas de vínculo chegam ao formato de linha nas duas fontes;
@@ -149,11 +156,12 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
   - `vinculadoNoOmie` em NF com fiscal já feito com a chave desligada;
   - sem `pc` com a chave desligada e o fiscal pendente;
   - NF recebida cujo item teve a descrição trocada pelo vínculo ("SUCATA PLASTICO" → "PS CRISTAL B") não volta à fila: a sequência ainda casa (FR-016, ACXEGDP-412)
-- [ ] T022 [US1] Em `modules/stockbridge/src/routes/recebimento-nacional.routes.ts` (~l.325-350), estender o schema `.strict()` do POST `/por-nf`: cada item de `itens[]` aceita `pc` opcional/nullable, `{ n_cod_ped: int>0, n_cod_item: int>0, justificativa?: string 1..500 | null }`, também `.strict()`. Repassar ao service
+- [ ] T022 [US1] Em `modules/stockbridge/src/routes/recebimento-nacional.routes.ts` (~l.325-350), estender o schema `.strict()` do POST `/por-nf`: cada item de `itens[]` aceita `pc` opcional/nullable, `{ n_cod_ped: int>0, n_cod_item: int>0, justificativa?: string 1..500 | null, n_cod_item_omie_visto?: int>0 | null }`, também `.strict()`. Repassar ao service
 - [ ] T023 [US1] Em `modules/stockbridge/src/services/recebimento-nacional.service.ts`, no portão 1 de `processarRecebimentoNacionalPorNf` (~l.659), chamar `validarEscolhaPc` (novo, em `pc-sugestao.service.ts`):
   - o `pc` enviado tem que estar em `vinculoOmie`, `candidatos` ou `outrosDoFornecedor` do detalhe recalculado; senão `PcNaoElegivelError`;
-  - sem justificativa quando é obrigatória (escolha de `outrosDoFornecedor` ou troca do vínculo do OMIE) → `PcJustificativaObrigatoriaError`.
-  Criar as classes com `userMessage` citando o número da NF, o PC e o item (ACXEGDP-313) e mapear 422 `PC_NAO_ELEGIVEL` / `PC_JUSTIFICATIVA_OBRIGATORIA` em `responderErroFilaNacional` (`recebimento-nacional.routes.ts`, ~l.233)
+  - item com PC possível (definição antes do FR-019 da spec) e sem `pc` → `PcNaoEscolhidoError` (422 `PC_NAO_ESCOLHIDO`), nos dois modos e sem aviso a compras;
+  - justificativa conforme a matriz única do `data-model.md` §4: obrigatória com o PC fora da tolerância, de qualquer origem (inclusive o vínculo do OMIE mantido), e na troca do vínculo do OMIE; senão `PcJustificativaObrigatoriaError`. Calcular `dentro_tolerancia` para a T029.
+  Criar as classes com `userMessage` citando o número da NF, o fornecedor, o PC e o item (ACXEGDP-313) e mapear 422 `PC_NAO_ELEGIVEL` / `PC_NAO_ESCOLHIDO` / `PC_JUSTIFICATIVA_OBRIGATORIA` em `responderErroFilaNacional` (`recebimento-nacional.routes.ts`, ~l.233)
 - [ ] T024 [P] [US1] Estender `modules/stockbridge/src/__tests__/recebimento-nacional-nf.routes.test.ts`: `itens[].pc` válido aceito; campo extra dentro de `pc` recusado (`.strict()`); `n_cod_ped` 0 recusado; mapeamento dos dois 422
 - [ ] T025 [US1] Em `apps/web/src/pages/stockbridge/operador/RecebimentoNacionalNfPanel.tsx`:
   - **na fila** (`FilaSection`, ~l.312-336): selo por `pcSituacao` ("PC vinculado no OMIE", "PC sugerido", "Escolher PC", "PC aguardando aprovação", "Sem PC");
@@ -164,7 +172,9 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
     - "Aguardando aprovação" desabilitados;
     - mensagem de sem PC;
     - pré-seleção;
-  - **no envio** (`DetalheSection`, ~l.493): mandar `pc` por item; botão de confirmar desabilitado enquanto faltar escolha num item com candidatos;
+    - justificativa pedida também para o vínculo do OMIE ou o candidato fora da tolerância (matriz do `data-model.md` §4);
+  - **com a cópia de PCs defasada** (`copiaPcsDefasada`): aviso "lista de pedidos de compra desatualizada" no lugar da sugestão e recebimento desabilitado para NF com fiscal pendente;
+  - **no envio** (`DetalheSection`, ~l.493): mandar `pc` por item, com `n_cod_item_omie_visto` (o vínculo do OMIE que a tela mostrou); botão de confirmar desabilitado enquanto faltar escolha num item com candidatos;
   - **com fiscal já feito**: mostrar "PC <n> vinculado no OMIE".
   Rodar o agente `frontend-design-reviewer` no componente alterado
 
@@ -181,12 +191,12 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
 - NF sem vínculo: `ASSOCIAR-PEDIDO` antes do `EDITAR`, `nQtdeRec` do PC atualizado no mock;
 - movimentação física gravada uma vez.
 
-- [ ] T026 [US2] Em `modules/stockbridge/src/services/pc-sugestao.service.ts`, criar `relerPcsEscolhidos(empresa, escolhas[])`:
-  - `pg_advisory_xact_lock` por `n_cod_item_ped`;
-  - se existir em `recebimento_fiscal_pc` vínculo `concluido` no mesmo item de PC há menos de 75 s → `PcRecemUsadoAguardeError` com `retryAfterSeconds`;
-  - `consultarPedidoCompra` (do `@atlas/integration-omie`) por PC distinto;
-  - recusa (`PcVinculoInvalidoError`, com a situação atual na mensagem) se etapa ≠ '15', sem o item, outro fornecedor, ou saldo efetivo insuficiente, que é o saldo lido menos os vínculos `concluido` do Atlas no item depois de `data_atualizacao` da cópia. A quantidade passa se estiver na tolerância ou se houver justificativa;
-  - devolve saldo, preço e etapa lidos para gravar no registro
+- [ ] T026 [US2] Em `modules/stockbridge/src/services/pc-sugestao.service.ts`, criar `relerEReservarPcs(empresa, ledgerId, escolhas[])`, chamada depois da trava da NF (ledger da 016) e antes da `ConsultarRecebimento` (research D4):
+  - `consultarPedidoCompra` (do `@atlas/integration-omie`) por PC distinto, fora de transação;
+  - numa transação com `pg_advisory_xact_lock` por `n_cod_item_ped`, em ordem crescente:
+    - vínculo `concluido` em `recebimento_fiscal_pc` no mesmo item de PC há menos de 75 s → `PcRecemUsadoAguardeError` com `retryAfterSeconds`;
+    - recusa (`PcVinculoInvalidoError`, com a situação atual na mensagem) se etapa ≠ '15', sem o item, outro fornecedor, ou saldo disponível insuficiente. Saldo disponível = `nQtde − nQtdeRec` lido ao vivo, **sem** descontar vínculos concluídos (o OMIE já os mostra), menos as reservas de outras NFs (`confirmado`/`associado` há menos de 15 min). A quantidade passa se estiver na tolerância ou se houver justificativa;
+    - grava as linhas `confirmado` de `recebimento_fiscal_pc` (T029) com o saldo, o preço e a etapa lidos. É a **reserva**: vale para as outras NFs até a linha virar `concluido` ou `falha`
 - [ ] T027 [US2] Em `modules/stockbridge/src/services/recebimento-fiscal.service.ts`:
   - decidir a ação por item em `concluirRecebimentoFiscal` (~l.403):
     - **manter**: vínculo vivo no recebimento igual ao escolhido → só `EDITAR` se faltarem os ajustes;
@@ -194,14 +204,15 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
     - **sem PC**: só no modo "receber sem vínculo" → `EDITAR` + `IGNORAR`;
   - `itensParaIgnorar` (~l.357) passa a excluir todo item com PC associado ou escolhido (FR-011a);
   - os `ASSOCIAR-PEDIDO` vão numa chamada `AlterarRecebimento` antes da chamada de `EDITAR`;
-  - em fault no associar: `passo_falha = 'associar'` e o mesmo tratamento de reconsulta/70 s da 016
-- [ ] T028 [US2] Em `modules/stockbridge/src/services/recebimento-fiscal.service.ts`, em `recusaAntesDeEscrever` (~l.362): se o vínculo vivo de algum item for diferente do que o espelho tinha no portão 1, e diferente da escolha do operador → `VinculoOmieMudouError` (409). Mapear em `responderErroFilaNacional` junto com `PC_VINCULO_INVALIDO` (409) e `PC_RECEM_USADO_AGUARDE` (409, com `retryAfterSeconds`)
+  - em fault no associar: `passo_falha = 'associar'` e o mesmo tratamento de reconsulta/70 s da 016. Em `adquirirLedger` (~l.205), a espera de 70 s depois de falha com escrita passa a listar `passo_falha IN ('associar','editar','ignorar','concluir')`;
+  - item com vínculo do OMIE nunca vai para o `IGNORAR`: sem outro PC possível, a NF já foi recusada no portão 1 (FR-011a)
+- [ ] T028 [US2] Em `modules/stockbridge/src/services/recebimento-fiscal.service.ts`, em `recusaAntesDeEscrever` (~l.362): se o vínculo vivo de algum item for diferente do `n_cod_item_omie_visto` enviado pela tela **e** diferente do PC escolhido → `VinculoOmieMudouError` (409). Vínculo vivo igual ao escolhido nunca é conflito. Mapear em `responderErroFilaNacional` junto com `PC_VINCULO_INVALIDO` (409) e `PC_RECEM_USADO_AGUARDE` (409, com `retryAfterSeconds`)
 - [ ] T029 [US2] Gravar `stockbridge.recebimento_fiscal_pc` em `modules/stockbridge/src/services/recebimento-fiscal.service.ts`:
-  - uma linha `confirmado` por item com PC, **antes** da primeira escrita no OMIE, na mesma transação que abre o ledger, com `origem`, PC escolhido, PC anterior do OMIE, justificativa, `candidatos` (retrato do detalhe), quantidade, preço da NF e o que foi relido;
+  - uma linha `confirmado` por item com PC, **antes** da primeira escrita no OMIE, gravada na transação da reserva da T026 (o ledger da 016 continua com o seu INSERT próprio, feito antes), com `origem`, `dentro_tolerancia`, PC escolhido, PC anterior do OMIE, justificativa, `candidatos` (retrato do detalhe), quantidade, preço da NF e o que foi relido;
   - transições: `associado` depois do `ASSOCIAR-PEDIDO`, ou direto quando o vínculo é mantido; `concluido` depois do `Concluir`; `falha` com `erro_omie_*`;
   - preencher `recebimento_fiscal.empresa` e `itens_vinculados`
 - [ ] T030 [US2] Em `modules/stockbridge/src/services/recebimento-nacional.service.ts`, na `executarFiscalSeNecessario` (~l.1010):
-  - chamar `relerPcsEscolhidos` antes do fiscal;
+  - a ordem passa a ser: trava da NF (`adquirirLedger`, 016) → `relerEReservarPcs` (T026) → `ConsultarRecebimento` e escritas (T027). Como a reserva precisa do id do ledger, a releitura vai para dentro de `concluirRecebimentoFiscal`, logo depois de `adquirirLedger`;
   - passar as escolhas e os vínculos do espelho ao fiscal;
   - acrescentar ao resultado `fiscal.vinculos[]` (`nSequencia`, `pcNumero`, `origem`, `status`), `fiscal.semVinculo[]` e `fiscal.avisoCompras`;
   - mensagem "…concluído no OMIE, vinculado ao PC <n>."
@@ -210,9 +221,11 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
   - vínculo do OMIE mantido sem `ASSOCIAR`;
   - `IGNORAR` nunca em item com PC;
   - NF mista (um item com PC e outro sem, no modo "receber sem vínculo");
-  - `VINCULO_OMIE_MUDOU`;
+  - `VINCULO_OMIE_MUDOU` só quando o vínculo vivo difere do visto e do escolhido;
   - `PC_VINCULO_INVALIDO` (saldo 0 e etapa 10);
   - `PC_RECEM_USADO_AGUARDE`;
+  - releitura com o saldo ao vivo sem descontar vínculos concluídos (PC de 18.000 kg com uma NF de 9.000 já concluída aceita a segunda NF de 9.000);
+  - reserva: duas NFs no mesmo item de PC, a segunda vê a reserva da primeira e é recusada quando o saldo não cobre as duas;
   - as linhas de `recebimento_fiscal_pc` em cada transição;
   - falha no associar sem nenhum INSERT em `movimentacao`
 - [ ] T032 [US2] Em `apps/web/src/pages/stockbridge/operador/RecebimentoNacionalNfPanel.tsx` (~l.697-740):
@@ -235,10 +248,10 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
 - Com `EXIGE_PC=true`: `422 NF_SEM_PC`, nada gravado, um e-mail; a segunda tentativa no mesmo dia não manda outro.
 - Com `EXIGE_PC=false`: fiscal concluído com `IGNORAR` só no item sem PC e aviso com motivo `recebida_sem_vinculo`.
 
-- [ ] T034 [US3] Em `modules/stockbridge/src/services/recebimento-nacional.service.ts`, no portão 1: com fiscal pendente e a chave da 016 ligada, item a gravar sem `pc` e sem PC possível:
-  - com `STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC = true` → `NfSemPcError` (422 `NF_SEM_PC`, mensagem com a NF e a descrição do item);
-  - com `false` → seguir, marcando o item como "sem vínculo" para o fiscal.
-  Item que **tem** PC possível (vínculo do OMIE, candidato ou outro do fornecedor) mas chegou sem `pc` no corpo → `PcNaoElegivelError` com a mensagem "escolha o pedido de compra do item <descrição>", nos dois modos: o "receber sem vínculo" só vale quando não há PC possível. Mapear `NF_SEM_PC` (422) em `responderErroFilaNacional`
+- [ ] T034 [US3] Em `modules/stockbridge/src/services/recebimento-nacional.service.ts`, no portão 1, com fiscal pendente e a chave da 016 ligada:
+  - cópia de PCs defasada (`copiaPcsDefasada()` da T007) → `CopiaPcsDefasadaError` (503 `COPIA_PCS_DEFASADA`), sem gravar nada e sem aviso a compras (FR-030);
+  - item a gravar **sem PC possível** (definição antes do FR-019 da spec): com `STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC = true` → `NfSemPcError` (422 `NF_SEM_PC`, mensagem com a NF, o fornecedor e a descrição do item); com `false` → seguir, marcando o item como "sem vínculo" para o fiscal. Item com vínculo do OMIE que não serve e sem outro PC possível é recusado nos dois modos (FR-011a).
+  Item **com** PC possível e sem `pc` é tratado na T023 (`PC_NAO_ESCOLHIDO`). Mapear `NF_SEM_PC` (422) e `COPIA_PCS_DEFASADA` (503) em `responderErroFilaNacional`
 - [ ] T035 [US3] Em `modules/stockbridge/src/services/notificacao.service.ts`, criar `enviarAvisoComprasNfSemPc({ empresa, nf, fornecedor, itens, motivo, disparadoPor })`:
   - consulta `stockbridge.nf_aviso_compras` e não envia se houver linha com a mesma chave e motivo nas últimas 24 h;
   - destinatários: `STOCKBRIDGE_COMPRAS_EMAILS`, ou `STOCKBRIDGE_OPS_EMAIL` com log de aviso quando vazio;
@@ -247,11 +260,14 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
   - grava a linha depois de enviar.
   Chamar a partir do portão 1 (`sem_pc`, `pc_aguardando_aprovacao`) e do fiscal no modo "receber sem vínculo" (`recebida_sem_vinculo`), sem bloquear a resposta (best-effort, erro só em log)
 - [ ] T036 [P] [US3] Criar `modules/stockbridge/src/__tests__/recebimento-nacional-pc.test.ts`:
-  - `NF_SEM_PC` com `EXIGE_PC=true` sem nenhum INSERT;
+  - `NF_SEM_PC` com `EXIGE_PC=true` sem nenhum INSERT em `movimentacao` ou `aprovacao` (só o aviso em `nf_aviso_compras`);
   - modo `false` seguindo sem vínculo;
   - deduplicação de 24 h;
   - fallback para `STOCKBRIDGE_OPS_EMAIL`;
-  - item só com PC na etapa 10 → `NF_SEM_PC` com motivo `pc_aguardando_aprovacao`
+  - item só com PC na etapa 10 → `NF_SEM_PC` com motivo `pc_aguardando_aprovacao`;
+  - cópia de PCs defasada → `COPIA_PCS_DEFASADA`, sem aviso a compras e sem gravar nada;
+  - item com PC possível e sem escolha → `PC_NAO_ESCOLHIDO`, sem aviso;
+  - vínculo do OMIE que não serve, sem outro PC, no modo `false` → recusado (nunca ignorado)
 - [ ] T037 [US3] Em `apps/web/src/pages/stockbridge/operador/RecebimentoNacionalNfPanel.tsx`:
   - estado "Aguardando PC de compras" no item e na NF;
   - mensagem do `422 NF_SEM_PC` informando que compras foi avisado;
@@ -272,13 +288,16 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
 - [ ] T039 [US4] Estoque já lançado pelo OMIE (FR-021a, research D7), em `modules/stockbridge/src/services/fila-nacional.service.ts` e `modules/stockbridge/src/services/recebimento-nacional.service.ts`:
   - **detecção** em `modules/stockbridge/src/services/fila-nacional.service.ts`: `estoqueLancadoPeloOmie` na fila e no detalhe, a partir do espelho (`c_recebido='S'` e item `c_ignorar_item='N'` e `c_nao_gerar_mov_estoque='N'`);
   - **bloqueio** no portão 1 de `modules/stockbridge/src/services/recebimento-nacional.service.ts`: `EstoqueJaLancadoPeloOmieError` (409 `ESTOQUE_JA_LANCADO_PELO_OMIE`);
-  - **leitura ao vivo** (`consultarRecebimentoNfe` por chave) quando a NF "fiscal já feito" não está no espelho de recebimentos;
+  - **leitura ao vivo** (`consultarRecebimentoNfe` por chave) quando a NF "fiscal já feito" não está no espelho de recebimentos, com comentário no código apontando para a seção 2 da 007 (exceção ao Princípio II, T014);
+  - **no ramo `ja_concluido` e na reconsulta depois de falha** em `modules/stockbridge/src/services/recebimento-fiscal.service.ts` (~l.419): com os itens lidos ao vivo, item não ignorado e com `cNaoGerarMovEstoque = 'N'` → `EstoqueJaLancadoPeloOmieError` antes de seguir para o físico (research D7);
+  - mapear `ESTOQUE_JA_LANCADO_PELO_OMIE` (409) em `responderErroFilaNacional` (`recebimento-nacional.routes.ts`, ~l.234);
   - vale com `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED` desligada
 - [ ] T040 [US4] Rejeição do gestor: conferir em `modules/stockbridge/src/services/aprovacao.service.ts` que a rejeição de recebimento nacional não toca `recebimento_fiscal_pc` nem o OMIE e que a NF volta à fila como "fiscal já feito" com `vinculadoNoOmie`. Acrescentar o caso em `modules/stockbridge/src/__tests__/recebimento-nacional-fiscal.test.ts`
 - [ ] T041 [P] [US4] Estender `modules/stockbridge/src/__tests__/recebimento-nacional-flag-off.test.ts`, que cobre a contenção: com a chave desligada, fila, detalhe e POST como hoje, mais `vinculadoNoOmie` (FR-021) e `ESTOQUE_JA_LANCADO_PELO_OMIE` (FR-021a). Estender `modules/stockbridge/src/__tests__/recebimento-fiscal-pc.test.ts` com:
   - nova tentativa depois de associar sem repetir o `ASSOCIAR-PEDIDO`;
   - duplo clique (`RECEBIMENTO_FISCAL_EM_ANDAMENTO`);
-  - órfã retomada
+  - órfã retomada;
+  - NF que a tela mostrava com fiscal pendente e foi concluída no portal com estoque (`ja_concluido` com `cNaoGerarMovEstoque = 'N'`) → `ESTOQUE_JA_LANCADO_PELO_OMIE`, sem nenhum INSERT
 - [ ] T042 [US4] Em `modules/stockbridge/src/services/recebimento-fiscal.service.ts`, `listarLedgerFiscal` (~l.538) passa a devolver `empresa` e `vinculos[]` (`nSequencia`, `pcNumero`, `origem`, `justificativa`, `status`, `confirmadoPor`, `confirmadoEm`), sem `erro_omie_*`, para o GET `/fiscal` (`recebimento-nacional.routes.ts`, ~l.765). Estender o teste da rota
 - [ ] T043 [US4] Em `apps/web/src/pages/stockbridge/operador/RecebimentoNacionalNfPanel.tsx`: aviso "O estoque desta NF já entrou pelo OMIE. Fale com o fiscal." no detalhe, com o botão de receber desabilitado, e selo na fila
 - [ ] T044 [US4] Em `modules/stockbridge/src/services/notificacao.service.ts`, `enviarAlertaNfDispensada` (~l.399) passa a citar o PC vinculado a cada item, quando houver (vínculo do OMIE no espelho ou linha `concluido` em `recebimento_fiscal_pc`), por exemplo "SUCATA PLASTICO: PC 304". Assim o fiscal sabe qual PC ficou com quantidade recebida no OMIE quando a NF dispensada já tinha o fiscal feito (caso de borda "Dispensa de NF" da spec). Estender `modules/stockbridge/src/__tests__/notificacao-nf-dispensada.test.ts`
@@ -295,8 +314,8 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
 
 - [ ] T045 [US5] Criar `packages/db/migrations/0057_stockbridge_recebimento_nacional_acxe.sql`:
   - `CREATE TABLE IF NOT EXISTS public."tbl_recebimentoNFe_ACXE"` e `"tbl_recebimentoNFe_itens_ACXE"` com a DDL das tabelas da Q2P na 0053, mais as 4 colunas de pedido;
-  - `stockbridge.fornecedor_exclusao`: `ADD COLUMN empresa varchar(4) NOT NULL DEFAULT 'q2p' CHECK (empresa IN ('q2p','acxe'))`, índice único incluindo `empresa`, e linha com a Q2P como fornecedor excluído na ACXE (CNPJ igual a `CNPJ_Q2P_MATRIZ` de `modules/stockbridge/src/types.ts`, motivo "intercompany").
-  Estender `fornecedorExclusao` em `packages/db/src/schemas/stockbridge.ts` e aplicar em dev (`psql -1 -f`)
+  - `stockbridge.fornecedor_exclusao`: `ADD COLUMN empresa varchar(4) NOT NULL DEFAULT 'q2p' CHECK (empresa IN ('q2p','acxe'))`, índice único incluindo `empresa`, e duas linhas com a Q2P como fornecedor excluído na ACXE: as CNPJs `27.019.059/0001-88` (matriz) e `27.019.059/0002-69` (filial), com máscara, como no cadastro da ACXE e como já está gravada a ACXE (`42.672.052/0001-54`), motivo "intercompany". Não há constante de CNPJ da Q2P: `CNPJ_Q2P_MATRIZ` em `types.ts` é rótulo.
+  Estender `fornecedorExclusao` em `packages/db/src/schemas/stockbridge.ts` e `modules/stockbridge/src/services/fornecedor.service.ts` (listar, excluir e reincluir por CNPJ passam a considerar a empresa), e aplicar em dev (`psql -1 -f`)
 - [ ] T046 [P] [US5] Adicionar `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED` (default `'false'`) em `packages/core/src/config.ts`
 - [ ] T047 [US5] Parametrizar por empresa `modules/stockbridge/src/services/fila-nacional.service.ts`:
   - `fonteNfSql`/`fonteRecebSql` aceitam `'q2p'|'acxe'` (`tbl_nf_header_ACXE`/`tbl_nf_itens_ACXE`/`tbl_recebimentoNFe_ACXE`, cadastro ACXE);
@@ -358,7 +377,7 @@ T003 (n8n) ───────────────────────
 
 ## Parallel Execution Examples
 
-- **Phase 2**: T010 (config), T011 → T013 (cliente OMIE e testes), T014 (doc 007), T015 (leitores) e T016 (auditoria, depois do T009) em paralelo com T005–T009 (migration e schema).
+- **Phase 2**: T010 (config) → T007 (monitoramento da cópia de PCs), T011 → T013 (cliente OMIE e testes), T014 (doc 007), T015 (leitores) e T016 (auditoria, depois do T009) em paralelo com T005, T006, T008 e T009 (migration e schema).
 - **US1**: T019 (testes da sugestão) em paralelo com T020 depois do T018; T021 e T024 em paralelo; T025 (UI) em paralelo com T022–T023 depois de fixado o formato.
 - **US3 ∥ US4**: frentes independentes depois da US2. Uma no portão 1 e na notificação, a outra na retomada, na rejeição e na UI de estoque já lançado.
 - **Phase 8**: T053, T054 e T055 em paralelo.
