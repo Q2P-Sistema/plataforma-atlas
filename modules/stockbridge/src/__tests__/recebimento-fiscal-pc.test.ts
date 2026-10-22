@@ -2271,3 +2271,130 @@ describe('instanteConclusaoOmie — dRec + hRec do recebimento (horário de Bras
     expect(instanteConclusaoOmie({ dRec: '23/10/2026', hRec: '10:00:00' }, AGORA)!.toISOString()).toBe(AGORA.toISOString());
   });
 });
+
+// ── Trava de unidade, modo 'converter' (22/10/2026): nQtdeRecebida no EDITAR ───────────────────────
+//
+// O OMIE copia para nQtdeRec do PC a quantidade recebida do item NA UNIDADE DA NF, sem converter (NF 60199 em
+// toneladas baixou o PC 306 em kg com 8,25 em vez de 8.250). No modo 'converter' a releitura devolve, por
+// sequencia, `ReservaPc.nQtdeRecebida` (kg da linha na unidade do PC; null = nada a converter) e o EDITAR manda
+// itensAjustes.nQtdeRecebida SO nessas sequencias; "ajustes ja aplicados" passa a exigir tambem que o OMIE
+// devolva a mesma nQtdeRecebida (tolerancia 1e-6) — senao o EDITAR corrige.
+describe('concluirRecebimentoFiscal com PC — nQtdeRecebida no EDITAR (trava de unidade, modo converter)', () => {
+  /** A releitura devolve as reservas com a quantidade convertida por sequencia (null = sem conversao). */
+  const reservasComConversao = (qtdPorSeq: Record<number, number | null>) =>
+    relerSpy.mockImplementationOnce(async (a: { escolhas: EscolhaPcValidada[] }) => {
+      ordem.push('pc:reler');
+      return reservasDe(a.escolhas).map((r) => ({ ...r, nQtdeRecebida: qtdPorSeq[r.nSequencia] ?? null }));
+    });
+  const ajustesDoEditar = () => chamadasAlterar().flatMap((c) => c.itens).filter((i) => i.cAcao === 'EDITAR').map((i) => [i.nSequencia, i.itensAjustes]);
+
+  it('item sem vínculo: o ASSOCIAR-PEDIDO não leva ajuste; o EDITAR leva os dois ajustes de sempre MAIS nQtdeRecebida (8.250 kg em PC de kg)', async () => {
+    reservasComConversao({ 1: 8250 });
+    await concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304, { qtdNfKg: 8250, kgPorSequencia: { 1: 8250 } })] }));
+
+    const [associar, editar] = chamadasAlterar();
+    expect(associar!.itens[0]).not.toHaveProperty('itensAjustes');
+    expect(editar).toEqual({
+      nIdReceb: N_ID_RECEB,
+      itens: [{ nSequencia: 1, cAcao: 'EDITAR', itensAjustes: { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', nQtdeRecebida: 8250 } }],
+    });
+  });
+
+  it('sem conversão (nQtdeRecebida null — mesma unidade): o EDITAR NÃO leva a chave nQtdeRecebida', async () => {
+    reservasComConversao({ 1: null });
+    await concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304)] }));
+    const [, editar] = chamadasAlterar();
+    expect(editar!.itens[0]!.itensAjustes).toEqual({ cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N' });
+    expect(editar!.itens[0]!.itensAjustes).not.toHaveProperty('nQtdeRecebida');
+  });
+
+  it('o comportamento padrão (reservas sem o campo, como antes da trava) também não manda nQtdeRecebida', async () => {
+    await concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304)] }));
+    expect(chamadasAlterar()[1]!.itens[0]!.itensAjustes).toEqual({ cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N' });
+  });
+
+  it('uma quantidade por SEQUÊNCIA: 5.000 kg e 3.250 kg do mesmo item agregado saem cada um na sua linha', async () => {
+    consultaUnica({ itens: [itemRec(1, { nQtdeNFe: 5 }), itemRec(2, { nQtdeNFe: 3.25 })] });
+    reservasComConversao({ 1: 5000, 2: 3250 });
+    await concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304, { sequencias: [1, 2], qtdNfKg: 8250, kgPorSequencia: { 1: 5000, 2: 3250 } })] }));
+    expect(ajustesDoEditar()).toEqual([
+      [1, { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', nQtdeRecebida: 5000 }],
+      [2, { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', nQtdeRecebida: 3250 }],
+    ]);
+  });
+
+  it('só algumas sequências com conversão: as demais seguem sem a chave', async () => {
+    consultaUnica({ itens: [itemRec(1), itemRec(2)] });
+    reservasComConversao({ 1: 8250, 2: null });
+    await concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304, { sequencias: [1, 2], kgPorSequencia: { 1: 8250, 2: 9750 } })] }));
+    expect(ajustesDoEditar()).toEqual([
+      [1, { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', nQtdeRecebida: 8250 }],
+      [2, { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N' }],
+    ]);
+  });
+
+  it('nQtdeRecebida só no EDITAR: o IGNORAR da outra sequência (sem PC) e o ASSOCIAR nunca levam itensAjustes (erro 151)', async () => {
+    consultaUnica({ itens: [itemRec(1), itemRec(2)] });
+    reservasComConversao({ 1: 8250 });
+    await concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304, { sequencias: [1] })], sequenciasSemVinculo: [2] }));
+    expect(acoesPorChamada()).toEqual([['ASSOCIAR-PEDIDO'], ['EDITAR'], ['IGNORAR']]);
+    const [associar, , ignorar] = chamadasAlterar();
+    expect(associar!.itens[0]).not.toHaveProperty('itensAjustes');
+    expect(ignorar!.itens).toEqual([{ nSequencia: 2, cAcao: 'IGNORAR' }]);
+  });
+
+  it('vínculo vivo = escolhido, com os ajustes E a mesma nQtdeRecebida já gravados no OMIE: não há AlterarRecebimento, só o Concluir', async () => {
+    consultaUnica({ itens: [itemRec(1, { ...vinculadoA(PC304), ...comAjustes, nQtdeRecebida: 8250 })] });
+    reservasComConversao({ 1: 8250 });
+    await concluirRecebimentoFiscal(input({ vinculos: [escolhaVendo(PC304, PC304, { origem: 'omie' })] }));
+    expect(alterarSpy).not.toHaveBeenCalled();
+    expect(concluirSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('a comparação da quantidade tem tolerância de 1e-6 (arredondamento da reserva): 8250,0000004 conta como igual', async () => {
+    consultaUnica({ itens: [itemRec(1, { ...vinculadoA(PC304), ...comAjustes, nQtdeRecebida: 8250.0000004 })] });
+    reservasComConversao({ 1: 8250 });
+    await concluirRecebimentoFiscal(input({ vinculos: [escolhaVendo(PC304, PC304, { origem: 'omie' })] }));
+    expect(alterarSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['o OMIE tem outra quantidade (8,25 — a baixa errada da NF 60199)', 8.25],
+    ['o OMIE devolve 0', 0],
+    ['o OMIE não devolve a quantidade (null)', null],
+    ['o OMIE não devolve o campo (ausente)', undefined],
+  ])('vínculo vivo = escolhido e ajustes já aplicados, mas %s: o EDITAR roda para corrigir a quantidade', async (_nome, atual) => {
+    consultaUnica({ itens: [itemRec(1, { ...vinculadoA(PC304), ...comAjustes, ...(atual === undefined ? {} : { nQtdeRecebida: atual }) })] });
+    reservasComConversao({ 1: 8250 });
+    await concluirRecebimentoFiscal(input({ vinculos: [escolhaVendo(PC304, PC304, { origem: 'omie' })] }));
+    expect(seqsDaAcao('EDITAR')).toEqual([1]);
+    expect(chamadasAlterar()[0]!.itens[0]!.itensAjustes).toEqual({ cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', nQtdeRecebida: 8250 });
+    expect(seqsDaAcao('ASSOCIAR-PEDIDO')).toEqual([]);
+  });
+
+  it('quando NÃO há conversão a fazer, a nQtdeRecebida que o OMIE tem no item não é exigida: ajustes aplicados bastam (sem EDITAR)', async () => {
+    consultaUnica({ itens: [itemRec(1, { ...vinculadoA(PC304), ...comAjustes, nQtdeRecebida: 123 })] });
+    reservasComConversao({ 1: null });
+    await concluirRecebimentoFiscal(input({ vinculos: [escolhaVendo(PC304, PC304, { origem: 'omie' })] }));
+    expect(alterarSpy).not.toHaveBeenCalled();
+  });
+
+  it('item com vínculo vivo e SEM escolha no POST (fora do recorte): EDITAR sem nQtdeRecebida — a conversão é só do que o Atlas escolheu', async () => {
+    consultaUnica({ itens: [itemRec(1), itemRec(2, vinculadoA(PC302))] });
+    reservasComConversao({ 1: 8250 });
+    await concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304, { sequencias: [1] })] }));
+    expect(ajustesDoEditar()).toEqual([
+      [1, { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', nQtdeRecebida: 8250 }],
+      [2, { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N' }],
+    ]);
+  });
+
+  it('retomada depois de uma falha no Concluir: a releitura devolve a mesma quantidade e os ajustes já gravados (com nQtdeRecebida) não são reenviados', async () => {
+    // 1ª tentativa: ASSOCIAR + EDITAR passaram (o OMIE agora tem o vínculo, os ajustes e a quantidade); o Concluir falhou.
+    consultaUnica({ itens: [itemRec(1, { ...vinculadoA(PC304), ...comAjustes, nQtdeRecebida: 8250 })] });
+    reservasComConversao({ 1: 8250 });
+    await concluirRecebimentoFiscal(input({ vinculos: [escolhaVendo(PC304, PC304)] }));
+    expect(alterarSpy).not.toHaveBeenCalled();
+    expect(ordemSemEspera()).toEqual(['ledger:insert', 'omie:consultar', 'pc:reler', 'pc:associado', 'omie:concluir', 'ledger:concluido', 'pc:concluido']);
+  });
+});

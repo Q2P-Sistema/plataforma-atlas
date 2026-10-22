@@ -30,7 +30,6 @@ import {
   type EscolhaPcValidada,
   type ItemParaSugestao,
   type MotivoSemPc,
-  type PcOutroCadastro,
   type ResultadoPcItem,
 } from './pc-sugestao.service.js';
 import { normalizarDescricaoNf } from './descricao-nf.js';
@@ -887,6 +886,8 @@ export async function processarRecebimentoNacionalPorNf(
           quantidadeKg: quantidadeNfKg,
           precoNfKg: info.entrada.precoNfKg,
           kgPorSequencia: info.entrada.kgPorSequencia,
+          unidadeNf: info.entrada.unidadeNf,
+          fatorUnidadeNf: info.entrada.fatorUnidadeNf,
         });
         if (validada) escolhasPc.push(validada);
         else {
@@ -940,7 +941,7 @@ export async function processarRecebimentoNacionalPorNf(
     ? detalhe.itensSemAvaliacaoPc.flatMap((x) => {
         const item = detalhe.itens.find((i) => i.indice === x.indice);
         const info = interno.pcPorIndice.get(x.indice);
-        return item ? [{ item, motivo: 'unidade' as const, sequencias: info?.entrada.sequencias ?? item.sequenciasRecebimento, precoNfKg: null, pcsAguardando: [], pcsOutroCadastro: [] }] : [];
+        return item ? [{ item, motivo: 'unidade' as const, sequencias: info?.entrada.sequencias ?? item.sequenciasRecebimento, precoNfKg: null, pcsAguardando: [], pcsUnidadeIncompativel: [], temVinculoOmie: false }] : [];
       })
     : [];
   if (fluxoPc) {
@@ -951,8 +952,10 @@ export async function processarRecebimentoNacionalPorNf(
     // D13: copia de PCs defasada nao decide nada — nem NF_SEM_PC, nem aviso.
     if (detalhe.copiaPcsDefasada) throw new CopiaPcsDefasadaError();
     if (semPc.length > 0 || semAvaliacao.length > 0) {
-      // FR-011a: vinculo do OMIE que nao serve, sem outro PC, e recusado nos dois modos.
-      const vinculoInvalido = semPc.some((x) => x.motivo === 'vinculo_invalido');
+      // FR-011a: vinculo do OMIE que nao serve, sem outro PC, e recusado nos dois modos — inclusive
+      // o vinculo em unidade diferente da NF (trava de unidade): "seguir sem vinculo" ignoraria um item
+      // que tem PC no OMIE.
+      const vinculoInvalido = semPc.some((x) => x.motivo === 'vinculo_invalido' || (x.motivo === 'unidade_pc' && x.temVinculoOmie));
       if (vinculoInvalido || exigePcHabilitado()) {
         if (semPc.length > 0) {
           const motivo: MotivoAvisoCompras = semPc.every((x) => x.motivo === 'pc_aguardando_aprovacao') ? 'pc_aguardando_aprovacao' : 'sem_pc';
@@ -963,7 +966,7 @@ export async function processarRecebimentoNacionalPorNf(
         throw new NfSemPcError(
           detalhe.notaFiscal,
           detalhe.fornecedorNome,
-          recusados.map((x) => ({ descricao: x.item.descricaoFornecedor, motivo: x.motivo, pcsOutroCadastro: x.pcsOutroCadastro })),
+          recusados.map((x) => ({ descricao: x.item.descricaoFornecedor, motivo: x.motivo })),
         );
       }
       // Modo "receber sem vinculo": essas sequencias seguem a receita da 016 (EDITAR + IGNORAR).
@@ -1204,18 +1207,26 @@ interface ItemSemPc {
   sequencias: number[];
   precoNfKg: number | null;
   pcsAguardando: string[];
-  /** PCs da mesma empresa lancados em outro cadastro do OMIE (filial x matriz) — so citados */
-  pcsOutroCadastro: PcOutroCadastro[];
+  /** PCs do fornecedor em unidade diferente da NF (trava de unidade) — so citados no aviso */
+  pcsUnidadeIncompativel: string[];
+  /** o item veio vinculado no OMIE (alguma linha com n_id_pedido): nunca e ignorado (FR-011a) */
+  temVinculoOmie: boolean;
 }
 
 function itemSemPc(item: ItemNfNacional, entrada: ItemParaSugestao, resultado: ResultadoPcItem): ItemSemPc {
+  const pc = resultado.pc;
+  const incompativeis = [
+    ...(resultado.motivoSemPc === 'unidade_pc' && pc.vinculoOmie && !pc.vinculoOmieElegivel ? [pc.vinculoOmie.pcNumero] : []),
+    ...(pc.unidadeIncompativel ?? []).map((c) => c.pcNumero),
+  ].filter((n) => n.length > 0);
   return {
     item,
     motivo: resultado.motivoSemPc ?? 'sem_pc',
     sequencias: entrada.sequencias,
     precoNfKg: entrada.precoNfKg,
-    pcsAguardando: resultado.pc.aguardandoAprovacao.map((c) => c.pcNumero).filter((n) => n.length > 0),
-    pcsOutroCadastro: resultado.pcsOutroCadastro,
+    pcsAguardando: pc.aguardandoAprovacao.map((c) => c.pcNumero).filter((n) => n.length > 0),
+    pcsUnidadeIncompativel: Array.from(new Set(incompativeis)),
+    temVinculoOmie: entrada.vinculos.length > 0,
   };
 }
 
@@ -1240,10 +1251,17 @@ function argsAvisoCompras(
         x.item.quantidadeNfKg == null ? `${x.item.quantidadeNf.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} ${x.item.unidadeOriginal}`.trim() : null,
     })),
     pcsAguardandoAprovacao: Array.from(new Set(itens.flatMap((x) => x.pcsAguardando))),
-    pcsOutroCadastro: itens.flatMap((x) =>
-      x.pcsOutroCadastro.map((p) => ({ itemDescricao: x.item.descricaoFornecedor, pcNumero: p.pcNumero, cnpjCadastroPc: p.cnpjCadastroPc })),
-    ),
-    cnpjNf: detalhe.fornecedorCnpj.replace(/\D/g, '') || null,
+    // Trava de unidade: PCs do fornecedor em unidade diferente da NF — a orientacao a compras
+    // e lancar o pedido na unidade da nota, nao um pedido novo qualquer.
+    unidadeIncompativel: (() => {
+      const xs = itens.filter((x) => x.motivo === 'unidade_pc');
+      if (xs.length === 0) return null;
+      return {
+        unidadeNf: xs[0]!.item.unidadeOriginal,
+        pcs: Array.from(new Set(xs.flatMap((x) => x.pcsUnidadeIncompativel))),
+        itens: xs.map((x) => x.item.descricaoFornecedor),
+      };
+    })(),
     motivo,
     disparadoPor: userId,
   };

@@ -79,6 +79,8 @@ export interface ItemRecebimentoNfe {
   cNumItPedCompra: number | null;
   cNaoGerarMovEstoque: SimNao | null;
   cNaoGerarFinanceiro: SimNao | null;
+  /** itensAjustes.nQtdeRecebida — quantidade recebida que vai para o PC (na unidade do PC); null se o OMIE nao informa */
+  nQtdeRecebida?: number | null;
 }
 
 export interface RecebimentoNfeConsultado {
@@ -115,6 +117,13 @@ export type AcaoItemRecebimento = 'EDITAR' | 'IGNORAR' | 'ASSOCIAR-PEDIDO';
 export interface AjustesItemRecebimento {
   cNaoGerarMovEstoque?: SimNao;
   cNaoGerarFinanceiro?: SimNao;
+  /**
+   * Quantidade recebida do item, NA UNIDADE DO PEDIDO DE COMPRA vinculado. O OMIE copia
+   * este valor para nQtdeRec do PC na conclusao, sem converter unidade: NF em toneladas
+   * com PC em kg precisa de 8250, nao 8,25 (NF 60199 x PC 306, 22/10/2026). Nao altera
+   * nQtdeNFe. So com cAcao='EDITAR'.
+   */
+  nQtdeRecebida?: number;
 }
 
 export interface ItemRecebimentoEditar {
@@ -207,6 +216,7 @@ export function parseRecebimentoNfeConsultado(raw: RawRecebimento): RecebimentoN
       cNumItPedCompra: num(ad.cNumItPedCompra),
       cNaoGerarMovEstoque: simNao(aj.cNaoGerarMovEstoque),
       cNaoGerarFinanceiro: simNao(aj.cNaoGerarFinanceiro),
+      nQtdeRecebida: num(aj.nQtdeRecebida),
     };
   });
   return {

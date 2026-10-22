@@ -1,8 +1,8 @@
 # Research — Recebimento Nacional com Pedido de Compra
 
-**Feature**: `017-recebimento-nacional-com-pc` | **Data**: 2026-10-21 | **Jira**: ACXEGDP-437
+**Feature**: `017-recebimento-nacional-com-pc` | **Data**: 2026-10-21 (revisto em 22/10/2026) | **Jira**: ACXEGDP-437
 
-Evidências: leitura ao vivo no OMIE da Q2P (sonda `m8moZ1C9xWvwyjmj` e teste `CA0PlrtFkzcdQlpM`, 21/10/2026), espelhos `public.*` em PROD (pg-acxe), documentação da API OMIE (`produtos/recebimentonfe/`, `produtos/pedidocompra/`, `estoque/consulta/`) e o código das features 015, 016 e da ACXEGDP-344.
+Evidências: leitura ao vivo no OMIE da Q2P (sonda `m8moZ1C9xWvwyjmj` e teste `CA0PlrtFkzcdQlpM`, 21/10/2026), teste do vínculo novo com a NF 60199 da Zaraplast (T033, n8n `4OnbxvfALn9OoXLH`, e primeira NF recebida pelo Atlas, 22/10/2026), espelhos `public.*` em PROD (pg-acxe), documentação da API OMIE (`produtos/recebimentonfe/`, `produtos/pedidocompra/`, `estoque/consulta/`) e o código das features 015, 016 e da ACXEGDP-344.
 
 ---
 
@@ -27,7 +27,7 @@ Efeito colateral esperado: a descrição do item no recebimento passou a ser a d
 
 **Alternativas**: concluir sem o `EDITAR` foi rejeitado, porque o recebimento chega com `cNaoGerarMovEstoque = N` e o OMIE lançaria o estoque.
 
-## D2. Item sem vínculo: `ASSOCIAR-PEDIDO`, depois `EDITAR`, depois `ConcluirRecebimento`. Ainda falta o teste com NF real
+## D2. Item sem vínculo: `ASSOCIAR-PEDIDO`, depois `EDITAR`, depois `ConcluirRecebimento`. Testado com NF real em 22/10/2026 (T033): aprovado
 
 **Decisão**: para o item sem vínculo, ou com vínculo trocado pelo operador, o Atlas grava o vínculo antes de marcar os ajustes:
 
@@ -37,30 +37,35 @@ Efeito colateral esperado: a descrição do item no recebimento passou a ser a d
 
 **Rationale**: reproduz o estado que funcionou na NF 7813 (associação existente e depois `EDITAR`). As duas ações vão em chamadas separadas porque `itensAjustes` só é aceito com `cAcao = 'EDITAR'` (erro `SOAP-ENV:Client-151`, visto na 016).
 
-**Pendência que bloqueia a ativação, não o plano**: testar com uma NF real **sem** vínculo, no mesmo formato do teste da 7813 (n8n de teste, passo a passo, autorização do usuário). Pontos a conferir no teste:
+**Resultado do teste T033** (22/10/2026, OMIE da Q2P em PROD, autorizado pelo usuário). Workflow n8n `4OnbxvfALn9OoXLH` ("Teste OMIE - ASSOCIAR-PEDIDO (NF 60199 Zaraplast x PC 306, Q2P) T033", pasta Em Desenvolvimento; hoje só tem passos de leitura). A NF 60199 da Zaraplast vem do cadastro da filial (CNPJ 61.827.663/0013-02), com 4 itens em toneladas (`TL`), na etapa 40 e sem vínculo. O PC 306 foi lançado por compras no cadastro da matriz (61.827.663/0001-79), com 3 itens em kg: PEBD LD (8.250), PEAD ES (13.750) e PELBD 07/21 (5.500). As quantidades da NF batiam exatamente com as do PC.
 
-- (a) se o `ASSOCIAR-PEDIDO` é aceito na etapa 40;
-- (b) se o `EDITAR` seguinte preserva a associação;
-- (c) se trocar um vínculo existente exige desassociar antes ou se o `ASSOCIAR-PEDIDO` sobrescreve;
-- (d) o efeito no PC quando a NF é **menor** que o saldo: o PC continua aberto com o saldo, ou o OMIE o encerra.
+| Ponto | Resultado |
+|---|---|
+| (a) `ASSOCIAR-PEDIDO` na etapa 40 | **Aceito**, inclusive com PC de **outro cadastro** do mesmo fornecedor (mesma raiz de CNPJ: filial na NF, matriz no PC). Base de D17 |
+| (b) `EDITAR` (`cNaoGerarMovEstoque = S`, `cNaoGerarFinanceiro = N`) depois da associação | **Preserva o vínculo.** Chamadas com vários itens numa só (3 `ASSOCIAR-PEDIDO`, depois 3 `EDITAR`, no formato do Atlas) foram aceitas, e duas linhas da NF (itens 3 e 4, 2,75 t cada) no mesmo item do PC também. Depois da associação, a descrição do item passa a ser a do produto do PC e o `nIdItem` do recebimento passa a ser o do item do PC |
+| Durante o teste | PC sem baixa, estoque inalterado, nenhuma conta a pagar |
+| (c) troca de um vínculo existente | **Não testada.** Vale o plano B abaixo |
+| (d) NF menor que o saldo do PC | **Não testada** (as quantidades eram exatas). O fiscal falha fechado: se o OMIE recusar, o Atlas responde 502 e não grava nada no estoque |
 
-Até o teste, a implementação fica atrás da chave da 016, que está desligada em PROD.
+**Primeira NF recebida pelo Atlas com a chave religada** (22/10/2026, 15h02, pelo usuário): a NF 60199 terminou com o fiscal `concluido` e os 4 vínculos mantidos (só `EDITAR` + `Concluir`, porque a associação do teste ainda valia), e 3 entradas físicas por ajuste de estoque, aprovadas. Foi nela que apareceram o problema da unidade na baixa do PC (D15) e a janela em que o PC some da lista de pendentes (D16).
 
-**Alternativas**: `EDITAR` antes de `ASSOCIAR-PEDIDO`. Ficou como plano B, se o teste mostrar que a associação zera os ajustes.
+**Plano B da troca de vínculo (c)**: se o OMIE recusar o `ASSOCIAR-PEDIDO` sobre um item que já tem vínculo, a troca deixa de ser oferecida na tela. O item mantém o vínculo do OMIE ou, se ele não servir, a NF é recusada com a orientação de pedir a troca ao fiscal no portal. Em nenhum caso o item é ignorado (FR-011a).
 
-**Plano B da troca de vínculo**: se o OMIE recusar o `ASSOCIAR-PEDIDO` sobre um item que já tem vínculo, a troca deixa de ser oferecida na tela. O item mantém o vínculo do OMIE ou, se ele não servir, a NF é recusada com a orientação de pedir a troca ao fiscal no portal. Em nenhum caso o item é ignorado (FR-011a).
+**Alternativas**: `EDITAR` antes de `ASSOCIAR-PEDIDO` era o plano B de ordem e foi descartado: o teste mostrou que a ordem `ASSOCIAR-PEDIDO` → `EDITAR` preserva a associação e os ajustes.
 
-## D3. A sugestão vem de duas fontes locais, sem chamar o OMIE ao abrir a tela
+## D3. A sugestão vem de fontes locais (espelho, cópia de PCs e cache), sem chamar o OMIE ao abrir a tela
 
 **Decisão**: a sugestão de cada item é montada só a partir de dados que já estão no Postgres:
 
 1. **Vínculo do OMIE**, lido do espelho de recebimentos, que ganha colunas novas (D9): `n_id_pedido`, `n_id_it_pedido`, `n_num_ped_compra`, `c_num_it_ped_compra`, além dos já existentes `c_associar_existente`, `c_ignorar_item` e `c_nao_gerar_mov_estoque`. Quando presente, é a sugestão principal.
 2. **Candidatos**, lidos de `public."tbl_pedidosCompras_<empresa>"`, a cópia local atualizada pela Rev 1.5 do n8n `qPJFEIY1PQ2LDQG2`: a cada aviso de PC, com agenda de 10 min, troca atômica e PCs recebidos parcialmente incluídos.
+3. **PCs que a cópia não traz**, lidos do cache `stockbridge.pedido_compra_visto` (D16): o OMIE tira da lista de pendentes o PC com item associado a um recebimento aberto, e o cache guarda a última versão que o Atlas viu.
 
 **Regra de candidato** (FR-002):
 
-- mesmo fornecedor: `pc.ncodfor` = `nIdFornecedor` do recebimento. A sugestão só existe com fiscal pendente, que vem do espelho de recebimentos; a fonte "fiscal já feito" não precisa do código. **Outro cadastro da mesma empresa** (revisão de 22/10/2026): a NF 60199 da Zaraplast vem do cadastro da filial (61.827.663/0013-02) e o PC 306 foi lançado no da matriz (/0001-79); a Zaraplast fatura sempre por filial. Mesmo fornecedor continua sendo o mesmo cadastro, porque o `ASSOCIAR-PEDIDO` com PC de outro cadastro não foi testado (T033). Os PCs aprovados e com saldo de outro cadastro com a mesma raiz de CNPJ não são oferecidos, mas aparecem no motivo do item e no aviso a compras ("ajuste o fornecedor do pedido para o cadastro da nota", em vez de "lance o PC", que geraria PC duplicado). Um vínculo que o próprio OMIE fez com PC de outro cadastro passa na releitura: o OMIE já o aceitou;
+- mesmo fornecedor: o mesmo cadastro (`pc.ncodfor` = `nIdFornecedor` do recebimento) **ou outro cadastro com a mesma raiz de CNPJ**, que passou a ser oferecido depois do T033 (22/10/2026, D17: a NF 60199 vem do cadastro da filial e o PC 306 foi lançado no da matriz). A sugestão só existe com fiscal pendente, que vem do espelho de recebimentos; a fonte "fiscal já feito" não precisa do código. Um vínculo que o próprio OMIE fez com PC de outro fornecedor passa na releitura: o OMIE já o aceitou (D4);
 - `cetapa = '15'`;
+- mesma unidade da NF (D15), com `STOCKBRIDGE_PC_UNIDADE_DIFERENTE = 'bloquear'` (default): PC em unidade diferente da NF (kg × tonelada) vai para `unidadeIncompativel`, visível e não selecionável;
 - quantidade do item, em kg, até 2% acima do saldo do PC: `qtdKg ≤ saldoKg × 1,02`. Na cópia local, o saldo é `nqtde − nqtderec`, menos os vínculos `concluido` do Atlas no mesmo item de PC depois de `data_atualizacao` da cópia (ela ainda não os viu) e menos as reservas em andamento de outras NFs (D4). A quantidade em kg usa a conversão de unidade da 015;
 - preço da NF por kg até 1% diferente do preço do PC por kg, com o preço do PC como base: `|preçoNfKg − preçoPcKg| ≤ preçoPcKg × 0,01`. O preço da NF vai em **duas bases**, e vale a mais próxima do preço do PC (revisto em 22/10/2026): o **comercial**, sem tributos (`n_preco_unit` no espelho de recebimentos, `v_un_com` em `tbl_nf_itens_<empresa>`), e o **valor do item** por kg, com tributos (`v_total_item` / `v_prod`). A premissa anterior (só o comercial) caiu com o dado de PROD: o PC 306 da Zaraplast foi lançado com o preço com IPI (R$ 10,80/kg = valor do item ÷ kg da NF 60199, enquanto o comercial fica 2,7% a 4,8% abaixo). Nos recebimentos desde julho de 2026, os itens dos fornecedores com IPI (Zaraplast, Valgroup, Cata, Apta e outros) ficam fora de 1% numa das bases; nos sem IPI (Replas, Isoforma) as duas coincidem. Subir a tolerância não resolveria, porque abriria a folga também para quem lança sem IPI. Para o item agregado por descrição, `preçoNfKg = Σ(preço comercial × qtd) ÷ Σ kg` e `preçoItemKg = Σ valor do item ÷ Σ kg`, chamando `converterItemNfParaKg(qtd, unidade, preço comercial × qtd)` por linha, porque a função recebe o valor **total**. O preço do PC por kg é `nvalunit` com `cunidade = 'KG'` (todos os PCs hoje) ou `nvalunit ÷ 1000` com `'T'`/`'TON'`; outra unidade deixa o PC fora, com o motivo. Item com unidade não conversível fica sem sugestão (já é bloqueado na 015 e vai ao formulário manual);
 - **nunca** PC de fornecedor ACXE com valor total abaixo de R$ 200 (PCs-espelho da importação). A ACXE é reconhecida pela CNPJ do fornecedor no cadastro, comparada sem máscara com `CNPJ_ACXE_NUMERICO` (`types.ts`); `CNPJ_ACXE` é um rótulo, não a CNPJ. A regra é defensiva: como o candidato precisa ser do fornecedor da NF e a ACXE já fica fora da fila da Q2P por `fornecedor_exclusao`, o caso só aparece num vínculo do OMIE que aponte para PC-espelho.
@@ -81,7 +86,7 @@ Até o teste, a implementação fica atrás da chave da 016, que está desligada
 
 1. lê o recebimento com `ConsultarRecebimento`, que já existe na 016;
 2. lê cada PC escolhido com `ConsultarPedCompra`, cliente da ACXEGDP-344;
-3. recusa o vínculo (`409 PC_VINCULO_INVALIDO`) se o PC não estiver na etapa 15, não tiver o item, for de outro fornecedor ou não tiver saldo disponível, ou se a quantidade passar da tolerância sem justificativa;
+3. recusa o vínculo (`409 PC_VINCULO_INVALIDO`) se o PC não estiver na etapa 15, não tiver o item, for de outro fornecedor ou não tiver saldo disponível, se a quantidade passar da tolerância sem justificativa ou, no modo `bloquear`, se estiver em unidade diferente da NF (D15). "Outro fornecedor" é outro cadastro **sem** a mesma raiz de CNPJ (D17);
 4. recusa com `409 VINCULO_OMIE_MUDOU` se o vínculo vivo no recebimento for diferente do que a tela mostrou (o corpo do POST leva `n_cod_item_omie_visto`) e diferente do PC escolhido. Vínculo vivo igual ao escolhido nunca é conflito, o que evita recusas em série enquanto o n8n ainda não preenche as colunas de pedido. Item com linhas ligadas a PCs diferentes no OMIE (`vinculosDivergentes`): a tela não tem um "visto" único, então a base de cada linha é o vínculo que o servidor leu no portão 1; qualquer escolha troca todas as linhas pelo PC escolhido (FR-002c, FR-007), registrando o PC anterior de cada linha (revisão de 22/10/2026 — antes toda escolha dava 409 e a NF ficava sem saída).
 
 **Saldo disponível na releitura**: é o que o OMIE devolve (`nQtde − nQtdeRec`), **sem** descontar vínculos concluídos pelo Atlas, porque o OMIE atualiza `nQtdeRec` ao concluir (teste da NF 7813). Desconta só as **reservas em andamento** de outras NFs no mesmo item de PC: linhas de `recebimento_fiscal_pc` em `confirmado` ou `associado`, de outra NF, iniciadas há menos de 15 min.
@@ -99,7 +104,7 @@ Até o teste, a implementação fica atrás da chave da 016, que está desligada
 
 No `ja_concluido` da primeira consulta o Atlas não relê nem reserva o PC, mas registra a escolha de cada sequência já no estado final em `recebimento_fiscal_pc`: `concluido` quando o vínculo vivo no OMIE é o escolhido, com `concluido_em` = data/hora da conclusão no OMIE (`dRec` + `hRec`, horário de Brasília, limitado a agora; nulo se o OMIE não informar), nunca o instante atual — que seria descontado outra vez do saldo de uma cópia que já viu a conclusão —; ou `falha` ("Fiscal concluído fora do Atlas sem este vínculo"). Antes do registro, as linhas `confirmado`/`associado` que sobraram de uma tentativa anterior morta da NF (de qualquer ledger) viram `falha`; sem escolha de PC, o fechamento dessas sobras acontece antes das escritas. A reconsulta depois de falha com escrita fecha as reservas desta tentativa por UPDATE (`concluido` com o instante atual: o `Concluir` foi desta tentativa).
 
-**Isenção de fornecedor só com o vínculo vivo** (revisão de 22/10/2026): a escolha de origem `omie` escapa da checagem "é de outro fornecedor" só quando o vínculo **vivo** na `ConsultarRecebimento` desta tentativa já é o PC escolhido em todas as linhas da escolha — o OMIE já o aceitou, ainda que o PC esteja em outro cadastro do mesmo fornecedor. Vínculo que sumiu, ou que não cobre todas as linhas, seria criado pelo Atlas com `ASSOCIAR-PEDIDO`: aí vale o FR-009.
+**Isenção de fornecedor só com o vínculo vivo** (revisão de 22/10/2026): a escolha de origem `omie` escapa da checagem "é de outro fornecedor" só quando o vínculo **vivo** na `ConsultarRecebimento` desta tentativa já é o PC escolhido em todas as linhas da escolha — o OMIE já o aceitou, ainda que o PC não seja do mesmo fornecedor. PC de outro cadastro com a mesma raiz de CNPJ passa em qualquer origem (D17). Vínculo que sumiu, ou que não cobre todas as linhas, seria criado pelo Atlas com `ASSOCIAR-PEDIDO`: aí vale o FR-009.
 
 A trava solta no fim da transação, mas a reserva continua valendo para as outras NFs até a linha virar `concluido` ou `falha`. Isso fecha a janela de duas NFs simultâneas no mesmo item de PC sem segurar a trava durante as chamadas ao OMIE.
 
@@ -167,12 +172,14 @@ Com essa marca, o detalhe mostra o motivo e o POST responde `409 ESTOQUE_JA_LANC
 
 **Risco de ativação**: religar a chave com uma imagem anterior à 017 volta a receita do `IGNORAR`, que é o problema original. O quickstart e o runbook de deploy registram que a chave só volta a `true` depois da versão com a 017 em PROD e do teste de D2.
 
+**Estado em 22/10/2026**: a chave foi religada em PROD às ~14h50 (horário de Brasília), depois do T033, com a imagem v1.1.20 e a 0056 aplicada. A trava de unidade (D15), o cache de PCs vistos (D16, migration 0057), o PC por NF (D14) e o PC de outro cadastro (D17) são desta rodada de 22/10/2026 e entram numa imagem posterior à v1.1.20.
+
 ## D9. Espelhos de recebimento: colunas de pedido e espelho novo da ACXE, com DDL na migration e mudança no n8n
 
 **Decisão**:
 
 - a migration `0056` (Fase 1) acrescenta `n_id_pedido bigint`, `n_id_it_pedido bigint`, `n_num_ped_compra varchar(15)` e `c_num_it_ped_compra integer` em `public."tbl_recebimentoNFe_itens_Q2P"` (`ADD COLUMN IF NOT EXISTS`);
-- a migration `0057` (Fase 2, História 5) cria `public."tbl_recebimentoNFe_ACXE"` e `"_itens_ACXE"` com a mesma DDL (`IF NOT EXISTS`), já com essas colunas.
+- a migration `0058` (Fase 2, História 5; a 0057 ficou com o cache de PCs vistos, D16) cria `public."tbl_recebimentoNFe_ACXE"` e `"_itens_ACXE"` com a mesma DDL (`IF NOT EXISTS`), já com essas colunas.
 
 O workflow n8n "Q2P - Exporta Recebimentos NF-e" passa a gravar os quatro campos, que vêm de `itensCabec.nIdPedido` e `nIdItPedido` e de `itensInfoAdic.nNumPedCompra` e `cNumItPedCompra`. Um workflow novo, "ACXE - Exporta Recebimentos NF-e", copia o da Q2P com as chaves da ACXE.
 
@@ -198,7 +205,7 @@ O contrato para a sessão dos workflows está em `contracts/espelhos-n8n.md`.
 - **não há PC na Q2P.** O n8n `RDa9ilL3tbx5ETIk` só espelha PC de fornecedor estrangeiro (gate `gate_internacional_ativo`, ACXEGDP-376; o nacional cai em `Pedido_Nacional_Ignorado`). Logo, não há baixa de PC na Q2P (FR-029);
 - **estoque**: o operador escolhe o local entre os mesmos oferecidos na importação. Os locais espelhados vêm de `listarLocalidadesEspelhadas` (`localidade.service.ts`, a mesma lista do `ConferenciaModal` da importação), com a correspondência ACXE↔Q2P em `stockbridge.localidade_correlacao`. A entrada é sempre nas duas empresas: no local escolhido da ACXE e no local correlato da Q2P. **Não há entrada só na ACXE.** Não há trânsito: o lado da ACXE é `ENT`, e não `TRF`. Os sufixos de idempotência ficam `acxe-ent` e `q2p-ent`; falha só no lado da Q2P reaproveita `pendente_q2p` e o painel de retentativa;
 - **valor**: o mesmo valor unitário nas duas empresas, o do item na NF por kg, **sem** o acréscimo de 14,5% que a importação aplica na entrada da Q2P (`ceil(vNF / kg × 1,145)` em `executarAjusteOmieDual`). Decisão do usuário em 21/10/2026;
-- é entregue numa fase separada, atrás de `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED` (default `false`), com migration própria (`0057`).
+- é entregue numa fase separada, atrás de `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED` (default `false`), com migration própria (`0058`).
 
 **Extrema (decidido em 21/10/2026)**: quando o material chega fisicamente a Extrema (sede da ACXE), o local é o **21.1 EXTREMA**, espelhado (ACXE 4004166399 ↔ Q2P 7960459966, já correlacionados em `stockbridge.localidade_correlacao`). Assim o estoque aparece na Q2P e vendas pode vender. O 21.2 "EXTREMA (NACIONAL)" da ACXE (4452867179, só ACXE) **não** é usado por esta feature. Vale notar que, no OMIE da ACXE, o 21.1 está descrito como "EXTREMA (IMPORTADO)": a descrição não reflete o uso para compra nacional, mas não afeta o recebimento.
 
@@ -209,6 +216,7 @@ O contrato para a sessão dos workflows está em `contracts/espelhos-n8n.md`.
 - `alterarRecebimentoNfeItens` passa a aceitar `cAcao: 'ASSOCIAR-PEDIDO'` com `nIdPedidoExistente` e `nIdItPedidoExistente`;
 - o parser de `ConsultarRecebimento` (`parseRecebimentoNfeConsultado`) passa a ler `itensCabec.nIdPedido` e `nIdItPedido` e o bloco `itensInfoAdic` (`nNumPedCompra`, `cNumItPedCompra`), que hoje nem é declarado no tipo `RawRecebimento`;
 - `validarItensRecebimentoEditar` continua recusando `itensAjustes` fora de `EDITAR`, agora também com `ASSOCIAR-PEDIDO`;
+- `AjustesItemRecebimento` ganha `nQtdeRecebida` (`itensAjustes.nQtdeRecebida`, só com `EDITAR`): a quantidade recebida do item **na unidade do PC**, usada no modo `converter` da trava de unidade (D15). O parser lê o mesmo campo de `ConsultarRecebimento` (`ItemRecebimentoNfe.nQtdeRecebida`, nulo se o OMIE não informa) e o mock o grava sem mexer em `nQtdeNFe`;
 - o mock ganha associação com estado (a sombra do modo leitura também), e `nQtdeRec` do PC atualiza ao concluir;
 - `consultarPedidoCompra` (344) é reaproveitado sem mudança, com `retries 2` na leitura;
 - a escrita continua sem retry (STK-23);
@@ -228,11 +236,80 @@ O contrato para a sessão dos workflows está em `contracts/espelhos-n8n.md`.
 
 **Alternativas**: tratar cópia defasada como "sem PC" foi rejeitado, porque bloquearia NFs e mandaria avisos falsos a compras justamente quando o problema é do pipeline.
 
+## D14. PC por NF: o operador escolhe o pedido uma vez por nota, o servidor deriva a atribuição item a item (22/10/2026)
+
+**Problema**: na NF 60199 o PC era um só (306), mas a tela pedia a escolha e a justificativa item por item: 3 confirmações do mesmo PC e 3 justificativas iguais (relato do usuário, 22/10/2026).
+
+**Decisão**: o detalhe ganha `pcsDaNf` (`PcsDaNf`: `pcs[]` e `preSelecionado`), montado por `montarPcsDaNf` a partir das listas de cada item. Entram só os itens a receber (pendentes, com unidade convertida, sem baixa externa pedida e com quantidade em kg). Vazio fora do fluxo de PC e com a cópia de PCs defasada.
+
+- **Quais PCs**: todo PC que aparece em algum item como vínculo do OMIE elegível, candidato ou "outro do fornecedor".
+- **Atribuição item da NF → item do PC**: gulosa, do item maior para o menor. Cada item fica com a primeira opção daquele PC (na ordem do próprio item) cujo saldo restante ainda cabe, com a tolerância de quantidade. Se nenhuma cabe, fica com a primeira, e o POST decide com o saldo ao vivo. Duas linhas da NF podem apontar para o mesmo item do PC (itens 3 e 4 da NF 60199 → PELBD 07/21), e o saldo restante é consumido na ordem.
+- **Por PC** (`PcDaNf`): `itens[]` (um `PcDaNfItem` por item atendido, com `origem` omie/sugestao/manual, `dentroTolerancia` e `justificativaNecessaria`), `cobreTodos` (nenhum item sem PC possível e o PC atende todos), `dentroTolerancia`, `vinculoOmie` e `justificativaNecessaria`.
+- **Ordem dos PCs**: cobre todos os itens; vínculo do OMIE; atende mais itens; dentro da tolerância; número.
+- **Pré-seleção da nota**: o vínculo do OMIE que cobre todos sem justificativa; senão o único PC que cobre todos dentro da tolerância e sem justificativa; senão nenhum (o operador escolhe).
+- **Justificativa**: uma só para a nota, pedida quando qualquer atribuição exige (fora da tolerância, escolha manual, troca do vínculo do OMIE ou vínculo sem dados locais). A tela a copia para o `pc.justificativa` de cada item.
+
+O **POST continua por item** (`itens[].pc`): a tela aplica a escolha da nota em cada item, e o portão 1, a matriz de justificativa (data-model §4), a releitura ao vivo e a reserva (D4) não mudam. Um PC que não atende algum item deixa esse item sem opção naquele PC; o operador resolve o item à parte.
+
+**Alternativa não adotada**: mudar o POST para um `pc` por nota. O item é a unidade do vínculo (FR-002c) e o contrato por item é o que a 017 já testa.
+
+## D15. Trava de unidade: PC em unidade diferente da NF é bloqueado por padrão; converter fica atrás de chave, a validar (22/10/2026)
+
+**Descoberta**: na conclusão do recebimento, o OMIE grava em `nQtdeRec` do PC a quantidade recebida do item **na unidade da NF**, sem converter. A NF 60199 (toneladas) baixou o PC 306 (kg) com 8,25 / 13,75 / 5,5 em vez de 8.250 / 13.750 / 5.500.
+
+**Correção validada no portal** (22/10/2026, 15h23, pelo usuário): reverteu o recebimento, editou a "quantidade recebida" de cada item para o valor na unidade do PC (8250 etc.) e concluiu de novo. Resultado: PC 306 recebido por inteiro; `nQtdeNFe` da NF inalterado (8,25); um só título de conta a pagar (R$ 292.737,65, vencimento 04/11/2026); estoque sem movimento novo. O campo editado é o `itensAjustes.nQtdeRecebida` do `AlterarRecebimento` `EDITAR`. A etapa do PC continuou 15 mesmo recebido por inteiro: o OMIE não a muda (igual ao PC 304).
+
+**Decisão**: a variável `STOCKBRIDGE_PC_UNIDADE_DIFERENTE` (`bloquear` | `converter`, default `bloquear`) define o que fazer. **Unidade diferente** = fator para kg diferente (KG × T/TON/TL; T, TON e TL contam como a mesma unidade). PC em unidade que não é KG, T, TON nem TL já ficava fora da sugestão.
+
+- **`bloquear` (default)**:
+  - o PC em unidade diferente vai para `pc.unidadeIncompativel` (visível, não selecionável), em vez de candidatos e "outros";
+  - o vínculo do OMIE nesse caso fica inelegível (`vinculoOmieElegivel = false`) e o alerta orienta compras e o fiscal; sem outro PC, a NF é recusada no portão 1 **nos dois modos** de `STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC` (como o vínculo que não serve, FR-011a): "seguir sem vínculo" ignoraria um item com vínculo vivo no OMIE, e o fiscal só barraria depois com um `VINCULO_OMIE_MUDOU` enganoso;
+  - o motivo da trava mostra as duas quantidades na unidade do PC: "com 8,25 em vez de 8.250 kg" (nota em toneladas, PC em kg) e "com 8.250 em vez de 8,25 toneladas" (nota em kg, PC em toneladas);
+  - sem outro PC possível, o motivo interno é `unidade_pc` e a situação, `sem_pc`: `422 NF_SEM_PC` com texto próprio e aviso a compras com o quadro "Pedido em unidade diferente da nota" (gravado em `nf_aviso_compras` com o motivo `sem_pc`, que o CHECK já aceita). PC aguardando aprovação tem precedência na mensagem;
+  - `pc` do corpo que é um `unidadeIncompativel` → `422 PC_NAO_ELEGIVEL`;
+  - releitura ao vivo com PC em unidade diferente (inclusive o vínculo que o OMIE já fez) → `409 PC_VINCULO_INVALIDO`.
+- **`converter`**: o PC em unidade diferente é oferecido normalmente, e o `EDITAR` manda `itensAjustes.nQtdeRecebida` = kg da linha ÷ fator da unidade do PC (arredondado em 6 casas): 8.250 kg → 8250 em PC de KG; 8,25 em PC de TON. A reserva devolve o valor (`ReservaPc.nQtdeRecebida`, nulo se a unidade é a mesma), `ajustesJaAplicados` confere também esse valor (a retomada só refaz o `EDITAR` se a quantidade difere), e o saldo do PC continua comparado em kg.
+
+**Estado**: default `bloquear`. O modo `converter` **não foi testado pela API**: o campo foi validado só pelo portal. Ligar em PROD depende de um teste com NF real em toneladas contra PC em kg (quickstart, cenário 10). No UAT (`OMIE_MODE=leitura`) as escritas são simuladas, então o modo pode ser exercitado lá, mas isso não prova o comportamento do OMIE.
+
+**Alternativas**: converter sempre foi descartado por não ter sido testado pela API; o bloqueio é o modo seguro. Corrigir no portal depois da conclusão (o que o usuário fez em 22/10) funciona, mas é trabalho manual por NF e deixa o PC errado até lá.
+
+## D16. Cache de PCs vistos: o PC some da lista de pendentes quando ganha item associado a um recebimento aberto (22/10/2026)
+
+**Problema**: o PC 306 sumiu da cópia local `tbl_pedidosCompras_Q2P` (n8n `qPJFEIY1PQ2LDQG2`, `PesquisarPedCompra` com `lExibirPedidosRecParciais = 'T'`) entre a associação (13h) e a conclusão (15h) da NF 60199, e voltou depois como recebido parcial. O OMIE tira da lista de pendentes o PC com item associado a um recebimento aberto. Na janela, o detalhe mostrava o vínculo do OMIE "sem número, sem saldo, exige justificativa" e os outros itens da mesma NF ficavam sem candidato (`NF_SEM_PC` com o PC existindo e com saldo).
+
+**Decisão**: tabela `stockbridge.pedido_compra_visto` (migration `0057`, data-model §11) com a última versão de cada item de PC que passou pela cópia (chave: empresa + item do PC).
+
+- **Quem grava**: `registrarPcsVistos(empresa)` (`pc-visto.service.ts`), no cron `5,35 * * * *` (Q2P) e ao carregar o contexto da sugestão (`registrarPcsVistosSeVencido`, no máximo 1× a cada 5 min por processo). O upsert só grava a linha que **mudou** (`IS DISTINCT FROM`), então a trigger de auditoria registra o histórico real do PC (saldo, etapa, preço) e não o ruído de cada sincronização. Por isso `visto_em` é o momento em que o Atlas viu os dados atuais do item, e só se atualiza quando algo muda.
+- **Quem lê**: `carregarContextoPc` lê o cache (`lerPcsVistos`) para os fornecedores da NF, as raízes de CNPJ (D17) e os PCs de vínculo do OMIE, e inclui com `fonte: 'cache'` (`PcCandidato.dadosEmCache`) **só** os itens que a cópia não trouxe. Número, produto, saldo e etapa são os da última vez em que o PC foi visto.
+- **Vínculo do OMIE em PC só no cache**: elegível, com alerta ("saiu da lista de pedidos pendentes do OMIE; os dados são da última sincronização em que apareceu; a confirmação confere o saldo ao vivo"). `numerosDosPcs` (número do PC nas NFs com fiscal já feito) ganha o cache como 3ª fonte, depois da cópia e do ledger.
+- **A confirmação continua conferindo ao vivo** (D4, FR-009): o cache nunca decide sozinho.
+- **Best-effort**: falha ao ler ou gravar o cache vira aviso no log e a sugestão segue só com a cópia (comportamento anterior). A tabela ausente, porém, derruba a query única de `numerosDosPcs`, que perde também os números vindos da cópia e do ledger ("PC vinculado no OMIE" sem número). Por isso a 0057 vai antes da imagem, ainda que nada deixe de funcionar sem ela.
+- **Validade**: como candidato (por fornecedor ou raiz de CNPJ) o item do cache vale 7 dias (`CACHE_PC_VALIDADE_DIAS`): o PC que saiu da lista por recebimento total no portal, cancelamento ou exclusão ficaria aqui com o último saldo visto e seria oferecido (e até pré-selecionado) até a releitura recusar no POST; a janela que o cache resolve dura horas ou dias. O PC apontado por um vínculo do OMIE entra sempre.
+- **Linha repetida na cópia**: a leitura usa `DISTINCT ON (ncoditem)` (mais recente por `data_atualizacao`); sem isso um `ncoditem` repetido derrubaria o upsert inteiro (SQLSTATE 21000) e entraria duas vezes no valor total do PC.
+- **Limites**: só a Q2P (o cron chama `registrarPcsVistos('q2p')`; o código já aceita a ACXE na Fase 2). Um PC criado e associado entre duas sincronizações nunca passou pela cópia, então o cache não o conhece: cai no caso anterior (vínculo sem dados locais, e a releitura decide).
+
+**Alternativa descartada**: ler o PC ao vivo (`ConsultarPedCompra` ou `PesquisarPedCompra`) no GET do detalhe. Fere o Princípio II (a leitura ao vivo é só no POST, imediatamente antes de escrever) e custaria uma chamada de API a cada abertura de NF.
+
+## D17. PC de outro cadastro com a mesma raiz de CNPJ passa a ser oferecido; FR-002 revisado (22/10/2026)
+
+**Evidência**: o T033 mostrou o `ASSOCIAR-PEDIDO` aceito com PC de outro cadastro do mesmo fornecedor (NF 60199 da filial × PC 306 da matriz). A Zaraplast fatura sempre por filial, e compras lança o PC no cadastro da matriz. A decisão anterior (21/10 e primeira revisão de 22/10) era não oferecer, "até o T033 testar".
+
+**Decisão**: "mesmo fornecedor" (FR-002 a) passa a ser o mesmo cadastro **ou** outro cadastro com a mesma raiz de CNPJ (8 primeiros dígitos, ambos com CNPJ de 14 dígitos). CPF ou cadastro sem CNPJ não tem raiz: só vale o mesmo cadastro.
+
+- **Carga**: `carregarContextoPc` busca os PCs do cadastro da NF, os dos vínculos do OMIE e os dos cadastros com a mesma raiz (`raizPorFornecedor`).
+- **Marcação**: `PcCandidato.outroCadastro` (o cadastro do PC difere do fornecedor da NF) e `cnpjCadastro` (só dígitos; a tela formata). O motivo ganha o sufixo "em outro cadastro do fornecedor (CNPJ …)".
+- **Releitura ao vivo**: o PC é do mesmo fornecedor se o cadastro ao vivo é o mesmo ou tem a mesma raiz. A consulta ao cadastro só acontece quando algum PC está em outro cadastro, sem custo extra no caso comum. Continua valendo a isenção do vínculo vivo = escolhido (D4).
+- **Removido**: o "só informativo" (`pcsOutroCadastro`) do motivo do item e o quadro "PC em outro cadastro" do aviso a compras, que pedia para ajustar o fornecedor do pedido.
+
+**Pendente**: a troca de um vínculo existente entre cadastros não foi testada (T033 c).
+
 ---
 
 ## Pendências de pesquisa (não bloqueiam o plano)
 
-1. **Teste de D2** com NF real sem vínculo, incluindo NF menor que o PC e troca de vínculo. Bloqueia a **ativação**, não o desenvolvimento.
-2. **Se a etapa do PC muda depois** do recebimento total. No PC 304, ela ficou em 15 logo depois da conclusão. Conferir no espelho do dia seguinte. Não afeta o desenho: a elegibilidade usa o saldo (`nqtde − nqtderec`) além da etapa.
+1. ~~**Teste de D2** com NF real sem vínculo~~: **feito em 22/10/2026 (T033)** e aprovado (D2). Restam (c) a troca de um vínculo existente e (d) a NF menor que o saldo do PC, para quando houver NF. Não bloqueiam.
+2. ~~**Se a etapa do PC muda depois** do recebimento total~~: resolvido. O PC 306, recebido por inteiro, continuou na etapa 15, como o 304 (D15). A elegibilidade usa o saldo (`nqtde − nqtderec`) além da etapa.
 3. **Como o OMIE associa sozinho.** Na NF 7813, o recebimento foi incluído por `cUsuarioInc = P000548700` já com o vínculo. Ainda não se sabe se foi automático (pelo `xPed` do XML) ou manual. Não afeta o desenho: o vínculo existente é sempre a sugestão principal.
 4. ~~Local da ACXE em Extrema~~: resolvido, é o 21.1 EXTREMA, espelhado; a entrada é sempre nas duas empresas (D11).
+5. **Modo `converter` da trava de unidade** (D15): testar com NF real em toneladas contra PC em kg, pela API, antes de ligar em PROD. Enquanto isso o default é `bloquear`.

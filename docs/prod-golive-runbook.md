@@ -224,16 +224,26 @@ DROP TABLE IF EXISTS public."tb_movimentacao_q2p_legado";
 
 ## Ativação da feature 017 — recebimento nacional com pedido de compra (ACXEGDP-437)
 
-Desde 21/10/2026 a chave `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED` está `false` em PROD
+De 21/10/2026 a 22/10/2026 a chave `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED` ficou `false` em PROD
 (contenção). A receita da 016 (`EDITAR → IGNORAR → Concluir`) desfaz o vínculo do item com
 o pedido de compra (PC) que compras lança no OMIE. A 017 conclui o fiscal mantendo ou
 gravando o vínculo e só usa o `IGNORAR` em item sem PC.
+
+**Estado em 22/10/2026**: os passos abaixo foram executados até a religação em PROD (passo 6). A 0056 foi aplicada, a imagem
+v1.1.20 está no ar, o teste do vínculo novo (T033, NF 60199 da Zaraplast) foi aprovado e a chave
+foi religada em PROD às ~14h50 (horário de Brasília). A rodada de ajustes do mesmo dia (PC por NF,
+PC de outro cadastro, trava de unidade e cache de PCs vistos) tem os seus passos na subseção
+"Rodada de ajustes de 22/10/2026", mais abaixo.
 
 **Pré-requisitos já atendidos**
 
 - Cópia de PCs na Rev 1.5 (`qPJFEIY1PQ2LDQG2`), no ar desde 21/10/2026.
 - Espelho de recebimentos da Q2P gravando o vínculo (`CJWpHyJEXoHCGkOt` Rev 1.1, no ar desde
   21/10/2026 22:40). As 4 colunas de pedido foram aplicadas em PROD com o mesmo texto da 0056.
+- Teste do `ASSOCIAR-PEDIDO` com NF real (T033): feito e aprovado em 22/10/2026, na NF 60199 da
+  Zaraplast contra o PC 306, inclusive com PC de outro cadastro do mesmo fornecedor. Detalhes em
+  `specs/017-recebimento-nacional-com-pc/research.md` (D2). Não testados: troca de um vínculo
+  existente e NF menor que o saldo do PC.
 
 **Ordem** (não inverter os passos 1 e 3):
 
@@ -308,23 +318,82 @@ gravando o vínculo e só usa o `IGNORAR` em item sem PC.
    - NF concluída no portal sem "não movimentar estoque" aparece com "Estoque já lançado pelo
      OMIE" e não pode ser recebida.
 5. **Teste do vínculo novo** (`ASSOCIAR-PEDIDO`) com uma NF real sem vínculo, com
-   autorização, como foi feito na NF 7813 (tarefa T033). Registrar o resultado na
-   ACXEGDP-437 e na research D2 da 017.
+   autorização, como foi feito na NF 7813 (tarefa T033). **Feito em 22/10/2026 (NF 60199)**;
+   resultado na research D2 da 017. Registrar também na ACXEGDP-437.
 6. **Religar** `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED=true`: primeiro no UAT, depois em
    PROD, em dia útil e com o fiscal avisado. Acompanhar as primeiras NFs reais (SC-007).
 
 **Atenção**: religar a chave com uma imagem anterior à 017 traz de volta o `IGNORAR`, que é o
 problema original.
 
+**Rodada de ajustes de 22/10/2026 (0057 + imagem seguinte à v1.1.20)**
+
+A NF 60199 (Zaraplast × PC 306), a primeira recebida pelo Atlas com a chave religada, mostrou quatro
+ajustes: o OMIE baixa o PC na unidade da NF sem converter, o PC some da lista de pendentes, o PC da
+matriz serve à NF da filial e a escolha do PC por item é repetitiva. Eles estão no código desta
+rodada (research D14 a D17) e **não estão na v1.1.20**.
+
+- **Até a imagem desta rodada subir**, a trava de unidade não existe em PROD: NF em toneladas contra
+  PC em kg baixa o PC com a quantidade na unidade da NF (8,25 em vez de 8.250 kg). A mitigação é
+  operacional: conferir o `nQtdeRec` do PC depois da conclusão e, se estiver na unidade errada,
+  corrigir pelo portal, como na NF 60199 (reverter o recebimento, editar a quantidade recebida de
+  cada item para o valor na unidade do PC e concluir de novo).
+
+Ordem:
+
+1. **Migration 0057** (cache de PCs vistos, `stockbridge.pedido_compra_visto`), **antes** da imagem.
+   É aditiva: só cria uma tabela nova (`CREATE TABLE IF NOT EXISTS`, índices e trigger de
+   auditoria), não altera nenhuma tabela existente e convive com a v1.1.20. Também é
+   **best-effort**: sem a tabela nada deixa de funcionar (a sugestão registra um aviso e segue só
+   com a cópia de PCs), mas o detalhe perde o PC que sai da lista de pendentes e o número do PC das
+   NFs com fiscal já feito. Por isso vai antes. Mesmo comando da 0056, com o arquivo da 0057:
+
+   ```bash
+   export PROD_USER=<usuario-prod>
+   PGOPTIONS='-c lock_timeout=5s' psql -h db.manager01.q2p.com.br -p 5432 -U "$PROD_USER" -d acxe_q2p \
+     -1 -q -v ON_ERROR_STOP=1 -f packages/db/migrations/0057_stockbridge_pedido_compra_visto.sql
+   echo "exit=$?"
+   ```
+
+   - **Esperado**: `exit=0` e nenhuma linha `ERROR`. `NOTICE: trigger ... does not exist, skipping`
+     é normal na 1ª execução. Em caso de `exit=3` ou erro de lock, nada foi aplicado: repetir o
+     mesmo comando (idempotente).
+   - **Conferência obrigatória, antes da imagem** (somente leitura):
+
+     ```sql
+     SELECT to_regclass('stockbridge.pedido_compra_visto'),
+            (SELECT count(*) FROM pg_trigger
+              WHERE tgname = 'trg_audit_sb_pedido_compra_visto' AND NOT tgisinternal) AS triggers;
+     ```
+
+     Esperado: `to_regclass` **não nulo** e `triggers = 1`. Outro resultado: reaplicar a migration
+     antes de subir a imagem.
+2. **Variável nova** no Portainer: `STOCKBRIDGE_PC_UNIDADE_DIFERENTE`, já listada no
+   `atlas.stack.yml` com default `bloquear`. **Deixar `bloquear`.** Só mudar para `converter` depois
+   do teste do modo com NF real (tarefa T073, em toneladas contra PC em kg, com autorização) e da
+   decisão registrada (T074): o campo `nQtdeRecebida` foi validado no portal, ainda não pela API.
+3. **Imagem seguinte à v1.1.20** (nova `ATLAS_VERSION`), com a chave da 016 já `true`.
+4. **Conferir**:
+   - o cache se povoa sozinho (cron `5,35` ou ao abrir uma NF):
+     `SELECT count(*), max(visto_em) FROM stockbridge.pedido_compra_visto WHERE empresa = 'q2p';`
+     deve dar mais de zero em até 30 minutos;
+   - o detalhe de uma NF com PC mostra o PC uma vez para a nota, com o número e o saldo;
+   - NF em toneladas contra PC só em kg, no modo `bloquear`: o PC aparece não selecionável, com o
+     motivo de unidade, e o POST responde `422 NF_SEM_PC`.
+
 **Rollback**: voltar `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED` para `false` na stack e atualizar a
 stack. A chave é lida uma vez, na subida do processo, então o container é recriado: é um redeploy
 rápido, sem trocar a imagem nem mexer em migration. Com a imagem da 017 e a chave `false`, as
 dispensas e o bloqueio de estoque já lançado continuam valendo. A 0056 pode ficar, porque é
-aditiva e convive também com a imagem anterior.
+aditiva e convive também com a imagem anterior. Idem a 0057: voltar para a v1.1.20 deixa a tabela
+do cache parada, sem efeito.
 
 **UAT**:
 - a 0056 vai por `psql -1 -f`, como a 0053: o comando do passo 1 com `-p 5437 -U postgres`, e a
-  mesma conferência depois;
+  mesma conferência depois; a 0057 idem, com o arquivo dela e a conferência da rodada de 22/10;
+- `STOCKBRIDGE_PC_UNIDADE_DIFERENTE`: no UAT (`OMIE_MODE=leitura`, escritas simuladas) o modo
+  `converter` pode ser exercitado para conferir o `EDITAR` na sombra, mas isso não prova o
+  comportamento do OMIE (T073 é em PROD);
 - as colunas do espelho chegam pela cópia PROD→UAT ou pela própria 0056 (o bloco `DO` do começo
   da migration só as cria se faltar alguma);
 - `STOCKBRIDGE_COPIA_PCS_MAX_MIN=1440`, porque a cópia de PCs também chega pela cópia PROD→UAT.

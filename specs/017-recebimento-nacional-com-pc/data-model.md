@@ -1,6 +1,6 @@
 # Data Model — Recebimento Nacional com Pedido de Compra
 
-**Feature**: `017-recebimento-nacional-com-pc` | **Migrations**: `0056` (Q2P, Histórias 1 a 4) e `0057` (ACXE, História 5)
+**Feature**: `017-recebimento-nacional-com-pc` | **Migrations**: `0056` (Q2P, Histórias 1 a 4), `0057` (cache de PCs vistos, ajuste de 22/10/2026) e `0058` (ACXE, História 5)
 
 Base: o modelo da feature 016 (`specs/016-recebimento-fiscal-nf/data-model.md`). Aqui ficam só as extensões.
 
@@ -25,7 +25,7 @@ Colunas que já existem e passam a ser usadas: `c_associar_existente`, `c_ignora
 
 Caso real, NF 7813 na etapa 40 em 21/10/2026: `n_id_pedido` 8516905979, `n_id_it_pedido` 8516907022, `n_num_ped_compra` "304", `c_num_it_ped_compra` 1, `c_associar_existente` S, `c_nao_gerar_mov_estoque` N.
 
-## 2. Espelho de recebimentos da ACXE (0057)
+## 2. Espelho de recebimentos da ACXE (0058)
 
 `public."tbl_recebimentoNFe_ACXE"` e `public."tbl_recebimentoNFe_itens_ACXE"`: mesma DDL das tabelas da Q2P (data-model da 016, §1 e §2), já com as colunas do §1, criadas com `IF NOT EXISTS` e escritas por um workflow n8n novo (contrato em `contracts/espelhos-n8n.md`).
 
@@ -116,7 +116,7 @@ Aviso a compras sobre NF sem PC (D6), deduplicado.
 
 **Deduplicação** (revista em 22/10/2026): por destinatário. Numa transação com trava consultiva por `(nf_chave_acesso, motivo)`, o envio vai só a quem ainda não consta no `enviado_para` das linhas das últimas 24 h; sem ninguém pendente, `deduplicado`. A linha grava em `enviado_para` só os destinatários **entregues**: quem falhou fica pendente para a próxima tentativa. Duas chamadas simultâneas não enviam duas vezes. **Trigger**: padrão `audit_*`.
 
-## 6. `stockbridge.fornecedor_exclusao`: empresa (0057, História 5)
+## 6. `stockbridge.fornecedor_exclusao`: empresa (0058, História 5)
 
 `empresa varchar(4) NOT NULL DEFAULT 'q2p'`, com `CHECK (empresa IN ('q2p','acxe'))`. Linhas novas com a Q2P como fornecedor excluído na ACXE (intercompany): as duas CNPJs da Q2P no cadastro da ACXE, `27.019.059/0001-88` (matriz) e `27.019.059/0002-69` (filial), com máscara, como já está gravada a ACXE (`42.672.052/0001-54`). Não há constante de CNPJ da Q2P em `types.ts` (`CNPJ_Q2P_MATRIZ` é um rótulo). O índice único passa a incluir `empresa`, e `fornecedor.service.ts` passa a filtrar por empresa.
 
@@ -150,13 +150,18 @@ interface PcCandidato {
   etapa: string;                       // '15' ou '10'; outra etapa só aparece num vínculo do OMIE, com alerta
   dentroTolerancia: boolean;
   casaNumeroPedidoNf: boolean;         // n_num_ped_compra = cnumero
-  motivo: string;                      // "Número do pedido na NF", "Quantidade e preço compatíveis", "Preço da NF 3,2% acima do PC", …
-  semDadosLocais: boolean;             // true só no vínculo do OMIE cujo PC não está na cópia: produto, saldo e preço desconhecidos
+  motivo: string;                      // "Número do pedido na NF", "Quantidade e preço compatíveis", "Preço da NF 3,2% acima do PC", …;
+                                       // com outroCadastro ganha o sufixo "· em outro cadastro do fornecedor (CNPJ …)"
+  semDadosLocais: boolean;             // true só no vínculo do OMIE cujo PC não está na cópia nem no cache: produto, saldo e preço desconhecidos
+  outroCadastro: boolean;              // D17 — o cadastro do PC difere do fornecedor da NF (mesma raiz de CNPJ: matriz × filial)
+  cnpjCadastro: string;                // CNPJ do cadastro do PC, só dígitos ('' sem cadastro); a tela formata
+  dadosEmCache: boolean;               // D16 — dados do cache `pedido_compra_visto`: o PC saiu da lista de pendentes; saldo e etapa são os da última vez em que foi visto
+  unidade: string;                     // unidade do PC no OMIE ('KG', 'TON', …); a tela a mostra ao lado do saldo
 }
 
 interface PcDoItem {
   vinculoOmie: PcCandidato | null;     // FR-000 (pode vir com alerta: PC sem saldo, etapa ≠ 15, PC-espelho)
-  vinculoOmieElegivel: boolean;        // false = aparece mas não pode ser mantido (PC-espelho); o operador troca ou a NF é recusada (FR-011a)
+  vinculoOmieElegivel: boolean;        // false = aparece mas não pode ser mantido (PC-espelho; PC em unidade diferente da NF no modo bloquear); o operador troca ou a NF é recusada (FR-011a)
   vinculosDivergentes: boolean;        // linhas do item vinculadas a PCs diferentes no OMIE: vinculoOmie null, alerta preenchido (com os números, se estão na cópia);
                                        // qualquer escolha é troca (justificativa) e a base do 409 é, por linha, o vínculo lido no portão 1;
                                        // sem PC possível: motivo vinculo_invalido (recusa nos dois modos, FR-011a)
@@ -164,6 +169,7 @@ interface PcDoItem {
   candidatos: PcCandidato[];           // dentro da tolerância, ordenados (D3)
   outrosDoFornecedor: PcCandidato[];   // etapa 15 com saldo, fora da tolerância (escolha manual, FR-002a)
   aguardandoAprovacao: PcCandidato[];  // etapa 10 (FR-002b), não selecionáveis
+  unidadeIncompativel: PcCandidato[];  // D15 — etapa 15 com saldo, em unidade diferente da NF (modo bloquear): visíveis, não selecionáveis
   preSelecionado: { nCodPed: number; nCodItem: number } | null; // vínculo do OMIE ou candidato único pelo número do pedido
   semPcMotivo: string | null;          // FR-019, quando não há nada selecionável
   vinculadoNoOmie: { pcNumero: string } | null; // fiscal já feito: PC vinculado à vista (FR-021)
@@ -178,6 +184,33 @@ interface ItemNfNacional {
   pc: PcDoItem | null;                 // null = fiscal pelo Atlas desligado e nenhum vínculo a mostrar
 }
 
+// PC por NF (D14, 22/10/2026): o operador escolhe o PC uma vez para a nota. O POST continua por item.
+interface PcDaNfItem {                 // atribuição de um item da NF a um item do PC
+  indice: number;                      // item agregado da NF
+  nCodItem: number;                    // item do PC atribuído (id de seleção, nunca texto)
+  produtoDescricao: string;
+  dentroTolerancia: boolean;
+  motivo: string;
+  origem: 'omie' | 'sugestao' | 'manual';
+  justificativaNecessaria: boolean;    // fora da tolerância, escolha manual, troca do vínculo do OMIE ou vínculo sem dados locais
+}
+interface PcDaNf {                     // um PC que atende a nota
+  nCodPed: number;
+  pcNumero: string;
+  outroCadastro: boolean;
+  cnpjCadastro: string;
+  dadosEmCache: boolean;
+  itens: PcDaNfItem[];                 // um por item da NF atendido; item sem opção neste PC fica de fora
+  cobreTodos: boolean;                 // nenhum item a receber sem PC possível, e este PC atende todos
+  dentroTolerancia: boolean;           // todas as atribuições
+  vinculoOmie: boolean;                // é o PC que o OMIE já tem vinculado em algum item
+  justificativaNecessaria: boolean;    // alguma atribuição exige: uma só justificativa para a nota
+}
+interface PcsDaNf {
+  pcs: PcDaNf[];                       // ordem: cobre todos; vínculo do OMIE; atende mais itens; dentro da tolerância; número
+  preSelecionado: number | null;       // nCodPed: o vínculo do OMIE que cobre todos sem justificativa, ou o único PC que cobre todos dentro da tolerância
+}
+
 interface DetalheNfNacional {
   // …campos da 015/016…
   empresa: Empresa;
@@ -187,10 +220,12 @@ interface DetalheNfNacional {
   itensSemAvaliacaoPc: Array<{ indice: number; descricao: string }>; // pendentes que o Atlas não recebe (unidade não convertida) e sem PC no OMIE;
                                        // modo bloquear: POST → 422 NF_SEM_PC (orienta o fiscal, sem aviso a compras); sem vínculo: seguem sem PC
                                        // e compras é avisado. Só com o fluxo de PC (chave da 016 + fiscal pendente); senão []
+  pcsDaNf: PcsDaNf;                    // D14 — só itens a receber (pendentes, unidade convertida, sem baixa externa pedida);
+                                       // { pcs: [], preSelecionado: null } fora do fluxo de PC ou com a cópia de PCs defasada
 }
 ```
 
-Os candidatos são calculados por item agregado: quantidade = soma das linhas (`quantidadeNfKg`); preço em duas bases por kg, o comercial (`n_preco_unit` / `v_un_com`) e o valor do item (`v_total_item` / `v_prod`), valendo a mais próxima do PC (D3). Os vínculos do OMIE são lidos por sequência. Se as sequências de um mesmo item agregado apontarem para itens de PC diferentes, o item mostra `alertaVinculoOmie` e exige escolha (`escolha_necessaria`); a escolha troca todas as linhas pelo PC escolhido. PCs aprovados e com saldo de **outro cadastro com a mesma raiz de CNPJ** do fornecedor (filial × matriz) não são oferecidos; sem PC possível, o `semPcMotivo` e o aviso a compras os citam.
+Os candidatos são calculados por item agregado: quantidade = soma das linhas (`quantidadeNfKg`); preço em duas bases por kg, o comercial (`n_preco_unit` / `v_un_com`) e o valor do item (`v_total_item` / `v_prod`), valendo a mais próxima do PC (D3). Os vínculos do OMIE são lidos por sequência. Se as sequências de um mesmo item agregado apontarem para itens de PC diferentes, o item mostra `alertaVinculoOmie` e exige escolha (`escolha_necessaria`); a escolha troca todas as linhas pelo PC escolhido. PCs de **outro cadastro com a mesma raiz de CNPJ** do fornecedor (filial × matriz) são oferecidos, com `outroCadastro` e `cnpjCadastro` (D17). PCs em **unidade diferente** da NF (fator para kg diferente; T, TON e TL são a mesma unidade) vão para `unidadeIncompativel` no modo `bloquear` (D15); sem outro PC possível, o motivo interno é `unidade_pc` (a situação do item é `sem_pc`, o `semPcMotivo` explica e o aviso a compras ganha o quadro de unidade). Os PCs vêm da cópia local e, para o que ela não traz, do cache de PCs vistos (§11).
 
 `pcSituacao` da NF é o pior caso entre os itens a receber (pendentes e com unidade convertida — item bloqueado por unidade não conta; NF sem fornecedor cadastrado no OMIE é `nao_aplicavel`), nesta ordem: `sem_pc` > `aguardando_aprovacao` > `escolha_necessaria` (empate, só fora da tolerância ou vínculos divergentes) > `sugerido` > `vinculado_omie`. `nao_aplicavel` = fiscal já feito ou fiscal pelo Atlas desligado.
 
@@ -215,6 +250,8 @@ fiscal: {
 };
 ```
 
+**PC por NF** (D14): o corpo não muda. A tela escolhe o PC da nota em `pcsDaNf` e monta o `pc` de cada item com o `nCodItem` atribuído a ele, repetindo a mesma `justificativa` quando exigida. Cada item continua validado, relido ao vivo e reservado sozinho (§4).
+
 ## 10. Configuração nova
 
 | Variável | Default | Uso |
@@ -225,5 +262,36 @@ fiscal: {
 | `STOCKBRIDGE_COMPRAS_EMAILS` | vazio (cai em `STOCKBRIDGE_OPS_EMAIL`) | D6: aviso de NF sem PC |
 | `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED` | `false` | D11: História 5 |
 | `STOCKBRIDGE_COPIA_PCS_MAX_MIN` | `120` | D13: idade máxima da cópia de PCs antes do alerta e do modo seguro |
+| `STOCKBRIDGE_PC_UNIDADE_DIFERENTE` | `bloquear` | D15: PC em unidade diferente da NF. `bloquear` = o PC não é oferecido e a NF é recusada sem outro PC; `converter` = o `EDITAR` manda `itensAjustes.nQtdeRecebida` na unidade do PC (só depois de teste com NF real) |
 
 Reaproveitada: `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED` (D8).
+
+## 11. `stockbridge.pedido_compra_visto` (nova, 0057)
+
+Cache da última versão vista de cada item de PC (D16). Derivado da cópia `tbl_pedidosCompras_<empresa>`, sem valor de negócio próprio. A migration é aditiva (`CREATE TABLE IF NOT EXISTS`, sem alterar tabela existente) e a leitura e a gravação são best-effort: sem a tabela, a sugestão segue só com a cópia.
+
+| Coluna | Tipo | Regra |
+|---|---|---|
+| `id` | `uuid` PK | `gen_random_uuid()` |
+| `empresa` | `varchar(4) NOT NULL` | `q2p` \| `acxe` — CHECK |
+| `n_cod_ped` | `bigint NOT NULL` | PC (`ncodped` da cópia) |
+| `n_cod_item` | `bigint NOT NULL` | item do PC (`ncoditem`) |
+| `pc_numero` | `varchar(50) NOT NULL DEFAULT ''` | número legível (`cnumero`) |
+| `n_cod_for` | `bigint` | cadastro do fornecedor do PC (`ncodfor`) |
+| `produto_descricao` | `varchar(255)` | `cdescricao`, ou `cproduto` |
+| `unidade` | `varchar(10)` | `cunidade` em caixa alta |
+| `qtde`, `qtde_rec` | `numeric(14,3)` | pedida e recebida, na unidade do PC |
+| `preco_unit` | `numeric(14,6)` | `nvalunit`, na unidade do PC |
+| `etapa` | `varchar(2)` | `cetapa` |
+| `dt_previsao` | `date` | `ddtprevisao` |
+| `valor_total_pc` | `numeric(14,2)` | soma do PC inteiro; com o CNPJ do cadastro identifica o PC-espelho (fornecedor ACXE abaixo de R$ 200) |
+| `visto_em` | `timestamptz NOT NULL DEFAULT now()` | quando o Atlas viu os dados atuais do item; só se atualiza quando algo muda. É o `atualizadoEmMs` do item vindo do cache |
+| `created_at`, `updated_at` | `timestamptz NOT NULL DEFAULT now()` | — |
+
+**Índices**: único `pedido_compra_visto_item_uq (empresa, n_cod_item)`; `pedido_compra_visto_ped_idx (empresa, n_cod_ped)`; `pedido_compra_visto_for_idx (empresa, n_cod_for)`.
+
+**Gravação**: `registrarPcsVistos(empresa)` (`pc-visto.service.ts`) faz `INSERT … ON CONFLICT (empresa, n_cod_item) DO UPDATE … WHERE (colunas) IS DISTINCT FROM (EXCLUDED …)`, então só grava a linha nova ou alterada. Roda no cron `5,35 * * * *` (Q2P) e ao carregar o contexto da sugestão, no máximo 1× a cada 5 min por processo. Nunca lança: falha vira aviso no log. A cópia é lida com `DISTINCT ON (ncoditem)` (linha mais recente por `data_atualizacao`): um item repetido na cópia derrubaria o `ON CONFLICT` inteiro (SQLSTATE 21000) e entraria duas vezes no valor total do pedido. Não apaga linhas: o PC que sai da cópia (lista de pendentes, ou recebido por inteiro) permanece com o último saldo visto — por isso a leitura tem validade (abaixo).
+
+**Leitura**: `lerPcsVistos` (por cadastro do fornecedor, raiz de CNPJ e PC de vínculo do OMIE) alimenta `carregarContextoPc`, que inclui só os itens que a cópia não trouxe (`fonte: 'cache'`, `PcCandidato.dadosEmCache`). **Validade**: por fornecedor e por raiz (candidatos) só entram itens com `visto_em` nos últimos 7 dias (`CACHE_PC_VALIDADE_DIAS`) — o PC que saiu da lista por recebimento total no portal, cancelamento ou exclusão não volta como candidato nem como pré-seleção; o PC apontado por um vínculo do OMIE entra sempre (a releitura ao vivo decide). `numerosDosPcs` (fila e detalhe) usa o cache como terceira fonte do número do PC, depois da cópia e do ledger.
+
+**Trigger**: `stockbridge.audit_pedido_compra_visto()` + `trg_audit_sb_pedido_compra_visto` (INSERT/UPDATE/DELETE, Princípio IV). Como o upsert só grava o que mudou, cada registro da auditoria é uma mudança real do PC (saldo, etapa, preço), não o ruído de cada sincronização.

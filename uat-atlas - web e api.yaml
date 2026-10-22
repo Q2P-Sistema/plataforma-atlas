@@ -81,6 +81,8 @@ services:
       # A cópia de PCs chega pela cópia PROD→UAT, como o espelho: com limite curto, o
       # modo seguro recusaria toda NF com fiscal pendente (503 COPIA_PCS_DEFASADA).
       STOCKBRIDGE_COPIA_PCS_MAX_MIN: ${STOCKBRIDGE_COPIA_PCS_MAX_MIN:-1440}
+      # PC em unidade diferente da NF: bloquear (default) ou converter (escrita simulada no UAT).
+      STOCKBRIDGE_PC_UNIDADE_DIFERENTE: ${STOCKBRIDGE_PC_UNIDADE_DIFERENTE:-bloquear}
       STOCKBRIDGE_COMEX_EMAIL: ${STOCKBRIDGE_COMEX_EMAIL:-}
       STOCKBRIDGE_OPS_EMAIL: ${STOCKBRIDGE_OPS_EMAIL:-}
 

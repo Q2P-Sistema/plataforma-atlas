@@ -421,6 +421,22 @@ describe('OMIE_MODE=leitura — vínculo do item com o PC na sombra (ACXEGDP-437
     },
   );
 
+  it('EDITAR com nQtdeRecebida (trava de unidade, modo converter) é simulado: a sombra guarda a quantidade e a reconsulta a enxerga, sem rede', async () => {
+    responder({ ConsultarRecebimento: blocoRecebimento({ vinculado: true, qtd: 8.25 }), ConsultarPedCompra: blocoPedido() });
+    const rec = await consultarRecebimentoNfe('q2p', { cChaveNfe: CHAVE });
+    expect(rec.itens[0]!.nQtdeRecebida ?? null).toBeNull();
+
+    await alterarRecebimentoNfeItens('q2p', {
+      nIdReceb: rec.nIdReceb,
+      itens: [{ nSequencia: 1, cAcao: 'EDITAR', itensAjustes: { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', nQtdeRecebida: 8250 } }],
+    });
+
+    const depois = await consultarRecebimentoNfe('q2p', { nIdReceb: rec.nIdReceb });
+    expect(depois.itens[0]).toMatchObject({ nQtdeNFe: 8.25, nQtdeRecebida: 8250, cNaoGerarMovEstoque: 'S', nIdPedido: PC, nIdItPedido: ITEM_PC });
+    // só a consulta inicial saiu pela rede; o AlterarRecebimento nunca
+    expect(metodosEnviados()).toEqual(['ConsultarRecebimento']);
+  });
+
   it('Concluir soma sobre a sombra do PC que já existe, em vez de semeá-la de novo da leitura antiga', async () => {
     responder({
       ConsultarRecebimento: (param) =>

@@ -2,7 +2,7 @@
 
 **Feature**: `017-recebimento-nacional-com-pc` | **Repositório dos workflows**: `backup-workflow-n8n`
 
-Este documento é o prompt para a sessão dos workflows. A DDL canônica está nas migrations `0056` e `0057` do Atlas (`ADD COLUMN IF NOT EXISTS` / `CREATE TABLE IF NOT EXISTS`). O n8n pode aplicá-la antes, porque o texto é o mesmo.
+Este documento é o prompt para a sessão dos workflows. A DDL canônica está nas migrations `0056` (Q2P) e `0058` (ACXE, Fase 2) do Atlas (`ADD COLUMN IF NOT EXISTS` / `CREATE TABLE IF NOT EXISTS`). O n8n pode aplicá-la antes, porque o texto é o mesmo.
 
 ## 1. "Q2P - Exporta Recebimentos NF-e": gravar o vínculo com o PC (Histórias 1 a 4)
 
@@ -30,7 +30,7 @@ Workflow existente da feature 016 (`ListarRecebimentos` com `cExibirDetalhes = '
 Cópia do workflow da Q2P, com:
 
 - credencial **Omie ACXE**;
-- tabelas `public."tbl_recebimentoNFe_ACXE"` e `"_itens_ACXE"` (DDL da 0057: a mesma das tabelas da Q2P, já com as colunas do §1);
+- tabelas `public."tbl_recebimentoNFe_ACXE"` e `"_itens_ACXE"` (DDL da 0058: a mesma das tabelas da Q2P, já com as colunas do §1);
 - chave própria em `tbl_sync_debounce` e o mesmo padrão de retentativa;
 - mesmos horários da Q2P, defasados alguns minutos para não somar chamadas ao mesmo tempo.
 

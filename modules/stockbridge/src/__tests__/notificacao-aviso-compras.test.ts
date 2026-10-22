@@ -5,7 +5,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // stockbridge.nf_aviso_compras por NF, motivo e DESTINATARIO (24 h), numa
 // transacao com trava consultiva por (NF, motivo) — revisao pos-017, infra-02 e
 // infra-05; destino STOCKBRIDGE_COMPRAS_EMAILS, ou STOCKBRIDGE_OPS_EMAIL quando
-// vazio; sem codigo OMIE. Quadro "PC em outro cadastro" (sugestao-01).
+// vazio; sem codigo OMIE. Quadro "Pedido em unidade diferente da nota" (trava de unidade, 22/10/2026;
+// substituiu o quadro "PC em outro cadastro" depois do T033, em que o ASSOCIAR entre cadastros foi aceito).
 
 const { sendEmailMock, loggerMock, configMock, clientQuerySpy, releaseSpy, connectSpy } = vi.hoisted(() => ({
   sendEmailMock: vi.fn().mockResolvedValue(undefined),
@@ -297,102 +298,114 @@ describe('enviarAvisoComprasNfSemPc — corrida entre chamadas simultaneas (infr
   });
 });
 
-// Revisao pos-017, sugestao-01: o PC do fornecedor pode estar lancado em OUTRO cadastro
-// do OMIE (matriz x filial). O aviso nao pode mandar compras lancar um PC novo.
-describe('enviarAvisoComprasNfSemPc — PC lancado em outro cadastro do fornecedor (sugestao-01)', () => {
-  const outro = { itemDescricao: 'SUCATA PLASTICO', pcNumero: '306', cnpjCadastroPc: '61827663000179' };
-  const CNPJ_NF = '61827663001302';
+// Trava de unidade (22/10/2026, NF 60199 x PC 306): o OMIE grava no PC a quantidade recebida na unidade
+// da NF, sem converter — so ha PC em unidade diferente da nota. O aviso nao pode mandar compras lancar
+// "um PC qualquer": tem que pedir o pedido NA UNIDADE DA NOTA. (O quadro "PC em outro cadastro" saiu:
+// o PC da matriz agora e oferecido para a NF da filial.)
+describe('enviarAvisoComprasNfSemPc — PC em unidade diferente da nota (trava de unidade)', () => {
+  const unidadeIncompativel = { unidadeNf: 'TON', pcs: ['306'], itens: ['SUCATA PLASTICO'] };
 
-  it('sem_pc: o quadro cita o PC, o CNPJ dos dois cadastros e o item, e o "O que fazer" nao manda lancar PC novo', async () => {
-    expect(await enviarAvisoComprasNfSemPc({ ...base, pcsOutroCadastro: [outro], cnpjNf: CNPJ_NF })).toBe('enviado');
+  it('sem_pc: o quadro cita a unidade da nota, o PC e o item, e o "O que fazer" manda ajustar a unidade (não lançar PC qualquer)', async () => {
+    expect(await enviarAvisoComprasNfSemPc({ ...base, unidadeIncompativel })).toBe('enviado');
     const html = emails()[0]!.html;
-    expect(html).toContain('[Pedido de compra em outro cadastro do OMIE]');
+    expect(html).toContain('[Pedido em unidade diferente da nota]');
     expect(html).toContain(
-      'Há pedido de compra deste fornecedor lançado em OUTRO cadastro do OMIE: PC 306 (CNPJ 61.827.663/0001-79) para o item "SUCATA PLASTICO". ' +
-        'A nota é do cadastro 61.827.663/0013-02. ' +
-        'Ajuste o fornecedor do pedido para o cadastro da nota (ou peça ao fiscal para concluir o recebimento no OMIE) em vez de lançar um pedido novo.',
+      'A nota está em toneladas e o PC 306 está em outra unidade para o item "SUCATA PLASTICO". ' +
+        'Na conclusão do recebimento o OMIE grava no pedido a quantidade recebida na unidade da nota, sem converter ' +
+        '(uma NF de 8,25 toneladas baixaria um pedido em kg com 8,25, não 8.250). ' +
+        'Lance (ou ajuste) o pedido de compra na mesma unidade da nota.',
     );
-    expect(html).toContain('Siga a orientação acima e não lance pedido de compra novo para estes itens.');
-    expect(html).not.toContain('Lance e aprove no OMIE');
-    // nenhum codigo OMIE nem CNPJ cru (so mascarado)
+    expect(html).toContain('Siga a orientação acima: o pedido precisa estar na unidade da nota. A NF fica na fila do StockBridge até o pedido estar na unidade certa.');
+    expect(html).not.toContain('Lance e aprove no OMIE o pedido de compra deste item');
     expect(html).not.toMatch(/\d{10}/);
+    // o quadro vem antes do "O que fazer"
+    expect(html.indexOf('[Pedido em unidade diferente da nota]')).toBeLessThan(html.indexOf('[O que fazer]'));
   });
 
-  it('so parte dos itens tem PC em outro cadastro: o "O que fazer" manda lancar PC apenas para os demais (nomeados)', async () => {
-    const itens = [
-      { nSequencia: 1, descricao: 'SUCATA PLÁSTICO', qtdKg: 18000, precoUnit: 11.3 },
-      { nSequencia: 2, descricao: 'SUCATA PP', qtdKg: 5000, precoUnit: 9 },
-    ];
-    await enviarAvisoComprasNfSemPc({ ...base, itens, pcsOutroCadastro: [{ ...outro, itemDescricao: 'sucata  plastico' }], cnpjNf: CNPJ_NF });
+  it('o quadro de outro cadastro NÃO existe mais (o PC da matriz agora é oferecido)', async () => {
+    await enviarAvisoComprasNfSemPc({ ...base, unidadeIncompativel });
     const html = emails()[0]!.html;
-    expect(html).toContain('Para os itens com pedido em outro cadastro, siga a orientação acima e não lance pedido novo.');
-    expect(html).toContain('Para o item "SUCATA PP", lance e aprove no OMIE o pedido de compra deste fornecedor.');
-    expect(html).not.toContain('Para o item "SUCATA PLÁSTICO"');
+    expect(html).not.toContain('outro cadastro');
+    expect(html).not.toContain('OUTRO cadastro');
   });
 
-  it('varios itens no mesmo PC saem agrupados; PCs diferentes vao para o plural', async () => {
-    const itens = [
-      { nSequencia: 1, descricao: 'MC PEBD LD', qtdKg: 8250, precoUnit: 10.8 },
-      { nSequencia: 2, descricao: 'MC PEAD ES', qtdKg: 13750, precoUnit: 10.8 },
-      { nSequencia: 3, descricao: 'PEBDL-16', qtdKg: 2750, precoUnit: 9.9 },
-    ];
+  it('NF em kg e PC em toneladas: o quadro cita "kg" (rótulo da unidade da nota)', async () => {
+    await enviarAvisoComprasNfSemPc({ ...base, unidadeIncompativel: { ...unidadeIncompativel, unidadeNf: 'KG' } });
+    expect(emails()[0]!.html).toContain('A nota está em kg e o PC 306');
+  });
+
+  it.each([
+    ['T', 'toneladas'],
+    ['TL', 'toneladas'],
+    ['ton', 'toneladas'],
+    ['UN', 'UN'],
+    ['', 'unidade desconhecida'],
+  ])('unidade da nota "%s" aparece como "%s"', async (unidadeNf, rotulo) => {
+    await enviarAvisoComprasNfSemPc({ ...base, unidadeIncompativel: { ...unidadeIncompativel, unidadeNf } });
+    expect(emails()[0]!.html).toContain(`A nota está em ${rotulo} e o PC 306`);
+  });
+
+  it('vários PCs e vários itens vão para o plural, na ordem recebida', async () => {
     await enviarAvisoComprasNfSemPc({
       ...base,
-      itens,
-      cnpjNf: CNPJ_NF,
-      pcsOutroCadastro: [
-        { itemDescricao: 'MC PEBD LD', pcNumero: '306', cnpjCadastroPc: '61827663000179' },
-        { itemDescricao: 'MC PEAD ES', pcNumero: '306', cnpjCadastroPc: '61827663000179' },
-        { itemDescricao: 'PEBDL-16', pcNumero: '307', cnpjCadastroPc: '61827663000926' },
-      ],
+      unidadeIncompativel: { unidadeNf: 'TON', pcs: ['306', '307', '310'], itens: ['MC PEBD LD', 'MC PEAD ES', 'PEBDL-16'] },
     });
     const html = emails()[0]!.html;
-    expect(html).toContain('Há pedidos de compra deste fornecedor lançados em OUTRO cadastro do OMIE: ');
-    expect(html).toContain('PC 306 (CNPJ 61.827.663/0001-79) para os itens "MC PEBD LD" e "MC PEAD ES"');
-    expect(html).toContain('PC 307 (CNPJ 61.827.663/0009-26) para o item "PEBDL-16"');
-    expect(html).toContain('Ajuste o fornecedor dos pedidos para o cadastro da nota');
-    expect(html).toContain('em vez de lançar pedidos novos.');
+    expect(html).toContain('A nota está em toneladas e os PCs 306, 307 e 310 está em outra unidade para os itens "MC PEBD LD", "MC PEAD ES" e "PEBDL-16".');
   });
 
-  it('sem o CNPJ da nota, a frase do cadastro da nota some; o resto do quadro fica', async () => {
-    await enviarAvisoComprasNfSemPc({ ...base, pcsOutroCadastro: [outro], cnpjNf: null });
-    const html = emails()[0]!.html;
-    expect(html).not.toContain('A nota é do cadastro');
-    expect(html).toContain('PC 306 (CNPJ 61.827.663/0001-79) para o item "SUCATA PLASTICO".');
-    expect(html).toContain('Ajuste o fornecedor do pedido para o cadastro da nota');
+  it('dois PCs vão com "e" e um item vai no singular', async () => {
+    await enviarAvisoComprasNfSemPc({ ...base, unidadeIncompativel: { unidadeNf: 'TON', pcs: ['306', '307'], itens: ['MC PEBD LD'] } });
+    expect(emails()[0]!.html).toContain('os PCs 306 e 307 está em outra unidade para o item "MC PEBD LD".');
   });
 
-  it('numero de PC vazio ou com cara de codigo interno do OMIE nunca aparece', async () => {
-    await enviarAvisoComprasNfSemPc({
-      ...base,
-      cnpjNf: CNPJ_NF,
-      pcsOutroCadastro: [{ ...outro, pcNumero: '8517884280' }],
-    });
+  it('número de PC vazio ou com cara de código interno do OMIE nunca aparece: vira "o pedido de compra deste fornecedor"', async () => {
+    await enviarAvisoComprasNfSemPc({ ...base, unidadeIncompativel: { ...unidadeIncompativel, pcs: ['8517884280', '  ', ''] } });
     const html = emails()[0]!.html;
-    expect(html).toContain('um pedido de compra (CNPJ 61.827.663/0001-79) para o item "SUCATA PLASTICO"');
+    expect(html).toContain('A nota está em toneladas e o pedido de compra deste fornecedor está em outra unidade para o item "SUCATA PLASTICO".');
     expect(html).not.toMatch(/\d{10}/);
     expect(html).not.toContain('PC 8517884280');
   });
 
-  it('pcsOutroCadastro vazio ou ausente: o e-mail e o de sempre (sem quadro, "O que fazer" padrao)', async () => {
-    await enviarAvisoComprasNfSemPc({ ...base, pcsOutroCadastro: [], cnpjNf: CNPJ_NF });
-    const html = emails()[0]!.html;
-    expect(html).not.toContain('outro cadastro');
-    expect(html).toContain('Lance e aprove no OMIE o pedido de compra deste item para este fornecedor. A NF fica na fila do StockBridge até o PC existir.');
+  it('sem itens na lista, o quadro não cita item nenhum ("para …" some)', async () => {
+    await enviarAvisoComprasNfSemPc({ ...base, unidadeIncompativel: { unidadeNf: 'TON', pcs: ['306'], itens: [] } });
+    expect(emails()[0]!.html).toContain('A nota está em toneladas e o PC 306 está em outra unidade. Na conclusão do recebimento');
   });
 
-  it('PC aguardando aprovacao com PC em outro cadastro: o quadro aparece e o "O que fazer" continua o do motivo', async () => {
+  it('unidadeIncompativel null ou ausente: o e-mail é o de sempre (sem quadro, "O que fazer" padrão)', async () => {
+    for (const args of [{ ...base }, { ...base, unidadeIncompativel: null }]) {
+      sendEmailMock.mockClear();
+      await enviarAvisoComprasNfSemPc(args);
+      const html = emails()[0]!.html;
+      expect(html).not.toContain('Pedido em unidade diferente da nota');
+      expect(html).toContain('Lance e aprove no OMIE o pedido de compra deste item para este fornecedor. A NF fica na fila do StockBridge até o PC existir.');
+    }
+  });
+
+  it('PC aguardando aprovação com PC em unidade diferente: o quadro aparece e o "O que fazer" continua o do motivo', async () => {
     await enviarAvisoComprasNfSemPc({
       ...base,
       motivo: 'pc_aguardando_aprovacao',
       pcsAguardandoAprovacao: ['305'],
-      pcsOutroCadastro: [outro],
-      cnpjNf: CNPJ_NF,
+      unidadeIncompativel,
     });
     const html = emails()[0]!.html;
-    expect(html).toContain('[Pedido de compra em outro cadastro do OMIE]');
+    expect(html).toContain('[Pedido em unidade diferente da nota]');
     expect(html).toContain('Aprove o pedido de compra no OMIE.');
     expect(html).toContain('PC 305');
+    expect(html).not.toContain('Siga a orientação acima: o pedido precisa estar na unidade da nota');
+  });
+
+  it('recebida sem vínculo com a lista de unidade: o "O que fazer" é o do motivo (fiscal), com o quadro', async () => {
+    await enviarAvisoComprasNfSemPc({ ...base, motivo: 'recebida_sem_vinculo', unidadeIncompativel });
+    const html = emails()[0]!.html;
+    expect(html).toContain('[Pedido em unidade diferente da nota]');
+    expect(html).toContain('fiscal');
+  });
+
+  it('o registro do aviso (nf_aviso_compras) leva só os itens: a lista de unidade não muda o INSERT', async () => {
+    await enviarAvisoComprasNfSemPc({ ...base, unidadeIncompativel });
+    expect(insercoes()[0]![1]).toEqual(['q2p', CHAVE, '7813', 'REPLAS COMERCIAL LTDA', 'sem_pc', JSON.stringify(base.itens), 'compras@q2p.local, comprador@q2p.local', base.disparadoPor]);
   });
 });
 

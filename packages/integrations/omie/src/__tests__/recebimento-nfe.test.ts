@@ -6,7 +6,14 @@ import {
   validarItensRecebimentoEditar,
   parseRecebimentoNfeConsultado,
 } from '../stockbridge/recebimento-nfe.js';
-import { __resetMockState, __injectMockRecebimentoNfe, __getMockRecebimentoNfe } from '../stockbridge/mock.js';
+import {
+  __resetMockState,
+  __injectMockRecebimentoNfe,
+  __getMockRecebimentoNfe,
+  __injectMockPedidoCompra,
+  __getMockPedidoCompra,
+} from '../stockbridge/mock.js';
+import { consultarPedidoCompra, type PedidoCompraConsultado } from '../stockbridge/pedido-compra.js';
 import { OmieApiError } from '../client.js';
 
 // Feature 016 (ACXEGDP-395): o Atlas conclui o recebimento FISCAL da NF nacional
@@ -506,5 +513,245 @@ describe('OMIE recebimento de NF-e — corpo enviado no modo real (ACXEGDP-437)'
     expect(corpoEnviado().call).toBe('ConsultarRecebimento');
     expect(corpoEnviado().param[0]).toEqual({ nIdReceb: 8516900001 });
     expect(rec.itens[0]).toMatchObject({ nIdPedido: 8516905979, nIdItPedido: 8516907022, nNumPedCompra: '304' });
+  });
+});
+
+
+// ── Trava de unidade (22/10/2026): itensAjustes.nQtdeRecebida ────────────────────────────────────
+//
+// Na conclusao o OMIE copia para nQtdeRec do item de PC a quantidade recebida do item NA UNIDADE DA NF, sem
+// converter (NF 60199 em toneladas baixou o PC 306 em kg com 8,25 em vez de 8.250). O campo
+// itensAjustes.nQtdeRecebida, editado no portal, corrigiu o PC 306 sem mudar a quantidade da NF. O cliente
+// o le (parser), o envia no EDITAR (corpo real) e o mock o aplica no item.
+
+/** Bloco de ConsultarRecebimento com `itensAjustes.nQtdeRecebida` = `qtd` (o OMIE sempre devolve o campo). */
+function blocoComQtdeRecebida(qtd: unknown) {
+  const b = blocoRecebimento({ nQtdeNFe: 8.25, cUnidadeNfe: 'TON' });
+  (b.itensRecebimento[0]!.itensAjustes as Record<string, unknown>).nQtdeRecebida = qtd;
+  return b;
+}
+
+describe('parseRecebimentoNfeConsultado — itensAjustes.nQtdeRecebida (trava de unidade)', () => {
+  it('le o número', () => {
+    expect(parseRecebimentoNfeConsultado(blocoComQtdeRecebida(8250)).itens[0]!.nQtdeRecebida).toBe(8250);
+    expect(parseRecebimentoNfeConsultado(blocoComQtdeRecebida(8.25)).itens[0]!.nQtdeRecebida).toBe(8.25);
+  });
+
+  it('aceita número em texto (o OMIE às vezes serializa assim)', () => {
+    expect(parseRecebimentoNfeConsultado(blocoComQtdeRecebida('8250')).itens[0]!.nQtdeRecebida).toBe(8250);
+    expect(parseRecebimentoNfeConsultado(blocoComQtdeRecebida('8.25')).itens[0]!.nQtdeRecebida).toBe(8.25);
+  });
+
+  it('zero é um valor (não vira null)', () => {
+    expect(parseRecebimentoNfeConsultado(blocoComQtdeRecebida(0)).itens[0]!.nQtdeRecebida).toBe(0);
+  });
+
+  it.each([[undefined], [null], [''], ['abc'], [Number.NaN]])('valor %j vira null', (valor) => {
+    expect(parseRecebimentoNfeConsultado(blocoComQtdeRecebida(valor)).itens[0]!.nQtdeRecebida).toBeNull();
+  });
+
+  it('sem itensAjustes no item: null (e o resto do item é lido normalmente)', () => {
+    const b = blocoRecebimento();
+    delete (b.itensRecebimento[0] as { itensAjustes?: unknown }).itensAjustes;
+    const item = parseRecebimentoNfeConsultado(b).itens[0]!;
+    expect(item.nQtdeRecebida).toBeNull();
+    expect(item.nQtdeNFe).toBe(18000);
+  });
+
+  it('é independente de nQtdeNFe: a quantidade da NF (8,25 t) e a recebida (8.250) coexistem', () => {
+    const item = parseRecebimentoNfeConsultado(blocoComQtdeRecebida(8250)).itens[0]!;
+    expect(item.nQtdeNFe).toBe(8.25);
+    expect(item.cUnidadeNfe).toBe('TON');
+    expect(item.nQtdeRecebida).toBe(8250);
+  });
+
+  it('cada item guarda a sua própria quantidade recebida', () => {
+    const a = blocoComQtdeRecebida(8250);
+    const b = blocoRecebimento({ nSequencia: 2, nQtdeNFe: 2.75 });
+    (b.itensRecebimento[0]!.itensAjustes as Record<string, unknown>).nQtdeRecebida = 2750;
+    const rec = parseRecebimentoNfeConsultado({ ...a, itensRecebimento: [...a.itensRecebimento, ...b.itensRecebimento] });
+    expect(rec.itens.map((i) => [i.nSequencia, i.nQtdeRecebida])).toEqual([[1, 8250], [2, 2750]]);
+  });
+});
+
+describe('OMIE recebimento de NF-e — mock: EDITAR com nQtdeRecebida (trava de unidade)', () => {
+  const originalMode = process.env.OMIE_MODE;
+  const editar = (nIdReceb: number, itensAjustes: Record<string, unknown>) =>
+    alterarRecebimentoNfeItens('q2p', {
+      nIdReceb,
+      itens: [{ nSequencia: 1, cAcao: 'EDITAR', itensAjustes: itensAjustes as never }],
+    });
+
+  beforeEach(() => {
+    process.env.OMIE_MODE = 'mock';
+    __resetMockState();
+  });
+  afterEach(() => {
+    process.env.OMIE_MODE = originalMode;
+  });
+
+  it('o EDITAR grava nQtdeRecebida no item, sem mexer em nQtdeNFe, e a consulta seguinte reflete', async () => {
+    const base = await consultarRecebimentoNfe('q2p', { nIdReceb: 910 });
+    expect(base.itens[0]!.nQtdeRecebida ?? null).toBeNull();
+    await editar(910, { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', nQtdeRecebida: 8250 });
+    const depois = await consultarRecebimentoNfe('q2p', { nIdReceb: 910 });
+    expect(depois.itens[0]!.nQtdeRecebida).toBe(8250);
+    expect(depois.itens[0]!.nQtdeNFe).toBe(base.itens[0]!.nQtdeNFe);
+    expect(depois.itens[0]!.cNaoGerarMovEstoque).toBe('S');
+  });
+
+  it('um EDITAR sem a chave não apaga nem altera a nQtdeRecebida já gravada', async () => {
+    await consultarRecebimentoNfe('q2p', { nIdReceb: 911 });
+    await editar(911, { nQtdeRecebida: 8250 });
+    await editar(911, { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N' });
+    expect((await consultarRecebimentoNfe('q2p', { nIdReceb: 911 })).itens[0]!.nQtdeRecebida).toBe(8250);
+  });
+
+  it('um novo EDITAR com outra quantidade substitui a anterior', async () => {
+    await consultarRecebimentoNfe('q2p', { nIdReceb: 912 });
+    await editar(912, { nQtdeRecebida: 8.25 });
+    await editar(912, { nQtdeRecebida: 8250 });
+    expect((await consultarRecebimentoNfe('q2p', { nIdReceb: 912 })).itens[0]!.nQtdeRecebida).toBe(8250);
+  });
+
+  it('só o item editado muda: o outro item do recebimento fica como estava', async () => {
+    const base = await consultarRecebimentoNfe('q2p', { nIdReceb: 913 });
+    __injectMockRecebimentoNfe('q2p', { ...base, itens: [base.itens[0]!, { ...base.itens[0]!, nSequencia: 2 }] });
+    await editar(913, { nQtdeRecebida: 8250 });
+    const depois = await consultarRecebimentoNfe('q2p', { nIdReceb: 913 });
+    expect(depois.itens.map((i) => i.nQtdeRecebida ?? null)).toEqual([8250, null]);
+  });
+
+  it('IGNORAR e ASSOCIAR-PEDIDO com itensAjustes (inclusive nQtdeRecebida) seguem recusados: itensAjustes é só do EDITAR', async () => {
+    await consultarRecebimentoNfe('q2p', { nIdReceb: 914 });
+    await expect(
+      alterarRecebimentoNfeItens('q2p', { nIdReceb: 914, itens: [{ nSequencia: 1, cAcao: 'IGNORAR', itensAjustes: { nQtdeRecebida: 8250 } }] }),
+    ).rejects.toThrow(/nao pode levar itensAjustes/);
+    await expect(
+      alterarRecebimentoNfeItens('q2p', {
+        nIdReceb: 914,
+        itens: [{ nSequencia: 1, cAcao: 'ASSOCIAR-PEDIDO', nIdPedidoExistente: 1, nIdItPedidoExistente: 2, itensAjustes: { nQtdeRecebida: 8250 } }],
+      }),
+    ).rejects.toThrow(/nao pode levar itensAjustes/);
+    expect((await consultarRecebimentoNfe('q2p', { nIdReceb: 914 })).itens[0]!.nQtdeRecebida ?? null).toBeNull();
+  });
+
+  describe('Concluir atualiza o nQtdeRec do PC vinculado', () => {
+    const PED = 7974140306;
+    const ITEM_PC = 7974140311;
+    const pedidoEmKg = (): PedidoCompraConsultado => ({
+      nCodPed: PED, cCodIntPed: null, cNumero: '306', cEtapa: '15', dDtPrevisao: '05/11/2026', dIncData: null, nCodFor: 7974140605,
+      cCodIntFor: null, cCodParc: null, nQtdeParc: null, cCodCateg: null, nCodCompr: null, cContato: null, cContrato: null, nCodCC: null,
+      nCodIntCC: null, nCodProj: null, cObs: null, cObsInt: null, frete: {},
+      produtos: [
+        {
+          nCodItem: ITEM_PC, cCodIntItem: null, nCodProd: 1, cCodIntProd: null, cProduto: 'PELBD', cDescricao: 'PELBD 07/21', cNCM: null,
+          cUnidade: 'KG', cEAN: null, nPesoLiq: null, nPesoBruto: null, nQtde: 11000, nQtdeRec: 0, nValUnit: 10.8, nDesconto: null,
+          codigoLocalEstoque: null,
+        },
+      ],
+    });
+    /** NF 60199: 8,25 t (nQtdeNFe) vinculada ao item de PC em kg. */
+    async function recebimentoVinculado(nIdReceb: number) {
+      const base = await consultarRecebimentoNfe('q2p', { nIdReceb });
+      __injectMockRecebimentoNfe('q2p', {
+        ...base,
+        itens: [{ ...base.itens[0]!, nQtdeNFe: 8.25, cUnidadeNfe: 'TON', nIdPedido: PED, nIdItPedido: ITEM_PC, cAssociarExistente: 'S' }],
+      });
+      __injectMockPedidoCompra('q2p', pedidoEmKg());
+    }
+
+    it('sem nQtdeRecebida editada: soma a quantidade da NF (o comportamento do OMIE que gerou o bug: 8,25 no PC em kg)', async () => {
+      await recebimentoVinculado(920);
+      await editar(920, { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N' });
+      await concluirRecebimentoNfe('q2p', { nIdReceb: 920 });
+      expect((await consultarPedidoCompra('q2p', { nCodPed: PED })).produtos[0]!.nQtdeRec).toBe(8.25);
+    });
+
+    // SUSPEITA DE BUG NO MOCK (ver relatorio): o OMIE real copia itensAjustes.nQtdeRecebida (e nao nQtdeNFe) para o
+    // nQtdeRec do PC. mockConcluirRecebimentoNfe (mock.ts, loop "Item vinculado a PC") soma it.nQtdeNFe sempre; no
+    // modo converter a sombra do PC no UAT (OMIE_MODE=leitura) fica com 8,25 em vez de 8.250 mesmo com o EDITAR
+    // correto. `it.fails`: passa enquanto o mock ignora o campo; quando o mock somar nQtdeRecebida ?? nQtdeNFe,
+    // o vitest avisa que o teste passou e este `.fails` deve virar `it(...)`.
+    it('com nQtdeRecebida editada (8.250): soma a quantidade recebida, não a da NF — como o OMIE real', async () => {
+      await recebimentoVinculado(921);
+      await editar(921, { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', nQtdeRecebida: 8250 });
+      await concluirRecebimentoNfe('q2p', { nIdReceb: 921 });
+      expect(__getMockPedidoCompra('q2p', PED)!.produtos[0]!.nQtdeRec).toBe(8250);
+    });
+  });
+});
+
+describe('OMIE recebimento de NF-e — corpo enviado no modo real: nQtdeRecebida no EDITAR', () => {
+  const mockFetch = vi.fn();
+  const ENV_ORIGINAL = { ...process.env };
+  const respostaOk = (body: unknown) => ({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(body)) });
+  const corpoEnviado = (n = 0) =>
+    JSON.parse((mockFetch.mock.calls[n]![1] as { body: string }).body) as { call: string; param: Array<Record<string, unknown>> };
+  const statusOk = { nIdReceb: 8516900001, cCodStatus: '0', cDescStatus: 'Recebimento alterado com sucesso!' };
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', mockFetch);
+    mockFetch.mockReset();
+    delete process.env.ATLAS_ENV;
+    process.env.OMIE_MODE = 'real';
+    process.env.OMIE_Q2P_KEY = 'q2p-key';
+    process.env.OMIE_Q2P_SECRET = 'q2p-secret';
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    process.env = { ...ENV_ORIGINAL };
+  });
+
+  it('EDITAR leva nQtdeRecebida (número) dentro de itensAjustes, junto dos outros dois ajustes, e nada de ids de pedido', async () => {
+    mockFetch.mockResolvedValue(respostaOk(statusOk));
+    await alterarRecebimentoNfeItens('q2p', {
+      nIdReceb: 8516900001,
+      itens: [{ nSequencia: 1, cAcao: 'EDITAR', itensAjustes: { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', nQtdeRecebida: 8250 } }],
+    });
+    expect(corpoEnviado().call).toBe('AlterarRecebimento');
+    expect(corpoEnviado().param[0]).toEqual({
+      ide: { nIdReceb: 8516900001 },
+      itensRecebimentoEditar: [
+        {
+          itensIde: { nSequencia: 1, cAcao: 'EDITAR' },
+          itensAjustes: { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', nQtdeRecebida: 8250 },
+        },
+      ],
+    });
+  });
+
+  it('EDITAR sem nQtdeRecebida não leva a chave (o OMIE manteria o valor que tem)', async () => {
+    mockFetch.mockResolvedValue(respostaOk(statusOk));
+    await alterarRecebimentoNfeItens('q2p', {
+      nIdReceb: 8516900001,
+      itens: [{ nSequencia: 1, cAcao: 'EDITAR', itensAjustes: { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N' } }],
+    });
+    const aj = (corpoEnviado().param[0]!.itensRecebimentoEditar as Array<{ itensAjustes: Record<string, unknown> }>)[0]!.itensAjustes;
+    expect(aj).toEqual({ cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N' });
+    expect(aj).not.toHaveProperty('nQtdeRecebida');
+  });
+
+  it('nQtdeRecebida decimal (8,25 t) vai como número, sem arredondar', async () => {
+    mockFetch.mockResolvedValue(respostaOk(statusOk));
+    await alterarRecebimentoNfeItens('q2p', {
+      nIdReceb: 8516900001,
+      itens: [{ nSequencia: 1, cAcao: 'EDITAR', itensAjustes: { nQtdeRecebida: 8.25 } }],
+    });
+    const aj = (corpoEnviado().param[0]!.itensRecebimentoEditar as Array<{ itensAjustes: Record<string, unknown> }>)[0]!.itensAjustes;
+    expect(aj.nQtdeRecebida).toBe(8.25);
+  });
+
+  it('IGNORAR/ASSOCIAR-PEDIDO com nQtdeRecebida em itensAjustes é recusado ANTES da rede (erro 151)', async () => {
+    await expect(
+      alterarRecebimentoNfeItens('q2p', { nIdReceb: 8516900001, itens: [{ nSequencia: 1, cAcao: 'IGNORAR', itensAjustes: { nQtdeRecebida: 8250 } }] }),
+    ).rejects.toThrow(/Client-151/);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('ConsultarRecebimento real devolve a nQtdeRecebida do item (parse ponta a ponta)', async () => {
+    mockFetch.mockResolvedValue(respostaOk(blocoComQtdeRecebida(8250)));
+    const rec = await consultarRecebimentoNfe('q2p', { nIdReceb: 8516900001 });
+    expect(rec.itens[0]).toMatchObject({ nQtdeNFe: 8.25, cUnidadeNfe: 'TON', nQtdeRecebida: 8250 });
   });
 });

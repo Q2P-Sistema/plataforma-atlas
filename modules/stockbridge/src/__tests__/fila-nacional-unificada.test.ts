@@ -494,6 +494,7 @@ describe('017 — pedido de compra na fila e no detalhe', () => {
     });
 
   beforeEach(() => {
+    delete config.STOCKBRIDGE_PC_UNIDADE_DIFERENTE; // o modo da trava de unidade nao vaza entre testes
     idadeCopiaMin = 5;
     pcFilaRows = [];
     numerosRows = [];
@@ -587,6 +588,161 @@ describe('017 — pedido de compra na fila e no detalhe', () => {
     const d = await getDetalheNfNacional(CHAVE);
     expect(d.itens[0]!.pc).toMatchObject({ vinculadoNoOmie: { pcNumero: '999' }, candidatos: [] });
     expect(d.copiaPcsDefasada).toBe(false);
+  });
+
+  // ── PC por NF (22/10/2026): DetalheNfNacional.pcsDaNf ──
+
+  it('detalhe com fiscal pendente: pcsDaNf lista o PC que atende a nota; o vinculo do OMIE vira o PC pre-selecionado da nota', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    detalheRows = [linhaPc({ n_id_pedido: '8516905979', n_id_it_pedido: '8516907022', n_num_ped_compra: '304' })];
+    const d = await getDetalheNfNacional(CHAVE);
+    expect(d.pcsDaNf.preSelecionado).toBe(8516905979);
+    expect(d.pcsDaNf.pcs).toHaveLength(1);
+    expect(d.pcsDaNf.pcs[0]).toMatchObject({ nCodPed: 8516905979, pcNumero: '304', cobreTodos: true, vinculoOmie: true, dentroTolerancia: true, justificativaNecessaria: false });
+    expect(d.pcsDaNf.pcs[0]!.itens).toEqual([
+      expect.objectContaining({ indice: 0, nCodItem: 8516907022, origem: 'omie', dentroTolerancia: true, justificativaNecessaria: false }),
+    ]);
+  });
+
+  it('detalhe sem vinculo: o unico candidato dentro da tolerancia e o PC pre-selecionado da nota', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    detalheRows = [linhaPc()];
+    const d = await getDetalheNfNacional(CHAVE);
+    expect(d.pcsDaNf.pcs.map((p) => [p.pcNumero, p.cobreTodos, p.vinculoOmie])).toEqual([['304', true, false]]);
+    expect(d.pcsDaNf.preSelecionado).toBe(8516905979);
+  });
+
+  it('so os itens a receber entram no PC por NF: item ja recebido, com baixa solicitada ou sem unidade convertida fica de fora', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    detalheRows = [
+      linhaPc(),
+      linhaPc({ n_cod_item: '2', x_prod: 'RECEBIDO', desc_norm: 'RECEBIDO', n_seq: 2, recebido: true }),
+      linhaPc({ n_cod_item: '3', x_prod: 'BAIXA', desc_norm: 'BAIXA', n_seq: 3, baixa_solicitada: true }),
+      linhaPc({ n_cod_item: '4', x_prod: 'TAMPA', desc_norm: 'TAMPA', u_com: 'UN', q_com: 300, valor_item: 900, preco_comercial: 3, n_seq: 4 }),
+    ];
+    const d = await getDetalheNfNacional(CHAVE);
+    expect(d.pcsDaNf.pcs).toHaveLength(1);
+    expect(d.pcsDaNf.pcs[0]!.itens.map((i) => i.indice)).toEqual([0]);
+    expect(d.pcsDaNf.pcs[0]!.cobreTodos).toBe(true);
+  });
+
+  it('copia defasada, fiscal ja feito ou chave desligada: pcsDaNf vazio e sem pre-selecao', async () => {
+    const vazio = { pcs: [], preSelecionado: null };
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    idadeCopiaMin = 500;
+    detalheRows = [linhaPc()];
+    expect((await getDetalheNfNacional(CHAVE)).pcsDaNf).toEqual(vazio);
+    idadeCopiaMin = 5;
+    detalheRows = [linhaPc({ fiscal_pendente: false, receb_recebido: 'S', c_nao_gerar_mov_estoque: 'S' })];
+    expect((await getDetalheNfNacional(CHAVE)).pcsDaNf).toEqual(vazio);
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = false;
+    detalheRows = [linhaPc()];
+    expect((await getDetalheNfNacional(CHAVE)).pcsDaNf).toEqual(vazio);
+  });
+
+  // ── Trava de unidade no detalhe e na fila (STOCKBRIDGE_PC_UNIDADE_DIFERENTE) ──
+
+  /** Item da NF em TONELADAS: 18 t (18.000 kg), R$ 11.300 por tonelada = R$ 11,30/kg. O PC da copia (304) e em KG. */
+  const itemEmTon = () => linhaPc({ q_com: 18, u_com: 'TON', valor_item: 203400, preco_comercial: 11300 });
+
+  it('detalhe, modo bloquear (padrao): NF em toneladas e PC em kg -> o PC vai para unidadeIncompativel, item sem PC possivel e pcsDaNf vazio', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    detalheRows = [itemEmTon()];
+    const d = await getDetalheNfNacional(CHAVE);
+    const pc = d.itens[0]!.pc!;
+    expect(pc.candidatos).toEqual([]);
+    expect(pc.unidadeIncompativel.map((c) => [c.pcNumero, c.unidade])).toEqual([['304', 'KG']]);
+    expect(pc.unidadeIncompativel[0]!.motivo).toBe('PC em kg e nota em toneladas: o OMIE baixaria o pedido com 18 em vez de 18.000 kg');
+    expect(pc.semPcMotivo).toContain('O PC 304 está em kg e a nota em toneladas');
+    expect(d.pcsDaNf).toEqual({ pcs: [], preSelecionado: null });
+  });
+
+  it("detalhe, modo 'converter': o mesmo PC em kg e candidato e a nota o pre-seleciona", async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    config.STOCKBRIDGE_PC_UNIDADE_DIFERENTE = 'converter';
+    detalheRows = [itemEmTon()];
+    const d = await getDetalheNfNacional(CHAVE);
+    expect(d.itens[0]!.pc!.unidadeIncompativel).toEqual([]);
+    expect(d.itens[0]!.pc!.candidatos.map((c) => c.pcNumero)).toEqual(['304']);
+    expect(d.pcsDaNf.preSelecionado).toBe(8516905979);
+  });
+
+  it('detalhe com NF em kg e PC em kg (o caso comum): a trava nao muda nada', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    detalheRows = [linhaPc()];
+    const d = await getDetalheNfNacional(CHAVE);
+    expect(d.itens[0]!.pc!.unidadeIncompativel).toEqual([]);
+    expect(d.itens[0]!.pc!.candidatos).toHaveLength(1);
+  });
+
+  it('fila: pcSituacao da NF em toneladas com PC so em kg e sem_pc no modo bloquear e sugerido no modo converter', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    filaRows = [
+      { nf_chave_acesso: CHAVE, nota_fiscal: '7813', fornecedor_nome: 'REPLAS', fornecedor_cnpj: 'x', dt_emissao: '2026-10-20', dias_desde_emissao: 1, itens_total: 1, itens_pendentes: 1, valor_total_brl: 203400, fiscal: 'pendente', fiscal_concluido_em: null, estoque_lancado: false },
+    ];
+    pcFilaRows = [
+      { c_chave_nfe: CHAVE, x_prod: 'SUCATA PLASTICO', desc_norm: 'SUCATA PLASTICO', q_com: 18, u_com: 'TON', valor_item: 203400, preco_comercial: 11300,
+        n_seq: 1, n_id_pedido: null, n_id_it_pedido: null, n_num_ped_compra: null, fornecedor_codigo: '1111', recebido: false },
+    ];
+    expect((await getFilaNacional())[0]!.pcSituacao).toBe('sem_pc');
+    config.STOCKBRIDGE_PC_UNIDADE_DIFERENTE = 'converter';
+    expect((await getFilaNacional())[0]!.pcSituacao).toBe('sugerido');
+  });
+
+  // 0057 (cache de PCs vistos): o PC que saiu da lista de pendentes (ou foi recebido por inteiro) deixa de estar na
+  // copia, mas o cache guarda o numero. A consulta unica de `numerosDosPcs` tem 3 fontes, ordenadas por prioridade.
+  const PC_VINCULADO = { fiscal_pendente: false, receb_recebido: 'S', c_nao_gerar_mov_estoque: 'S', n_id_pedido: '8516999999', n_id_it_pedido: '8516999998', n_num_ped_compra: '200001909863465' };
+
+  it('fiscal ja feito: o numero do PC vem do cache de PCs vistos (3a fonte) quando nem a copia nem o ledger o tem', async () => {
+    detalheRows = [linhaPc(PC_VINCULADO)];
+    numerosRows = [{ ncodped: '8516999999', numero: '306', prio: 3 }];
+    const d = await getDetalheNfNacional(CHAVE);
+    expect(d.itens[0]!.pc!.vinculadoNoOmie).toEqual({ pcNumero: '306' });
+  });
+
+  it('a consulta de numeros une copia (1), ledger (2) e cache (3) e ordena pela prioridade; o cache e so da Q2P e ignora numero em branco', async () => {
+    detalheRows = [linhaPc(PC_VINCULADO)];
+    await getDetalheNfNacional(CHAVE);
+    const c = chamadas.find((x) => x.sql.includes('UNION ALL') && x.sql.includes('pc_numero'))!;
+    const sql = c.sql.replace(/\s+/g, ' ');
+    expect(sql).toContain('FROM public."tbl_pedidosCompras_Q2P" WHERE ncodped = ANY($1::bigint[]) GROUP BY ncodped');
+    expect(sql).toContain("FROM stockbridge.recebimento_fiscal_pc WHERE n_cod_ped = ANY($1::bigint[]) AND status = 'concluido' GROUP BY n_cod_ped");
+    expect(sql).toContain("SELECT n_cod_ped::text, MIN(NULLIF(btrim(pc_numero), '')), 3 FROM stockbridge.pedido_compra_visto WHERE empresa = 'q2p' AND n_cod_ped = ANY($1::bigint[]) GROUP BY n_cod_ped");
+    expect(sql).toMatch(/ORDER BY 3$/);
+    expect(c.params).toEqual([[8516999999]]);
+  });
+
+  it('o mesmo PC em varias fontes: a de menor prioridade (copia) vence o cache, mesmo se o cache vier primeiro nas linhas', async () => {
+    detalheRows = [linhaPc(PC_VINCULADO)];
+    numerosRows = [
+      { ncodped: '8516999999', numero: '1', prio: 1 },
+      { ncodped: '8516999999', numero: '2', prio: 2 },
+      { ncodped: '8516999999', numero: '3', prio: 3 },
+    ];
+    expect((await getDetalheNfNacional(CHAVE)).itens[0]!.pc!.vinculadoNoOmie).toEqual({ pcNumero: '1' });
+    // copia sem numero (vazio) -> cai para a proxima fonte que tem
+    numerosRows = [
+      { ncodped: '8516999999', numero: '', prio: 1 },
+      { ncodped: '8516999999', numero: null, prio: 2 },
+      { ncodped: '8516999999', numero: '306', prio: 3 },
+    ];
+    expect((await getDetalheNfNacional(CHAVE)).itens[0]!.pc!.vinculadoNoOmie).toEqual({ pcNumero: '306' });
+  });
+
+  it('numero em branco tambem no cache: numero vazio (a tela mostra "PC vinculado no OMIE" sem numero)', async () => {
+    detalheRows = [linhaPc(PC_VINCULADO)];
+    numerosRows = [{ ncodped: '8516999999', numero: null, prio: 3 }];
+    expect((await getDetalheNfNacional(CHAVE)).itens[0]!.pc!.vinculadoNoOmie).toEqual({ pcNumero: '' });
+  });
+
+  it('cache ausente (tabela da 0057 nao aplicada): a consulta unica falha, o detalhe NAO cai e o numero fica vazio', async () => {
+    detalheRows = [linhaPc(PC_VINCULADO)];
+    const base = poolQuerySpy.getMockImplementation()!;
+    poolQuerySpy.mockImplementation((sql: string, params?: unknown[]) =>
+      sql.includes('UNION ALL') && sql.includes('pc_numero') ? Promise.reject(new Error('relation "stockbridge.pedido_compra_visto" does not exist')) : base(sql, params),
+    );
+    const d = await getDetalheNfNacional(CHAVE);
+    expect(d.itens[0]!.pc!.vinculadoNoOmie).toEqual({ pcNumero: '' });
   });
 
   it('fiscal ja feito sem numero na copia nem no ledger: numero vazio — nunca o xPed do fornecedor', async () => {

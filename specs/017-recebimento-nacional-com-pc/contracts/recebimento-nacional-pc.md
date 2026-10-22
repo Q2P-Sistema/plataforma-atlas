@@ -8,6 +8,7 @@ Chaves:
 
 - `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED` (a da 016). Desligada: sem sugestão, sem vínculo e sem fiscal pelo Atlas. **Continuam ativos** o PC vinculado à vista nas NFs com fiscal já feito (FR-021) e o bloqueio de estoque já lançado pelo OMIE (FR-021a).
 - `STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC` (default `true`): regra para NF sem PC (D6).
+- `STOCKBRIDGE_PC_UNIDADE_DIFERENTE` (default `bloquear`): PC em unidade diferente da NF (D15). `converter` só depois de teste com NF real.
 - `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED` (default `false`): NFs da ACXE na fila (História 5).
 
 Mensagens ao operador identificam a NF, o fornecedor e o PC pelo **número** (ex.: "PC 304"). Nunca mostram `nCodPed`, `nIdReceb` ou códigos de 10 dígitos (ACXEGDP-313).
@@ -33,21 +34,52 @@ O detalhe ganha `empresa`, `exigePc` e `estoqueLancadoPeloOmie`. Cada item agreg
 ```json
 { "indice": 0, "descricaoFornecedor": "SUCATA PLASTICO", "quantidadeNfKg": 18000, "sequenciasRecebimento": [1],
   "pc": {
-    "vinculoOmie": { "pcNumero": "304", "nCodPed": 8516905979, "nCodItem": 8516907022, "produtoDescricao": "PS CRISTAL B",
+    "vinculoOmie": { "pcNumero": "304", "nCodPed": <nCodPed>, "nCodItem": <nCodItem>, "produtoDescricao": "PS CRISTAL B",
                      "qtdPedidaKg": 18000, "saldoKg": 18000, "precoUnit": 11.30, "dtPrevisao": "2026-10-20",
-                     "etapa": "15", "dentroTolerancia": true, "casaNumeroPedidoNf": true, "motivo": "Vínculo do OMIE" },
+                     "etapa": "15", "dentroTolerancia": true, "casaNumeroPedidoNf": true, "motivo": "Vínculo do OMIE",
+                     "outroCadastro": false, "cnpjCadastro": "", "dadosEmCache": false, "unidade": "KG" },
     "vinculoOmieElegivel": true,
     "vinculosDivergentes": false,
     "alertaVinculoOmie": null,
     "candidatos": [],
     "outrosDoFornecedor": [],
     "aguardandoAprovacao": [],
-    "preSelecionado": { "nCodPed": 8516905979, "nCodItem": 8516907022 },
+    "unidadeIncompativel": [],
+    "preSelecionado": { "nCodPed": <nCodPed>, "nCodItem": <nCodItem> },
     "semPcMotivo": null,
     "vinculadoNoOmie": null } }
 ```
 
-`nCodPed` e `nCodItem` vão ao front só como identificadores de seleção, nunca como texto. A tela mostra `pcNumero`.
+`nCodPed` e `nCodItem` vão ao front só como identificadores de seleção, nunca como texto. A tela mostra `pcNumero`. (O exemplo usa `<nCodPed>` e `<nCodItem>` no lugar dos ids reais do OMIE.)
+
+**Campos novos de `PcCandidato`** (data-model §8):
+
+- `outroCadastro` e `cnpjCadastro` (D17): o PC está em outro cadastro do mesmo fornecedor, com a mesma raiz de CNPJ (matriz × filial). O motivo ganha o sufixo "em outro cadastro do fornecedor (CNPJ …)"; a tela formata o CNPJ.
+- `dadosEmCache` (D16): os dados vêm do cache de PCs vistos, porque o PC saiu da lista de pendentes. Saldo e etapa são os da última vez em que foi visto. O vínculo do OMIE nesse caso traz `alertaVinculoOmie` ("saiu da lista de pedidos pendentes do OMIE; os dados mostrados são da última sincronização em que apareceu; a confirmação confere o saldo ao vivo").
+- `unidade`: unidade do PC no OMIE, mostrada ao lado do saldo.
+
+**`unidadeIncompativel`** (D15, modo `bloquear`): PCs do fornecedor, etapa 15 e com saldo, em unidade diferente da NF. A tela os mostra não selecionáveis, com o motivo nas duas unidades do PC ("PC em kg e nota em toneladas: o OMIE baixaria o pedido com 8,25 em vez de 8.250 kg"; "PC em toneladas e nota em kg: … com 8.250 em vez de 8,25 toneladas"). O vínculo do OMIE em unidade diferente fica com `vinculoOmieElegivel: false` e alerta (sem outro PC, o POST recusa a NF nos dois modos de `EXIGE_PC`, como o vínculo que não serve), e o item sem outro PC possível tem `semPcMotivo` próprio e `pcSituacao = sem_pc`. No modo `converter` a lista é sempre vazia.
+
+**`pcsDaNf`** (D14): os PCs que atendem a nota, com a atribuição item da NF → item do PC. A tela deixa o operador escolher o PC uma vez e monta o `pc` de cada item do POST a partir da atribuição. Só entram os itens a receber (pendentes, com unidade convertida e sem baixa externa pedida); `{ "pcs": [], "preSelecionado": null }` fora do fluxo de PC ou com a cópia de PCs defasada. Exemplo ilustrativo (NF de 4 itens contra um PC de 3 itens, com as linhas 3 e 4 no mesmo item do PC):
+
+```json
+"pcsDaNf": {
+  "pcs": [
+    { "nCodPed": <nCodPed>, "pcNumero": "306", "outroCadastro": true, "cnpjCadastro": "61827663000179", "dadosEmCache": false,
+      "cobreTodos": true, "dentroTolerancia": true, "vinculoOmie": false, "justificativaNecessaria": false,
+      "itens": [
+        { "indice": 0, "nCodItem": <nCodItem-1>, "produtoDescricao": "PEBD LD",     "origem": "sugestao", "dentroTolerancia": true, "justificativaNecessaria": false,
+          "motivo": "Quantidade e preço compatíveis · em outro cadastro do fornecedor (CNPJ 61.827.663/0001-79)" },
+        { "indice": 1, "nCodItem": <nCodItem-2>, "produtoDescricao": "PEAD ES",     "origem": "sugestao", "dentroTolerancia": true, "justificativaNecessaria": false, "motivo": "…" },
+        { "indice": 2, "nCodItem": <nCodItem-3>, "produtoDescricao": "PELBD 07/21", "origem": "sugestao", "dentroTolerancia": true, "justificativaNecessaria": false, "motivo": "…" },
+        { "indice": 3, "nCodItem": <nCodItem-3>, "produtoDescricao": "PELBD 07/21", "origem": "sugestao", "dentroTolerancia": true, "justificativaNecessaria": false, "motivo": "…" }
+      ] }
+  ],
+  "preSelecionado": <nCodPed>
+}
+```
+
+Ordem dos PCs: cobre todos os itens; vínculo do OMIE; atende mais itens; dentro da tolerância; número. `preSelecionado` só quando há uma resposta sem justificativa (o vínculo do OMIE que cobre todos, ou o único PC que cobre todos dentro da tolerância). A justificativa é uma só para a nota: `justificativaNecessaria` do PC é verdadeiro se qualquer atribuição exige.
 
 **NF com fiscal já feito**: `pc.vinculadoNoOmie = { "pcNumero": "304" }` quando o recebimento concluído tem vínculo, e todas as listas ficam vazias.
 
@@ -73,20 +105,20 @@ Corpo: o da 015, com `itens[].pc` opcional (data-model §9), `.strict()` em todo
      - fornecedor não cadastrado no OMIE (sem CNPJ no espelho ou `n_id_fornecedor` 0) → `422 RECEBIMENTO_FISCAL_SEM_FORNECEDOR`, **antes** das regras de PC e sem aviso a compras (o problema é o cadastro);
      - cópia de PCs defasada (D13) → `503 COPIA_PCS_DEFASADA`, sem aviso a compras;
      - item a gravar **sem PC possível** (definição antes do FR-019 da spec):
-       - com `EXIGE_PC = true` → `422 NF_SEM_PC` (dispara o aviso a compras, deduplicado em 24 h);
+       - com `EXIGE_PC = true` → `422 NF_SEM_PC` (dispara o aviso a compras, deduplicado em 24 h). No modo `bloquear`, o item cujo único PC está em unidade diferente da NF conta como sem PC possível (motivo interno `unidade_pc`), com texto próprio e o quadro de unidade no aviso (§5);
        - com `EXIGE_PC = false` → segue sem vínculo nesse item (receita da 016);
      - item **com** PC possível e sem `pc` → `422 PC_NAO_ESCOLHIDO`, sem aviso;
      - item pendente que o Atlas não recebe (unidade) e sem PC no OMIE (`itensSemAvaliacaoPc`): com `EXIGE_PC = true` → `422 NF_SEM_PC` com a orientação ao fiscal, sem aviso a compras; com `EXIGE_PC = false` → segue sem vínculo (IGNORAR da 016) e entra no aviso `recebida_sem_vinculo`;
-     - `pc` fora do vínculo do OMIE, dos candidatos e dos "outros do fornecedor" → `422 PC_NAO_ELEGIVEL`;
+     - `pc` fora do vínculo do OMIE, dos candidatos e dos "outros do fornecedor" → `422 PC_NAO_ELEGIVEL` (inclui o PC em unidade diferente da NF no modo `bloquear`, com a mensagem de unidade);
      - sem `justificativa` quando a matriz do data-model §4 exige (fora da tolerância, de qualquer origem, ou troca do vínculo do OMIE) → `422 PC_JUSTIFICATIVA_OBRIGATORIA`.
 2. **Consulta do recebimento** (só com fiscal pendente), depois da trava da NF (ledger da 016): `ConsultarRecebimento` por chave. Já concluído (`cRecebido = 'S'`) → item não ignorado e sem "não movimentar estoque" dá `409 ESTOQUE_JA_LANCADO_PELO_OMIE`; senão `ja_concluido`, **sem** releitura nem reserva do PC (a NF pode já ter consumido o saldo); a escolha de cada sequência vai direto ao estado final em `recebimento_fiscal_pc` (`concluido` com a data/hora da conclusão no OMIE, ou `falha`) e as sobras vivas de tentativas anteriores da NF viram `falha` (research D4). Aberto → recusas da 016 → vínculo vivo diferente do visto (`n_cod_item_omie_visto`; no item com linhas ligadas a PCs diferentes, o vínculo de cada linha lido no portão 1) **e** diferente do escolhido → `409 VINCULO_OMIE_MUDOU` (vínculo vivo igual ao escolhido nunca é conflito). Ordem revista em 22/10/2026: antes a releitura do PC vinha primeiro.
 3. **Releitura e reserva** (só com recebimento aberto e algum `pc`):
    - `ConsultarPedCompra` de cada PC, fora de transação;
    - numa transação com trava consultiva por item de PC (ordem crescente):
      - vínculo concluído pelo Atlas no mesmo item de PC há menos de 75 s → `409 PC_RECEM_USADO_AGUARDE` (`retryAfterSeconds`);
-     - fora da etapa 15, sem o item, de outro fornecedor ou sem saldo disponível → `409 PC_VINCULO_INVALIDO`, com a situação atual na mensagem. Saldo disponível = `nQtde − nQtdeRec` lido ao vivo, menos as reservas de outras NFs (linhas `confirmado`/`associado` há menos de 15 min). Vínculos concluídos não são descontados, porque o OMIE já os mostra;
-     - grava as linhas `confirmado` de `recebimento_fiscal_pc`, que são a reserva.
-4. **Fiscal** (016 estendida): `ASSOCIAR-PEDIDO` nos itens com vínculo novo ou trocado → `EDITAR` nos itens sem os ajustes → `IGNORAR` **só** nos itens sem PC possível (modo "receber sem vínculo") → `Concluir`. As linhas de `recebimento_fiscal_pc` já existem desde o passo 3, gravadas **antes** da primeira escrita. Na reconsulta depois de falha com escrita, `cRecebido = 'S'` com item não ignorado e sem "não movimentar estoque" também dá `409 ESTOQUE_JA_LANCADO_PELO_OMIE`.
+     - fora da etapa 15, sem o item, de outro fornecedor (cadastro sem a mesma raiz de CNPJ, D17), em unidade diferente da NF no modo `bloquear` (D15) ou sem saldo disponível → `409 PC_VINCULO_INVALIDO`, com a situação atual na mensagem. Saldo disponível = `nQtde − nQtdeRec` lido ao vivo, menos as reservas de outras NFs (linhas `confirmado`/`associado` há menos de 15 min). Vínculos concluídos não são descontados, porque o OMIE já os mostra;
+     - grava as linhas `confirmado` de `recebimento_fiscal_pc`, que são a reserva. No modo `converter`, com a unidade do PC diferente da NF, a reserva também devolve a quantidade recebida de cada linha na unidade do PC (kg ÷ fator da unidade do PC), usada no `EDITAR`.
+4. **Fiscal** (016 estendida): `ASSOCIAR-PEDIDO` nos itens com vínculo novo ou trocado → `EDITAR` nos itens sem os ajustes (no modo `converter`, com a unidade do PC diferente da NF, o `EDITAR` leva `itensAjustes.nQtdeRecebida` na unidade do PC, e os ajustes só contam como aplicados com esse valor) → `IGNORAR` **só** nos itens sem PC possível (modo "receber sem vínculo") → `Concluir`. As linhas de `recebimento_fiscal_pc` já existem desde o passo 3, gravadas **antes** da primeira escrita. Na reconsulta depois de falha com escrita, `cRecebido = 'S'` com item não ignorado e sem "não movimentar estoque" também dá `409 ESTOQUE_JA_LANCADO_PELO_OMIE`.
 5. **Portão 2** (gravação física), igual à 015.
 
 **201**, acrescido:
@@ -103,13 +135,13 @@ Corpo: o da 015, com `itens[].pc` opcional (data-model §9), `.strict()` em todo
 | HTTP | code | Quando | userMessage (exemplo) |
 |---|---|---|---|
 | 409 | `ESTOQUE_JA_LANCADO_PELO_OMIE` | o fiscal foi concluído fora do Atlas com movimento de estoque (pelo espelho, pela leitura ao vivo quando o espelho não confirma a conclusão, ou no ramo `ja_concluido` do fiscal) | "O estoque da NF 7813 (REPLAS COMERCIAL LTDA) já entrou pelo OMIE no recebimento fiscal. Para não lançar em dobro, o recebimento físico foi bloqueado. Fale com o fiscal." |
-| 422 | `NF_SEM_PC` | modo bloquear, item sem PC possível; ou, nos dois modos, item com vínculo do OMIE que não serve (inclusive linhas ligadas a PCs diferentes) e sem outro PC (FR-011a); ou, modo bloquear, item pendente que o Atlas não recebe (unidade) e sem PC no OMIE | "A NF 7813 (REPLAS COMERCIAL LTDA) tem item sem pedido de compra no OMIE (SUCATA PLASTICO). A equipe de Compras foi avisada. A NF fica na fila até o PC ser lançado e aprovado." · item de unidade: "… tem item que o Atlas não recebe (unidade não convertida para kg) e sem pedido de compra vinculado no OMIE (TAMPA). Peça ao fiscal para corrigir a unidade ou concluir o recebimento desta NF no OMIE, vinculando o pedido." (sem aviso a compras) · item com PC em outro cadastro do mesmo fornecedor: "… tem item sem pedido de compra no cadastro do fornecedor da nota (MC PEAD ES), mas há o PC 306 lançado em outro cadastro do mesmo fornecedor (CNPJ 61.827.663/0001-79). A equipe de Compras foi avisada para ajustar o fornecedor do pedido; a NF fica na fila até o ajuste." |
+| 422 | `NF_SEM_PC` | modo bloquear, item sem PC possível; ou, nos dois modos, item com vínculo do OMIE que não serve (inclusive linhas ligadas a PCs diferentes) e sem outro PC (FR-011a); ou, modo bloquear, item pendente que o Atlas não recebe (unidade) e sem PC no OMIE | "A NF 7813 (REPLAS COMERCIAL LTDA) tem item sem pedido de compra no OMIE (SUCATA PLASTICO). A equipe de Compras foi avisada. A NF fica na fila até o PC ser lançado e aprovado." · item de unidade: "… tem item que o Atlas não recebe (unidade não convertida para kg) e sem pedido de compra vinculado no OMIE (TAMPA). Peça ao fiscal para corrigir a unidade ou concluir o recebimento desta NF no OMIE, vinculando o pedido." (sem aviso a compras) · só há PC em unidade diferente da NF (modo `bloquear`): "A NF 60199 (ZARAPLAST) tem item cujo pedido de compra está em unidade diferente da nota (MC PEAD ES): o OMIE baixaria o pedido na unidade da nota, sem converter. A equipe de Compras foi avisada para lançar o pedido na unidade da nota; a NF fica na fila até o ajuste." |
 | 400 | `NF_INCOMPLETA` | fiscal pelo Atlas e um item pendente da NF não veio no corpo (D27: a NF é recebida por inteiro) | "A NF 7813 é recebida por inteiro: informe também o item \"SUCATA PP\". Recarregue a nota e confira todos os itens." |
 | 422 | `PC_NAO_ESCOLHIDO` | item com PC possível e sem `pc` no corpo | "Escolha o pedido de compra do item SUCATA PLASTICO da NF 7813 (REPLAS COMERCIAL LTDA)." |
 | 503 | `COPIA_PCS_DEFASADA` | cópia local de PCs mais velha que `STOCKBRIDGE_COPIA_PCS_MAX_MIN` (D13); nada é gravado nem avisado | "A lista de pedidos de compra está desatualizada. Nada foi registrado. Tente de novo em alguns minutos; se persistir, avise o suporte." |
-| 422 | `PC_NAO_ELEGIVEL` | PC enviado que não é do fornecedor, não está na etapa 15 ou não tem saldo, segundo a cópia local | "O PC 305 não pode ser vinculado à NF 7813: está aguardando aprovação." |
+| 422 | `PC_NAO_ELEGIVEL` | PC enviado que não é do fornecedor, não está na etapa 15, não tem saldo ou está em unidade diferente da NF (modo `bloquear`), segundo a cópia local | "O PC 305 não pode ser vinculado à NF 7813: está aguardando aprovação." · unidade: "O PC 306 não pode ser vinculado ao item MC PEAD ES da NF 60199: está em kg e a nota em toneladas (o OMIE baixaria o pedido na unidade da nota)." |
 | 422 | `PC_JUSTIFICATIVA_OBRIGATORIA` | PC fora da tolerância, de qualquer origem (inclusive vínculo do OMIE mantido), ou troca do vínculo do OMIE, sem justificativa (matriz do data-model §4) | "Informe por que o PC 302 foi escolhido para o item SUCATA PLASTICO (quantidade 4% acima do saldo)." |
-| 409 | `PC_VINCULO_INVALIDO` | a releitura ao vivo do PC recusa. O corpo leva `error.pc = { nCodPed, nCodItem }`, o item de PC recusado, só para a tela desmarcar a escolha (nunca exibido) | "O PC 304 não pode ser vinculado à NF 7813: não tem saldo disponível (saldo atual: 0 kg). Escolha outro PC." |
+| 409 | `PC_VINCULO_INVALIDO` | a releitura ao vivo do PC recusa. O corpo leva `error.pc = { nCodPed, nCodItem }`, o item de PC recusado, só para a tela desmarcar a escolha (nunca exibido) | "O PC 304 não pode ser vinculado à NF 7813: não tem saldo disponível (saldo atual: 0 kg). Escolha outro PC." · unidade (PC lido ao vivo, inclusive o vínculo que o OMIE já fez): "O PC 306 não pode ser vinculado à NF 60199: está em kg e a nota em toneladas — o OMIE baixaria o pedido na unidade da nota, sem converter. Escolha outro PC." |
 | 409 | `VINCULO_OMIE_MUDOU` | o vínculo vivo no recebimento é diferente do que a tela mostrou (`n_cod_item_omie_visto`) e diferente do PC escolhido | "O vínculo da NF 7813 com pedido de compra mudou no OMIE. Recarregue a nota." |
 | 409 | `PC_RECEM_USADO_AGUARDE` | o mesmo item de PC foi usado pelo Atlas há menos de 75 s | "O PC 304 acabou de ser usado em outro recebimento. Aguarde cerca de N segundos e tente de novo." |
 | 502 | `RECEBIMENTO_FISCAL_FAIL` (da 016) | falha também no passo `associar` (ou na leitura ao vivo do PC, passo `consultar_pc`) | igual à 016, citando o PC: "Não foi possível concluir o recebimento fiscal da NF 7813 (REPLAS COMERCIAL LTDA), com o vínculo ao PC 304, no OMIE. Nada foi registrado no estoque — tente novamente em 1 minuto. Se persistir, avise o fiscal." |
@@ -142,14 +174,17 @@ Cada linha do ledger ganha `empresa` e `vinculos[]`: `{ nSequencia, pcNumero, or
 
 ## 5. Avisos por e-mail
 
-- **NF sem PC** (D6) para `STOCKBRIDGE_COMPRAS_EMAILS`, ou `STOCKBRIDGE_OPS_EMAIL` se vazio. Assunto: "NF <n> de <fornecedor> sem pedido de compra no OMIE". Corpo: itens (descrição, kg, preço unitário), PCs do fornecedor aguardando aprovação, se houver, e o modo (bloqueado ou recebido sem vínculo). Deduplicado por NF, motivo e destinatário a cada 24 h (`stockbridge.nf_aviso_compras`); destinatário com falha de envio fica pendente. Com PC aprovado e com saldo lançado em outro cadastro do mesmo fornecedor (filial × matriz), o corpo cita o PC e os dois CNPJs e pede para ajustar o fornecedor do pedido em vez de lançar um novo.
+- **NF sem PC** (D6) para `STOCKBRIDGE_COMPRAS_EMAILS`, ou `STOCKBRIDGE_OPS_EMAIL` se vazio. Assunto: "NF <n> de <fornecedor> sem pedido de compra no OMIE". Corpo: itens (descrição, kg, preço unitário), PCs do fornecedor aguardando aprovação, se houver, e o modo (bloqueado ou recebido sem vínculo). Deduplicado por NF, motivo e destinatário a cada 24 h (`stockbridge.nf_aviso_compras`); destinatário com falha de envio fica pendente. Com PC do fornecedor em unidade diferente da NF (trava de unidade, D15), o corpo ganha o quadro "Pedido em unidade diferente da nota": a nota está em toneladas e o pedido em outra unidade, o OMIE grava no pedido a quantidade na unidade da nota sem converter (8,25 em vez de 8.250), e compras deve lançar ou ajustar o pedido na mesma unidade da nota; o "O que fazer" manda seguir essa orientação, e o motivo é gravado como `sem_pc`. Não há mais o quadro "PC em outro cadastro": o PC de outro cadastro com a mesma raiz de CNPJ é oferecido na tela (D17).
 - Layout e regras de `notificacao.service.ts` (`buildEmailLayout`, sem códigos OMIE), com prefixo `[UAT]` no UAT, como os demais.
 
-## 6. Leitores da cópia de PCs (sem mudança de contrato)
+## 6. Leitores da cópia de PCs e cache de PCs vistos
 
 Cockpit e pendências fiscais passam a usar saldo (`nqtde − nqtderec`). O formato das respostas fica igual. A função de trânsito da 0037 não muda (D10).
+
+**Fonte dos PCs no detalhe e no portão 1** (D16): a cópia `tbl_pedidosCompras_<empresa>` e, para os itens que ela não traz (PC que saiu da lista de pendentes por ter item associado a um recebimento aberto), o cache `stockbridge.pedido_compra_visto` (data-model §11). O item vem com `dadosEmCache: true`. O número do PC das NFs com fiscal já feito (`vinculadoNoOmie.pcNumero`) vem da cópia, do ledger e do cache, nessa ordem. O cache só informa a tela: a confirmação confere o PC ao vivo (§3, passo 3).
 
 ## 7. Health e alerta da cópia de PCs (D13)
 
 - `GET /api/v1/stockbridge/health` (autenticado) ganha `pedidosCompraCopiaIdadeMin`, `degraded` acima de `STOCKBRIDGE_COPIA_PCS_MAX_MIN` (default 120). Na Fase 2, também a cópia e o espelho de recebimentos da ACXE.
 - O cron que já alerta o espelho de recebimentos (`alerta-espelho-recebimentos.service.ts`) alerta também a cópia de PCs, para `STOCKBRIDGE_OPS_EMAIL`, com o mesmo reaviso.
+- O mesmo cron (`5,35 * * * *`) atualiza o cache de PCs vistos da Q2P (`registrarPcsVistos`), sem alertar: falha vira aviso no log e a sugestão segue só com a cópia.

@@ -414,17 +414,27 @@ function extrairErroOmie(err: unknown): { codigo: string | null; mensagem: strin
 // ocorrencia real.
 const RE_SEM_FORNECEDOR = /fornecedor[^.!]*(n[aã]o (cadastrad|informad|encontrad|identificad)|inv[aá]lid|inexist)/i;
 
-const ajustesJaAplicados = (it: ItemRecebimentoNfe) => it.cNaoGerarMovEstoque === 'S' && it.cNaoGerarFinanceiro === 'N';
+/**
+ * Ajustes do EDITAR ja gravados no item: nao movimentar estoque, gerar financeiro e, quando
+ * o PC esta em unidade diferente da NF (modo 'converter'), a quantidade recebida ja na
+ * unidade do PC (`qtdRecebida`; undefined = nao se aplica).
+ */
+const ajustesJaAplicados = (it: ItemRecebimentoNfe, qtdRecebida?: number) =>
+  it.cNaoGerarMovEstoque === 'S' &&
+  it.cNaoGerarFinanceiro === 'N' &&
+  (qtdRecebida === undefined || (it.nQtdeRecebida != null && Math.abs(it.nQtdeRecebida - qtdRecebida) < 1e-6));
 const ignorado = (it: ItemRecebimentoNfe) => it.cIgnorarItem === 'S';
 
 /** Vinculo vivo do item com um item de PC (017): nIdPedido > 0 ja normalizado pelo parser. */
 const vinculoVivo = (it: ItemRecebimentoNfe): { nIdPedido: number; nIdItPedido: number | null } | null =>
   it.nIdPedido != null ? { nIdPedido: it.nIdPedido, nIdItPedido: it.nIdItPedido } : null;
 
-const editarItem = (nSequencia: number): ItemRecebimentoEditar => ({
+const editarItem = (nSequencia: number, qtdRecebida?: number): ItemRecebimentoEditar => ({
   nSequencia,
   cAcao: 'EDITAR',
-  itensAjustes: { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N' },
+  // nQtdeRecebida so quando a unidade do PC difere da NF (trava de unidade, modo 'converter'):
+  // o OMIE copia o valor para nQtdeRec do PC sem converter (NF 60199 x PC 306, 22/10/2026).
+  itensAjustes: { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', ...(qtdRecebida !== undefined ? { nQtdeRecebida: qtdRecebida } : {}) },
 });
 
 interface PlanoFiscal {
@@ -443,7 +453,13 @@ interface PlanoFiscal {
  * logo depois de um ASSOCIAR-PEDIDO, que pode ter mexido no item (D2). IGNORAR so
  * em item SEM vinculo e sem escolha: item com PC nunca e ignorado (FR-011a).
  */
-function planejarAcoes(rec: RecebimentoNfeConsultado, escolhas: EscolhaPcValidada[], semVinculo: Set<number>): PlanoFiscal {
+function planejarAcoes(
+  rec: RecebimentoNfeConsultado,
+  escolhas: EscolhaPcValidada[],
+  semVinculo: Set<number>,
+  /** quantidade recebida na unidade do PC, por sequencia — so nas que precisam de conversao (reserva) */
+  qtdRecebidaPorSeq: Map<number, number> = new Map(),
+): PlanoFiscal {
   const escolhaPorSeq = new Map<number, EscolhaPcValidada>();
   for (const e of escolhas) for (const seq of e.sequencias) escolhaPorSeq.set(seq, e);
   const plano: PlanoFiscal = { associar: [], editar: [], ignorar: [], semVinculo: [], vinculados: 0 };
@@ -467,7 +483,8 @@ function planejarAcoes(rec: RecebimentoNfeConsultado, escolhas: EscolhaPcValidad
           nIdItPedidoExistente: e.candidato.nCodItem,
         });
       }
-      if (!mesmo || !ajustesJaAplicados(it)) plano.editar.push(editarItem(it.nSequencia));
+      const qtd = qtdRecebidaPorSeq.get(it.nSequencia);
+      if (!mesmo || !ajustesJaAplicados(it, qtd)) plano.editar.push(editarItem(it.nSequencia, qtd));
     } else if (vivo) {
       plano.vinculados++;
       if (!ajustesJaAplicados(it)) plano.editar.push(editarItem(it.nSequencia));
@@ -854,7 +871,9 @@ export async function concluirRecebimentoFiscal(input: ConcluirRecebimentoFiscal
     }
 
     // 3–6. Escritas, na ordem, so do que falta — SEM retry (STK-23).
-    const plano = planejarAcoes(rec, escolhas, semVinculo);
+    const qtdRecebidaPorSeq = new Map<number, number>();
+    for (const r of reservas) if (r.nQtdeRecebida != null) qtdRecebidaPorSeq.set(r.nSequencia, r.nQtdeRecebida);
+    const plano = planejarAcoes(rec, escolhas, semVinculo, qtdRecebidaPorSeq);
     if (plano.associar.length > 0) {
       passo = 'associar';
       await alterarRecebimentoNfeItens(empresa, { nIdReceb, itens: plano.associar });

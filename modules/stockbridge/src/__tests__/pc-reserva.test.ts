@@ -17,13 +17,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mocks = vi.hoisted(() => ({
   consultarPedidoCompra: vi.fn(),
   connect: vi.fn(),
+  // pool.query: so a raiz do CNPJ dos cadastros (raizesDosCadastros), consultada FORA da transacao
+  poolQuery: vi.fn(),
   config: {} as Record<string, unknown>,
 }));
 
 vi.mock('@atlas/core', () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getDb: vi.fn(),
-  getPool: () => ({ connect: () => mocks.connect() }),
+  getPool: () => ({ connect: () => mocks.connect(), query: (sql: string, params?: unknown[]) => mocks.poolQuery(sql, params) }),
   getConfig: () => mocks.config,
 }));
 
@@ -93,11 +95,17 @@ function candidato(over: Partial<PcCandidato> = {}): PcCandidato {
     qtdPedidaKg: 18000,
     saldoKg: 18000,
     precoUnit: 11.3,
+    precoNfKgComparado: 11.3,
     dtPrevisao: '2026-10-30',
     etapa: '15',
     dentroTolerancia: true,
     casaNumeroPedidoNf: true,
+    semDadosLocais: false,
     motivo: 'Quantidade e preço compatíveis',
+    outroCadastro: false,
+    cnpjCadastro: '',
+    dadosEmCache: false,
+    unidade: 'KG',
     ...over,
   };
 }
@@ -122,6 +130,8 @@ function escolha(over: Partial<EscolhaPcValidada> = {}): EscolhaPcValidada {
     precoNfKg: 11.3,
     kgPorSequencia: { 1: 9000 },
     itemDescricao: 'SUCATA PLASTICO',
+    unidadeNf: 'KG',
+    fatorUnidadeNf: 1,
     ...over,
   };
 }
@@ -233,6 +243,12 @@ beforeEach(() => {
   mocks.connect.mockImplementation(async () => {
     estado.eventos.push('CONNECT');
     return client;
+  });
+  // raiz do CNPJ dos cadastros (so consultada quando algum PC lido esta em outro cadastro): padrao = sem cadastros
+  mocks.poolQuery.mockReset();
+  mocks.poolQuery.mockImplementation(async () => {
+    estado.eventos.push('RAIZ');
+    return { rows: [] };
   });
   mocks.consultarPedidoCompra.mockReset();
   mocks.consultarPedidoCompra.mockImplementation(async (_empresa: string, ref: { nCodPed: number }) => {
@@ -512,9 +528,9 @@ describe('relerEReservarPcs — saldo disponível (nQtde − nQtdeRec ao vivo �
     expect(err.message).toContain('não tem saldo disponível');
   });
 
-  it('PC em tonelada: o saldo vivo e o preço são convertidos para kg', async () => {
+  it('PC em tonelada (NF também em toneladas): o saldo vivo e o preço são convertidos para kg', async () => {
     estado.pedidos.set(NCODPED_304, pedido304({}, [itemPedido({ cUnidade: 'T', nQtde: 18, nQtdeRec: 9, nValUnit: 11300 })]));
-    await reservar([escolha({ qtdNfKg: 9000 })]);
+    await reservar([escolha({ qtdNfKg: 9000, unidadeNf: 'TON', fatorUnidadeNf: 1000 })]);
     const [ins] = chamadasDe('INSERT');
     expect(ins!.params[15]).toBe('9000.000');
     expect(ins!.params[16]).toBe('11.300000');
@@ -772,7 +788,7 @@ describe('relerEReservarPcs — linhas `confirmado` (a reserva)', () => {
     expect(chamadasDe('INSERT')[0]!.params[16]).toBeNull();
   });
 
-  it('o retorno lista as reservas (id, sequência, índice do item, PC e origem), na ordem das escolhas', async () => {
+  it('o retorno lista as reservas (id, sequência, índice do item, PC, origem e quantidade na unidade do PC), na ordem das escolhas', async () => {
     estado.pedidos.set(NCODPED_302, { ...pedido304({ cNumero: '302' }), nCodPed: NCODPED_302, produtos: [itemPedido({ nCodItem: NCODITEM_302 })] });
     const e1 = escolha({ indice: 0, sequencias: [1, 2], kgPorSequencia: { 1: 5000, 2: 4000 }, qtdNfKg: 9000, origem: 'sugestao' });
     const e2 = escolha({
@@ -785,9 +801,9 @@ describe('relerEReservarPcs — linhas `confirmado` (a reserva)', () => {
     });
     const r = await reservar([e1, e2]);
     expect(r).toEqual([
-      { id: 'reserva-1', nSequencia: 1, indice: 0, nCodPed: NCODPED_304, nCodItemPed: NCODITEM_304, pcNumero: '304', origem: 'sugestao' },
-      { id: 'reserva-2', nSequencia: 2, indice: 0, nCodPed: NCODPED_304, nCodItemPed: NCODITEM_304, pcNumero: '304', origem: 'sugestao' },
-      { id: 'reserva-3', nSequencia: 3, indice: 1, nCodPed: NCODPED_302, nCodItemPed: NCODITEM_302, pcNumero: '302', origem: 'manual' },
+      { id: 'reserva-1', nSequencia: 1, indice: 0, nCodPed: NCODPED_304, nCodItemPed: NCODITEM_304, pcNumero: '304', origem: 'sugestao', nQtdeRecebida: null },
+      { id: 'reserva-2', nSequencia: 2, indice: 0, nCodPed: NCODPED_304, nCodItemPed: NCODITEM_304, pcNumero: '304', origem: 'sugestao', nQtdeRecebida: null },
+      { id: 'reserva-3', nSequencia: 3, indice: 1, nCodPed: NCODPED_302, nCodItemPed: NCODITEM_302, pcNumero: '302', origem: 'manual', nQtdeRecebida: null },
     ]);
   });
 
@@ -879,6 +895,115 @@ describe('relerEReservarPcs — vínculo que o próprio OMIE fez, em outro cadas
       }),
     );
     expect(err.message).toContain('é de outro fornecedor');
+  });
+});
+
+describe('relerEReservarPcs — PC de outro cadastro com a MESMA raiz de CNPJ passa (filial × matriz, NF 60199 × PC 306; T033)', () => {
+  const MATRIZ = 2222;
+  const CNPJ_FILIAL = '61.827.663/0013-02';
+  const CNPJ_MATRIZ = '61827663000179';
+  const raizes = (...linhas: Array<[number, string | null]>) =>
+    mocks.poolQuery.mockImplementation(async () => {
+      estado.eventos.push('RAIZ');
+      return { rows: linhas.map(([codigo, cnpj]) => ({ codigo: String(codigo), cnpj })) };
+    });
+  const pcDaMatriz = () => estado.pedidos.set(NCODPED_304, pedido304({ nCodFor: MATRIZ }));
+
+  it('mesma raiz: a escolha por SUGESTÃO (sem vínculo do OMIE) passa e a reserva é gravada', async () => {
+    pcDaMatriz();
+    raizes([FORNECEDOR, CNPJ_FILIAL], [MATRIZ, CNPJ_MATRIZ]);
+    const r = await reservar([escolha({ origem: 'sugestao' })]);
+    expect(r).toHaveLength(1);
+    expect(tipos()).toContain('COMMIT');
+  });
+
+  it('a consulta da raiz lê o cadastro da própria empresa e leva o fornecedor da NF e o do PC, sem repetidos', async () => {
+    pcDaMatriz();
+    raizes([FORNECEDOR, CNPJ_FILIAL], [MATRIZ, CNPJ_MATRIZ]);
+    await reservar([escolha(), escolha({ indice: 1, sequencias: [2], kgPorSequencia: { 2: 1000 }, qtdNfKg: 1000 })], { empresa: 'acxe' });
+    expect(mocks.poolQuery).toHaveBeenCalledTimes(1);
+    const [sql, params] = mocks.poolQuery.mock.calls[0]!;
+    expect(String(sql)).toContain('public."tbl_cadastroFornecedoresClientes_ACXE"');
+    expect(String(sql)).toContain('codigo_cliente_omie = ANY($1::bigint[])');
+    expect(params).toEqual([[FORNECEDOR, MATRIZ]]);
+  });
+
+  it('raiz diferente: "é de outro fornecedor" (CNPJs de empresas distintas)', async () => {
+    pcDaMatriz();
+    raizes([FORNECEDOR, CNPJ_FILIAL], [MATRIZ, '99999999000100']);
+    const err = await falha(reservar([escolha()]));
+    expect(err).toBeInstanceOf(PcVinculoInvalidoError);
+    expect(err.message).toContain('é de outro fornecedor');
+    expectSemReserva();
+  });
+
+  it.each([
+    ['cadastro da NF sem CNPJ', [[FORNECEDOR, null], [MATRIZ, CNPJ_MATRIZ]]],
+    ['cadastro do PC de pessoa física (CPF)', [[FORNECEDOR, CNPJ_FILIAL], [MATRIZ, '12345678901']]],
+    ['cadastro do PC inexistente no OMIE local', [[FORNECEDOR, CNPJ_FILIAL]]],
+    ['nenhum cadastro encontrado', []],
+  ] as Array<[string, Array<[number, string | null]>]>)('%s: sem raiz comparável, recusa', async (_nome, linhas) => {
+    pcDaMatriz();
+    raizes(...linhas);
+    const err = await falha(reservar([escolha()]));
+    expect(err.message).toContain('é de outro fornecedor');
+  });
+
+  it('a raiz só é consultada quando o PC está em OUTRO cadastro: PC do próprio fornecedor não faz consulta extra', async () => {
+    await reservar([escolha()]);
+    expect(mocks.poolQuery).not.toHaveBeenCalled();
+  });
+
+  it('sem fornecedor da NF (null) não há checagem nem consulta de raiz', async () => {
+    pcDaMatriz();
+    await reservar([escolha()], { fornecedorCodigo: null });
+    expect(mocks.poolQuery).not.toHaveBeenCalled();
+  });
+
+  it('PC com nCodFor 0 (OMIE não informou o fornecedor) não dispara a consulta e, sem vínculo do OMIE, é recusado', async () => {
+    estado.pedidos.set(NCODPED_304, pedido304({ nCodFor: 0 }));
+    const err = await falha(reservar([escolha()]));
+    expect(mocks.poolQuery).not.toHaveBeenCalled();
+    expect(err.message).toContain('é de outro fornecedor');
+  });
+
+  it('dois PCs em dois outros cadastros: UMA consulta com todos os códigos', async () => {
+    estado.pedidos.set(NCODPED_304, pedido304({ nCodFor: MATRIZ }));
+    estado.pedidos.set(NCODPED_302, { ...pedido304({ cNumero: '302', nCodFor: 3333 }), nCodPed: NCODPED_302, produtos: [itemPedido({ nCodItem: NCODITEM_302 })] });
+    raizes([FORNECEDOR, CNPJ_FILIAL], [MATRIZ, CNPJ_MATRIZ], [3333, '61827663000926']);
+    const r = await reservar([
+      escolha({ indice: 0 }),
+      escolha({ indice: 1, sequencias: [2], kgPorSequencia: { 2: 1000 }, qtdNfKg: 1000, candidato: candidato({ nCodPed: NCODPED_302, nCodItem: NCODITEM_302, pcNumero: '302' }) }),
+    ]);
+    expect(r).toHaveLength(2);
+    expect(mocks.poolQuery).toHaveBeenCalledTimes(1);
+    // a ordem dos codigos nao e contrato (vem da ordem de leitura dos PCs): o fornecedor da NF + os dois cadastros
+    const [codigos] = mocks.poolQuery.mock.calls[0]![1] as [number[]];
+    expect([...codigos].sort((a, b) => a - b)).toEqual([FORNECEDOR, MATRIZ, 3333]);
+  });
+
+  it('a consulta da raiz acontece FORA da transação: depois das leituras do OMIE e antes da conexão e do BEGIN', async () => {
+    pcDaMatriz();
+    raizes([FORNECEDOR, CNPJ_FILIAL], [MATRIZ, CNPJ_MATRIZ]);
+    await reservar([escolha()]);
+    const ev = estado.eventos;
+    expect(ev.indexOf(`OMIE:${NCODPED_304}`)).toBeLessThan(ev.indexOf('RAIZ'));
+    expect(ev.indexOf('RAIZ')).toBeLessThan(ev.indexOf('CONNECT'));
+    expect(ev.indexOf('CONNECT')).toBeLessThan(ev.indexOf('BEGIN'));
+  });
+
+  it('falha ao consultar a raiz: propaga o erro sem abrir conexão nem transação', async () => {
+    pcDaMatriz();
+    mocks.poolQuery.mockRejectedValue(new Error('connection terminated'));
+    const err = await falha(reservar([escolha()]));
+    expect(err.message).toBe('connection terminated');
+    expect(mocks.connect).not.toHaveBeenCalled();
+  });
+
+  it('o vínculo do OMIE ainda vale sem a raiz: origem omie com o vínculo vivo passa mesmo sem cadastros (o OMIE já aceitou)', async () => {
+    pcDaMatriz();
+    const r = await reservar([escolha({ origem: 'omie' })], { vinculosVivos: { 1: { nIdPedido: NCODPED_304, nIdItPedido: NCODITEM_304 } } });
+    expect(r).toHaveLength(1);
   });
 });
 
