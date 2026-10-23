@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../../../stores/auth.store.js';
-import { TIPO_MOVIMENTO_LABEL, SUBTIPO_LABEL, rotulo, labelGalpao } from '../labels.js';
+import { TIPO_MOVIMENTO_LABEL, SUBTIPO_LABEL, rotulo, labelGalpao, type Empresa } from '../labels.js';
 
 interface LadoCnpj {
   status: string | null;
@@ -23,10 +23,15 @@ interface Movimentacao {
   produtoCodigoAcxe: number | null;
   produtoDescricao: string | null;
   galpao: string | null;
-  empresa: 'acxe' | 'q2p' | null;
+  empresa: Empresa | null;
   criadoPor: { id: string | null; nome: string | null };
   aprovadoPor: { id: string | null; nome: string | null; em: string | null };
   statusOmie: string | null;
+  /**
+   * Feature 017 (Fase 2): a perna da Q2P de uma entrada ficou pendente depois da aprovacao (status 'pendente_q2p' e nenhuma
+   * aprovacao pendente ligada) — o gestor pode retentar. Ausente = servidor anterior = sem botao.
+   */
+  retentavelQ2p?: boolean;
   /** Baixa do pedido de compra Q2P (só entradas de importação). */
   baixaPedidoQ2p: 'pendente' | 'aguardando_vinculo' | 'concluida' | 'sem_saldo' | 'falha' | null;
   ladoAcxe: LadoCnpj;
@@ -73,8 +78,22 @@ function useApiFetch() {
     const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(opts.headers as Record<string, string>) };
     if (csrfToken) headers['x-csrf-token'] = csrfToken;
     const res = await fetch(url, { credentials: 'include', ...opts, headers });
-    const body = (await res.json()) as { data: unknown; meta?: { total: number; page: number; pageSize: number }; error: { message?: string } | null };
-    if (!res.ok) throw new Error(body.error?.message ?? 'Erro');
+    type Corpo = {
+      data: unknown;
+      meta?: { total: number; page: number; pageSize: number };
+      error: { message?: string; userMessage?: string } | null;
+    };
+    // Corpo vazio ou em HTML (proxy em redeploy, timeout): ler como texto e nao mostrar "Unexpected token".
+    let body: Corpo | null = null;
+    try {
+      body = JSON.parse(await res.text()) as Corpo;
+    } catch {
+      body = null;
+    }
+    const respostaInvalida = `O servidor não respondeu corretamente (HTTP ${res.status}). Tente novamente em instantes.`;
+    // prefere o texto pt-BR da rota (userMessage), ex.: falha do OMIE ao retentar a Q2P
+    if (!res.ok) throw new Error(body?.error?.userMessage ?? body?.error?.message ?? respostaInvalida);
+    if (body === null) throw new Error(respostaInvalida);
     return body;
   };
 }
@@ -93,6 +112,8 @@ export function MovimentacoesPage() {
   const role = useAuthStore((s) => s.user?.role) ?? 'operador';
   const [retentando, setRetentando] = useState<string | null>(null);
   const [erroRetry, setErroRetry] = useState<string | null>(null);
+  const [retentandoQ2p, setRetentandoQ2p] = useState<string | null>(null);
+  const [erroRetryQ2p, setErroRetryQ2p] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [filtroTipo, setFiltroTipo] = useState('');
   const [filtroSubtipo, setFiltroSubtipo] = useState('');
@@ -126,6 +147,21 @@ export function MovimentacoesPage() {
       setErroRetry((err as Error).message);
     } finally {
       setRetentando(null);
+    }
+  };
+
+  /** Retenta a perna da Q2P de uma entrada aprovada (POST /operacoes-pendentes/:id/retentar): a ACXE ja foi lancada, nada repete la. */
+  const retentarEntradaQ2p = async (movimentacaoId: string) => {
+    setRetentandoQ2p(movimentacaoId);
+    setErroRetryQ2p(null);
+    try {
+      await apiFetch(`/api/v1/stockbridge/operacoes-pendentes/${movimentacaoId}/retentar`, { method: 'POST', body: '{}' });
+      await queryClient.invalidateQueries({ queryKey: ['sb', 'movimentacoes'] });
+      await queryClient.invalidateQueries({ queryKey: ['stockbridge'] });
+    } catch (err) {
+      setErroRetryQ2p((err as Error).message);
+    } finally {
+      setRetentandoQ2p(null);
     }
   };
 
@@ -205,6 +241,11 @@ export function MovimentacoesPage() {
       {erroRetry && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-800">
           Não foi possível retentar a baixa do pedido: {erroRetry}
+        </div>
+      )}
+      {erroRetryQ2p && (
+        <div role="alert" className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-800">
+          Não foi possível retentar a entrada na Q2P: {erroRetryQ2p}
         </div>
       )}
 
@@ -298,7 +339,20 @@ export function MovimentacoesPage() {
                       {m.statusOmie === 'concluida' ? (
                         <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-700 rounded">Concluída</span>
                       ) : m.statusOmie === 'pendente_q2p' ? (
-                        <span className="text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded">Pendente</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded">Pendente</span>
+                          {role !== 'operador' && m.retentavelQ2p === true && (
+                            <button
+                              type="button"
+                              disabled={retentandoQ2p === m.id}
+                              onClick={() => void retentarEntradaQ2p(m.id)}
+                              className="text-[10px] px-1.5 py-0.5 border border-atlas-border rounded hover:bg-atlas-bg disabled:opacity-50 whitespace-nowrap"
+                              title="A entrada já foi lançada na ACXE; lança agora a da Q2P"
+                            >
+                              {retentandoQ2p === m.id ? 'Retentando…' : 'Retentar Q2P'}
+                            </button>
+                          )}
+                        </div>
                       ) : m.statusOmie === 'pendente_acxe_faltando' ? (
                         <span className="text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded">Pend. ACXE</span>
                       ) : m.statusOmie === 'falha' ? (

@@ -9,6 +9,7 @@ import {
   OperacaoPendenteNaoEncontradaError,
   OperacaoNaoPendenteError,
   OperadorSemRetentativasError,
+  RetentativaEntradaNacionalInvalidaError,
 } from '../services/operacoes-pendentes.service.js';
 import { OmieAjusteError } from '../services/recebimento.service.js';
 import { mapearErroOmieParaResposta } from '../services/erros-omie.js';
@@ -143,7 +144,11 @@ router.post(
       if (err instanceof OperacaoNaoPendenteError) {
         res.status(409).json({
           data: null,
-          error: { code: 'OPERACAO_NAO_PENDENTE', message: err.message },
+          error: {
+            code: 'OPERACAO_NAO_PENDENTE',
+            message: err.message,
+            userMessage: 'Esta movimentação não está mais pendente no OMIE. Atualize a lista.',
+          },
         });
         return;
       }
@@ -160,6 +165,13 @@ router.post(
         });
         return;
       }
+      if (err instanceof RetentativaEntradaNacionalInvalidaError) {
+        res.status(409).json({
+          data: null,
+          error: { code: 'RETENTATIVA_INVALIDA', message: err.message, userMessage: err.userMessage, retryable: false },
+        });
+        return;
+      }
       if (err instanceof OmieAjusteError) {
         const { httpStatus, body } = mapearErroOmieParaResposta(err, { role });
         res.status(httpStatus).json({ data: null, error: body });
@@ -168,7 +180,11 @@ router.post(
       logger.error({ err, movimentacaoId: params.data.id }, 'Erro inesperado em retentar operação pendente');
       res.status(500).json({
         data: null,
-        error: { code: 'RETENTAR_FAIL', message: (err as Error).message },
+        error: {
+          code: 'RETENTAR_FAIL',
+          message: (err as Error).message,
+          userMessage: 'Não foi possível retentar o lançamento na Q2P agora. Tente de novo em instantes ou acione o suporte.',
+        },
       });
     }
   },

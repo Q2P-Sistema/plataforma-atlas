@@ -27,7 +27,7 @@ Caso real, NF 7813 na etapa 40 em 21/10/2026: `n_id_pedido` 8516905979, `n_id_it
 
 ## 2. Espelho de recebimentos da ACXE (0058)
 
-`public."tbl_recebimentoNFe_ACXE"` e `public."tbl_recebimentoNFe_itens_ACXE"`: mesma DDL das tabelas da Q2P (data-model da 016, §1 e §2), já com as colunas do §1, criadas com `IF NOT EXISTS` e escritas por um workflow n8n novo (contrato em `contracts/espelhos-n8n.md`).
+`public."tbl_recebimentoNFe_ACXE"` e `public."tbl_recebimentoNFe_itens_ACXE"`: mesma DDL das tabelas da Q2P (data-model da 016, §1 e §2), já com as colunas do §1, criadas só onde faltam (em PROD já existem, vazias, desde 21/10/2026) e escritas por um workflow n8n novo (contrato em `contracts/espelhos-n8n.md`).
 
 ## 3. `stockbridge.recebimento_fiscal`: extensão do ledger (0056)
 
@@ -118,7 +118,7 @@ Aviso a compras sobre NF sem PC (D6), deduplicado.
 
 ## 6. `stockbridge.fornecedor_exclusao`: empresa (0058, História 5)
 
-`empresa varchar(4) NOT NULL DEFAULT 'q2p'`, com `CHECK (empresa IN ('q2p','acxe'))`. Linhas novas com a Q2P como fornecedor excluído na ACXE (intercompany): as duas CNPJs da Q2P no cadastro da ACXE, `27.019.059/0001-88` (matriz) e `27.019.059/0002-69` (filial), com máscara, como já está gravada a ACXE (`42.672.052/0001-54`). Não há constante de CNPJ da Q2P em `types.ts` (`CNPJ_Q2P_MATRIZ` é um rótulo). O índice único passa a incluir `empresa`, e `fornecedor.service.ts` passa a filtrar por empresa.
+`empresa varchar(4) NOT NULL DEFAULT 'q2p'`, com `CHECK (empresa IN ('q2p','acxe'))` (`fornecedor_exclusao_empresa_check`). O índice único `fornecedor_exclusao_ativa_idx` passa a `(empresa, fornecedor_cnpj) WHERE reincluido_em IS NULL`. Linhas novas com a Q2P como fornecedor excluído na ACXE (intercompany): as duas CNPJs da Q2P no cadastro da ACXE, `27.019.059/0001-88` (matriz) e `27.019.059/0002-69` (filial), com máscara, como já está gravada a ACXE (`42.672.052/0001-54`). Não há constante de CNPJ da Q2P em `types.ts` (`CNPJ_Q2P_MATRIZ` é um rótulo). O índice único passa a incluir `empresa`, e `fornecedor.service.ts` passa a filtrar por empresa.
 
 ## 7. Função `stockbridge.refresh_lotes_em_transito_se_stale`: não muda
 
@@ -157,6 +157,8 @@ interface PcCandidato {
   cnpjCadastro: string;                // CNPJ do cadastro do PC, só dígitos ('' sem cadastro); a tela formata
   dadosEmCache: boolean;               // D16 — dados do cache `pedido_compra_visto`: o PC saiu da lista de pendentes; saldo e etapa são os da última vez em que foi visto
   unidade: string;                     // unidade do PC no OMIE ('KG', 'TON', …); a tela a mostra ao lado do saldo
+  localidadeId: string | null;         // D18 — local do item do PC no Atlas (só NF da ACXE; Q2P e local virtual/desconhecido: null)
+  localDescricao: string | null;       // D18 — "20.0.7 · PRODUÇÃO"; nunca o código OMIE
 }
 
 interface PcDoItem {
@@ -295,3 +297,16 @@ Cache da última versão vista de cada item de PC (D16). Derivado da cópia `tbl
 **Leitura**: `lerPcsVistos` (por cadastro do fornecedor, raiz de CNPJ e PC de vínculo do OMIE) alimenta `carregarContextoPc`, que inclui só os itens que a cópia não trouxe (`fonte: 'cache'`, `PcCandidato.dadosEmCache`). **Validade**: por fornecedor e por raiz (candidatos) só entram itens com `visto_em` nos últimos 7 dias (`CACHE_PC_VALIDADE_DIAS`) — o PC que saiu da lista por recebimento total no portal, cancelamento ou exclusão não volta como candidato nem como pré-seleção; o PC apontado por um vínculo do OMIE entra sempre (a releitura ao vivo decide). `numerosDosPcs` (fila e detalhe) usa o cache como terceira fonte do número do PC, depois da cópia e do ledger.
 
 **Trigger**: `stockbridge.audit_pedido_compra_visto()` + `trg_audit_sb_pedido_compra_visto` (INSERT/UPDATE/DELETE, Princípio IV). Como o upsert só grava o que mudou, cada registro da auditoria é uma mudança real do PC (saldo, etapa, preço), não o ruído de cada sincronização.
+
+## 12. Compra nacional da ACXE: locais, idempotência e cache (0058, História 5, research D18)
+
+**Locais operacionais**: `stockbridge.localidade.tipo` aceita `'operacional'` (CHECK `localidade_tipo_check` refeito). Seeds `20.0.5 PROCESSO` e `20.0.7 PRODUÇÃO`, `galpao` e `cnpj` nulos, com `localidade_correlacao` só do lado da ACXE (OMIE ACXE 4530985781 e 4553940398). Ficam fora de Meu Estoque, saída manual e transferência; entram só como destino do recebimento nacional da ACXE.
+
+**Destinos da NF da ACXE** (`GET …/nacional/localidades?empresa=acxe&destino=nf`): locais ativos, não virtuais, com código da ACXE; `entradaEm = ['acxe','q2p']` quando a correlação também tem o código da Q2P (11.1, 12.1, 21.1, 31.1), senão `['acxe']` (21.2, 20.0.5, 20.0.7).
+
+**Movimentação da NF da ACXE**: `entrada_manual`/`compra_nacional`, `empresa = 'acxe'`, `produto_codigo_acxe` = produto escolhido, `produto_codigo_q2p` = gêmeo da Q2P **só** quando o local também é da Q2P (entrada nas duas empresas, derivada: `subtipo = 'compra_nacional' AND empresa = 'acxe' AND nf_chave_acesso IS NOT NULL AND produto_codigo_q2p IS NOT NULL`), `status_omie = 'pendente_q2p'` até a aprovação. Na aprovação: `mv_acxe`/`id_*_acxe` e, nas duas empresas, `mv_q2p`/`id_*_q2p`; perna da Q2P com falha deixa `pendente_q2p` com a perna da ACXE gravada.
+
+**Idempotência**: `movimentacao_nf_nacional_acxe_idempotencia_idx` — único em `(nf_chave_acesso, nf_item_descricao_normalizada, produto_codigo_acxe) WHERE subtipo = 'compra_nacional' AND ativo AND empresa = 'acxe' AND nf_chave_acesso IS NOT NULL AND produto_codigo_acxe IS NOT NULL`. O índice da 0052 continua valendo para a linha com `produto_codigo_q2p`.
+
+**Cache de PCs vistos** (§11): `n_cod_prod bigint` e `codigo_local_estoque bigint` (produto e local do item do PC no OMIE da empresa), para sugerir o produto e pré-selecionar o local também quando o PC sai da lista de pendentes.
+

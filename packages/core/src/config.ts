@@ -151,6 +151,22 @@ const envSchema = z.object({
   // (itensAjustes.nQtdeRecebida — o mesmo campo que, editado no portal, corrigiu o
   // PC 306). Ligar 'converter' depois de testar com NF real (quickstart cenario 8).
   STOCKBRIDGE_PC_UNIDADE_DIFERENTE: z.enum(['bloquear', 'converter']).default('bloquear'),
+  // Feature 017, Historia 5 (ACXEGDP-437): NF de compra nacional da ACXE na mesma
+  // fila, com fiscal e vinculo de PC no OMIE da ACXE e entrada de estoque no local
+  // escolhido pelo operador: local que tambem e da Q2P (11.1, 12.1, 21.1, 31.1) entra
+  // nas duas empresas pelo mesmo valor; local so da ACXE (20.0.7 PRODUCAO, 20.0.5
+  // PROCESSO, 21.2) entra so na ACXE (decisao de 22/10/2026). Default DESLIGADO. So
+  // vale com a chave da 016 ligada E a data de corte da ACXE abaixo; sem ela a parte
+  // da ACXE fica de fora (log + health), sem derrubar a fila da Q2P.
+  STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED: z
+    .enum(['true', 'false', '1', '0', ''])
+    .default('false')
+    .transform((v) => v === 'true' || v === '1'),
+  // Corte proprio da ACXE (YYYY-MM-DD): NF da ACXE emitida antes desta data nunca
+  // entra na fila. A equipe da ACXE recebe hoje pelo portal COM estoque (13 NFs entre
+  // 15/09 e 07/10/2026); o corte da Q2P (STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE)
+  // traria essas NFs de volta. Definir na ativacao.
+  STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_DATA_CORTE: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   // ACXEGDP-344: baixa automatica do pedido de compra Q2P (AlteraPedCompra)
   // apos recebimento de importacao. Default LIGADO. 'false' desliga o disparo no
   // fluxo — as movimentacoes ficam 'pendente' e podem ser processadas depois

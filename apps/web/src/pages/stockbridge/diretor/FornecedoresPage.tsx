@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '@atlas/ui';
 import { useAuthStore } from '../../../stores/auth.store.js';
+import { ROTULO_EMPRESA, type Empresa } from '../labels.js';
 
 interface Fornecedor {
   cnpj: string;
@@ -29,17 +30,19 @@ export function FornecedoresPage() {
   const [busca, setBusca] = useState('');
   const [excluindo, setExcluindo] = useState<Fornecedor | null>(null);
   const [motivo, setMotivo] = useState('');
+  // Historia 5 (ACXEGDP-437): a exclusao vale para a fila de compra nacional de UMA empresa.
+  const [empresa, setEmpresa] = useState<Empresa>('q2p');
 
   const { data = [] } = useQuery<Fornecedor[]>({
-    queryKey: ['sb', 'fornecedores'],
-    queryFn: async () => (await apiFetch('/api/v1/stockbridge/fornecedores')).data as Fornecedor[],
+    queryKey: ['sb', 'fornecedores', empresa],
+    queryFn: async () => (await apiFetch(`/api/v1/stockbridge/fornecedores?empresa=${empresa}`)).data as Fornecedor[],
   });
 
   const excluirMut = useMutation({
     mutationFn: async (args: { cnpj: string; nome: string; motivo: string }) =>
       apiFetch(`/api/v1/stockbridge/fornecedores/${encodeURIComponent(args.cnpj)}/excluir`, {
         method: 'POST',
-        body: JSON.stringify({ motivo: args.motivo, nome: args.nome }),
+        body: JSON.stringify({ motivo: args.motivo, nome: args.nome, empresa }),
       }),
     onSuccess: () => {
       setExcluindo(null);
@@ -50,7 +53,10 @@ export function FornecedoresPage() {
 
   const reincluirMut = useMutation({
     mutationFn: async (cnpj: string) =>
-      apiFetch(`/api/v1/stockbridge/fornecedores/${encodeURIComponent(cnpj)}/reincluir`, { method: 'POST' }),
+      apiFetch(`/api/v1/stockbridge/fornecedores/${encodeURIComponent(cnpj)}/reincluir`, {
+        method: 'POST',
+        body: JSON.stringify({ empresa }),
+      }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['sb', 'fornecedores'] }),
   });
 
@@ -74,8 +80,22 @@ export function FornecedoresPage() {
           </span>
         </div>
         <p className="text-sm text-atlas-muted">
-          Excluir/reincluir fornecedores da fila de compra nacional. Importação e devolução não são afetadas.
+          Excluir/reincluir fornecedores da fila de compra nacional da {ROTULO_EMPRESA[empresa]}. Importação e devolução não são afetadas.
         </p>
+      </div>
+
+      <div role="group" aria-label="Fila de compra nacional" className="mb-4 inline-flex rounded border border-atlas-border overflow-hidden text-sm">
+        {(['q2p', 'acxe'] as const).map((e) => (
+          <button
+            key={e}
+            type="button"
+            aria-pressed={empresa === e}
+            onClick={() => setEmpresa(e)}
+            className={`px-3 py-1.5 ${empresa === e ? 'bg-atlas-btn-bg text-atlas-btn-text' : 'text-atlas-muted hover:text-atlas-ink'}`}
+          >
+            Fila da {ROTULO_EMPRESA[e]}
+          </button>
+        ))}
       </div>
 
       <input

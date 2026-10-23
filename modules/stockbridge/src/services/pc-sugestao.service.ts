@@ -2,6 +2,7 @@ import { getPool, getConfig, createLogger } from '@atlas/core';
 import { fmtCnpj, raizCnpj } from './cnpj.js';
 import { consultarPedidoCompra, type PedidoCompraConsultado } from '@atlas/integration-omie';
 import { CNPJ_ACXE_NUMERICO } from '../types.js';
+import { tabelasNacional, type EmpresaNacional } from './empresa-nacional.js';
 
 const logger = createLogger('stockbridge:pc-sugestao');
 
@@ -30,9 +31,15 @@ const logger = createLogger('stockbridge:pc-sugestao');
  *
  * Quem chama (fila/detalhe/portao 1) decide o modo seguro da copia defasada (D13)
  * ANTES de chamar — este modulo nao importa a fila, para nao criar ciclo.
+ *
+ * Historia 5 (ACXEGDP-437): vale para as duas empresas (copia `tbl_pedidosCompras_<empresa>`).
+ * Na NF da ACXE o candidato leva tambem o LOCAL do item do PC, resolvido no servidor
+ * (`localidadeId`/`localDescricao`: o `codigo_local_estoque` do OMIE vira a localidade ativa e
+ * nao virtual do Atlas) — a tela pre-seleciona o estoque de entrada por ele — e o `ncodprod` do
+ * item serve de sugestao de produto. O PC-espelho da importacao so existe na copia da Q2P.
  */
 
-export type EmpresaPc = 'q2p' | 'acxe';
+export type EmpresaPc = EmpresaNacional;
 
 /** Situacao do PC da NF na fila — pior caso entre os itens a receber (data-model §8). */
 export type PcSituacaoNf = 'vinculado_omie' | 'sugerido' | 'escolha_necessaria' | 'aguardando_aprovacao' | 'sem_pc' | 'nao_aplicavel';
@@ -82,6 +89,15 @@ export interface PcCandidato {
   dadosEmCache: boolean;
   /** unidade do PC no OMIE ('KG', 'TON', …) — a tela a mostra ao lado do saldo */
   unidade: string;
+  /**
+   * Local de entrada do item do PC, resolvido no servidor (Historia 5, ACXEGDP-437): so na NF
+   * da ACXE — o `codigo_local_estoque` do item do PC no OMIE vira a localidade ativa e nao
+   * virtual do Atlas (`localidade_correlacao.codigo_local_estoque_acxe`); a tela o
+   * pre-seleciona. null na NF da Q2P, sem local no PC ou local que nao e destino (ex.: TRANSITO).
+   */
+  localidadeId: string | null;
+  /** "20.0.7 · PRODUÇÃO" — o codigo OMIE de 10 digitos nunca vai para a tela (ACXEGDP-313) */
+  localDescricao: string | null;
 }
 
 export interface PcDoItem {
@@ -140,6 +156,9 @@ export interface PcDaNfItem {
   origem: 'omie' | 'sugestao' | 'manual';
   /** manter/escolher este item exige justificativa (fora da tolerancia, manual, troca do vinculo ou nao comparado) */
   justificativaNecessaria: boolean;
+  /** local de entrada do item do PC atribuido (mesma regra de `PcCandidato.localidadeId`): so NF da ACXE, senao null */
+  localidadeId: string | null;
+  localDescricao: string | null;
 }
 
 export interface PcDaNf {
@@ -290,6 +309,22 @@ export interface PcCopia {
    * sincronizado). O saldo do cache e o da ultima vez em que o PC foi visto.
    */
   fonte: 'copia' | 'cache';
+  /** ncodprod do item do PC (produto no OMIE da empresa) — sugestao de produto da NF da ACXE; ausente = desconhecido */
+  nCodProd?: number;
+  /**
+   * codigo_local_estoque do item do PC no OMIE da empresa (na copia e varchar: so entra se
+   * for numerico) — pre-selecao do local da entrada da NF da ACXE; ausente = sem local
+   */
+  codigoLocalEstoque?: number;
+}
+
+/** Localidade do Atlas que corresponde ao local de estoque do PC no OMIE (so ACXE, Historia 5). */
+export interface LocalPcResolvido {
+  id: string;
+  /** "20.0.7" */
+  codigo: string;
+  /** "PRODUÇÃO" */
+  nome: string;
 }
 
 /** Vinculo gravado pelo Atlas que pesa no saldo (concluido depois do sync, ou reserva viva de outra NF). */
@@ -309,6 +344,11 @@ export interface ContextoPc {
   agoraMs: number;
   /** raiz do CNPJ (8 digitos) de cada fornecedor pedido — base dos PCs de outro cadastro */
   raizPorFornecedor: Map<number, string>;
+  /**
+   * Local de estoque do PC (codigo OMIE) -> localidade do Atlas. So na NF da ACXE e so quando
+   * algum PC lido tem local resolvivel (Historia 5); ausente = nenhum candidato leva local.
+   */
+  locais?: Map<number, LocalPcResolvido>;
 }
 
 
@@ -321,9 +361,46 @@ export function fatorUnidadePc(unidade: string | null | undefined): number | nul
   return null;
 }
 
-export const tabelaPcs = (empresa: EmpresaPc): string => (empresa === 'acxe' ? '"tbl_pedidosCompras_ACXE"' : '"tbl_pedidosCompras_Q2P"');
-export const tabelaCadastro = (empresa: EmpresaPc): string =>
-  empresa === 'acxe' ? '"tbl_cadastroFornecedoresClientes_ACXE"' : '"tbl_cadastroFornecedoresClientes_Q2P"';
+export const tabelaPcs = (empresa: EmpresaPc): string => tabelasNacional(empresa).pedidosCompras;
+export const tabelaCadastro = (empresa: EmpresaPc): string => tabelasNacional(empresa).cadastro;
+
+/** Numero do OMIE em texto -> number (ids de 10 digitos cabem em double); vazio, nao numerico ou <= 0 = undefined. */
+function idOmieOuUndefined(v: unknown): number | undefined {
+  if (v == null) return undefined;
+  const t = String(v).trim();
+  if (!/^\d{1,18}$/.test(t)) return undefined;
+  const n = Number(t);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/**
+ * Localidades do Atlas dos locais de estoque do OMIE da ACXE (Historia 5): o
+ * `codigo_local_estoque` de um item de PC -> localidade ATIVA e nao virtual, pela
+ * correlacao `codigo_local_estoque_acxe`. Local virtual (90.0.2 TRANSITO — o destino dos
+ * PCs de importacao), inativo ou sem cadastro no Atlas fica de fora do mapa. O codigo
+ * OMIE so serve de chave: nunca vai para a tela (ACXEGDP-313). Lanca em falha de banco.
+ */
+export async function resolverLocaisAcxePorCodigoOmie(codigosOmie: number[]): Promise<Map<number, LocalPcResolvido>> {
+  const out = new Map<number, LocalPcResolvido>();
+  const codigos = Array.from(new Set(codigosOmie.filter((n) => Number.isFinite(n) && n > 0)));
+  if (codigos.length === 0) return out;
+  const r = await getPool().query<{ codigo_omie: string; id: string; codigo: string; nome: string }>(
+    `SELECT lc.codigo_local_estoque_acxe::text AS codigo_omie, l.id::text AS id, l.codigo, l.nome
+       FROM stockbridge.localidade_correlacao lc
+       JOIN stockbridge.localidade l ON l.id = lc.localidade_id
+      WHERE lc.codigo_local_estoque_acxe = ANY($1::bigint[])
+        AND l.ativo = true
+        AND l.tipo NOT LIKE 'virtual%'
+      ORDER BY l.codigo`,
+    [codigos],
+  );
+  for (const x of r.rows) {
+    const chave = Number(x.codigo_omie);
+    // mais de uma localidade com o mesmo codigo OMIE nao deveria existir; vale a de menor codigo (ORDER BY)
+    if (!out.has(chave)) out.set(chave, { id: x.id, codigo: x.codigo, nome: x.nome });
+  }
+  return out;
+}
 
 /** Raiz do CNPJ (8 digitos) dos cadastros de fornecedor pedidos; sem CNPJ, fica de fora do mapa. */
 export async function raizesDosCadastros(empresa: EmpresaPc, codigos: number[]): Promise<Map<number, string>> {
@@ -383,6 +460,9 @@ export async function carregarContextoPc(
     valor_total_pc: number | string | null;
     fornecedor_acxe: boolean | null;
     cnpj_cadastro: string | null;
+    /** Historia 5: produto e local (varchar na copia) do item do PC */
+    ncodprod?: string | null;
+    codigo_local_estoque?: string | null;
   }
   const r = await pool.query<PcRow>(
     `SELECT pc.ncodped::text AS ncodped, pc.ncoditem::text AS ncoditem, pc.cnumero, pc.cetapa, pc.ncodfor::text AS ncodfor,
@@ -391,7 +471,8 @@ export async function carregarContextoPc(
             (EXTRACT(EPOCH FROM pc.data_atualizacao) * 1000)::float8 AS atualizado_ms,
             SUM(COALESCE(pc.nvaltot, pc.nqtde * pc.nvalunit, 0)) OVER (PARTITION BY pc.ncodped)::float8 AS valor_total_pc,
             (regexp_replace(COALESCE(cad.cnpj_cpf, ''), '\\D', '', 'g') = $3) AS fornecedor_acxe,
-            regexp_replace(COALESCE(cad.cnpj_cpf, ''), '\\D', '', 'g') AS cnpj_cadastro
+            regexp_replace(COALESCE(cad.cnpj_cpf, ''), '\\D', '', 'g') AS cnpj_cadastro,
+            pc.ncodprod::text AS ncodprod, pc.codigo_local_estoque
        FROM public.${tabelaPcs(empresa)} pc
        LEFT JOIN LATERAL (
          SELECT c.cnpj_cpf FROM public.${tabelaCadastro(empresa)} c WHERE c.codigo_cliente_omie = pc.ncodfor LIMIT 1
@@ -412,6 +493,8 @@ export async function carregarContextoPc(
     const nqtderec = Number(x.nqtderec ?? 0);
     const nvalunit = x.nvalunit == null ? null : Number(x.nvalunit);
     const valorTotal = Number(x.valor_total_pc ?? 0);
+    const nCodProd = idOmieOuUndefined(x.ncodprod);
+    const codigoLocalEstoque = idOmieOuUndefined(x.codigo_local_estoque);
     pcs.push({
       nCodPed: Number(x.ncodped),
       nCodItem: Number(x.ncoditem),
@@ -425,10 +508,14 @@ export async function carregarContextoPc(
       unidade: (x.cunidade ?? '').trim().toUpperCase(),
       dtPrevisao: x.ddtprevisao ? String(x.ddtprevisao).slice(0, 10) : null,
       atualizadoEmMs: Number(x.atualizado_ms ?? 0),
-      pcEspelho: x.fornecedor_acxe === true && valorTotal < PC_ESPELHO_VALOR_MAX_BRL,
+      // PC-espelho da importacao so existe na copia da Q2P (o PC que compras lanca contra a ACXE);
+      // na copia da ACXE o fornecedor nunca e a propria ACXE (Historia 5)
+      pcEspelho: empresa === 'q2p' && x.fornecedor_acxe === true && valorTotal < PC_ESPELHO_VALOR_MAX_BRL,
       cnpjCadastro: x.cnpj_cadastro ?? '',
       raizCnpj: raizCnpj(x.cnpj_cadastro),
       fonte: 'copia',
+      ...(nCodProd !== undefined ? { nCodProd } : {}),
+      ...(codigoLocalEstoque !== undefined ? { codigoLocalEstoque } : {}),
     });
   }
 
@@ -478,7 +565,22 @@ export async function carregarContextoPc(
       emMs: Number(x.em_ms),
     }));
   }
-  return { pcs, usos, agoraMs, raizPorFornecedor };
+
+  // Historia 5: o local de entrada do item do PC (codigo OMIE -> localidade do Atlas), so na ACXE
+  // e so quando algum PC tem local. Best-effort: sem o mapa os candidatos seguem sem local.
+  let locais: Map<number, LocalPcResolvido> | undefined;
+  if (empresa === 'acxe') {
+    const codigosLocal = pcs.map((p) => p.codigoLocalEstoque).filter((n): n is number => n !== undefined);
+    if (codigosLocal.length > 0) {
+      try {
+        const mapa = await resolverLocaisAcxePorCodigoOmie(codigosLocal);
+        if (mapa.size > 0) locais = mapa;
+      } catch (err) {
+        logger.warn({ err: (err as Error).message }, 'Locais dos pedidos de compra indisponíveis — candidatos seguem sem local de entrada');
+      }
+    }
+  }
+  return { pcs, usos, agoraMs, raizPorFornecedor, ...(locais ? { locais } : {}) };
 }
 
 /**
@@ -581,7 +683,16 @@ function avaliar(item: ItemParaSugestao, pc: PcCopia, saldoKg: number, tol: Tole
   return { dentroTolerancia: qtdOk && precoOk, difPreco, precoNfKgUsado, excessoQtd, saldoKg, desvios };
 }
 
-function paraCandidato(item: ItemParaSugestao, pc: PcCopia, av: Avaliacao, motivo: string, fornecedorCodigo: number | null): PcCandidato {
+function paraCandidato(
+  item: ItemParaSugestao,
+  pc: PcCopia,
+  av: Avaliacao,
+  motivo: string,
+  fornecedorCodigo: number | null,
+  locais?: ContextoPc['locais'],
+): PcCandidato {
+  // Historia 5: local de entrada do item do PC (so a ACXE carrega o mapa; Q2P e PC sem local = null)
+  const local = pc.codigoLocalEstoque !== undefined ? locais?.get(pc.codigoLocalEstoque) : undefined;
   return {
     nCodPed: pc.nCodPed,
     nCodItem: pc.nCodItem,
@@ -601,6 +712,8 @@ function paraCandidato(item: ItemParaSugestao, pc: PcCopia, av: Avaliacao, motiv
     cnpjCadastro: pc.cnpjCadastro,
     dadosEmCache: pc.fonte === 'cache',
     unidade: pc.unidade,
+    localidadeId: local?.id ?? null,
+    localDescricao: local ? `${local.codigo} · ${local.nome}` : null,
   };
 }
 
@@ -723,6 +836,8 @@ export function montarPcDoItem(
         cnpjCadastro: '',
         dadosEmCache: false,
         unidade: '',
+        localidadeId: null,
+        localDescricao: null,
       };
       vinculoOmieElegivel = v.nIdItPedido != null;
       alertas.push(
@@ -731,7 +846,7 @@ export function montarPcDoItem(
     } else {
       const saldo = saldoDisponivelCopiaKg(pcDoVinculo, ctx, chaveNf);
       const av = avaliar(item, pcDoVinculo, saldo, tol);
-      vinculoOmie = paraCandidato(item, pcDoVinculo, av, 'Vínculo do OMIE', fornecedorCodigo);
+      vinculoOmie = paraCandidato(item, pcDoVinculo, av, 'Vínculo do OMIE', fornecedorCodigo, ctx.locais);
       if (pcDoVinculo.pcEspelho) {
         vinculoOmieElegivel = false;
         alertas.push('O item está vinculado no OMIE a um pedido de importação (pedido-espelho), que não pode ser usado aqui. Escolha outro pedido.');
@@ -800,11 +915,11 @@ export function montarPcDoItem(
     const base = av.desvios.join(' · ');
     return fornecedorCodigo != null && pc.nCodFor > 0 && pc.nCodFor !== fornecedorCodigo ? `${base} · ${sufixoOutroCadastro(pc)}` : base;
   };
-  const candidatos = ordenar(item, dentro).map(({ pc, av }) => paraCandidato(item, pc, av, motivoCandidato(pc), fornecedorCodigo));
-  const outrosDoFornecedor = ordenar(item, fora).map(({ pc, av }) => paraCandidato(item, pc, av, motivoFora(pc, av), fornecedorCodigo));
-  const aguardandoAprovacao = ordenar(item, aguardando).map(({ pc, av }) => paraCandidato(item, pc, av, 'Aguardando aprovação', fornecedorCodigo));
+  const candidatos = ordenar(item, dentro).map(({ pc, av }) => paraCandidato(item, pc, av, motivoCandidato(pc), fornecedorCodigo, ctx.locais));
+  const outrosDoFornecedor = ordenar(item, fora).map(({ pc, av }) => paraCandidato(item, pc, av, motivoFora(pc, av), fornecedorCodigo, ctx.locais));
+  const aguardandoAprovacao = ordenar(item, aguardando).map(({ pc, av }) => paraCandidato(item, pc, av, 'Aguardando aprovação', fornecedorCodigo, ctx.locais));
   const unidadeIncompativelLista = ordenar(item, incompativeis).map(({ pc, av }) =>
-    paraCandidato(item, pc, av, motivoUnidadeIncompativel(item, pc), fornecedorCodigo),
+    paraCandidato(item, pc, av, motivoUnidadeIncompativel(item, pc), fornecedorCodigo, ctx.locais),
   );
 
   // ── Pre-selecao (D3): vinculo do OMIE sem alerta, ou candidato unico pelo numero do pedido ──
@@ -956,6 +1071,8 @@ export function montarPcsDaNf(itens: ItemParaPcsDaNf[], tol: ToleranciasPc): Pcs
         motivo: escolhida.c.motivo,
         origem: escolhida.origem,
         justificativaNecessaria: !dentroTolerancia || trocaDoVinculo,
+        localidadeId: escolhida.c.localidadeId,
+        localDescricao: escolhida.c.localDescricao,
       });
     }
     atribuicoes.sort((a, b) => a.indice - b.indice);
@@ -1008,15 +1125,28 @@ export async function sugerirPcPorItens(
   chaveNf: string,
   itens: ItemParaSugestao[],
 ): Promise<Map<number, ResultadoPcItem>> {
+  return (await sugerirPcPorItensComContexto(empresa, fornecedorCodigo, chaveNf, itens)).resultados;
+}
+
+/**
+ * `sugerirPcPorItens` devolvendo tambem o contexto lido (copia + cache + ledger): o detalhe
+ * da NF da ACXE usa os `ncodprod` dos itens de PC para sugerir o produto (Historia 5).
+ */
+export async function sugerirPcPorItensComContexto(
+  empresa: EmpresaPc,
+  fornecedorCodigo: number | null,
+  chaveNf: string,
+  itens: ItemParaSugestao[],
+): Promise<{ resultados: Map<number, ResultadoPcItem>; ctx: ContextoPc }> {
   const ctx = await carregarContextoPc(empresa, {
     fornecedores: fornecedorCodigo != null ? [fornecedorCodigo] : [],
     nCodPedsVinculo: itens.flatMap((i) => i.vinculos.map((v) => v.nIdPedido)),
   });
   const tol = toleranciasPc();
   const opcoes = opcoesPc();
-  const out = new Map<number, ResultadoPcItem>();
-  for (const it of itens) out.set(it.indice, montarPcDoItem(it, ctx, fornecedorCodigo, chaveNf, tol, opcoes));
-  return out;
+  const resultados = new Map<number, ResultadoPcItem>();
+  for (const it of itens) resultados.set(it.indice, montarPcDoItem(it, ctx, fornecedorCodigo, chaveNf, tol, opcoes));
+  return { resultados, ctx };
 }
 
 // ── Escolha do operador (portao 1 — T023) ───────────────────────────────────

@@ -13,9 +13,29 @@ import {
 const logger = createLogger('stockbridge:fornecedor');
 const router: Router = Router();
 
-router.get('/api/v1/stockbridge/fornecedores', requireDiretor, async (_req: Request, res: Response) => {
+/**
+ * Historia 5 (ACXEGDP-437): a exclusao e por empresa (fila de recebimento nacional da Q2P ou da ACXE).
+ * Vem na query (GET) ou na query/corpo (POST); ausente = 'q2p', entao a tela atual nao muda.
+ */
+const EmpresaSchema = z.enum(['q2p', 'acxe']);
+
+function lerEmpresa(req: Request): { ok: true; empresa: 'q2p' | 'acxe' | undefined } | { ok: false } {
+  const bruto = (req.body as { empresa?: unknown } | undefined)?.empresa ?? req.query.empresa;
+  if (bruto === undefined || bruto === null || bruto === '') return { ok: true, empresa: undefined };
+  const parsed = EmpresaSchema.safeParse(bruto);
+  return parsed.success ? { ok: true, empresa: parsed.data } : { ok: false };
+}
+
+const EMPRESA_INVALIDA = { data: null, error: { code: 'INVALID_INPUT', message: "empresa deve ser 'q2p' ou 'acxe'" } };
+
+router.get('/api/v1/stockbridge/fornecedores', requireDiretor, async (req: Request, res: Response) => {
+  const emp = lerEmpresa(req);
+  if (!emp.ok) {
+    res.status(400).json(EMPRESA_INVALIDA);
+    return;
+  }
   try {
-    const data = await listarFornecedores();
+    const data = await listarFornecedores(emp.empresa);
     res.json({ data, error: null });
   } catch (err) {
     logger.error({ err }, 'Erro ao listar fornecedores');
@@ -23,6 +43,7 @@ router.get('/api/v1/stockbridge/fornecedores', requireDiretor, async (_req: Requ
   }
 });
 
+// `empresa` e lida a parte (lerEmpresa): corpo ou query; o schema (nao estrito) descarta a chave.
 const ExcluirSchema = z.object({ motivo: z.string().min(1).optional(), nome: z.string().min(1).optional() });
 
 router.post('/api/v1/stockbridge/fornecedores/:cnpj/excluir', requireDiretor, async (req: Request, res: Response) => {
@@ -37,12 +58,18 @@ router.post('/api/v1/stockbridge/fornecedores/:cnpj/excluir', requireDiretor, as
     res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', message: 'payload inválido' } });
     return;
   }
+  const emp = lerEmpresa(req);
+  if (!emp.ok) {
+    res.status(400).json(EMPRESA_INVALIDA);
+    return;
+  }
   try {
     const result = await excluirFornecedor({
       cnpj,
       nome: parsed.data.nome ?? cnpj,
       motivo: parsed.data.motivo ?? null,
       usuarioId: userId,
+      ...(emp.empresa ? { empresa: emp.empresa } : {}),
     });
     res.status(201).json({ data: result, error: null });
   } catch (err) {
@@ -62,8 +89,13 @@ router.post('/api/v1/stockbridge/fornecedores/:cnpj/reincluir', requireDiretor, 
     res.status(400).json({ data: null, error: { code: 'INVALID_INPUT', message: 'cnpj/usuário inválidos' } });
     return;
   }
+  const emp = lerEmpresa(req);
+  if (!emp.ok) {
+    res.status(400).json(EMPRESA_INVALIDA);
+    return;
+  }
   try {
-    const result = await reincluirFornecedor({ cnpj, usuarioId: userId });
+    const result = await reincluirFornecedor({ cnpj, usuarioId: userId, ...(emp.empresa ? { empresa: emp.empresa } : {}) });
     res.json({ data: result, error: null });
   } catch (err) {
     if (err instanceof ExclusaoNaoEncontradaError) {

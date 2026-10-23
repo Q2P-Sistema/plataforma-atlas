@@ -1,6 +1,7 @@
 import { createLogger } from '@atlas/core';
 import { idadeCopiaPcs, idadeEspelhoRecebimentos, type IdadeEspelhoRecebimentos } from './fila-nacional.service.js';
 import { enviarAlertaCopiaPcsDefasada, enviarAlertaEspelhoRecebimentosDefasado } from './notificacao.service.js';
+import { ROTULO_EMPRESA, type EmpresaNacional } from './empresa-nacional.js';
 
 const logger = createLogger('stockbridge:alerta-espelho-recebimentos');
 
@@ -20,6 +21,11 @@ const logger = createLogger('stockbridge:alerta-espelho-recebimentos');
  * tentativa. Os senders devolvem true so quando o sendEmail resolveu; com false o
  * job devolve 'falha' sem gravar o horario, e a rodada seguinte (30 min depois)
  * tenta de novo — um SendGrid fora do ar nao silencia o alerta por 6 h.
+ *
+ * Feature 017, Historia 5 (ACXEGDP-437): os dois espelhos (recebimentos e copia de PCs) se
+ * vigiam por empresa, cada um com o seu estado de reaviso — a defasagem da ACXE nao suprime
+ * a da Q2P nem o contrario. A ACXE so e vigiada com `recebimentoNacionalAcxeHabilitado()`
+ * (`idade*('acxe')` devolve 'desligado' sem ela, e nada e enviado).
  */
 
 export const REALERTA_ESPELHO_MS = 6 * 60 * 60 * 1000;
@@ -30,11 +36,14 @@ interface EstadoAlerta {
   ultimoAlertaEm: number | null;
 }
 
-const estadoEspelho: EstadoAlerta = { ultimoAlertaEm: null };
-const estadoCopiaPcs: EstadoAlerta = { ultimoAlertaEm: null };
+const estadoEspelho: Record<EmpresaNacional, EstadoAlerta> = { q2p: { ultimoAlertaEm: null }, acxe: { ultimoAlertaEm: null } };
+const estadoCopiaPcs: Record<EmpresaNacional, EstadoAlerta> = { q2p: { ultimoAlertaEm: null }, acxe: { ultimoAlertaEm: null } };
 
 /** true = o e-mail foi entregue ao provedor (sendEmail resolveu); false = falhou. */
-type EnviarAlerta = (a: { status: 'degraded' | 'sem_dados' | 'indisponivel'; idadeMin: number | null; limiteMin: number }) => Promise<boolean>;
+type EnviarAlerta = (
+  a: { status: 'degraded' | 'sem_dados' | 'indisponivel'; idadeMin: number | null; limiteMin: number },
+  empresa: EmpresaNacional,
+) => Promise<boolean>;
 
 async function verificar(
   estado: EstadoAlerta,
@@ -42,6 +51,7 @@ async function verificar(
   enviar: EnviarAlerta,
   rotulo: string,
   agora: number,
+  empresa: EmpresaNacional,
 ): Promise<DesfechoVerificacaoEspelho> {
   if (idade.status === 'desligado') return 'desligado';
   if (idade.status === 'ok') {
@@ -50,10 +60,10 @@ async function verificar(
     return 'ok';
   }
   if (estado.ultimoAlertaEm != null && agora - estado.ultimoAlertaEm < REALERTA_ESPELHO_MS) return 'suprimido';
-  logger.warn({ status: idade.status, idadeMin: idade.idadeMin, limiteMin: idade.limiteMin }, `${rotulo} defasado — alertando`);
+  logger.warn({ empresa, status: idade.status, idadeMin: idade.idadeMin, limiteMin: idade.limiteMin }, `${rotulo} defasado — alertando`);
   let entregue = false;
   try {
-    entregue = await enviar({ status: idade.status, idadeMin: idade.idadeMin, limiteMin: idade.limiteMin ?? 120 });
+    entregue = await enviar({ status: idade.status, idadeMin: idade.idadeMin, limiteMin: idade.limiteMin ?? 120 }, empresa);
   } catch (err) {
     // os senders nao lancam; se um dia lancarem, o desfecho e o mesmo de uma falha de envio
     logger.error({ err }, `${rotulo}: erro inesperado ao enviar o alerta`);
@@ -66,17 +76,52 @@ async function verificar(
   return 'alertado';
 }
 
-export async function verificarEspelhoRecebimentos(agora: number = Date.now()): Promise<DesfechoVerificacaoEspelho> {
-  return verificar(estadoEspelho, await idadeEspelhoRecebimentos(), enviarAlertaEspelhoRecebimentosDefasado, 'Espelho de recebimentos de NF-e', agora);
+/**
+ * Os dois parametros sao opcionais e aceitam as duas ordens: `(empresa, agora)` e a forma da
+ * Historia 5; um primeiro argumento NUMERICO e o `agora` da assinatura anterior (so a Q2P).
+ */
+function resolverArgs(empresaOuAgora: EmpresaNacional | number | undefined, agora: number | undefined): { empresa: EmpresaNacional; agora: number } {
+  if (typeof empresaOuAgora === 'number') return { empresa: 'q2p', agora: empresaOuAgora };
+  return { empresa: empresaOuAgora ?? 'q2p', agora: agora ?? Date.now() };
 }
 
-/** Feature 017 (D13): copia de pedidos de compra, com reaviso proprio. */
-export async function verificarCopiaPcs(agora: number = Date.now()): Promise<DesfechoVerificacaoEspelho> {
-  return verificar(estadoCopiaPcs, await idadeCopiaPcs(), enviarAlertaCopiaPcsDefasada, 'Cópia de pedidos de compra', agora);
+const sufixoEmpresa = (empresa: EmpresaNacional): string => (empresa === 'q2p' ? '' : ` (${ROTULO_EMPRESA[empresa]})`);
+
+export async function verificarEspelhoRecebimentos(
+  empresaOuAgora?: EmpresaNacional | number,
+  agoraOpcional?: number,
+): Promise<DesfechoVerificacaoEspelho> {
+  const { empresa, agora } = resolverArgs(empresaOuAgora, agoraOpcional);
+  return verificar(
+    estadoEspelho[empresa],
+    await idadeEspelhoRecebimentos(empresa),
+    enviarAlertaEspelhoRecebimentosDefasado,
+    `Espelho de recebimentos de NF-e${sufixoEmpresa(empresa)}`,
+    agora,
+    empresa,
+  );
+}
+
+/** Feature 017 (D13): copia de pedidos de compra, com reaviso proprio (e por empresa — Historia 5). */
+export async function verificarCopiaPcs(
+  empresaOuAgora?: EmpresaNacional | number,
+  agoraOpcional?: number,
+): Promise<DesfechoVerificacaoEspelho> {
+  const { empresa, agora } = resolverArgs(empresaOuAgora, agoraOpcional);
+  return verificar(
+    estadoCopiaPcs[empresa],
+    await idadeCopiaPcs(empresa),
+    enviarAlertaCopiaPcsDefasada,
+    `Cópia de pedidos de compra${sufixoEmpresa(empresa)}`,
+    agora,
+    empresa,
+  );
 }
 
 /** Somente testes. */
 export function __resetAlertaEspelho(): void {
-  estadoEspelho.ultimoAlertaEm = null;
-  estadoCopiaPcs.ultimoAlertaEm = null;
+  for (const e of ['q2p', 'acxe'] as const) {
+    estadoEspelho[e].ultimoAlertaEm = null;
+    estadoCopiaPcs[e].ultimoAlertaEm = null;
+  }
 }

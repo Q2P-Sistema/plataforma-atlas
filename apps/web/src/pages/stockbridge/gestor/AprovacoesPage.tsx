@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '@atlas/ui';
 import { useAuthStore } from '../../../stores/auth.store.js';
-import { SUBTIPO_LABEL, rotulo, labelGalpao } from '../labels.js';
+import { SUBTIPO_LABEL, ROTULO_EMPRESA, rotulo, labelGalpao, textoEmpresas, type Empresa } from '../labels.js';
 
 interface Pendencia {
   id: string;
@@ -21,7 +21,12 @@ interface Pendencia {
   produto: { codigoAcxe: number; fornecedor: string };
   /** Saidas manuais sem lote: galpao + empresa do material. */
   galpao: string | null;
-  empresa: 'acxe' | 'q2p' | null;
+  empresa: Empresa | null;
+  /**
+   * Feature 017 (Fase 2): empresas em que a entrada e lancada ao aprovar — ['acxe','q2p'] na compra nacional da ACXE em estoque que
+   * tambem e da Q2P, ['acxe'] so na ACXE. Ausente ou vazio = a empresa da pendencia (`empresa`).
+   */
+  entradaEm?: Empresa[];
   // Feature 015 (ACXEGDP-328): recebimento nacional por NF e baixa externa —
   // produto Q2P (sem ACXE) e identidade da NF/item, para o card nao cair em "SKU 0".
   produtoCodigoQ2p: number | null;
@@ -42,6 +47,8 @@ interface BaixaExterna {
   lancadoEm: string;
   aprovadoPor: string | null;
   aprovadoEm: string | null;
+  /** Historia 5: empresa da NF (ausente = backend anterior, Q2P) */
+  empresa?: Empresa;
 }
 
 /** NF dispensada da fila de recebimento nacional pelo gestor (feature 016, FR-021..025) — reversivel. */
@@ -74,6 +81,33 @@ const TIPO_LABEL: Record<string, string> = {
 
 const fmtKg0 = (v: number) => Math.abs(v).toLocaleString('pt-BR', { maximumFractionDigits: 0 });
 
+/** "ACXE + Q2P" | "ACXE" | "Q2P": onde a entrada e lancada ao aprovar (`entradaEm`) ou, sem ele, a empresa da pendencia. */
+function empresasDaPendencia(p: Pick<Pendencia, 'empresa' | 'entradaEm'>): string | null {
+  return textoEmpresas(p.entradaEm) || (p.empresa ? ROTULO_EMPRESA[p.empresa] : null);
+}
+
+/**
+ * `empresasDaPendencia`, sem repetir a empresa que o rotulo do galpao ja traz ("Produção (20.0.7) · ACXE" + "ACXE").
+ * Entrada nas duas empresas ("ACXE + Q2P") nunca e repetida: o rotulo do galpao so cita uma.
+ */
+function empresaSeNova(p: Pick<Pendencia, 'empresa' | 'entradaEm' | 'galpao'>): string | null {
+  const texto = empresasDaPendencia(p);
+  return texto && p.galpao && labelGalpao(p.galpao).endsWith(`· ${texto}`) ? null : texto;
+}
+
+/** A entrada de uma compra nacional da ACXE vale para as duas empresas (a aprovacao lanca nas duas). */
+const entradaNasDuas = (p: Pick<Pendencia, 'tipoAprovacao' | 'entradaEm'>): boolean =>
+  p.tipoAprovacao === 'entrada_manual' && p.entradaEm?.includes('acxe') === true && p.entradaEm.includes('q2p');
+
+/** `data.pendenciaOmie` do POST /aprovar: a aprovacao valeu, mas o OMIE deixou um lado pendente. */
+type PendenciaOmie = { lado?: 'q2p' | 'acxe-faltando'; mensagem?: string };
+
+function textoPendenciaOmie(pendencia: PendenciaOmie): string {
+  return pendencia.lado === 'q2p'
+    ? 'A entrada foi lançada na ACXE, mas a da Q2P ficou pendente. Use "Retentar Q2P" em Movimentações.'
+    : 'Parte do lançamento no OMIE ficou pendente. Acompanhe em Movimentações.';
+}
+
 function useApiFetch() {
   const csrfToken = useAuthStore((s) => s.csrfToken);
   return async (url: string, opts: RequestInit = {}) => {
@@ -84,7 +118,7 @@ function useApiFetch() {
     // 204, etc). Ler como texto e parsear defensivamente para nao mascarar o
     // status real com "Unexpected end of JSON input".
     const text = await res.text();
-    let body: { data: unknown; error: { message?: string } | null } = { data: null, error: null };
+    let body: { data: unknown; error: { message?: string; userMessage?: string } | null } = { data: null, error: null };
     if (text) {
       try {
         body = JSON.parse(text);
@@ -93,7 +127,8 @@ function useApiFetch() {
       }
     }
     if (!res.ok) {
-      const err = new Error(body.error?.message ?? `HTTP ${res.status} sem resposta — o servidor pode ter reiniciado, tente novamente`) as Error & { status?: number };
+      // prefere o texto pt-BR para o gestor (userMessage), ex.: falha do OMIE na ACXE ao aprovar a entrada
+      const err = new Error(body.error?.userMessage ?? body.error?.message ?? `HTTP ${res.status} sem resposta — o servidor pode ter reiniciado, tente novamente`) as Error & { status?: number };
       err.status = res.status;
       throw err;
     }
@@ -106,11 +141,12 @@ export function AprovacoesPage() {
   const queryClient = useQueryClient();
   const [rejeitando, setRejeitando] = useState<Pendencia | null>(null);
   const [motivoRejeicao, setMotivoRejeicao] = useState('');
-  const [feedback, setFeedback] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null);
+  const [feedback, setFeedback] = useState<{ tipo: 'sucesso' | 'erro' | 'aviso'; texto: string } | null>(null);
 
   useEffect(() => {
     if (!feedback) return;
-    const t = setTimeout(() => setFeedback(null), 5000);
+    // o aviso pede uma acao do gestor (retentar), entao fica mais tempo na tela
+    const t = setTimeout(() => setFeedback(null), feedback.tipo === 'aviso' ? 15000 : 5000);
     return () => clearTimeout(t);
   }, [feedback]);
 
@@ -129,11 +165,14 @@ export function AprovacoesPage() {
         body,
         pendencia: p,
       })),
-    onSuccess: ({ pendencia }) => {
-      setFeedback({
-        tipo: 'sucesso',
-        texto: `✓ Pendência aprovada: ${TIPO_LABEL[pendencia.tipoAprovacao] ?? pendencia.tipoAprovacao} — ${pendencia.produto.fornecedor}`,
-      });
+    onSuccess: ({ body, pendencia }) => {
+      const base = `Pendência aprovada: ${TIPO_LABEL[pendencia.tipoAprovacao] ?? pendencia.tipoAprovacao} — ${pendencia.produto.fornecedor}`;
+      const pendenciaOmie = (body.data as { pendenciaOmie?: PendenciaOmie } | null)?.pendenciaOmie;
+      setFeedback(
+        pendenciaOmie
+          ? { tipo: 'aviso', texto: `${base}. ${textoPendenciaOmie(pendenciaOmie)}` }
+          : { tipo: 'sucesso', texto: `✓ ${base}` },
+      );
       queryClient.invalidateQueries({ queryKey: ['stockbridge'] });
     },
     onError: (err) => setFeedback({ tipo: 'erro', texto: `Erro ao aprovar: ${(err as Error).message}` }),
@@ -164,7 +203,9 @@ export function AprovacoesPage() {
           className={`fixed top-banner-4 right-4 z-50 max-w-md p-4 rounded-lg shadow-lg border ${
             feedback.tipo === 'sucesso'
               ? 'bg-emerald-50 border-emerald-300 text-emerald-900 dark:bg-emerald-900/40 dark:border-emerald-700 dark:text-emerald-100'
-              : 'bg-red-50 border-red-300 text-red-900 dark:bg-red-900/40 dark:border-red-700 dark:text-red-100'
+              : feedback.tipo === 'aviso'
+                ? 'bg-amber-50 border-amber-300 text-amber-900 dark:bg-amber-900/40 dark:border-amber-700 dark:text-amber-100'
+                : 'bg-red-50 border-red-300 text-red-900 dark:bg-red-900/40 dark:border-red-700 dark:text-red-100'
           }`}
         >
           <div className="flex items-start gap-2">
@@ -233,6 +274,8 @@ export function AprovacoesPage() {
                   </div>
                   {externo && (
                     <div className="text-xs text-atlas-muted mt-0.5">
+                      {/* o numero de NF se repete entre as empresas: com NF da ACXE, a empresa vem escrita */}
+                      {p.empresa === 'acxe' && <>{ROTULO_EMPRESA.acxe} · </>}
                       {p.quantidadePrevistaKg != null && <>{fmtKg0(p.quantidadePrevistaKg)} kg na nota · </>}
                       sem movimentação de estoque — só retira o item da fila de recebimento
                     </div>
@@ -243,10 +286,13 @@ export function AprovacoesPage() {
                       {[
                         p.notaFiscal ? `NF ${p.notaFiscal}${p.nfItemDescricao ? ` · item "${p.nfItemDescricao.trim()}"` : ''}` : null,
                         p.galpao ? labelGalpao(p.galpao) : null,
-                        p.empresa ? p.empresa.toUpperCase() : null,
+                        empresaSeNova(p),
                         p.quantidadeRecebidaKg != null ? `${fmtKg0(p.quantidadeRecebidaKg)} kg` : null,
                       ].filter(Boolean).join(' · ')}
                     </div>
+                  )}
+                  {entradaNasDuas(p) && (
+                    <div className="text-xs text-atlas-muted mt-0.5">Ao aprovar, a entrada é lançada na ACXE e na Q2P, pelo mesmo valor unitário.</div>
                   )}
                   <div className="text-xs text-atlas-muted mt-0.5">
                     Lançado por <strong>{p.lancadoPor.nome}</strong> em {new Date(p.lancadoEm).toLocaleString('pt-BR')}
@@ -389,6 +435,7 @@ function BaixasExternasSection({
             <div className="flex-1 min-w-[16rem]">
               <div className="text-sm text-atlas-ink">
                 <span className="font-mono">NF {b.notaFiscal}</span> — {b.nfItemDescricao.trim()}
+                {b.empresa === 'acxe' && <span className="text-atlas-muted"> · {ROTULO_EMPRESA.acxe}</span>}
                 {b.quantidadeNfKg != null && <span className="text-atlas-muted"> · {fmtKg0(b.quantidadeNfKg)} kg na nota</span>}
               </div>
               {b.motivo && <div className="text-xs text-atlas-muted italic mt-0.5">"{b.motivo}"</div>}

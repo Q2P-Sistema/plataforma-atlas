@@ -34,6 +34,8 @@ import {
 } from './pc-sugestao.service.js';
 import { normalizarDescricaoNf } from './descricao-nf.js';
 import { registrarUsoCorrelacao } from './correlacao-produto.service.js';
+import { ROTULO_EMPRESA, type EmpresaNacional } from './empresa-nacional.js';
+import { resolverGemeosQ2p } from './produto-gemeo-q2p.js';
 import type { UnidadeMedida, SubtipoMovimento } from '../types.js';
 
 const logger = createLogger('stockbridge:recebimento-nacional');
@@ -56,6 +58,51 @@ export class ProdutoNaoEncontradoError extends Error {
   }
 }
 
+/**
+ * Historia 5 (ACXEGDP-437): produto da ACXE escolhido para um estoque que tambem e da Q2P, mas
+ * sem produto de mesma descricao (ativo) no cadastro da Q2P — a entrada nas duas empresas nao tem
+ * como ser lancada. Recusado no portao 1 (antes do fiscal). Mensagem pt-BR, sem codigo OMIE.
+ */
+export class ProdutoSemCorrelatoQ2pError extends Error {
+  constructor(public readonly produtoDescricao: string, public readonly localCodigo?: string) {
+    super(
+      `O produto "${produtoDescricao.trim()}" não tem correspondente na Q2P, então não pode entrar em estoque que também é da Q2P. ` +
+        'Escolha um estoque só da ACXE ou peça o cadastro do produto na Q2P.',
+    );
+    this.name = 'ProdutoSemCorrelatoQ2pError';
+  }
+}
+
+/**
+ * Historia 5: dois produtos da ACXE da MESMA linha da NF tem o mesmo correspondente na Q2P e os
+ * dois iriam para estoque que tambem e da Q2P. O indice de idempotencia da Q2P (nf + linha +
+ * produto da Q2P) derrubaria o segundo como `ja_recebido`, perdendo o peso em silencio.
+ */
+export class ProdutoCorrelatoQ2pRepetidoError extends Error {
+  constructor(public readonly itemDescricao: string, public readonly correlatoDescricao: string) {
+    super(
+      `Em "${itemDescricao.trim()}", dois produtos da ACXE têm o mesmo correspondente na Q2P ("${correlatoDescricao.trim()}"), ` +
+        'então não podem entrar juntos em estoque que também é da Q2P. Escolha um estoque só da ACXE para um deles.',
+    );
+    this.name = 'ProdutoCorrelatoQ2pRepetidoError';
+  }
+}
+
+/**
+ * Historia 5 (revisao da Fase 2): produto da ACXE fora de KG. O recebimento lanca a quantidade da NF em kg; num
+ * produto controlado em metro, unidade ou caixa, o OMIE registraria 26.000 kg como 26.000 da unidade do produto.
+ * Recusado no portao 1 (antes do fiscal). Mensagem pt-BR, sem codigo OMIE.
+ */
+export class ProdutoUnidadeNaoKgError extends Error {
+  constructor(public readonly produtoDescricao: string, public readonly unidade: string) {
+    super(
+      `O produto "${produtoDescricao.trim()}" está cadastrado na ACXE em ${unidade || 'outra unidade'}, não em kg, ` +
+        'e o recebimento lança a quantidade em kg. Escolha um produto controlado em kg.',
+    );
+    this.name = 'ProdutoUnidadeNaoKgError';
+  }
+}
+
 export interface LocalidadeNacionalItem {
   id: string;
   codigo: string;
@@ -65,6 +112,65 @@ export interface LocalidadeNacionalItem {
   cnpj: string | null;
   empresa: 'acxe' | 'q2p';
   codigoLocalEstoqueOmie: string;
+}
+
+/**
+ * Estoque oferecido como destino da entrada de uma NF (GET .../localidades?empresa=...&destino=nf).
+ * Sem codigo OMIE (ACXEGDP-313): o operador ve o codigo do Atlas ("21.1") e o nome.
+ */
+export interface DestinoEntradaNf {
+  id: string;
+  codigo: string;
+  nome: string;
+  tipo: string;
+  /**
+   * Empresas em que a entrada e lancada na aprovacao: ['acxe','q2p'] no estoque que tambem e da Q2P
+   * (mesmo valor unitario nas duas), ['acxe'] no so da ACXE, ['q2p'] na NF da Q2P.
+   */
+  entradaEm: EmpresaNacional[];
+}
+
+/**
+ * Historia 5 (decisao de 22/10/2026): destinos da entrada por NF, por empresa da NF.
+ *  - ACXE: todo estoque ativo, nao virtual, com codigo no OMIE da ACXE. Os que tambem tem codigo
+ *    na Q2P (11.1, 12.1, 21.1, 31.1) entram nas duas empresas e vem primeiro; os so da ACXE (21.2
+ *    EXTREMA NACIONAL, 20.0.5 PROCESSO, 20.0.7 PRODUCAO) entram so na ACXE. Por tipo, nao por
+ *    codigo: o 90.0.2 TRANSITO (virtual, com os dois codigos) fica de fora — por isso NAO se usa
+ *    `listarLocalidadesEspelhadas`.
+ *  - Q2P: a lista de sempre (11.2, 12.2 — so Q2P), no mesmo formato, `entradaEm: ['q2p']`.
+ */
+export async function listarDestinosEntradaNf(empresa: EmpresaNacional): Promise<DestinoEntradaNf[]> {
+  if (empresa === 'q2p') {
+    const q2p = await listarLocalidadesNacional('q2p');
+    return q2p.map((l) => ({ id: l.id, codigo: l.codigo, nome: l.nome, tipo: l.tipo, entradaEm: ['q2p' as const] }));
+  }
+  const result = await getDb().execute<{
+    id: string;
+    codigo: string;
+    nome: string;
+    tipo: string;
+    entra_nas_duas: boolean;
+  }>(sql`
+    SELECT
+      l.id::text AS id,
+      l.codigo,
+      l.nome,
+      l.tipo,
+      (lc.codigo_local_estoque_q2p IS NOT NULL) AS entra_nas_duas
+    FROM stockbridge.localidade l
+    INNER JOIN stockbridge.localidade_correlacao lc ON lc.localidade_id = l.id
+    WHERE l.ativo = true
+      AND l.tipo NOT LIKE 'virtual%'
+      AND lc.codigo_local_estoque_acxe IS NOT NULL
+    ORDER BY (lc.codigo_local_estoque_q2p IS NOT NULL) DESC, l.codigo
+  `);
+  return result.rows.map((r) => ({
+    id: r.id,
+    codigo: r.codigo,
+    nome: r.nome,
+    tipo: r.tipo,
+    entradaEm: r.entra_nas_duas === true ? (['acxe', 'q2p'] as EmpresaNacional[]) : (['acxe'] as EmpresaNacional[]),
+  }));
 }
 
 /**
@@ -127,6 +233,12 @@ export interface ProdutoNacionalItem {
   codigo: number; // codigo da empresa selecionada (acxe=codigo_produto ACXE, q2p=codigo_produto Q2P)
   descricao: string;
   unidadeMedida: string | null;
+  /**
+   * So com empresa=acxe (Historia 5): nao ha produto Q2P ativo de mesma descricao — o produto so
+   * pode entrar em estoque so da ACXE. A tela desabilita os estoques que tambem sao da Q2P; o POST
+   * por NF recusa (422 PRODUTO_SEM_CORRELATO_Q2P). Ausente = Q2P, ou a consulta do correspondente falhou.
+   */
+  semCorrelatoQ2p?: boolean;
 }
 
 /**
@@ -186,15 +298,29 @@ export async function buscarProdutosNacional(params: {
     FROM public."tbl_produtos_ACXE" pa
     WHERE pa.descricao IS NOT NULL
       AND (pa.inativo IS NULL OR pa.inativo <> 'S')
+      -- Historia 5: o recebimento lanca em kg; produto da ACXE em outra unidade nao e oferecido (o POST recusa)
+      AND upper(btrim(COALESCE(pa.unidade, ''))) = 'KG'
       ${termo ? sql`AND pa.descricao ILIKE ${termo}` : sql``}
     ORDER BY pa.descricao
     LIMIT ${limit}
   `);
-  return result.rows.map((r) => ({
+  const produtos: ProdutoNacionalItem[] = result.rows.map((r) => ({
     codigo: Number(r.codigo),
     descricao: r.descricao,
     unidadeMedida: r.unidade,
   }));
+  // Historia 5: cada produto da ACXE diz se tem correspondente na Q2P (regra de getCorrelacao). Best-effort:
+  // sem a marca a tela nao previne, mas o POST por NF recusa o produto sem correspondente no portao 1.
+  try {
+    const gemeos = await resolverGemeosQ2p(produtos.map((p) => p.codigo));
+    for (const p of produtos) {
+      const g = gemeos.get(p.codigo);
+      if (g) p.semCorrelatoQ2p = g.gemeoQ2p == null;
+    }
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, 'Correspondente Q2P dos produtos da ACXE indisponível — lista segue sem a marca semCorrelatoQ2p');
+  }
+  return produtos;
 }
 
 export interface ItemRecebimentoNacionalInput {
@@ -360,7 +486,9 @@ export async function processarRecebimentoNacional(
           subtipo: 'compra_nacional' satisfies SubtipoMovimento,
           loteId: null,
           produtoCodigoAcxe: it.produtoCodigoAcxe ?? null,
-          produtoCodigoQ2p: it.produtoCodigoQ2p ?? null,
+          // Historia 5: o formulario manual da ACXE lanca SO na ACXE — produto_codigo_q2p com empresa 'acxe'
+          // e a marca da entrada nas duas empresas (so o POST por NF a grava), entao nunca vem do corpo aqui.
+          produtoCodigoQ2p: it.empresa === 'acxe' ? null : (it.produtoCodigoQ2p ?? null),
           // Codigo interno Atlas (ex: '11.2'), nao o codigoLocalEstoqueOmie (numerico).
           // GALPAO_LABELS na UI mapeia o codigo interno pra label legivel.
           galpao: loc.codigo,
@@ -378,7 +506,7 @@ export async function processarRecebimentoNacional(
         .values({
           loteId: null,
           produtoCodigoAcxe: it.produtoCodigoAcxe ?? null,
-          produtoCodigoQ2p: it.produtoCodigoQ2p ?? null,
+          produtoCodigoQ2p: it.empresa === 'acxe' ? null : (it.produtoCodigoQ2p ?? null),
           galpao: loc.codigo,
           empresa: it.empresa,
           movimentacaoId: mov!.id,
@@ -558,7 +686,9 @@ export type CodigoValidacaoPorNf =
   | 'PRODUTO_REPETIDO_NO_ITEM'
   | 'ITEM_NAO_ENCONTRADO'
   | 'QUANTIDADE_INVALIDA'
-  | 'NF_INCOMPLETA';
+  | 'NF_INCOMPLETA'
+  // Historia 5: o campo do produto (Q2P ou ACXE) nao e o da empresa da NF
+  | 'PRODUTO_EMPRESA_INCOMPATIVEL';
 
 export class ValidacaoRecebimentoNacionalError extends Error {
   constructor(public readonly code: CodigoValidacaoPorNf, message: string) {
@@ -575,7 +705,10 @@ export class NfNacionalJaProcessadaError extends Error {
 }
 
 export interface ProdutoDistribuicaoInput {
-  produtoCodigoQ2p: number;
+  /** NF da Q2P: produto do cadastro da Q2P. Exatamente um entre este e `produtoCodigoAcxe`, o da empresa da NF. */
+  produtoCodigoQ2p?: number | null;
+  /** NF da ACXE (Historia 5): produto do cadastro da ACXE. */
+  produtoCodigoAcxe?: number | null;
   quantidadeKg: number;
   localidadeId: string;
 }
@@ -611,7 +744,20 @@ export interface ProdutoPorNfResult {
   descricaoFornecedor: string;
   /** descricao do produto do catalogo (ACXEGDP-313: nunca o codigo em mensagem) */
   produto: string;
-  produtoCodigoQ2p: number;
+  /**
+   * NF da Q2P: o produto escolhido. NF da ACXE (Historia 5): o correspondente na Q2P quando o estoque
+   * tambem e da Q2P, senao null — o produto escolhido vai em `produtoCodigoAcxe`.
+   */
+  produtoCodigoQ2p: number | null;
+  /** So na NF da ACXE: o produto escolhido, do cadastro da ACXE */
+  produtoCodigoAcxe?: number;
+  /**
+   * Historia 5: onde a entrada e lancada na aprovacao do gestor — ['q2p'] na NF da Q2P, ['acxe','q2p']
+   * na NF da ACXE em estoque que tambem e da Q2P, ['acxe'] no so da ACXE. Presente nos produtos que chegaram
+   * a validacao do estoque (gravados, `ja_recebido` por corrida e `falha`); ausente nos bloqueados e nos
+   * ja recebidos antes dela.
+   */
+  entradaEm?: EmpresaNacional[];
   status: StatusProdutoPorNf;
   movimentacaoId?: string;
   aprovacaoId?: string;
@@ -685,19 +831,156 @@ interface ProdutoPreparado {
   observacoes: string;
   temDivergencia: boolean;
   deltaItemKg: number;
+  /** Historia 5: produto_codigo_acxe da movimentacao/aprovacao (NF da ACXE); null na NF da Q2P */
+  produtoCodigoAcxe: number | null;
+  /**
+   * produto_codigo_q2p gravado: o escolhido (NF da Q2P) ou o correspondente na Q2P (NF da ACXE em estoque
+   * que tambem e da Q2P — a marca da entrada nas duas empresas); null na entrada so na ACXE.
+   */
+  produtoCodigoQ2pGravado: number | null;
+  /** Historia 5: onde a entrada e lancada na aprovacao */
+  entradaEm: EmpresaNacional[];
 }
+
+/**
+ * Os dois indices de idempotencia do recebimento nacional por NF: o da 0052 (nf + linha + produto da Q2P)
+ * e o da 0058 (nf + linha + produto da ACXE, so empresa 'acxe'). A entrada da ACXE nas duas empresas
+ * cai nos dois — o Postgres informa o primeiro que violar, e qualquer um e "ja recebido".
+ */
+const INDICES_IDEMPOTENCIA_NACIONAL: ReadonlySet<string> = new Set([
+  'movimentacao_nf_nacional_idempotencia_idx',
+  'movimentacao_nf_nacional_acxe_idempotencia_idx',
+]);
 
 function violacaoIdempotenciaNacional(err: unknown): boolean {
   let e: unknown = err;
   for (let i = 0; i < 4 && e && typeof e === 'object'; i++) {
     const o = e as { code?: unknown; constraint?: unknown; cause?: unknown };
-    if (o.code === '23505' && o.constraint === 'movimentacao_nf_nacional_idempotencia_idx') return true;
+    if (o.code === '23505' && typeof o.constraint === 'string' && INDICES_IDEMPOTENCIA_NACIONAL.has(o.constraint)) return true;
     e = o.cause;
   }
   return false;
 }
 
+/** Estoque de destino da entrada de uma NF da ACXE, resolvido no servidor (o codigo do OMIE nunca sai daqui). */
+interface DestinoAcxeResolvido {
+  id: string;
+  /** codigo do Atlas (ex.: '21.1') — vai para movimentacao.galpao */
+  codigo: string;
+  /** ['acxe','q2p'] quando o estoque tambem tem codigo na Q2P, ['acxe'] senao */
+  entradaEm: EmpresaNacional[];
+  /** codigo do local no OMIE da ACXE */
+  codigoLocalEstoqueOmie: string;
+}
+
+/**
+ * Destinos validos de uma NF da ACXE entre os `ids` do corpo: ativos, nao virtuais (o 90.0.2 TRANSITO tem os
+ * dois codigos mas nao recebe material) e com codigo no OMIE da ACXE. Mesma regra da lista que a tela oferece
+ * (`listarDestinosEntradaNf`) — o que nao estiver aqui e recusado, mesmo que o corpo traga um UUID valido.
+ */
+async function resolverDestinosEntradaAcxe(ids: string[]): Promise<Map<string, DestinoAcxeResolvido>> {
+  const unicos = Array.from(new Set(ids));
+  const map = new Map<string, DestinoAcxeResolvido>();
+  if (unicos.length === 0) return map;
+  const { rows } = await getPool().query<{ id: string; codigo: string; codigo_acxe: string; codigo_q2p: string | null }>(
+    `SELECT l.id::text AS id,
+            l.codigo AS codigo,
+            lc.codigo_local_estoque_acxe::text AS codigo_acxe,
+            lc.codigo_local_estoque_q2p::text AS codigo_q2p
+       FROM stockbridge.localidade l
+       INNER JOIN stockbridge.localidade_correlacao lc ON lc.localidade_id = l.id
+      WHERE l.ativo = true
+        AND l.tipo NOT LIKE 'virtual%'
+        AND lc.codigo_local_estoque_acxe IS NOT NULL
+        AND l.id::text = ANY($1::text[])`,
+    [unicos],
+  );
+  for (const r of rows) {
+    map.set(r.id, {
+      id: r.id,
+      codigo: r.codigo,
+      entradaEm: r.codigo_q2p ? ['acxe', 'q2p'] : ['acxe'],
+      codigoLocalEstoqueOmie: r.codigo_acxe,
+    });
+  }
+  return map;
+}
+
+/**
+ * Portao 1 da NF da ACXE (Historia 5): estoque entre os destinos da ACXE, produto do cadastro da ACXE e, no
+ * estoque que tambem e da Q2P, o produto correspondente na Q2P ("gemeo": mesma descricao, ativo —
+ * `resolverGemeosQ2p`). Sem correspondente -> 422 PRODUTO_SEM_CORRELATO_Q2P; dois produtos da mesma linha da NF
+ * com o MESMO correspondente -> 422 PRODUTO_CORRELATO_Q2P_REPETIDO (o indice da Q2P os confundiria). O
+ * correspondente e gravado em produto_codigo_q2p: a aprovacao e o retry nao o resolvem de novo.
+ * Nada e escrito aqui; quem chama so segue para o fiscal se tudo passar.
+ */
+async function prepararEntradaAcxe(preparados: ProdutoPreparado[], detalhe: DetalheNfNacional): Promise<void> {
+  const destinos = await resolverDestinosEntradaAcxe(preparados.map((p) => p.input.localidadeId));
+  const produtos = await resolverGemeosQ2p(preparados.map((p) => codigoEscolhido(p.input, 'acxe')));
+  const correlatosVistos = new Set<string>();
+  for (const pp of preparados) {
+    const destino = destinos.get(pp.input.localidadeId);
+    if (!destino) {
+      throw new LocalidadeNaoElegivelError(
+        pp.input.localidadeId,
+        'o estoque escolhido não está entre os estoques da ACXE disponíveis para a compra nacional — atualize a página e escolha o estoque de novo',
+      );
+    }
+    const codigoAcxe = codigoEscolhido(pp.input, 'acxe');
+    const prod = produtos.get(codigoAcxe);
+    if (!prod || !prod.ativoAcxe) {
+      logger.warn({ codigoProduto: codigoAcxe, nf: detalhe.notaFiscal, ativo: prod?.ativoAcxe }, 'Produto da NF da ACXE não encontrado (ou inativo) no catálogo');
+      throw new ProdutoNaoEncontradoError(codigoAcxe, `item "${pp.item.descricaoFornecedor.trim()}"`);
+    }
+    if (!prod.emKgAcxe) throw new ProdutoUnidadeNaoKgError(prod.descricaoAcxe, prod.unidadeAcxe);
+    const nasDuas = destino.entradaEm.includes('q2p');
+    let correlatoQ2p: number | null = null;
+    if (nasDuas) {
+      if (!prod.gemeoQ2p) throw new ProdutoSemCorrelatoQ2pError(prod.descricaoAcxe, destino.codigo);
+      const chave = `${pp.indice}:${prod.gemeoQ2p.codigo}`;
+      if (correlatosVistos.has(chave)) throw new ProdutoCorrelatoQ2pRepetidoError(pp.item.descricaoFornecedor, prod.gemeoQ2p.descricao);
+      correlatosVistos.add(chave);
+      correlatoQ2p = prod.gemeoQ2p.codigo;
+    }
+    pp.loc = { id: destino.id, codigo: destino.codigo, empresa: 'acxe', codigoLocalEstoqueOmie: destino.codigoLocalEstoqueOmie };
+    pp.produtoDescricao = prod.descricaoAcxe;
+    pp.produtoCodigoAcxe = codigoAcxe;
+    pp.produtoCodigoQ2pGravado = correlatoQ2p;
+    pp.entradaEm = destino.entradaEm;
+    pp.observacoes = `${pp.observacoes} | Produto: ${prod.descricaoAcxe} | Empresa: ${nasDuas ? 'ACXE + Q2P' : 'ACXE'} · Estoque ${destino.codigo}`;
+  }
+}
+
 const fmtKg = (v: number): string => v.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+
+/**
+ * O campo do produto e o da empresa da NF? NF da Q2P: so `produtoCodigoQ2p`; NF da ACXE: so
+ * `produtoCodigoAcxe` (exatamente um dos dois, o da empresa da NF — o outro vem vazio).
+ */
+function produtoDaEmpresaDaNf(p: ProdutoDistribuicaoInput, empresa: EmpresaNacional): boolean {
+  const q2p = p.produtoCodigoQ2p ?? null;
+  const acxe = p.produtoCodigoAcxe ?? null;
+  return empresa === 'acxe' ? acxe != null && q2p == null : q2p != null && acxe == null;
+}
+
+/** Codigo do produto escolhido, no cadastro da empresa da NF (so depois de `produtoDaEmpresaDaNf`). */
+const codigoEscolhido = (p: ProdutoDistribuicaoInput, empresa: EmpresaNacional): number =>
+  Number((empresa === 'acxe' ? p.produtoCodigoAcxe : p.produtoCodigoQ2p) ?? 0);
+
+/**
+ * Os campos de produto do resultado. NF da Q2P: o produto escolhido. NF da ACXE: o produto da ACXE e — quando ja se
+ * sabe, no portao 2 — o correspondente na Q2P (`correlatoQ2p`); nos resultados antecipados (bloqueado, ja recebido)
+ * ele nao foi resolvido e vai nulo.
+ */
+function chaveProdutoResultado(
+  p: ProdutoDistribuicaoInput,
+  empresa: EmpresaNacional,
+  correlatoQ2p: number | null = null,
+): Pick<ProdutoPorNfResult, 'produtoCodigoQ2p' | 'produtoCodigoAcxe'> {
+  return empresa === 'acxe'
+    ? { produtoCodigoQ2p: correlatoQ2p, produtoCodigoAcxe: codigoEscolhido(p, empresa) }
+    : { produtoCodigoQ2p: codigoEscolhido(p, empresa) };
+}
 
 /**
  * Da entrada nos itens de uma NF nacional do espelho. Dois portoes:
@@ -706,6 +989,12 @@ const fmtKg = (v: number): string => v.toLocaleString('pt-BR', { maximumFraction
  *     motivo; localidades elegiveis (nao espelhadas); produtos no catalogo.
  *  2. ESCRITA best-effort POR PRODUTO, cada um na propria transacao: falha de um
  *     nao derruba os demais; 23505 do indice de idempotencia vira `ja_recebido`.
+ *
+ * Historia 5 (ACXEGDP-437): a empresa e a da NF (`detalhe.empresa`), nunca do corpo. Na NF da ACXE o
+ * produto e o do cadastro da ACXE e o estoque e escolhido entre os destinos da ACXE: o que tambem e
+ * da Q2P (11.1, 12.1, 21.1, 31.1) lanca a entrada nas duas empresas pelo mesmo valor — exige o
+ * correspondente do produto na Q2P, validado AQUI, antes do fiscal (irreversivel) —; o so da ACXE
+ * (21.2, 20.0.5, 20.0.7) lanca so na ACXE. O OMIE de estoque so e chamado na aprovacao do gestor.
  */
 export async function processarRecebimentoNacionalPorNf(
   input: ProcessarRecebimentoPorNfInput,
@@ -716,6 +1005,8 @@ export async function processarRecebimentoNacionalPorNf(
 
   // Lanca NfNacionalNaoEncontrada / NfNacionalCancelada / FornecedorExcluido.
   const { detalhe, interno } = await montarDetalheNfNacional(input.nfChaveAcesso);
+  // Historia 5: a empresa vem da NF (espelho), nunca do corpo. Detalhe sem empresa = Q2P (formato anterior).
+  const empresa: EmpresaNacional = detalhe.empresa === 'acxe' ? 'acxe' : 'q2p';
   const obsBase = input.observacoes?.trim() ?? '';
   // Feature 017: o PC so entra quando o Atlas faz o fiscal (chave da 016 ligada e fiscal pendente).
   const fluxoPc = recebimentoFiscalHabilitado() && detalhe.fiscal === 'pendente';
@@ -745,7 +1036,16 @@ export async function processarRecebimentoNacionalPorNf(
     if (!it.produtos || it.produtos.length === 0) {
       throw new ValidacaoRecebimentoNacionalError('ITEM_NAO_ENCONTRADO', `Escolha ao menos um produto para "${item.descricaoFornecedor.trim()}".`);
     }
-    const codigos = it.produtos.map((p) => p.produtoCodigoQ2p);
+    // Historia 5: o campo do produto tem de ser o da empresa da NF (cadastro da Q2P x da ACXE).
+    for (const p of it.produtos) {
+      if (!produtoDaEmpresaDaNf(p, empresa)) {
+        throw new ValidacaoRecebimentoNacionalError(
+          'PRODUTO_EMPRESA_INCOMPATIVEL',
+          `A NF ${detalhe.notaFiscal} é da ${ROTULO_EMPRESA[empresa]}: em "${item.descricaoFornecedor.trim()}" escolha o produto do cadastro da ${ROTULO_EMPRESA[empresa]}. Recarregue a nota e escolha o produto de novo.`,
+        );
+      }
+    }
+    const codigos = it.produtos.map((p) => codigoEscolhido(p, empresa));
     if (new Set(codigos).size !== codigos.length) {
       // Sem isto a segunda linha colidiria no indice e viraria 'ja_recebido', perdendo peso em silencio.
       throw new ValidacaoRecebimentoNacionalError(
@@ -761,7 +1061,7 @@ export async function processarRecebimentoNacionalPorNf(
         item.bloqueio === 'unidade_incoerente' ? 'bloqueado_unidade_incoerente' : 'bloqueado_unidade';
       for (const p of it.produtos) {
         resultados.push({
-          indice: it.indice, descricaoFornecedor: item.descricaoFornecedor, produto: '', produtoCodigoQ2p: p.produtoCodigoQ2p,
+          indice: it.indice, descricaoFornecedor: item.descricaoFornecedor, produto: '', ...chaveProdutoResultado(p, empresa),
           status, quantidadeKg: p.quantidadeKg, quantidadeNfKg: null, divergenciaKg: null, valorItemBrl: null,
           mensagemErro: item.bloqueioMensagem ?? 'Unidade da NF não pôde ser convertida para Kg.',
         });
@@ -777,7 +1077,7 @@ export async function processarRecebimentoNacionalPorNf(
     if (recebidoIntegral) {
       for (const p of it.produtos) {
         resultados.push({
-          indice: it.indice, descricaoFornecedor: item.descricaoFornecedor, produto: '', produtoCodigoQ2p: p.produtoCodigoQ2p,
+          indice: it.indice, descricaoFornecedor: item.descricaoFornecedor, produto: '', ...chaveProdutoResultado(p, empresa),
           status: 'ja_recebido', quantidadeKg: p.quantidadeKg, quantidadeNfKg: null, divergenciaKg: null, valorItemBrl: null,
         });
       }
@@ -805,7 +1105,7 @@ export async function processarRecebimentoNacionalPorNf(
     if (aDistribuir <= 0) {
       for (const p of it.produtos) {
         resultados.push({
-          indice: it.indice, descricaoFornecedor: item.descricaoFornecedor, produto: '', produtoCodigoQ2p: p.produtoCodigoQ2p,
+          indice: it.indice, descricaoFornecedor: item.descricaoFornecedor, produto: '', ...chaveProdutoResultado(p, empresa),
           status: 'ja_recebido', quantidadeKg: p.quantidadeKg, quantidadeNfKg: null, divergenciaKg: null, valorItemBrl: null,
         });
       }
@@ -851,6 +1151,10 @@ export async function processarRecebimentoNacionalPorNf(
         observacoes: '',
         temDivergencia,
         deltaItemKg,
+        // preenchidos na validacao do estoque/produto (portao 1), abaixo
+        produtoCodigoAcxe: null,
+        produtoCodigoQ2pGravado: null,
+        entradaEm: [empresa],
       });
     }
     // Motivo/obs por item: aplicados nos preparados desse item abaixo.
@@ -974,30 +1278,38 @@ export async function processarRecebimentoNacionalPorNf(
     }
   }
 
-  // Localidades (nao espelhadas — defesa em profundidade, FR-011) e produtos (catalogo Q2P).
-  const localidadesById = await resolverLocalidadesParaItens(preparados.map((p) => ({ localidadeId: p.input.localidadeId })));
-  const produtosByCodigo = await resolverProdutosNacionais(
-    preparados.map((p) => ({ empresa: 'q2p' as const, produtoCodigoQ2p: p.input.produtoCodigoQ2p })),
-  );
-  for (const pp of preparados) {
-    const loc = localidadesById.get(pp.input.localidadeId);
-    if (!loc) {
-      throw new LocalidadeNaoElegivelError(
-        pp.input.localidadeId,
-        'não encontrado ou é espelhado (ACXE+Q2P) — o recebimento nacional não aceita locais espelhados',
-      );
+  if (empresa === 'acxe') {
+    // Historia 5: estoque entre os destinos da ACXE, produto do cadastro da ACXE e — no estoque que
+    // tambem e da Q2P — o correspondente do produto na Q2P. Tudo AQUI, antes do fiscal (irreversivel).
+    await prepararEntradaAcxe(preparados, detalhe);
+  } else {
+    // Localidades (nao espelhadas — defesa em profundidade, FR-011) e produtos (catalogo Q2P).
+    const localidadesById = await resolverLocalidadesParaItens(preparados.map((p) => ({ localidadeId: p.input.localidadeId })));
+    const produtosByCodigo = await resolverProdutosNacionais(
+      preparados.map((p) => ({ empresa: 'q2p' as const, produtoCodigoQ2p: p.input.produtoCodigoQ2p })),
+    );
+    for (const pp of preparados) {
+      const loc = localidadesById.get(pp.input.localidadeId);
+      if (!loc) {
+        throw new LocalidadeNaoElegivelError(
+          pp.input.localidadeId,
+          'não encontrado ou é espelhado (ACXE+Q2P) — o recebimento nacional não aceita locais espelhados',
+        );
+      }
+      if (loc.empresa !== 'q2p') {
+        throw new LocalidadeNaoElegivelError(pp.input.localidadeId, `o local ${loc.codigo} não pertence à Q2P`);
+      }
+      const codigoQ2p = codigoEscolhido(pp.input, 'q2p');
+      const prod = produtosByCodigo.get(`q2p:${codigoQ2p}`);
+      if (!prod) {
+        logger.warn({ codigoProduto: codigoQ2p, nf: detalhe.notaFiscal }, 'Produto do recebimento por NF não encontrado no catálogo');
+        throw new ProdutoNaoEncontradoError(codigoQ2p, `item "${pp.item.descricaoFornecedor.trim()}"`);
+      }
+      pp.loc = loc;
+      pp.produtoDescricao = prod.descricao;
+      pp.produtoCodigoQ2pGravado = codigoQ2p;
+      pp.observacoes = `${pp.observacoes} | Produto: ${prod.descricao} | Empresa: Q2P · Estoque ${loc.codigo}`;
     }
-    if (loc.empresa !== 'q2p') {
-      throw new LocalidadeNaoElegivelError(pp.input.localidadeId, `o local ${loc.codigo} não pertence à Q2P`);
-    }
-    const prod = produtosByCodigo.get(`q2p:${pp.input.produtoCodigoQ2p}`);
-    if (!prod) {
-      logger.warn({ codigoProduto: pp.input.produtoCodigoQ2p, nf: detalhe.notaFiscal }, 'Produto do recebimento por NF não encontrado no catálogo');
-      throw new ProdutoNaoEncontradoError(pp.input.produtoCodigoQ2p, `item "${pp.item.descricaoFornecedor.trim()}"`);
-    }
-    pp.loc = loc;
-    pp.produtoDescricao = prod.descricao;
-    pp.observacoes = `${pp.observacoes} | Produto: ${prod.descricao} | Empresa: Q2P · Estoque ${loc.codigo}`;
   }
 
   // ── Feature 016: recebimento FISCAL no OMIE, ANTES de qualquer escrita ──
@@ -1033,10 +1345,12 @@ export async function processarRecebimentoNacionalPorNf(
             tipoMovimento: 'entrada_manual',
             subtipo: 'compra_nacional' satisfies SubtipoMovimento,
             loteId: null,
-            produtoCodigoAcxe: null,
-            produtoCodigoQ2p: pp.input.produtoCodigoQ2p,
+            // NF da Q2P: so o produto da Q2P. NF da ACXE (Historia 5): o produto da ACXE e, so no estoque que
+            // tambem e da Q2P, o correspondente na Q2P — a marca da entrada nas duas empresas.
+            produtoCodigoAcxe: pp.produtoCodigoAcxe,
+            produtoCodigoQ2p: pp.produtoCodigoQ2pGravado,
             galpao: pp.loc.codigo,
-            empresa: 'q2p',
+            empresa,
             criadoPor: input.userId,
             quantidadeKg: String(pp.quantidadeKg),
             quantidadeNfKg: String(pp.quantidadeNfKg),
@@ -1055,10 +1369,10 @@ export async function processarRecebimentoNacionalPorNf(
           .insert(aprovacao)
           .values({
             loteId: null,
-            produtoCodigoAcxe: null,
-            produtoCodigoQ2p: pp.input.produtoCodigoQ2p,
+            produtoCodigoAcxe: pp.produtoCodigoAcxe,
+            produtoCodigoQ2p: pp.produtoCodigoQ2pGravado,
             galpao: pp.loc.codigo,
-            empresa: 'q2p',
+            empresa,
             movimentacaoId: mov!.id,
             precisaNivel: 'gestor',
             tipoAprovacao: 'entrada_manual',
@@ -1079,7 +1393,7 @@ export async function processarRecebimentoNacionalPorNf(
       criados.push(pp);
       resultados.push({
         indice: pp.indice, descricaoFornecedor: pp.item.descricaoFornecedor, produto: pp.produtoDescricao,
-        produtoCodigoQ2p: pp.input.produtoCodigoQ2p, status: 'aguardando_aprovacao',
+        ...chaveProdutoResultado(pp.input, empresa, pp.produtoCodigoQ2pGravado), entradaEm: pp.entradaEm, status: 'aguardando_aprovacao',
         movimentacaoId: movId, aprovacaoId: aprId,
         quantidadeKg: pp.quantidadeKg, quantidadeNfKg: pp.quantidadeNfKg, divergenciaKg: pp.divergenciaKg, valorItemBrl: pp.valorItemBrl,
       });
@@ -1087,7 +1401,7 @@ export async function processarRecebimentoNacionalPorNf(
       if (violacaoIdempotenciaNacional(err)) {
         resultados.push({
           indice: pp.indice, descricaoFornecedor: pp.item.descricaoFornecedor, produto: pp.produtoDescricao,
-          produtoCodigoQ2p: pp.input.produtoCodigoQ2p, status: 'ja_recebido',
+          ...chaveProdutoResultado(pp.input, empresa, pp.produtoCodigoQ2pGravado), entradaEm: pp.entradaEm, status: 'ja_recebido',
           quantidadeKg: pp.quantidadeKg, quantidadeNfKg: pp.quantidadeNfKg, divergenciaKg: pp.divergenciaKg, valorItemBrl: pp.valorItemBrl,
         });
         continue;
@@ -1095,7 +1409,7 @@ export async function processarRecebimentoNacionalPorNf(
       logger.error({ err, nf: detalhe.notaFiscal, produto: pp.produtoDescricao }, 'Falha ao gravar produto do recebimento por NF');
       resultados.push({
         indice: pp.indice, descricaoFornecedor: pp.item.descricaoFornecedor, produto: pp.produtoDescricao,
-        produtoCodigoQ2p: pp.input.produtoCodigoQ2p, status: 'falha',
+        ...chaveProdutoResultado(pp.input, empresa, pp.produtoCodigoQ2pGravado), entradaEm: pp.entradaEm, status: 'falha',
         quantidadeKg: pp.quantidadeKg, quantidadeNfKg: pp.quantidadeNfKg, divergenciaKg: pp.divergenciaKg, valorItemBrl: pp.valorItemBrl,
         mensagemErro: `Não foi possível registrar "${pp.produtoDescricao}". Tente novamente; o que já entrou não será duplicado.`,
       });
@@ -1104,13 +1418,15 @@ export async function processarRecebimentoNacionalPorNf(
 
   // Historia 3 (FR-007): a escolha do operador vira memoria — SO para o que foi
   // gravado, e best-effort: falhar aqui nao desfaz recebimento nenhum.
-  for (const c of criados) {
+  // Historia 5: a memoria (fornecedor x descricao) e so da Q2P — guarda codigo do cadastro da Q2P, e o CNPJ
+  // do fornecedor se repete nas duas empresas. A NF da ACXE nao memoriza (o produto vem do item e do PC).
+  for (const c of empresa === 'q2p' ? criados : []) {
     try {
       await registrarUsoCorrelacao({
         fornecedorCnpj: detalhe.fornecedorCnpj,
         fornecedorNome: detalhe.fornecedorNome,
         descricaoNf: c.item.descricaoFornecedor,
-        produtoCodigoQ2p: c.input.produtoCodigoQ2p,
+        produtoCodigoQ2p: codigoEscolhido(c.input, 'q2p'),
         produtoDescricao: c.produtoDescricao,
         userId: input.userId,
       });
@@ -1123,7 +1439,13 @@ export async function processarRecebimentoNacionalPorNf(
     void enviarAlertaRecebimentoNacionalLote({
       notaFiscal: detalhe.notaFiscal,
       nivel: 'gestor',
-      itens: criados.map((c) => ({ produto: c.produtoDescricao, empresa: 'q2p' as const, galpao: c.loc.codigo, quantidadeKg: c.quantidadeKg })),
+      itens: criados.map((c) => ({
+        produto: c.produtoDescricao,
+        // Q2P: 'q2p' como sempre. ACXE: "ACXE + Q2P" no estoque que entra nas duas empresas, "ACXE" no so da ACXE.
+        empresa: empresa === 'q2p' ? ('q2p' as const) : c.entradaEm.map((e) => ROTULO_EMPRESA[e]).join(' + '),
+        galpao: c.loc.codigo,
+        quantidadeKg: c.quantidadeKg,
+      })),
       detalhes: `Recebimento nacional via fila · ${detalhe.fornecedorNome}${obsBase ? ` · ${obsBase}` : ''}`,
     }).catch((err) => logger.error({ err, nf: detalhe.notaFiscal }, 'Falha ao notificar gestor (digest recebimento por NF)'));
   }
@@ -1177,7 +1499,9 @@ const RE_RECEBIMENTO_INEXISTENTE = /n[ãa]o (foi |foram )?(encontrad|localizad|c
 async function verificarEstoqueLancadoAoVivo(detalhe: DetalheNfNacional): Promise<void> {
   let rec;
   try {
-    rec = await consultarRecebimentoNfe('q2p', { cChaveNfe: detalhe.nfChaveAcesso });
+    // Historia 5: o recebimento esta no OMIE da empresa da NF. Com 'q2p' fixo, a NF da ACXE voltaria "nao
+    // encontrada" (= nada lancado) e a trava contra estoque em dobro viraria no-op justo no caso comum da ACXE.
+    rec = await consultarRecebimentoNfe(detalhe.empresa === 'acxe' ? 'acxe' : 'q2p', { cChaveNfe: detalhe.nfChaveAcesso });
   } catch (err) {
     const msg = (err as Error)?.message ?? '';
     if (RE_RECEBIMENTO_INEXISTENTE.test(msg)) {
@@ -1318,7 +1642,8 @@ async function executarFiscalSeNecessario(
 }
 
 function montarResultado(detalhe: DetalheNfNacional, produtos: ProdutoPorNfResult[], fiscal: FiscalPorNfResult): ProcessarRecebimentoPorNfResult {
-  produtos.sort((a, b) => a.indice - b.indice || a.produtoCodigoQ2p - b.produtoCodigoQ2p);
+  const codigo = (r: ProdutoPorNfResult): number => r.produtoCodigoAcxe ?? r.produtoCodigoQ2p ?? 0;
+  produtos.sort((a, b) => a.indice - b.indice || codigo(a) - codigo(b));
   return {
     nfChaveAcesso: detalhe.nfChaveAcesso,
     notaFiscal: detalhe.notaFiscal,

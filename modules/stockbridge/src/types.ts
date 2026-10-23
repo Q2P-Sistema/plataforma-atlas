@@ -136,6 +136,11 @@ export const COD_INT_AJUSTE_SUFIXO = {
   retEntradaAcxe: 'ret-entrada-acxe',
   retBaixaQ2p: 'ret-baixa-q2p',
   retEntradaQ2p: 'ret-entrada-q2p',
+  // Recebimento nacional por NF (features 015/017): ENT na empresa da NF. Na compra
+  // nacional da ACXE em local que tambem e da Q2P, as duas pernas (ACXE e Q2P, mesmo
+  // valor) usam estes dois sufixos, e o retry da perna Q2P repete nacionalQ2p.
+  nacionalAcxe: 'nacional-acxe',
+  nacionalQ2p: 'nacional-q2p',
 } as const;
 
 export type CodIntAjusteSufixo = (typeof COD_INT_AJUSTE_SUFIXO)[keyof typeof COD_INT_AJUSTE_SUFIXO];
@@ -144,7 +149,12 @@ export function buildCodIntAjuste(opId: string, sufixo: CodIntAjusteSufixo): str
   return `${opId}:${sufixo}`;
 }
 
-export type TipoLocalidade = 'proprio' | 'tpl' | 'porto_seco' | 'virtual_transito' | 'virtual_ajuste';
+/**
+ * 'operacional' (migration 0058): local do OMIE da ACXE que recebe compra nacional
+ * para producao (20.0.5 PROCESSO, 20.0.7 PRODUCAO). So entra como destino do
+ * recebimento nacional da ACXE; fica fora de saida manual, transferencia e Meu Estoque.
+ */
+export type TipoLocalidade = 'proprio' | 'tpl' | 'porto_seco' | 'virtual_transito' | 'virtual_ajuste' | 'operacional';
 
 export type UnidadeMedida = 't' | 'kg' | 'saco' | 'bigbag';
 

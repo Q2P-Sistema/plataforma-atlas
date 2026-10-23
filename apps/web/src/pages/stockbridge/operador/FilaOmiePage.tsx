@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../../../stores/auth.store.js';
-import { labelGalpao } from '../labels.js';
+import { labelGalpao, type Empresa } from '../labels.js';
 import { ConferenciaModal } from './ConferenciaModal.js';
 import { ReSubmeterModal } from './ReSubmeterModal.js';
 import { RecebimentoNacionalForm } from './RecebimentoNacionalForm.js';
-import { RecebimentoNacionalNfPanel } from './RecebimentoNacionalNfPanel.js';
+import { RecebimentoNacionalNfPanel, SeloEmpresa } from './RecebimentoNacionalNfPanel.js';
 
 type Aba = 'importacao' | 'nacional';
 // Feature 015: a aba nacional alterna entre a fila de NFs do espelho (padrao) e o
@@ -35,7 +35,7 @@ interface MinhaRejeicao {
   produtoCodigoAcxe: number;
   fornecedor: string;
   galpao: string | null;
-  empresa: 'acxe' | 'q2p' | null;
+  empresa: Empresa | null;
   rejeitadoEm: string;
   // Feature 015: recebimento nacional por NF — o card se identifica por NF,
   // fornecedor e item, como na lista de notas acima.
@@ -307,6 +307,8 @@ export function FilaOmiePage() {
         const rejeicaoNacional = rejeicoes.filter((r) => r.tipoAprovacao === 'entrada_manual');
         const lista = aba === 'importacao' ? rejeicaoImportacao : rejeicaoNacional;
         if (lista.length === 0) return null;
+        // Compra nacional da ACXE (feature 017, Fase 2): com rejeicao dela na lista, cada card diz de que empresa e
+        const mostrarEmpresa = aba === 'nacional' && lista.some((r) => r.empresa === 'acxe');
         return (
           <div className="mt-8">
             <h2 className="text-lg font-serif text-atlas-ink mb-2">
@@ -348,6 +350,7 @@ export function FilaOmiePage() {
                           </>
                         );
                       })()}
+                      {mostrarEmpresa && r.empresa && <SeloEmpresa empresa={r.empresa} />}
                       {r.galpao && <span className="text-xs text-atlas-muted">{labelGalpao(r.galpao)}</span>}
                     </div>
                     <div className="text-xs text-red-700 dark:text-red-300 italic truncate mt-0.5">

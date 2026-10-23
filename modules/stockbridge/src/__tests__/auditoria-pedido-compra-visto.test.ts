@@ -54,7 +54,9 @@ describe.skipIf(!temBanco)('migration 0057 — pedido_compra_visto: auditoria, U
     pool.query(`
       CREATE TABLE public."${tabela}" (
         ncodped bigint, ncoditem bigint, cnumero text, cetapa text, ncodfor bigint, nqtde numeric, nqtderec numeric, nvalunit numeric,
-        nvaltot numeric, cunidade text, ddtprevisao date, cdescricao text, cproduto text, data_atualizacao timestamptz DEFAULT now()
+        nvaltot numeric, cunidade text, ddtprevisao date, cdescricao text, cproduto text,
+        ncodprod bigint, codigo_local_estoque varchar(50), -- Historia 5 (0058): produto e local do item do PC (a copia real os tem)
+        data_atualizacao timestamptz DEFAULT now()
       )`);
   /** Insere um item na copia de teste. Defaults: PC 304 da Replas, 18.000 kg a R$ 11,30, nada recebido. */
   const itemCopia = (tabela: string, o: Record<string, unknown>) => {
@@ -109,6 +111,7 @@ describe.skipIf(!temBanco)('migration 0057 — pedido_compra_visto: auditoria, U
     expect(cols.rows.map((c) => c.column_name)).toEqual([
       'id', 'empresa', 'n_cod_ped', 'n_cod_item', 'pc_numero', 'n_cod_for', 'produto_descricao', 'unidade', 'qtde', 'qtde_rec', 'preco_unit',
       'etapa', 'dt_previsao', 'valor_total_pc', 'visto_em', 'created_at', 'updated_at',
+      'n_cod_prod', 'codigo_local_estoque', // migration 0058 (Historia 5): produto e local do item do PC
     ]);
     const obrigatorias = cols.rows.filter((c) => c.is_nullable === 'NO').map((c) => c.column_name);
     expect(obrigatorias).toEqual(['id', 'empresa', 'n_cod_ped', 'n_cod_item', 'pc_numero', 'visto_em', 'created_at', 'updated_at']);

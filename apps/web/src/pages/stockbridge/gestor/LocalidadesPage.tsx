@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { EmptyState, ErrorState } from '@atlas/ui';
 import { useAuthStore } from '../../../stores/auth.store.js';
 
-type Tipo = 'proprio' | 'tpl' | 'porto_seco' | 'virtual_transito' | 'virtual_ajuste';
+type Tipo = 'proprio' | 'tpl' | 'porto_seco' | 'virtual_transito' | 'virtual_ajuste' | 'operacional';
 
 interface Localidade {
   id: string;
@@ -20,6 +20,8 @@ const TIPO_LABEL: Record<Tipo, string> = {
   porto_seco: 'Porto Seco',
   virtual_transito: 'Virtual (Trânsito)',
   virtual_ajuste: 'Virtual (Ajuste)',
+  // 20.0.5 PROCESSO e 20.0.7 PRODUÇÃO da ACXE (migration 0058): só recebem compra nacional da ACXE
+  operacional: 'Operacional (produção/processo)',
 };
 
 function useApiFetch() {
@@ -51,7 +53,7 @@ export function LocalidadesPage() {
       <div className="mb-5">
         <h1 className="text-2xl font-serif text-atlas-ink mb-1">Localidades</h1>
         <p className="text-sm text-atlas-muted">
-          Armazéns próprios, 3PLs, portos secos e virtuais (trânsito/ajuste).
+          Armazéns próprios, 3PLs, portos secos, locais operacionais (produção/processo) e virtuais (trânsito/ajuste).
         </p>
       </div>
 
@@ -87,7 +89,7 @@ export function LocalidadesPage() {
             >
               <div className="font-mono text-xs">{l.codigo}</div>
               <div className="font-medium">{l.nome}</div>
-              <div className="text-atlas-muted">{TIPO_LABEL[l.tipo]}</div>
+              <div className="text-atlas-muted">{TIPO_LABEL[l.tipo] ?? l.tipo}</div>
               <div className="text-atlas-muted">{l.cnpj ?? '—'}</div>
               <div className="text-atlas-muted">{l.cidade ?? '—'}</div>
               <div className="text-center">

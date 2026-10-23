@@ -190,6 +190,7 @@ export async function dispensarNf(input: DispensarNfInput): Promise<DispensarNfR
   void (async () => {
     const nome = await nomeUsuario(input.userId);
     await enviarAlertaNfDispensada({
+      empresa: detalhe.empresa,
       notaFiscal: detalhe.notaFiscal,
       fornecedorNome: detalhe.fornecedorNome,
       situacaoFiscalNaDispensa: detalhe.fiscal,

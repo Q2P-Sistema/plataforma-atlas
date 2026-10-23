@@ -5,8 +5,9 @@ import { movimentacao, lote, localidade, localidadeCorrelacao, aprovacao } from 
 import type { Perfil, StatusOmie, SubtipoMovimento } from '../types.js';
 import { COD_INT_AJUSTE_SUFIXO, buildCodIntAjuste } from '../types.js';
 import { incluirAjusteIdempotente } from './omie-idempotente.js';
-import { calcularValorUnitarioQ2p, calcularValorUnitarioAcxe } from './recebimento.service.js';
+import { calcularValorUnitarioQ2p, calcularValorUnitarioAcxe, OmieAjusteError } from './recebimento.service.js';
 import { formatarDataOmie } from './omie-shared.js';
+import { entradaNacionalEspelhada } from './entrada-nacional-espelhada.js';
 import { resolverEstoqueDiferencaAcxe } from './estoques-especiais-acxe.js';
 import {
   resolverCorrelacaoCompletaGalpao,
@@ -68,6 +69,23 @@ export class OperadorSemRetentativasError extends Error {
   }
 }
 
+/**
+ * Retry da perna Q2P da entrada nacional nas duas empresas (feature 017, Historia 5) recusado por uma guarda,
+ * ANTES de qualquer chamada ao OMIE: a movimentacao nao e entrada nas duas empresas, a aprovacao nao foi
+ * concluida, a perna ACXE nao foi feita, a perna Q2P ja foi feita ou faltam dados persistidos. 409, com a
+ * mensagem para o usuario em `userMessage`.
+ */
+export class RetentativaEntradaNacionalInvalidaError extends Error {
+  constructor(
+    public readonly id: string,
+    message: string,
+    public readonly userMessage: string,
+  ) {
+    super(message);
+    this.name = 'RetentativaEntradaNacionalInvalidaError';
+  }
+}
+
 export interface OperacaoPendenteItem {
   id: string;
   opId: string;
@@ -77,6 +95,13 @@ export interface OperacaoPendenteItem {
   tentativas: number;
   ultimoErro: { lado: string; mensagem: string; timestamp: string } | null;
   createdAt: string;
+  /**
+   * Historia 5: identifica a pendencia SEM lote (compra nacional, saida manual) — o bloco `lote` vem vazio
+   * nesses casos. `empresa` e `galpao` sao os da movimentacao.
+   */
+  subtipo: string | null;
+  empresa: string | null;
+  galpao: string | null;
   lote: {
     id: string | null;
     codigo: string | null;
@@ -115,6 +140,10 @@ export async function listarPendentes(): Promise<OperacaoPendenteItem[]> {
       loteCodigo: lote.codigo,
       fornecedorNome: lote.fornecedorNome,
       produtoCodigoAcxe: lote.produtoCodigoAcxe,
+      subtipo: movimentacao.subtipo,
+      empresa: movimentacao.empresa,
+      galpao: movimentacao.galpao,
+      produtoCodigoAcxeMov: movimentacao.produtoCodigoAcxe,
     })
     .from(movimentacao)
     .leftJoin(lote, eq(lote.id, movimentacao.loteId))
@@ -155,11 +184,15 @@ export async function listarPendentes(): Promise<OperacaoPendenteItem[]> {
           }
         : null,
       createdAt: r.createdAt.toISOString(),
+      subtipo: r.subtipo ?? null,
+      empresa: r.empresa ?? null,
+      galpao: r.galpao ?? null,
       lote: {
         id: r.loteId,
         codigo: r.loteCodigo,
         fornecedorNome: r.fornecedorNome,
-        produtoCodigoAcxe: r.produtoCodigoAcxe,
+        // sem lote (compra nacional): o produto da propria movimentacao
+        produtoCodigoAcxe: r.produtoCodigoAcxe ?? r.produtoCodigoAcxeMov ?? null,
         quantidadeKg: Number(r.quantidadeKg),
       },
     };
@@ -309,6 +342,14 @@ interface MovimentacaoRow {
   movimentacaoOrigemId: string | null;
   // ACXEGDP-344: baixa do pedido Q2P pendente — disparada quando o dual conclui.
   baixaPedidoQ2p?: string | null;
+  // Historia 5 (ACXEGDP-437): retry da perna Q2P da compra nacional da ACXE nas duas empresas.
+  empresa?: string | null;
+  produtoCodigoQ2p?: number | null;
+  nfChaveAcesso?: string | null;
+  mvAcxe?: number | null;
+  mvQ2p?: number | null;
+  dtAcxe?: Date | null;
+  idMovestQ2p?: string | null;
 }
 
 async function retentarQ2p(args: {
@@ -317,6 +358,9 @@ async function retentarQ2p(args: {
 }): Promise<RetentarResult> {
   const db = getDb();
   if (!args.mov.loteId) {
+    // Historia 5 (ACXEGDP-437): a compra nacional da ACXE nas duas empresas tem retry proprio — a perna Q2P e uma
+    // ENTRADA (mvQ2p +1) com o valor gravado, e o fluxo de saida manual (SAI/TRF, mvQ2p -1) nao a cobre.
+    if (args.mov.subtipo === 'compra_nacional') return retentarQ2pEntradaNacional(args);
     // STK-03 (ACXEGDP-283): movimentacoes de saida manual/comodato nao tem lote —
     // antes este guard lancava incondicionalmente e a pendencia Q2P ficava
     // irrecuperavel (ACXE debitado, Q2P nao, sem caminho automatico).
@@ -431,6 +475,177 @@ async function retentarQ2p(args: {
       'Retry Q2P falhou — incrementando tentativas',
     );
     throw err;
+  }
+}
+
+/**
+ * Retry da perna Q2P da compra nacional da ACXE em estoque que tambem e da Q2P (Historia 5, ACXEGDP-437).
+ *
+ * A aprovacao lancou a ENTRADA na ACXE, a da Q2P falhou e a movimentacao ficou 'pendente_q2p'. Aqui a
+ * ENT/INI da Q2P e repetida com TUDO o que o POST/aprovacao gravou — nada e recalculado nem re-resolvido:
+ *  - produto da Q2P = `produto_codigo_q2p` (o correspondente resolvido no POST);
+ *  - valor = `custo_unitario_brl`, o MESMO numero da perna ACXE (nunca o preco vivo);
+ *  - data = a do lancamento na ACXE (`dt_acxe`), para as duas empresas ficarem na mesma data;
+ *  - cod_int_ajuste = ${opId}:nacional-q2p, a mesma chave da aprovacao, com `verificarAntes` (se a chamada
+ *    anterior chegou ao OMIE e so a resposta se perdeu, o ajuste e reaproveitado em vez de duplicado).
+ * Nunca baixa pedido de compra na Q2P (344).
+ *
+ * Guardas (nada vai ao OMIE se alguma falhar): e entrada nas duas empresas; a aprovacao foi concluida; a perna
+ * ACXE foi feita — sem ela o retry criaria estoque na Q2P sem entrada na ACXE —; a perna Q2P ainda nao.
+ * Falha: incrementa as tentativas e devolve OmieAjusteError('q2p') (502 OMIE_Q2P_FAIL com mensagem pt-BR).
+ */
+async function retentarQ2pEntradaNacional(args: {
+  mov: MovimentacaoRow;
+  ator: RetentarInput['ator'];
+}): Promise<RetentarResult> {
+  const db = getDb();
+  const { mov } = args;
+
+  if (
+    !entradaNacionalEspelhada({
+      subtipo: mov.subtipo,
+      empresa: mov.empresa ?? null,
+      nfChaveAcesso: mov.nfChaveAcesso ?? null,
+      produtoCodigoQ2p: mov.produtoCodigoQ2p ?? null,
+    })
+  ) {
+    throw new RetentativaEntradaNacionalInvalidaError(
+      mov.id,
+      `Movimentação ${mov.id} (compra nacional) não é uma entrada nas duas empresas — não há perna Q2P a retentar`,
+      'Esta entrada é só de uma empresa: não há lançamento na Q2P a retentar.',
+    );
+  }
+
+  // GUARDA DE APROVACAO: a movimentacao nasce 'pendente_q2p' na submissao, antes do gestor decidir; retry so
+  // vale depois da aprovacao (senao lancaria estoque de uma entrada nao aprovada, ou rejeitada).
+  const [aprAprovada] = await db
+    .select({ id: aprovacao.id })
+    .from(aprovacao)
+    .where(and(eq(aprovacao.movimentacaoId, mov.id), eq(aprovacao.status, 'aprovada')))
+    .limit(1);
+  if (!aprAprovada) {
+    throw new RetentativaEntradaNacionalInvalidaError(
+      mov.id,
+      `Movimentação ${mov.id} ainda não tem aprovação concluída — a pendência Q2P só é retentável depois que o gestor aprovar a entrada`,
+      'A entrada ainda não foi aprovada pelo gestor. A pendência na Q2P só pode ser retentada depois da aprovação.',
+    );
+  }
+  if (mov.mvAcxe !== 1 || !mov.idMovestAcxe) {
+    throw new RetentativaEntradaNacionalInvalidaError(
+      mov.id,
+      `Movimentação ${mov.id}: a entrada na ACXE ainda não foi lançada — retentar a Q2P criaria estoque na Q2P sem a entrada na ACXE`,
+      'A entrada na ACXE ainda não foi lançada; retentar a Q2P agora criaria estoque na Q2P sem a entrada na ACXE.',
+    );
+  }
+  if (mov.idMovestQ2p || mov.mvQ2p != null) {
+    throw new RetentativaEntradaNacionalInvalidaError(
+      mov.id,
+      `Movimentação ${mov.id}: a entrada na Q2P já consta como lançada — nada a retentar`,
+      'A entrada na Q2P já consta como lançada. Não há nada a retentar.',
+    );
+  }
+  if (!mov.galpao) {
+    throw new RetentativaEntradaNacionalInvalidaError(
+      mov.id,
+      `Movimentação ${mov.id} sem galpão persistido — não é possível reconstruir a chamada Q2P`,
+      'A movimentação está sem o estoque de destino gravado; não é possível retentar a Q2P. Acione o suporte.',
+    );
+  }
+
+  // Local da Q2P: join direto em localidade_correlacao, SEM filtro de tipo (o 31.1 e 'tpl' e quebraria
+  // resolverCorrelacaoCompletaGalpao, que so aceita 'proprio').
+  const localRes = await db.execute<{ codigo: string | null }>(sql`
+    SELECT lc.codigo_local_estoque_q2p::text AS codigo
+    FROM stockbridge.localidade l
+    INNER JOIN stockbridge.localidade_correlacao lc ON lc.localidade_id = l.id
+    WHERE l.codigo = ${mov.galpao}
+    LIMIT 1
+  `);
+  const codigoLocalQ2p = localRes.rows[0]?.codigo;
+  if (!codigoLocalQ2p) {
+    throw new RetentativaEntradaNacionalInvalidaError(
+      mov.id,
+      `Local ${mov.galpao} sem código OMIE da Q2P — não é possível retentar a entrada na Q2P (movimentação ${mov.id})`,
+      `O estoque ${mov.galpao} não tem mais correspondente na Q2P; não é possível retentar a entrada na Q2P. Acione o suporte.`,
+    );
+  }
+
+  // O MESMO valor da perna ACXE: o gravado no POST. Sem preco vivo como substituto.
+  const valor = mov.custoUnitarioBrl != null ? Number(mov.custoUnitarioBrl) : 0;
+  if (!(valor > 0)) {
+    throw new RetentativaEntradaNacionalInvalidaError(
+      mov.id,
+      `Movimentação ${mov.id} sem custo unitário persistido — o retry da Q2P não recalcula o valor (a ACXE já foi lançada com o valor original)`,
+      'A movimentação está sem o valor unitário gravado; o retry não recalcula o valor. Acione o suporte.',
+    );
+  }
+  const quantidade = Number(new Decimal(Math.abs(Number(mov.quantidadeKg))).toFixed(3));
+
+  try {
+    const res = await incluirAjusteIdempotente(
+      'q2p',
+      buildCodIntAjuste(mov.opId, COD_INT_AJUSTE_SUFIXO.nacionalQ2p),
+      {
+        codigoLocalEstoque: codigoLocalQ2p,
+        idProduto: Number(mov.produtoCodigoQ2p),
+        dataAtual: formatarDataOmie(mov.dtAcxe ?? undefined),
+        quantidade,
+        // ASCII puro: o OMIE guarda a observacao em Latin-1.
+        observacao: `Retry Q2P entrada nacional NF ${mov.notaFiscal} (op ${mov.opId})`.slice(0, 240),
+        origem: 'AJU',
+        tipo: 'ENT',
+        motivo: 'INI',
+        valor,
+      },
+      { verificarAntes: true },
+    );
+
+    await db
+      .update(movimentacao)
+      .set({
+        idMovestQ2p: res.idMovest,
+        idAjusteQ2p: res.idAjuste,
+        // Entrada: mesmo sinal que a perna ACXE e a aprovacao gravam (o retry de saida manual grava -1).
+        mvQ2p: 1,
+        dtQ2p: new Date(),
+        idUserQ2p: args.ator.userId,
+        statusOmie: 'concluida',
+        ultimoErroOmie: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(movimentacao.id, mov.id));
+
+    logger.info(
+      { movimentacaoId: mov.id, opId: mov.opId, ator: args.ator, jaExistia: res.jaExistia },
+      'Pendência Q2P da compra nacional da ACXE concluída via retry',
+    );
+
+    return {
+      movimentacaoId: mov.id,
+      statusOmie: 'concluida',
+      jaExistiaNoOmie: res.jaExistia,
+      tentativasQ2p: mov.tentativasQ2p,
+    };
+  } catch (err) {
+    const novasTentativas = mov.tentativasQ2p + 1;
+    await db
+      .update(movimentacao)
+      .set({
+        tentativasQ2p: novasTentativas,
+        ultimoErroOmie: {
+          lado: 'q2p',
+          mensagem: (err as Error)?.message ?? 'erro desconhecido',
+          timestamp: new Date().toISOString(),
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(movimentacao.id, mov.id));
+
+    logger.warn(
+      { movimentacaoId: mov.id, opId: mov.opId, tentativasQ2p: novasTentativas, ator: args.ator, err },
+      'Retry Q2P da compra nacional da ACXE falhou — incrementando tentativas',
+    );
+    throw new OmieAjusteError('q2p', err, { opId: mov.opId, movimentacaoId: mov.id, recoverable: true });
   }
 }
 

@@ -1,8 +1,15 @@
 import { eq, and, isNull, desc } from 'drizzle-orm';
 import { getDb, getPool, createLogger } from '@atlas/core';
 import { fornecedorExclusao } from '@atlas/db';
+import type { EmpresaNacional } from './empresa-nacional.js';
 
 const logger = createLogger('stockbridge:fornecedor');
+
+/**
+ * Historia 5 (ACXEGDP-437, migration 0058): a exclusao do fornecedor e POR EMPRESA — a fila de recebimento
+ * nacional de cada empresa tem as suas. Sem `empresa`, 'q2p': a tela atual (Fornecedores) nao muda.
+ */
+const EMPRESA_PADRAO: EmpresaNacional = 'q2p';
 
 export interface FornecedorExclusaoItem {
   id: string;
@@ -31,8 +38,11 @@ export class ExclusaoNaoEncontradaError extends Error {
 /**
  * Lista fornecedores com flag de exclusao (a partir de `shared.vw_sb_fornecedor_ativo`
  * quando disponivel OU fallback para leitura direta de public.tbl_cadastroFornecedoresClientes_ACXE).
+ * Historia 5: as exclusoes marcadas sao as da `empresa` pedida (padrao 'q2p'). A lista de CNPJs a escolher
+ * continua vindo do cadastro da ACXE para as duas — o da Q2P tem ~2,4 mil fornecedores e esta consulta corta em
+ * 500, entao trocar a fonte pioraria a tela atual; o que muda por empresa e a exclusao, nao o candidato.
  */
-export async function listarFornecedores(): Promise<Array<{
+export async function listarFornecedores(empresa: EmpresaNacional = EMPRESA_PADRAO): Promise<Array<{
   cnpj: string;
   nome: string;
   pais: string | null;
@@ -44,8 +54,8 @@ export async function listarFornecedores(): Promise<Array<{
   const excluidosRes = await pool.query(`
     SELECT fornecedor_cnpj, fornecedor_nome, motivo
     FROM stockbridge.fornecedor_exclusao
-    WHERE reincluido_em IS NULL
-  `).catch(() => ({ rows: [] }));
+    WHERE reincluido_em IS NULL AND empresa = $1
+  `, [empresa]).catch(() => ({ rows: [] }));
 
   const excluidos = new Map<string, { nome: string; motivo: string | null }>();
   for (const r of excluidosRes.rows as Array<{ fornecedor_cnpj: string; fornecedor_nome: string; motivo: string | null }>) {
@@ -90,13 +100,22 @@ export async function excluirFornecedor(args: {
   nome: string;
   motivo: string | null;
   usuarioId: string;
+  /** Historia 5: fila da empresa de onde o fornecedor sai (padrao 'q2p') */
+  empresa?: EmpresaNacional;
 }): Promise<{ id: string }> {
   const db = getDb();
+  const empresa = args.empresa ?? EMPRESA_PADRAO;
 
   const [existente] = await db
     .select()
     .from(fornecedorExclusao)
-    .where(and(eq(fornecedorExclusao.fornecedorCnpj, args.cnpj), isNull(fornecedorExclusao.reincluidoEm)))
+    .where(
+      and(
+        eq(fornecedorExclusao.fornecedorCnpj, args.cnpj),
+        eq(fornecedorExclusao.empresa, empresa),
+        isNull(fornecedorExclusao.reincluidoEm),
+      ),
+    )
     .limit(1);
   if (existente) {
     throw new FornecedorJaExcluidoError(args.cnpj);
@@ -105,6 +124,7 @@ export async function excluirFornecedor(args: {
   const [novo] = await db
     .insert(fornecedorExclusao)
     .values({
+      empresa,
       fornecedorCnpj: args.cnpj,
       fornecedorNome: args.nome,
       motivo: args.motivo,
@@ -112,17 +132,29 @@ export async function excluirFornecedor(args: {
     })
     .returning();
 
-  logger.info({ cnpj: args.cnpj, nome: args.nome }, 'Fornecedor excluido da fila');
+  logger.info({ cnpj: args.cnpj, nome: args.nome, empresa }, 'Fornecedor excluido da fila');
   return { id: novo!.id };
 }
 
-export async function reincluirFornecedor(args: { cnpj: string; usuarioId: string }): Promise<{ id: string }> {
+export async function reincluirFornecedor(args: {
+  cnpj: string;
+  usuarioId: string;
+  /** Historia 5: fila da empresa onde o fornecedor volta (padrao 'q2p') */
+  empresa?: EmpresaNacional;
+}): Promise<{ id: string }> {
   const db = getDb();
+  const empresa = args.empresa ?? EMPRESA_PADRAO;
 
   const [ativa] = await db
     .select()
     .from(fornecedorExclusao)
-    .where(and(eq(fornecedorExclusao.fornecedorCnpj, args.cnpj), isNull(fornecedorExclusao.reincluidoEm)))
+    .where(
+      and(
+        eq(fornecedorExclusao.fornecedorCnpj, args.cnpj),
+        eq(fornecedorExclusao.empresa, empresa),
+        isNull(fornecedorExclusao.reincluidoEm),
+      ),
+    )
     .orderBy(desc(fornecedorExclusao.excluidoEm))
     .limit(1);
   if (!ativa) {
@@ -134,6 +166,6 @@ export async function reincluirFornecedor(args: { cnpj: string; usuarioId: strin
     .set({ reincluidoEm: new Date(), reincluidoPor: args.usuarioId })
     .where(eq(fornecedorExclusao.id, ativa.id));
 
-  logger.info({ cnpj: args.cnpj }, 'Fornecedor reincluido na fila');
+  logger.info({ cnpj: args.cnpj, empresa }, 'Fornecedor reincluido na fila');
   return { id: ativa.id };
 }

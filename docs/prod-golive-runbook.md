@@ -398,3 +398,74 @@ do cache parada, sem efeito.
   da migration só as cria se faltar alguma);
 - `STOCKBRIDGE_COPIA_PCS_MAX_MIN=1440`, porque a cópia de PCs também chega pela cópia PROD→UAT.
   Com um limite curto, o modo seguro recusaria toda NF com fiscal pendente.
+
+## Ativação da Fase 2 da 017 — compra nacional da ACXE (ACXEGDP-437, História 5)
+
+A imagem da Fase 2 pode subir com a chave da ACXE **desligada**: com
+`STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED=false` a fila e a tela da Q2P ficam como estão (a
+única mudança visível é a exclusão de fornecedor passar a valer por empresa). Ligar a chave é um
+passo separado, depois do n8n da ACXE e de um teste controlado no OMIE da ACXE. Desenho e decisões em
+`specs/017-recebimento-nacional-com-pc/research.md` (D18).
+
+**Ordem**
+
+1. **Migration 0058** em PROD, **antes** da imagem, só o arquivo, com o dono dos objetos (`postgres`),
+   como a 0056:
+
+   ```bash
+   export PROD_USER=<usuario-prod>
+   PGOPTIONS='-c lock_timeout=5s' psql -h db.manager01.q2p.com.br -p 5432 -U "$PROD_USER" -d acxe_q2p \
+     -1 -q -v ON_ERROR_STOP=1 -f packages/db/migrations/0058_stockbridge_recebimento_nacional_acxe.sql
+   echo "exit=$?"
+   ```
+
+   - Esperado: `exit=0`. `NOTICE` normais: as duas tabelas do espelho da ACXE "já existem — não
+     alterada" (em PROD foram criadas vazias em 21/10/2026), `index ... does not exist, skipping` na
+     1ª execução. Reaplicar é seguro.
+   - O que muda: `fornecedor_exclusao.empresa` (as exclusões atuais ficam `q2p`; a Q2P matriz e filial
+     entram como excluídas na fila da ACXE), o tipo `operacional` e os locais 20.0.5/20.0.7 (com a
+     correlação só da ACXE), o índice de idempotência da ACXE, o índice da 0052 refeito só para a Q2P
+     (lock de escrita em `stockbridge.movimentacao` durante o `CREATE INDEX`, segundos) e duas colunas
+     em `pedido_compra_visto`.
+   - **Sem a 0058, a imagem nova quebra a fila nacional da Q2P** (a consulta passa a filtrar
+     `fornecedor_exclusao.empresa`). Não inverter.
+   - Conferência (somente leitura):
+
+     ```sql
+     SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'stockbridge'
+               AND table_name = 'fornecedor_exclusao' AND column_name = 'empresa') AS fe_empresa,
+            (SELECT count(*) FROM stockbridge.fornecedor_exclusao
+               WHERE empresa = 'acxe' AND reincluido_em IS NULL) AS q2p_excluida_na_acxe,   -- 2
+            (SELECT count(*) FROM stockbridge.localidade WHERE codigo IN ('20.0.5','20.0.7')
+               AND tipo = 'operacional') AS locais_operacionais,                          -- 2
+            to_regclass('stockbridge.movimentacao_nf_nacional_acxe_idempotencia_idx') AS idx_acxe,
+            (SELECT pg_get_indexdef('stockbridge.movimentacao_nf_nacional_idempotencia_idx'::regclass)
+               LIKE '%empresa%') AS idx_0052_so_q2p,                                       -- true
+            (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'stockbridge'
+               AND table_name = 'pedido_compra_visto'
+               AND column_name IN ('n_cod_prod','codigo_local_estoque')) AS cache_colunas;  -- 2
+     ```
+
+2. **Imagem nova** com as variáveis no YAML (já no `atlas.stack.yml`):
+   `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED: ${…:-false}` e
+   `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_DATA_CORTE: ${…:-}`. Conferir a fila e o detalhe da Q2P
+   (Ctrl+Shift+R antes de reprovar qualquer item de tela).
+3. **n8n "ACXE - Exporta Recebimentos NF-e"** (`xqgvUZ1X9P52EDbH`, inativo): ativar, deixar rodar e
+   conferir que `public."tbl_recebimentoNFe_ACXE"` traz os recebimentos **pendentes e os já recebidos**
+   (o histórico é o que permite detectar NF recebida no portal com estoque). T052.
+4. **Teste controlado em PROD** (T076), no modelo do T033, com a próxima NF da Solutec contra o PC 580:
+   fiscal com o vínculo no OMIE da ACXE e, na aprovação, `ENT/INI` só na ACXE no 20.0.7; depois uma
+   entrada num local que também é da Q2P (21.1), conferindo o mesmo valor nas duas empresas e a
+   Conferência de Estoque. É a primeira escrita do Atlas no OMIE da ACXE por esse caminho.
+5. **Ligar**: `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_DATA_CORTE` com a data da ativação (NF da ACXE
+   emitida antes dela nunca entra na fila; 13 NFs desde 11/09/2026 já foram recebidas no portal com
+   estoque) e `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED=true`, com "Update the stack". A chave
+   só vale com `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED=true`. Conferir `GET /api/v1/stockbridge/health`:
+   `recebimentoNfeEspelhoAcxe` e `pedidosCompraCopiaAcxe` deixam de ser `desligado`.
+6. **Combinar com a equipe da ACXE** que a compra nacional passa a ser recebida pelo Atlas: NF
+   concluída no portal com estoque aparece na fila como "estoque já lançado pelo OMIE" e fica
+   bloqueada (o gestor dispensa).
+
+**Desligar**: `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED=false` e "Update the stack": as NFs da
+ACXE saem da fila; aprovações já criadas continuam aprovando normalmente.
+

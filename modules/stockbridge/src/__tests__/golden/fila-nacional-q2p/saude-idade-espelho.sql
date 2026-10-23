@@ -1,0 +1,1 @@
+SELECT (EXTRACT(EPOCH FROM (now() - MAX(synced_at))) / 60)::numeric(12,1) AS idade_min FROM public."tbl_recebimentoNFe_Q2P"

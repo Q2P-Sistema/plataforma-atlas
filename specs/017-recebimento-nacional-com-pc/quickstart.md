@@ -117,15 +117,18 @@ Base: uma NF de teste (UAT, sombra do modo leitura, ou mock) com o item já vinc
 3. Com a chave da 016 desligada, a fila, o detalhe e o POST se comportam como na contenção, mais os cenários 5.1 e 5.4.
 4. Cockpit e pendências fiscais: com um PC da ACXE recebido em parte injetado na cópia, contam o saldo e não a quantidade cheia. O trânsito (função `refresh_lotes_em_transito_se_stale` da 0037) não muda nesta feature e segue contando a quantidade cheia (limitação registrada em research D10).
 
-## Cenário 8 — Compra nacional pela ACXE (História 5, fase 2)
+## Cenário 8 — Compra nacional pela ACXE (História 5, fase 2; revisto em 22/10/2026, research D18)
 
-Pré-requisitos: 0058 (a 0057 é o cache de PCs vistos), workflow "ACXE - Exporta Recebimentos NF-e" e `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED=true`.
+Pré-requisitos: 0058, workflow "ACXE - Exporta Recebimentos NF-e" ativo (com histórico), `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED=true`, `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_DATA_CORTE` e `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED=true`.
 
-1. A NF da ACXE aparece na fila identificada pela empresa. A NF Q2P→ACXE não aparece.
-2. Fiscal com vínculo no OMIE da ACXE (mesma receita).
-3. Local espelhado: a entrada é lançada na ACXE e na Q2P com **o mesmo valor unitário**, sem os 14,5%, e sem divergência nova na Conferência de Estoque.
-4. Material chegando a Extrema: local 21.1 EXTREMA. A entrada vai para o 21.1 da ACXE e o 21.1 da Q2P, e o produto aparece disponível para venda na Q2P.
-5. Nenhuma baixa de PC na Q2P.
+1. A NF da ACXE aparece na fila com o selo "ACXE" (filtro Todas/ACXE/Q2P). A NF da Q2P para a ACXE (intercompany) não aparece. NF da ACXE emitida antes do corte da ACXE também não. Com a chave da ACXE ligada sem a da 016 ou sem o corte, a ACXE fica fora (log e health) e a fila da Q2P segue normal.
+2. Detalhe: o PC da ACXE sugerido como na Q2P; o produto sugerido é o do catálogo da ACXE (o que o OMIE associou ao item, ou o do PC); o local vem marcado pelo PC (PC 580 → 20.0.7 PRODUÇÃO), com a dica "Estoque sugerido pelo pedido de compra — pode trocar". O select de estoque tem dois grupos: "Entra na ACXE e na Q2P" (11.1, 12.1, 21.1, 31.1) e "Entra só na ACXE" (20.0.5, 20.0.7, 21.2). Sem TRÂNSITO, sem código do OMIE.
+3. Fiscal com vínculo no OMIE da ACXE (mesma receita). A trava de estoque já lançado consulta o OMIE da ACXE.
+4. Local só da ACXE (20.0.7): na aprovação, `ENT/INI` só na ACXE (`nacional-acxe`), com o valor do item na NF por kg.
+5. Local que também é da Q2P (21.1): na aprovação, `ENT/INI` na ACXE e depois na Q2P (`nacional-q2p`), com **o mesmo valor unitário**, sem os 14,5%, e sem divergência nova na Conferência de Estoque. O produto aparece disponível para venda na Q2P.
+6. Produto da ACXE sem produto de mesma descrição na Q2P (ex.: SUCATA DE PLÁSTICO da Replas): a tela marca "Sem correspondente na Q2P" e desabilita os locais que entram nas duas; o POST recusa a combinação com `422 PRODUTO_SEM_CORRELATO_Q2P` antes do fiscal. Produto da ACXE fora de KG (cabo, cimento…) não aparece na lista; enviado à força, `422 PRODUTO_UNIDADE_NAO_KG`.
+7. Falha da perna Q2P na aprovação (mock): a aprovação fica aprovada, a movimentação `pendente_q2p` com a perna da ACXE gravada, alerta ao ops; "Retentar Q2P" em Movimentações conclui com o mesmo valor. Falha da perna ACXE: nada gravado, a aprovação continua pendente.
+8. Nenhuma baixa de PC na Q2P (344) em nenhum caminho.
 
 ## Cenário 9 — PC por NF, PC de outro cadastro e PC fora da lista de pendentes (rodada de 22/10/2026)
 
@@ -173,3 +176,5 @@ Base: uma NF de 4 itens contra um PC de 3 itens do mesmo fornecedor, lançado em
   - `recebimento-nacional-flag-off.test.ts` (estender): contenção + FR-021/021a;
   - auditoria (integração, `ATLAS_DB_INTEGRATION=1`): triggers de `recebimento_fiscal_pc`, `nf_aviso_compras` e `pedido_compra_visto` (22/10; `auditoria-pedido-compra-visto.test.ts` cobre também o upsert real, a linha repetida na cópia e a validade — roda num Postgres com `shared.audit_log` e a 0057, sem as tabelas do n8n);
   - `cockpit`/`pendencias-fiscais` (estender): saldo com `nqtderec`.
+  - Fase 2 (ACXE, 23/10/2026): `empresa-nacional`, `fila-nacional-acxe`, `fila-nacional-q2p-golden` (o SQL da Q2P igual ao de antes da Fase 2, exceto o filtro de empresa da exclusão de fornecedor; regenerar com `UPDATE_GOLDEN=1` só de propósito), `detalhe-nacional-acxe`, `fiscal-recebida-acxe`, `pc-sugestao-acxe`, `pc-visto-acxe`, `saude-nacional-acxe`, `alerta-espelho-acxe`, `cron-acxe`, `produto-gemeo-q2p`, `recebimento-nacional-acxe*`, `localidades-destino-acxe`, `aprovacao-entrada-nacional-acxe*`, `aprovacao-nacional-acxe-cenarios`, `operacoes-pendentes-*-acxe*`, `movimentacao-retentavel-q2p`, `fornecedor-*empresa`, `nf-dispensa-acxe`, `recebimento-externo-acxe`, `notificacao-*-acxe`;
+  - Fase 2 com Postgres real (opt-in, um arquivo por vez, banco descartável com as migrations até a 0058): `ATLAS_DB_INTEGRATION=1 DATABASE_URL=<descartável> … vitest run src/__tests__/auditoria-recebimento-nacional-acxe.test.ts` e o mesmo para `fila-nacional-acxe-db.test.ts` (os dois criam tabelas públicas de teste com DDL diferente: juntos, um se pula).

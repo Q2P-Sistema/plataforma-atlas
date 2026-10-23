@@ -22,6 +22,11 @@ const logger = createLogger('stockbridge:pc-visto');
  * contexto da sugestao. So linhas que MUDARAM sao gravadas (o trigger de auditoria
  * registra o historico do PC, nao ruido a cada sync). Leitura: `lerPcsVistos`, so dos
  * PCs que a copia nao trouxe.
+ *
+ * Historia 5 (ACXEGDP-437, migration 0058): o cache tambem guarda o produto (`n_cod_prod`)
+ * e o local (`codigo_local_estoque`) do item do PC — a NF da ACXE pre-seleciona o produto
+ * e o local de entrada pelo PC mesmo quando ele saiu da lista de pendentes. Na copia o local
+ * e varchar: so entra se for numerico.
  */
 
 export interface PcVisto extends Omit<PcCopia, 'fonte'> {
@@ -63,27 +68,32 @@ export async function registrarPcsVistos(empresa: EmpresaPc): Promise<number> {
                 pc.nqtde::numeric(14,3) AS qtde, COALESCE(pc.nqtderec, 0)::numeric(14,3) AS qtde_rec,
                 pc.nvalunit::numeric(14,6) AS preco_unit, btrim(COALESCE(pc.cetapa, '')) AS etapa,
                 pc.ddtprevisao::date AS dt_previsao,
+                pc.ncodprod::bigint AS n_cod_prod,
+                CASE WHEN btrim(COALESCE(pc.codigo_local_estoque, '')) ~ '^[0-9]{1,18}$' THEN btrim(pc.codigo_local_estoque)::bigint END AS codigo_local_estoque,
                 SUM(COALESCE(pc.nvaltot, pc.nqtde * pc.nvalunit, 0)) OVER (PARTITION BY pc.ncodped)::numeric(14,2) AS valor_total_pc
            FROM itens pc
        ),
        gravado AS (
          INSERT INTO stockbridge.pedido_compra_visto
-           (empresa, n_cod_ped, n_cod_item, pc_numero, n_cod_for, produto_descricao, unidade, qtde, qtde_rec, preco_unit, etapa, dt_previsao, valor_total_pc, visto_em)
-         SELECT $1, c.ncodped, c.ncoditem, c.pc_numero, c.ncodfor, c.produto_descricao, c.unidade, c.qtde, c.qtde_rec, c.preco_unit, c.etapa, c.dt_previsao, c.valor_total_pc, now()
+           (empresa, n_cod_ped, n_cod_item, pc_numero, n_cod_for, produto_descricao, unidade, qtde, qtde_rec, preco_unit, etapa, dt_previsao, valor_total_pc, n_cod_prod, codigo_local_estoque, visto_em)
+         SELECT $1, c.ncodped, c.ncoditem, c.pc_numero, c.ncodfor, c.produto_descricao, c.unidade, c.qtde, c.qtde_rec, c.preco_unit, c.etapa, c.dt_previsao, c.valor_total_pc, c.n_cod_prod, c.codigo_local_estoque, now()
            FROM copia c
          ON CONFLICT (empresa, n_cod_item) DO UPDATE
            SET n_cod_ped = EXCLUDED.n_cod_ped, pc_numero = EXCLUDED.pc_numero, n_cod_for = EXCLUDED.n_cod_for,
                produto_descricao = EXCLUDED.produto_descricao, unidade = EXCLUDED.unidade, qtde = EXCLUDED.qtde,
                qtde_rec = EXCLUDED.qtde_rec, preco_unit = EXCLUDED.preco_unit, etapa = EXCLUDED.etapa,
                dt_previsao = EXCLUDED.dt_previsao, valor_total_pc = EXCLUDED.valor_total_pc,
+               n_cod_prod = EXCLUDED.n_cod_prod, codigo_local_estoque = EXCLUDED.codigo_local_estoque,
                visto_em = EXCLUDED.visto_em, updated_at = now()
            WHERE (pedido_compra_visto.n_cod_ped, pedido_compra_visto.pc_numero, pedido_compra_visto.n_cod_for,
                   pedido_compra_visto.produto_descricao, pedido_compra_visto.unidade, pedido_compra_visto.qtde,
                   pedido_compra_visto.qtde_rec, pedido_compra_visto.preco_unit, pedido_compra_visto.etapa,
-                  pedido_compra_visto.dt_previsao, pedido_compra_visto.valor_total_pc)
+                  pedido_compra_visto.dt_previsao, pedido_compra_visto.valor_total_pc,
+                  pedido_compra_visto.n_cod_prod, pedido_compra_visto.codigo_local_estoque)
                  IS DISTINCT FROM
                  (EXCLUDED.n_cod_ped, EXCLUDED.pc_numero, EXCLUDED.n_cod_for, EXCLUDED.produto_descricao, EXCLUDED.unidade,
-                  EXCLUDED.qtde, EXCLUDED.qtde_rec, EXCLUDED.preco_unit, EXCLUDED.etapa, EXCLUDED.dt_previsao, EXCLUDED.valor_total_pc)
+                  EXCLUDED.qtde, EXCLUDED.qtde_rec, EXCLUDED.preco_unit, EXCLUDED.etapa, EXCLUDED.dt_previsao, EXCLUDED.valor_total_pc,
+                  EXCLUDED.n_cod_prod, EXCLUDED.codigo_local_estoque)
          RETURNING 1
        )
        SELECT count(*)::text AS n FROM gravado`,
@@ -105,6 +115,13 @@ export async function registrarPcsVistosSeVencido(empresa: EmpresaPc, agoraMs: n
   if (agoraMs - ultimo < REGISTRO_OPORTUNISTA_MIN_MS) return;
   ultimoRegistroMs.set(empresa, agoraMs);
   await registrarPcsVistos(empresa);
+}
+
+/** Id do OMIE em texto (bigint) -> number; vazio, nao numerico ou <= 0 = undefined (ausente). */
+function idOmieValido(v: string | null | undefined): number | undefined {
+  if (v == null || !/^\d{1,18}$/.test(v.trim())) return undefined;
+  const n = Number(v.trim());
+  return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
 /**
@@ -135,9 +152,12 @@ export async function lerPcsVistos(
     valor_total_pc: string | null;
     visto_ms: number | string | null;
     cnpj_cadastro: string | null;
+    n_cod_prod?: string | null;
+    codigo_local_estoque?: string | null;
   }>(
     `SELECT v.n_cod_ped::text, v.n_cod_item::text, v.pc_numero, v.n_cod_for::text, v.produto_descricao, v.unidade,
             v.qtde::text, v.qtde_rec::text, v.preco_unit::text, v.etapa, v.dt_previsao::text, v.valor_total_pc::text,
+            v.n_cod_prod::text, v.codigo_local_estoque::text,
             (EXTRACT(EPOCH FROM v.visto_em) * 1000)::float8 AS visto_ms,
             regexp_replace(COALESCE(cad.cnpj_cpf, ''), '\\D', '', 'g') AS cnpj_cadastro
        FROM stockbridge.pedido_compra_visto v
@@ -162,6 +182,8 @@ export async function lerPcsVistos(
     const nvalunit = x.preco_unit == null ? null : Number(x.preco_unit);
     const valorTotal = Number(x.valor_total_pc ?? 0);
     const cnpj = x.cnpj_cadastro ?? '';
+    const nCodProd = idOmieValido(x.n_cod_prod);
+    const codigoLocalEstoque = idOmieValido(x.codigo_local_estoque);
     out.push({
       nCodPed: Number(x.n_cod_ped),
       nCodItem: Number(x.n_cod_item),
@@ -175,10 +197,13 @@ export async function lerPcsVistos(
       unidade: (x.unidade ?? '').trim().toUpperCase(),
       dtPrevisao: x.dt_previsao ? String(x.dt_previsao).slice(0, 10) : null,
       atualizadoEmMs: Number(x.visto_ms ?? 0),
-      pcEspelho: cnpj === CNPJ_ACXE_NUMERICO && valorTotal < PC_ESPELHO_VALOR_MAX_BRL,
+      // PC-espelho da importacao so existe na copia da Q2P (mesma regra de carregarContextoPc)
+      pcEspelho: empresa === 'q2p' && cnpj === CNPJ_ACXE_NUMERICO && valorTotal < PC_ESPELHO_VALOR_MAX_BRL,
       cnpjCadastro: cnpj,
       raizCnpj: raizCnpj(cnpj),
       vistoEmMs: Number(x.visto_ms ?? 0),
+      ...(nCodProd !== undefined ? { nCodProd } : {}),
+      ...(codigoLocalEstoque !== undefined ? { codigoLocalEstoque } : {}),
     });
   }
   return out;

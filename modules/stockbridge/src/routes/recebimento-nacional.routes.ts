@@ -6,11 +6,15 @@ import { requireArmazemVinculado } from '../middleware/armazem-vinculado.js';
 import type { Perfil } from '../types.js';
 import {
   listarLocalidadesNacional,
+  listarDestinosEntradaNf,
   buscarProdutosNacional,
   processarRecebimentoNacional,
   processarRecebimentoNacionalPorNf,
   LocalidadeNaoElegivelError,
   ProdutoNaoEncontradoError,
+  ProdutoSemCorrelatoQ2pError,
+  ProdutoCorrelatoQ2pRepetidoError,
+  ProdutoUnidadeNaoKgError,
   ValidacaoRecebimentoNacionalError,
   NfNacionalJaProcessadaError,
   VerificacaoEstoqueOmieError,
@@ -40,6 +44,7 @@ import {
   ehTabelaAusente,
 } from '../services/fila-nacional.service.js';
 import { definirConjuntoCorrelacao } from '../services/correlacao-produto.service.js';
+import { recebimentoNacionalAcxeHabilitado } from '../services/empresa-nacional.js';
 import {
   RecebimentoFiscalError,
   RecebimentoFiscalEmAndamentoError,
@@ -85,6 +90,9 @@ const EmpresaSchema = z.enum(['acxe', 'q2p']);
 
 const LocalidadesQuerySchema = z.object({
   empresa: EmpresaSchema,
+  // Historia 5 (ACXEGDP-437): `destino=nf` devolve os estoques de destino da entrada POR NF da empresa
+  // (a ACXE inclui os que tambem sao da Q2P, com `entradaEm`). Sem ele, a lista do formulario manual, inalterada.
+  destino: z.enum(['nf']).optional(),
 });
 
 router.get(
@@ -100,7 +108,10 @@ router.get(
       return;
     }
     try {
-      const data = await listarLocalidadesNacional(parsed.data.empresa);
+      const data =
+        parsed.data.destino === 'nf'
+          ? await listarDestinosEntradaNf(parsed.data.empresa)
+          : await listarLocalidadesNacional(parsed.data.empresa);
       res.json({ data, error: null });
     } catch (err) {
       logger.error({ err }, 'Erro ao listar localidades nacional');
@@ -299,6 +310,9 @@ function responderErroFilaNacional(res: Response, err: unknown): boolean {
 const FilaNacionalQuerySchema = z.object({
   q: z.string().max(100).optional(),
   fornecedor: z.string().max(100).optional(),
+  // Historia 5 (ACXEGDP-437): filtro opcional por empresa da NF. Sem ele a fila traz as empresas ativas;
+  // `acxe` com a compra nacional da ACXE desabilitada devolve lista vazia (ver meta).
+  empresa: EmpresaSchema.optional(),
 });
 
 // A data de corte NAO e parametro de requisicao (invariante 10 do contrato):
@@ -315,9 +329,18 @@ router.get(
       return;
     }
     try {
-      const data = await getFilaNacional({ q: parsed.data.q ?? null, fornecedor: parsed.data.fornecedor ?? null });
+      const data = await getFilaNacional({
+        q: parsed.data.q ?? null,
+        fornecedor: parsed.data.fornecedor ?? null,
+        ...(parsed.data.empresa ? { empresa: parsed.data.empresa } : {}),
+      });
       // Feature 016: a UI so mostra o selo fiscal quando a flag esta ligada — vai em `meta`, a lista segue em `data`.
-      res.json({ data, error: null, meta: { recebimentoFiscalHabilitado: recebimentoFiscalHabilitado() } });
+      // Historia 5: idem para a compra nacional da ACXE (a tela so mostra o selo de empresa e o filtro quando ligada).
+      res.json({
+        data,
+        error: null,
+        meta: { recebimentoFiscalHabilitado: recebimentoFiscalHabilitado(), recebimentoNacionalAcxeHabilitado: recebimentoNacionalAcxeHabilitado() },
+      });
     } catch (err) {
       if (responderErroFilaNacional(res, err)) return;
       logger.error({ err }, 'Erro ao listar fila nacional');
@@ -355,13 +378,19 @@ router.get(
 // .strict() em todos os niveis: valor de item, valor total, unidade ou qualquer
 // campo que o cliente nao deva mandar e REJEITADO — o ponto da feature e que
 // esses dados nao passam pelo cliente (SC-001, invariante 2 do contrato).
+// Historia 5: exatamente UM dos codigos de produto — o da empresa da NF (Q2P ou ACXE). A empresa vem da NF,
+// nunca do corpo; o servico recusa o codigo da outra empresa com 400 PRODUTO_EMPRESA_INCOMPATIVEL.
 const ProdutoDistribuicaoSchema = z
   .object({
-    produto_codigo_q2p: z.number().int().positive(),
+    produto_codigo_q2p: z.number().int().positive().optional().nullable(),
+    produto_codigo_acxe: z.number().int().positive().optional().nullable(),
     quantidade_kg: z.number().positive(),
     localidade_id: z.string().uuid(),
   })
-  .strict();
+  .strict()
+  .refine((p) => (p.produto_codigo_q2p != null) !== (p.produto_codigo_acxe != null), {
+    message: 'informe exatamente um entre produto_codigo_q2p e produto_codigo_acxe',
+  });
 
 // Feature 017 (contrato §3, data-model §9): PC escolhido para o item. Os ids do OMIE
 // sao so identificadores de selecao (a tela mostra o numero do PC); `.strict()` como
@@ -427,7 +456,8 @@ router.post(
           motivoDivergencia: it.motivo_divergencia ?? null,
           observacoes: it.observacoes ?? null,
           produtos: it.produtos.map((p) => ({
-            produtoCodigoQ2p: p.produto_codigo_q2p,
+            ...(p.produto_codigo_q2p != null ? { produtoCodigoQ2p: p.produto_codigo_q2p } : {}),
+            ...(p.produto_codigo_acxe != null ? { produtoCodigoAcxe: p.produto_codigo_acxe } : {}),
             quantidadeKg: p.quantidade_kg,
             localidadeId: p.localidade_id,
           })),
@@ -449,6 +479,20 @@ router.post(
       }
       if (err instanceof ProdutoNaoEncontradoError) {
         res.status(404).json({ data: null, error: { code: 'PRODUTO_NAO_ENCONTRADO', userMessage: err.message, message: err.message } });
+        return;
+      }
+      // Historia 5 (ACXEGDP-437): produto da ACXE sem correspondente na Q2P num estoque que tambem e da Q2P
+      // (ou dois produtos da mesma linha com o mesmo correspondente) — recusado antes do fiscal, nada gravado.
+      if (err instanceof ProdutoSemCorrelatoQ2pError) {
+        res.status(422).json({ data: null, error: { code: 'PRODUTO_SEM_CORRELATO_Q2P', userMessage: err.message, message: err.message } });
+        return;
+      }
+      if (err instanceof ProdutoCorrelatoQ2pRepetidoError) {
+        res.status(422).json({ data: null, error: { code: 'PRODUTO_CORRELATO_Q2P_REPETIDO', userMessage: err.message, message: err.message } });
+        return;
+      }
+      if (err instanceof ProdutoUnidadeNaoKgError) {
+        res.status(422).json({ data: null, error: { code: 'PRODUTO_UNIDADE_NAO_KG', userMessage: err.message, message: err.message } });
         return;
       }
       if (err instanceof NfNacionalJaProcessadaError) {
@@ -574,6 +618,13 @@ router.put(
     }
     try {
       const detalhe = await getDetalheNfNacional(parsed.data.nf_chave_acesso);
+      // Historia 5 (ACXEGDP-437): a memoria fornecedor x descricao guarda codigos do cadastro da Q2P e o CNPJ do
+      // fornecedor se repete nas duas empresas — a NF da ACXE nao a grava (o produto vem do item e do pedido de compra).
+      if (detalhe.empresa === 'acxe') {
+        const msg = 'A memória de produto por fornecedor vale só para NF da Q2P. Na NF da ACXE o produto vem do próprio item e do pedido de compra.';
+        res.status(422).json({ data: null, error: { code: 'CORRELACAO_SO_Q2P', userMessage: msg, message: msg } });
+        return;
+      }
       const result = await definirConjuntoCorrelacao({
         fornecedorCnpj: detalhe.fornecedorCnpj,
         fornecedorNome: detalhe.fornecedorNome,

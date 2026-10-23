@@ -32,7 +32,9 @@ Cópia do workflow da Q2P, com:
 - credencial **Omie ACXE**;
 - tabelas `public."tbl_recebimentoNFe_ACXE"` e `"_itens_ACXE"` (DDL da 0058: a mesma das tabelas da Q2P, já com as colunas do §1);
 - chave própria em `tbl_sync_debounce` e o mesmo padrão de retentativa;
-- mesmos horários da Q2P, defasados alguns minutos para não somar chamadas ao mesmo tempo.
+- mesmos horários da Q2P, defasados alguns minutos para não somar chamadas ao mesmo tempo;
+- **batimento a cada rodada** (revisão da Fase 2, 23/10/2026): ao fim de toda execução, mesmo sem linha nova, gravar `public.tbl_sync_debounce` com `chave = 'receb_acxe'` e `ultima_execucao_inicio = now()` (upsert pela chave). Com poucas NFs na ACXE, `MAX(synced_at)` do espelho para de andar sem falha do n8n (ele só regrava as linhas que a rodada trouxe); o health do Atlas usa o mais recente dos dois sinais, e sem o batimento o espelho da ACXE apareceria defasado em período calmo (health `degraded` e aviso ao ops a cada 6 h);
+- **histórico**: sincronizar também os recebimentos já concluídos (`c_recebido = 'S'`), como a Q2P — é o que permite ao Atlas reconhecer NF recebida no portal com estoque.
 
 Só ativar quando a História 5 for implantada. Até lá, a tabela pode existir vazia.
 
