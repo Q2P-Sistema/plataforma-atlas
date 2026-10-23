@@ -4,6 +4,7 @@ import { aprovacao } from '@atlas/db';
 import { getDetalheNfNacional, recebimentoFiscalHabilitado, type DetalheNfNacional } from './fila-nacional.service.js';
 import { normalizarDescricaoNf } from './descricao-nf.js';
 import { enviarAlertaRecebimentoNacionalLote } from './notificacao.service.js';
+import type { EmpresaNacional } from './empresa-nacional.js';
 import type { Perfil } from '../types.js';
 
 const logger = createLogger('stockbridge:recebimento-externo');
@@ -120,6 +121,8 @@ export async function solicitarRecebimentoExterno(input: SolicitarRecebimentoExt
 
   const detalhe: DetalheNfNacional = await getDetalheNfNacional(input.nfChaveAcesso);
   if (recebimentoFiscalHabilitado() && detalhe.fiscal === 'pendente') throw new BaixaExternaFiscalPendenteError(detalhe.notaFiscal);
+  // Historia 5 (ACXEGDP-437): a baixa vale para a NF da empresa dela (Q2P ou ACXE). Detalhe sem empresa = Q2P.
+  const empresa: EmpresaNacional = detalhe.empresa === 'acxe' ? 'acxe' : 'q2p';
 
   const pendentes = detalhe.itens.filter((it) => !(it.jaRecebido && (it.quantidadeNfJaAtribuidaKg === 0 || (it.quantidadeRestanteKg ?? 0) <= 1)) && !it.baixadoComoExterno);
   let alvos = pendentes;
@@ -164,7 +167,7 @@ export async function solicitarRecebimentoExterno(input: SolicitarRecebimentoExt
         produtoCodigoAcxe: null,
         produtoCodigoQ2p: null,
         galpao: null,
-        empresa: 'q2p',
+        empresa,
         precisaNivel: 'gestor',
         tipoAprovacao: 'recebimento_externo',
         quantidadePrevistaKg: it.quantidadeNfKg != null ? String(it.quantidadeNfKg) : null,
@@ -185,7 +188,7 @@ export async function solicitarRecebimentoExterno(input: SolicitarRecebimentoExt
       nivel: 'gestor',
       itens: alvos
         .filter((it) => !it.baixadoComoExterno)
-        .map((it) => ({ produto: `${it.descricaoFornecedor.trim()} (baixa externa)`, empresa: 'q2p', galpao: '—', quantidadeKg: it.quantidadeNfKg ?? 0 })),
+        .map((it) => ({ produto: `${it.descricaoFornecedor.trim()} (baixa externa)`, empresa, galpao: '—', quantidadeKg: it.quantidadeNfKg ?? 0 })),
       detalhes: `Baixa por recebimento externo — ${motivo}`,
     }).catch((err) => logger.error({ err, nf: detalhe.notaFiscal }, 'Falha ao notificar gestor (recebimento externo)'));
   }
@@ -205,6 +208,8 @@ export interface BaixaExternaItem {
   lancadoEm: string;
   aprovadoPor: string | null;
   aprovadoEm: string | null;
+  /** Historia 5: empresa da NF (o numero de NF se repete entre os espelhos da Q2P e da ACXE) */
+  empresa: 'q2p' | 'acxe';
 }
 
 /** Baixas externas APROVADAS (as que tiraram item da fila) — para o gestor ver e, se preciso, reverter. */
@@ -227,6 +232,7 @@ export async function listarBaixasExternasAprovadas(limit = 200): Promise<BaixaE
     lancadoEm: r.lancadoEm.toISOString(),
     aprovadoPor: r.aprovadoPor,
     aprovadoEm: r.aprovadoEm ? r.aprovadoEm.toISOString() : null,
+    empresa: r.empresa === 'acxe' ? 'acxe' : 'q2p',
   }));
 }
 

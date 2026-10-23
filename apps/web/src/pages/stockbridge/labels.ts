@@ -41,6 +41,23 @@ export const SUBTIPO_LABEL: Record<string, string> = {
   varredura: 'Varredura',
 };
 
+/**
+ * Empresa (CNPJ) do OMIE a que uma NF ou uma entrada de estoque pertence. Tipo e rótulos únicos do
+ * StockBridge: o recebimento nacional (feature 017, Fase 2), as aprovações e a fila usam estes.
+ */
+export type Empresa = 'q2p' | 'acxe';
+
+export const ROTULO_EMPRESA: Record<Empresa, string> = { q2p: 'Q2P', acxe: 'ACXE' };
+
+/** Ordem em que as empresas aparecem juntas: ACXE primeiro ("ACXE + Q2P"). */
+const ORDEM_EMPRESAS: readonly Empresa[] = ['acxe', 'q2p'];
+
+/** "ACXE" | "Q2P" | "ACXE + Q2P" — onde uma entrada é lançada. Lista vazia ou desconhecida devolve ''. */
+export function textoEmpresas(empresas: readonly string[] | null | undefined): string {
+  const lista = ORDEM_EMPRESAS.filter((e) => empresas?.includes(e));
+  return lista.map((e) => ROTULO_EMPRESA[e]).join(' + ');
+}
+
 export const ROLE_LABEL: Record<string, string> = {
   operador: 'Operador',
   gestor: 'Gestor',
@@ -60,6 +77,9 @@ export const GALPAO_LABELS: Record<string, string> = {
   '12.2': 'Santo André — Nacional (12.2) · Q2P',
   '21.1': 'Extrema (21.1)',
   '21.2': 'Extrema — Nacional (21.2) · ACXE',
+  // Locais operacionais da ACXE (migration 0058): só recebem compra nacional da ACXE, fora do estoque de venda.
+  '20.0.5': 'Processo (20.0.5) · ACXE',
+  '20.0.7': 'Produção (20.0.7) · ACXE',
   '31.1': 'Armazém Externo / ATN (31.1)',
   '90': 'TROCA (virtual)',
   '90.0.1': 'TROCA (virtual)',

@@ -15,8 +15,11 @@ import {
   montarPcsDaNf,
   opcoesPc,
   pcSituacaoDaNf,
+  tabelaPcs,
   toleranciasPc,
   sugerirPcPorItens,
+  sugerirPcPorItensComContexto,
+  type ContextoPc,
   type ItemParaPcsDaNf,
   type ItemParaSugestao,
   type PcDoItem,
@@ -26,6 +29,14 @@ import {
   type ResultadoPcItem,
   type VinculoLinhaOmie,
 } from './pc-sugestao.service.js';
+import {
+  tabelasNacional,
+  empresasNacionalAtivas,
+  recebimentoNacionalAcxeHabilitado,
+  dataCorteAcxe,
+  type EmpresaNacional,
+} from './empresa-nacional.js';
+import { resolverGemeosQ2p } from './produto-gemeo-q2p.js';
 
 const logger = createLogger('stockbridge:fila-nacional');
 
@@ -87,6 +98,21 @@ const logger = createLogger('stockbridge:fila-nacional');
  *    o espelho (0053), entao ele existe em todo ambiente com a 017;
  *  - so a fonte (b) traz o codigo do fornecedor (`n_id_fornecedor`): a sugestao so
  *    existe com fiscal pendente, que vem de la; na (a) ele e NULL.
+ *
+ * Feature 017, Historia 5 (ACXEGDP-437) — compra nacional da ACXE na MESMA fila:
+ *  - cada empresa le o proprio espelho (`tabelasNacional`: NF, itens e recebimentos da Q2P
+ *    ou da ACXE, mesma DDL) e as duas fontes se repetem por empresa num UNION ALL; a linha
+ *    carrega `empresa` e a fila/o detalhe devolvem `empresa` por NF. A identidade segue
+ *    sendo a chave de acesso (unica entre os espelhos), mas o NUMERO da NF colide entre eles
+ *    (NF 5832: FDMA na ACXE, ACXE na Q2P) — por isso a exclusao de fornecedor e a via 2 do
+ *    "ja recebida" casam tambem pela empresa;
+ *  - a ACXE so entra com `recebimentoNacionalAcxeHabilitado()` (chave propria + fiscal pelo
+ *    Atlas + corte PROPRIO, parametro separado do da Q2P). Sem ela — ou com as tabelas
+ *    espelho da ACXE ausentes — o SQL e o resultado da Q2P sao os de sempre, byte a byte:
+ *    nada da ACXE derruba a Q2P (a falta e logada e vai para o health);
+ *  - o produto e o local da NF da ACXE nao vem da memoria fornecedor x descricao (so Q2P):
+ *    o detalhe sugere o produto que o OMIE ja associou ao item (n_cod_prod / n_id_produto) e o
+ *    do item do PC; o local de entrada vem do item do PC (resolvido no servidor).
  */
 
 export const CFOPS_RECEBIMENTO_NACIONAL: readonly string[] = Object.freeze(['1.101', '1.102', '2.101', '2.102']);
@@ -199,6 +225,15 @@ export function limiteIdadeEspelhoMin(): number {
   return Number.isFinite(v) && v > 0 ? v : ESPELHO_RECEBIMENTOS_IDADE_MAX_MIN;
 }
 
+/**
+ * A fila nacional atende a empresa agora? Q2P: chave da 016 (fonte "fiscal pendente").
+ * ACXE: chave da Historia 5, que por sua vez exige a da 016 e o corte proprio — sem tudo
+ * isso a ACXE nao tem espelho a vigiar ('desligado' no health, nenhum alerta).
+ */
+function filaDaEmpresaHabilitada(empresa: EmpresaNacional): boolean {
+  return empresa === 'acxe' ? recebimentoNacionalAcxeHabilitado() : recebimentoFiscalHabilitado();
+}
+
 export interface IdadeEspelhoRecebimentos {
   /** minutos desde a ultima atualizacao (`synced_at` / `data_atualizacao`); null quando nao ha dado ou o banco falhou */
   idadeMin: number | null;
@@ -221,25 +256,59 @@ export function statusHealthModulo(...idades: IdadeEspelhoRecebimentos[]): 'ok' 
 }
 
 /**
- * Feature 016 (T051): defasagem do espelho `tbl_recebimentoNFe_Q2P`. Com a flag
+ * Feature 016 (T051): defasagem do espelho `tbl_recebimentoNFe_<empresa>`. Com a flag
  * desligada a fonte (b) nao e usada e o dado e irrelevante ('desligado'). Usado
  * pelo health do modulo e pela fila (warn), porque a fila degrada em silencio:
  * sync parado = NF "fiscal pendente" sumindo sem erro.
+ * Historia 5: por empresa (default 'q2p'). A ACXE e 'desligado' enquanto a fila nao a
+ * atende (`recebimentoNacionalAcxeHabilitado`) — senao o espelho vazio de antes do go-live
+ * viraria 'sem_dados', health degradado e alerta ao ops por um workflow que ainda nao roda.
  */
-export async function idadeEspelhoRecebimentos(): Promise<IdadeEspelhoRecebimentos> {
-  if (!recebimentoFiscalHabilitado()) return { idadeMin: null, status: 'desligado' };
-  const limiteMin = limiteIdadeEspelhoMin();
+/**
+ * Batimento do n8n por empresa em `public.tbl_sync_debounce` (chave -> ultima_execucao_inicio), gravado a cada
+ * rodada mesmo sem linha nova (contracts/espelhos-n8n.md §2). Na ACXE, com poucas NFs, MAX(synced_at) para de
+ * andar sem falha nenhuma do n8n (ele so regrava as linhas que a rodada trouxe; a Q2P tem sempre NF parada na
+ * etapa 40): sem o batimento o health degradaria e o ops seria avisado a cada 6 h em periodo calmo. A Q2P segue
+ * so com MAX(synced_at), como antes.
+ */
+const CHAVE_BATIMENTO_ESPELHO_RECEBIMENTOS: Partial<Record<EmpresaNacional, string>> = { acxe: 'receb_acxe' };
+
+/** Idade (min) do batimento do n8n, ou null (sem tabela, sem chave, sem execucao). Nunca lanca. */
+async function idadeBatimentoN8nMin(chave: string): Promise<number | null> {
   try {
+    const existe = await getPool().query<{ existe: boolean }>(`SELECT to_regclass('public.tbl_sync_debounce') IS NOT NULL AS existe`);
+    if (existe.rows[0]?.existe !== true) return null;
     const r = await getPool().query<{ idade_min: string | number | null }>(
-      `SELECT (EXTRACT(EPOCH FROM (now() - MAX(synced_at))) / 60)::numeric(12,1) AS idade_min FROM public."tbl_recebimentoNFe_Q2P"`,
+      `SELECT (EXTRACT(EPOCH FROM (now() - ultima_execucao_inicio)) / 60)::numeric(12,1) AS idade_min FROM public.tbl_sync_debounce WHERE chave = $1`,
+      [chave],
     );
     const v = r.rows[0]?.idade_min;
-    if (v == null) return { idadeMin: null, status: 'sem_dados', limiteMin };
-    const idade = Number(v);
-    if (!Number.isFinite(idade)) return { idadeMin: null, status: 'sem_dados', limiteMin };
+    const idade = v == null ? NaN : Number(v);
+    return Number.isFinite(idade) ? idade : null;
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, chave }, 'Batimento do n8n indisponível');
+    return null;
+  }
+}
+
+export async function idadeEspelhoRecebimentos(empresa: EmpresaNacional = 'q2p'): Promise<IdadeEspelhoRecebimentos> {
+  if (!filaDaEmpresaHabilitada(empresa)) return { idadeMin: null, status: 'desligado' };
+  const limiteMin = limiteIdadeEspelhoMin();
+  const chaveBatimento = CHAVE_BATIMENTO_ESPELHO_RECEBIMENTOS[empresa];
+  const batimento = chaveBatimento ? await idadeBatimentoN8nMin(chaveBatimento) : null;
+  try {
+    const r = await getPool().query<{ idade_min: string | number | null }>(
+      `SELECT (EXTRACT(EPOCH FROM (now() - MAX(synced_at))) / 60)::numeric(12,1) AS idade_min FROM public.${tabelasNacional(empresa).recebimento}`,
+    );
+    const v = r.rows[0]?.idade_min;
+    const pelasLinhas = v == null ? NaN : Number(v);
+    // vale o sinal mais recente: a ultima linha regravada ou a ultima rodada do n8n
+    const candidatos = [pelasLinhas, batimento ?? NaN].filter((x) => Number.isFinite(x));
+    if (candidatos.length === 0) return { idadeMin: null, status: 'sem_dados', limiteMin };
+    const idade = Math.min(...candidatos);
     return { idadeMin: idade, status: idade > limiteMin ? 'degraded' : 'ok', limiteMin };
   } catch (err) {
-    logger.warn({ err: (err as Error).message }, 'Idade do espelho de recebimentos indisponível');
+    logger.warn({ err: (err as Error).message, empresa }, 'Idade do espelho de recebimentos indisponível');
     return { idadeMin: null, status: 'indisponivel', limiteMin };
   }
 }
@@ -256,20 +325,21 @@ export function limiteIdadeCopiaPcsMin(): number {
 
 /**
  * Feature 017 (ACXEGDP-437, research D13, FR-030): defasagem da copia de PCs
- * `tbl_pedidosCompras_Q2P`. Com a 017 ela decide a sugestao de PC, o bloqueio de
+ * `tbl_pedidosCompras_<empresa>`. Com a 017 ela decide a sugestao de PC, o bloqueio de
  * NF sem PC e o aviso a compras — tabela critica do Principio II ("monitoramento
  * DEVE alertar se a tabela critica ficar defasada"). A Rev 1.5 do n8n grava o
  * inicio do sync em `data_atualizacao` de todas as linhas (troca atomica), entao
  * a idade e now() − MAX(data_atualizacao). Mesmo padrao do espelho de
  * recebimentos: 'desligado' com a chave da 016 desligada, porque so com o fiscal
- * pelo Atlas a copia decide alguma coisa.
+ * pelo Atlas a copia decide alguma coisa. Historia 5: por empresa (default 'q2p'); o
+ * mesmo workflow do n8n grava a copia das duas.
  */
-export async function idadeCopiaPcs(): Promise<IdadeCopiaPcs> {
-  if (!recebimentoFiscalHabilitado()) return { idadeMin: null, status: 'desligado' };
+export async function idadeCopiaPcs(empresa: EmpresaNacional = 'q2p'): Promise<IdadeCopiaPcs> {
+  if (!filaDaEmpresaHabilitada(empresa)) return { idadeMin: null, status: 'desligado' };
   const limiteMin = limiteIdadeCopiaPcsMin();
   try {
     const r = await getPool().query<{ idade_min: string | number | null }>(
-      `SELECT (EXTRACT(EPOCH FROM (now() - MAX(data_atualizacao))) / 60)::numeric(12,1) AS idade_min FROM public."tbl_pedidosCompras_Q2P"`,
+      `SELECT (EXTRACT(EPOCH FROM (now() - MAX(data_atualizacao))) / 60)::numeric(12,1) AS idade_min FROM public.${tabelasNacional(empresa).pedidosCompras}`,
     );
     const v = r.rows[0]?.idade_min;
     if (v == null) return { idadeMin: null, status: 'sem_dados', limiteMin };
@@ -277,7 +347,7 @@ export async function idadeCopiaPcs(): Promise<IdadeCopiaPcs> {
     if (!Number.isFinite(idade)) return { idadeMin: null, status: 'sem_dados', limiteMin };
     return { idadeMin: idade, status: idade > limiteMin ? 'degraded' : 'ok', limiteMin };
   } catch (err) {
-    logger.warn({ err: (err as Error).message }, 'Idade da cópia de pedidos de compra indisponível');
+    logger.warn({ err: (err as Error).message, empresa }, 'Idade da cópia de pedidos de compra indisponível');
     return { idadeMin: null, status: 'indisponivel', limiteMin };
   }
 }
@@ -287,8 +357,8 @@ export async function idadeCopiaPcs(): Promise<IdadeCopiaPcs> {
  * nada — sem sugestao, sem NF_SEM_PC e sem aviso a compras; o POST com fiscal
  * pendente responde 503 COPIA_PCS_DEFASADA. False com a chave da 016 desligada.
  */
-export async function copiaPcsDefasada(): Promise<boolean> {
-  return statusHealthModulo(await idadeCopiaPcs()) === 'degraded';
+export async function copiaPcsDefasada(empresa: EmpresaNacional = 'q2p'): Promise<boolean> {
+  return statusHealthModulo(await idadeCopiaPcs(empresa)) === 'degraded';
 }
 
 /** Rotulo da fila quando o recebimento chegou da SEFAZ sem contraparte cadastrada no OMIE (research D8 da 016). */
@@ -310,8 +380,8 @@ export interface FilaNacionalItem {
   fiscal: SituacaoFiscal;
   /** quando o Atlas concluiu o fiscal (ledger) — null se foi no OMIE/portal ou flag desligada */
   fiscalConcluidoPeloAtlasEm: string | null;
-  /** feature 017: 'q2p' ate a Historia 5 (ACXE) */
-  empresa: 'q2p';
+  /** feature 017: empresa da NF — a ACXE so aparece com a Historia 5 habilitada */
+  empresa: EmpresaNacional;
   /** feature 017: selo do PC — pior caso entre os itens a receber; 'nao_aplicavel' com fiscal ja feito ou chave da 016 desligada */
   pcSituacao: PcSituacaoNf;
   /** feature 017 (D7, FR-021a): o fiscal foi concluido fora do Atlas com movimento de estoque — recebimento bloqueado */
@@ -364,18 +434,39 @@ const LEDGER_FISCAL_CONCLUIDO_SQL = (chaveExpr: string): string =>
  * `n_cod_item`), que bateu com a sequencia em todos os itens desde o go-live (as
  * 9 excecoes medidas sao devolucoes de 2023). Recebimento ausente do espelho =
  * NULL (casa so por descricao, como na 015).
+ * Historia 5: as tabelas sao as da empresa (a Q2P por padrao — o texto de antes).
  */
-function sequenciaItemNfSql(h: string, i: string): string {
+function sequenciaItemNfSql(h: string, i: string, empresa: EmpresaNacional = 'q2p'): string {
+  const t = tabelasNacional(empresa);
   return `(SELECT COALESCE(
                   MAX(ri.n_sequencia) FILTER (WHERE ri.n_id_item = ${i}.n_cod_item),
                   CASE WHEN COUNT(*) > 0 AND COUNT(*) FILTER (WHERE COALESCE(ri.n_id_item, 0) <> 0) = 0
-                       THEN (SELECT COUNT(*)::int FROM public."tbl_nf_itens_Q2P" i2
+                       THEN (SELECT COUNT(*)::int FROM public.${t.nfItens} i2
                               WHERE i2.n_id_nf = ${i}.n_id_nf AND i2.n_cod_item <= ${i}.n_cod_item)
                   END)
-             FROM public."tbl_recebimentoNFe_Q2P" r
-             JOIN public."tbl_recebimentoNFe_itens_Q2P" ri ON ri.n_id_receb = r.n_id_receb
+             FROM public.${t.recebimento} r
+             JOIN public.${t.recebimentoItens} ri ON ri.n_id_receb = r.n_id_receb
             WHERE r.c_chave_nfe = ${h}.c_chave_nfe)`;
 }
+
+/** Uma empresa na consulta da fila: o espelho dela e o placeholder do corte de emissao. */
+interface FonteEmpresa {
+  empresa: EmpresaNacional;
+  /** a coluna `cancelada` existe no espelho de NF dessa empresa (some depois de um sync PROD->UAT) */
+  canceladaExiste: boolean;
+  /** placeholder do corte de emissao dessa empresa (`$2`, `$5`…): o da Q2P e o da ACXE sao parametros separados */
+  corteParam: string;
+}
+
+/**
+ * A query leva as colunas `empresa`, `produto_omie` e `local_omie` nas linhas? So deixa de levar no caso
+ * "Q2P sozinha" — o SQL de antes da Historia 5, byte a byte (varias suites comparam o texto).
+ * Qualquer consulta que inclua a ACXE as leva, tambem a que filtra so a ACXE.
+ */
+const comEmpresaNasLinhas = (fontes: FonteEmpresa[]): boolean => !(fontes.length === 1 && fontes[0]!.empresa === 'q2p');
+
+/** Nome da tabela sem aspas (para o information_schema): `"tbl_nf_header_ACXE"` -> `tbl_nf_header_ACXE`. */
+const nomeSemAspas = (tabela: string): string => tabela.replace(/"/g, '');
 
 /** Vinculo com o PC (0056): `n_id_pedido` 0/nulo = sem vinculo; `n_id_it_pedido` so vale com pedido (NF 7736). */
 const VINCULO_PC_COLUNAS = (ri: string): string => `
@@ -389,8 +480,20 @@ const VINCULO_PC_COLUNAS = (ri: string): string => `
  * Feature 017: le SEMPRE o espelho de recebimentos (sequencia + vinculo com o PC +
  * flags de estoque do item), inclusive com a chave da 016 desligada (FR-021/021a).
  * Recebimento ausente do espelho = colunas NULL (casa so por descricao, sem vinculo).
+ * Historia 5: o espelho e o da empresa; `comEmpresa` acrescenta `empresa`, `produto_omie` (o
+ * produto que o OMIE associou ao item da NF) e `local_omie` (o local de estoque do item) — na
+ * MESMA posicao nas duas fontes, para o UNION ALL. O local do item e o padrao do cadastro do
+ * produto no OMIE, nao a intencao da compra: a pre-selecao do local vem do item do PC, e esta
+ * coluna so fica exposta na CTE (o detalhe nao a usa).
  */
-function fonteNfSql(canceladaExiste: boolean, nfValida: string): string {
+function fonteNfSql(f: FonteEmpresa, nfValida: string, comEmpresa = false): string {
+  const t = tabelasNacional(f.empresa);
+  const extras = comEmpresa
+    ? `,
+                 '${f.empresa}'::text                                  AS empresa,
+                 NULLIF(i.n_cod_prod, 0)::bigint                      AS produto_omie,
+                 NULLIF(i.codigo_local_estoque, 0)::bigint            AS local_omie`
+    : '';
   return `
         SELECT a.*,${VINCULO_PC_COLUNAS('rv')},
                rv.c_recebido                                        AS receb_recebido
@@ -398,24 +501,24 @@ function fonteNfSql(canceladaExiste: boolean, nfValida: string): string {
           SELECT h.c_chave_nfe, h.n_nf, h.dest_razao, h.dest_cnpj_cpf, h.d_emi::date AS d_emi,
                  h.n_id_receb::bigint                                 AS n_id_receb,
                  false                                                AS fiscal_pendente,
-                 ${canceladaExiste ? 'COALESCE(h.cancelada, false)' : 'false'} AS cancelada,
+                 ${f.canceladaExiste ? 'COALESCE(h.cancelada, false)' : 'false'} AS cancelada,
                  COALESCE(h.deletada, false)                          AS deletada,
                  i.n_cod_item::bigint                                 AS n_cod_item,  -- ordem NUMERICA dos itens (FILA-6)
                  i.x_prod, i.cfop, i.q_com, i.u_com,
                  i.v_prod                                             AS valor_item,  -- D26: NAO v_tot_item (IPI em dobro)
-                 ${sequenciaItemNfSql('h', 'i')}                      AS n_seq,
+                 ${sequenciaItemNfSql('h', 'i', f.empresa)}                      AS n_seq,
                  i.v_un_com                                           AS preco_comercial,  -- 017: preco SEM tributos (D3)
-                 NULL::bigint                                         AS fornecedor_codigo
-          FROM public."tbl_nf_header_Q2P" h
-          JOIN public."tbl_nf_itens_Q2P" i ON i.n_id_nf = h.n_id_nf
+                 NULL::bigint                                         AS fornecedor_codigo${extras}
+          FROM public.${t.nfHeader} h
+          JOIN public.${t.nfItens} i ON i.n_id_nf = h.n_id_nf
           WHERE h.tp_nf = 0
-            AND h.d_emi >= $2::date
+            AND h.d_emi >= ${f.corteParam}::date
             ${nfValida}
         ) a
         LEFT JOIN LATERAL (
           SELECT ri.*, r.c_recebido
-            FROM public."tbl_recebimentoNFe_Q2P" r
-            JOIN public."tbl_recebimentoNFe_itens_Q2P" ri ON ri.n_id_receb = r.n_id_receb
+            FROM public.${t.recebimento} r
+            JOIN public.${t.recebimentoItens} ri ON ri.n_id_receb = r.n_id_receb
            WHERE r.c_chave_nfe = a.c_chave_nfe AND ri.n_sequencia = a.n_seq
            LIMIT 1
         ) rv ON true`;
@@ -432,8 +535,17 @@ function fonteNfSql(canceladaExiste: boolean, nfValida: string): string {
  *    espelho de NF ainda nao trouxe: sem isso a NF sumia da fila e do detalhe na
  *    janela entre o sync de recebimentos (:23/:53) e o de NF (:08/:38) — FR-013,
  *    revisao pre-UAT (FILA-1). Saem como "fiscal ja feito" pelo ledger.
+ * Historia 5: os espelhos sao os da empresa; `comEmpresa` acrescenta `empresa`, `produto_omie`
+ * (o produto do item no recebimento, `n_id_produto`) e `local_omie` depois de `fornecedor_codigo`.
  */
-function fonteRecebSql(): string {
+function fonteRecebSql(f: FonteEmpresa, comEmpresa = false): string {
+  const t = tabelasNacional(f.empresa);
+  const extras = comEmpresa
+    ? `,
+               '${f.empresa}'::text                                 AS empresa,
+               NULLIF(ri.n_id_produto, 0)::bigint                   AS produto_omie,
+               NULLIF(ri.codigo_local_estoque, 0)::bigint           AS local_omie`
+    : '';
   return `
         SELECT r.c_chave_nfe, r.c_numero_nfe AS n_nf, r.c_razao_social AS dest_razao, r.c_cnpj_cpf AS dest_cnpj_cpf,
                r.d_emissao                                          AS d_emi,
@@ -449,12 +561,12 @@ function fonteRecebSql(): string {
                ri.v_total_item                                      AS valor_item,  -- = v_prod (research D7 da 016)
                ri.n_sequencia::int                                  AS n_seq,
                ri.n_preco_unit                                      AS preco_comercial,  -- 017: preco SEM tributos (D3)
-               NULLIF(r.n_id_fornecedor, 0)                         AS fornecedor_codigo,${VINCULO_PC_COLUNAS('ri')},
+               NULLIF(r.n_id_fornecedor, 0)                         AS fornecedor_codigo${extras},${VINCULO_PC_COLUNAS('ri')},
                r.c_recebido                                         AS receb_recebido
-        FROM public."tbl_recebimentoNFe_Q2P" r
-        JOIN public."tbl_recebimentoNFe_itens_Q2P" ri ON ri.n_id_receb = r.n_id_receb
-        WHERE r.d_emissao >= $2::date
-          AND NOT EXISTS (SELECT 1 FROM public."tbl_nf_header_Q2P" h2 WHERE h2.c_chave_nfe = r.c_chave_nfe)
+        FROM public.${t.recebimento} r
+        JOIN public.${t.recebimentoItens} ri ON ri.n_id_receb = r.n_id_receb
+        WHERE r.d_emissao >= ${f.corteParam}::date
+          AND NOT EXISTS (SELECT 1 FROM public.${t.nfHeader} h2 WHERE h2.c_chave_nfe = r.c_chave_nfe)
           AND (
                 (r.c_recebido = 'N' AND r.c_cancelada = 'N' AND r.c_etapa = '40'
                  AND COALESCE(r.c_bloqueado, 'N') <> 'S' AND COALESCE(r.c_devolvido, 'N') <> 'S')
@@ -468,12 +580,18 @@ function fonteRecebSql(): string {
  * deliberada: a via 2 da checagem "ja recebida" exige lancamento manual a partir
  * da emissao (colisao de numero entre fornecedores) — so faz NF reaparecer, nunca
  * sumir; paridade conferida no UAT na revisao pre-UAT.
+ * Historia 5: o bloco (a) [+ (b)] se repete por empresa, num UNION ALL. `aplicarNfValida`
+ * liga o filtro cancelada/deletada (a fila; o detalhe le as flags).
  */
-function nfUnificadaSql(flag: boolean, canceladaExiste: boolean, nfValida: string): string {
-  const a = fonteNfSql(canceladaExiste, nfValida);
-  return flag ? `${a}
+function nfUnificadaSql(fontes: FonteEmpresa[], flag: boolean, aplicarNfValida: boolean): string {
+  const comEmpresa = comEmpresaNasLinhas(fontes);
+  const blocos = fontes.flatMap((f) => {
+    const a = fonteNfSql(f, aplicarNfValida ? nfValidaSql(f.canceladaExiste, 'h') : '', comEmpresa);
+    return flag ? [a, fonteRecebSql(f, comEmpresa)] : [a];
+  });
+  return blocos.join(`
         UNION ALL
-        ${fonteRecebSql()}` : a;
+        `);
 }
 
 /** Movimentacao `m` (caminho novo) do item da linha `u` — por descricao ou pela sequencia (ACXEGDP-412). */
@@ -486,21 +604,32 @@ function movimentacaoDoItemSql(m: string, alias = 'u'): string {
   });
 }
 
-/** Fragmento SQL "item ja recebido" para a linha `u` da fonte unificada. */
-function recebidoSql(alias = 'u'): string {
+/**
+ * Fragmento SQL "item ja recebido" para a linha `u` da fonte unificada. `comEmpresa`: a linha
+ * carrega a empresa e a via 2 (historico manual, so pelo numero da NF) casa a mesma empresa.
+ */
+function recebidoSql(alias = 'u', comEmpresa = false): string {
   return itemNacionalRecebidoSql({
     chaveExpr: `${alias}.c_chave_nfe`,
     descricaoNormalizadaExpr: normalizarDescricaoSql(`${alias}.x_prod`),
     nfNumeroExpr: `${alias}.n_nf`,
     dataEmissaoExpr: `${alias}.d_emi`,
     sequenciaExpr: `${alias}.n_seq`,
+    ...(comEmpresa ? { empresaExpr: `${alias}.empresa` } : {}),
   });
 }
 
-function fornecedorNaoExcluidoSql(alias = 'u'): string {
+/**
+ * Fornecedor sem exclusao ativa. Historia 5: a exclusao vale so para a fila da empresa dela
+ * (a Q2P e contraparte intercompany da ACXE e a ACXE da Q2P — a mesma exclusao nao pode
+ * esconder a NF da outra empresa; o CNPJ do fornecedor se repete nas duas). Sem a empresa
+ * na linha a consulta e so da Q2P (comEmpresaNasLinhas), entao a exclusao filtrada e a da
+ * Q2P: sem isso, um CNPJ excluido so na ACXE sumiria tambem da fila da Q2P (exige a 0058).
+ */
+function fornecedorNaoExcluidoSql(alias = 'u', comEmpresa = false): string {
   return `NOT EXISTS (
         SELECT 1 FROM stockbridge.fornecedor_exclusao fe
-         WHERE fe.reincluido_em IS NULL AND fe.fornecedor_cnpj = ${alias}.dest_cnpj_cpf)`;
+         WHERE fe.reincluido_em IS NULL AND fe.fornecedor_cnpj = ${alias}.dest_cnpj_cpf AND fe.empresa = ${comEmpresa ? `${alias}.empresa` : `'q2p'`})`;
 }
 
 /**
@@ -537,29 +666,46 @@ function baixaSolicitadaSql(alias = 'u'): string {
               AND ${normalizarDescricaoSql('a.nf_item_descricao')} = ${normalizarDescricaoSql(`${alias}.x_prod`)})`;
 }
 
+/** Intervalo minimo entre dois avisos de "ACXE fora da fila por tabela ausente" no log. */
+const AVISO_ACXE_AUSENTE_MIN_MS = 10 * 60 * 1000;
+let ultimoAvisoAcxeAusenteMs = 0;
+
+/**
+ * Historia 5: a consulta que inclui a ACXE falhou por tabela (42P01) ou coluna (42703) ausente
+ * — espelho da ACXE ainda nao criado pelo n8n ou migration 0058 pendente — e a repeticao so com
+ * a Q2P deu certo: as NFs da ACXE ficam fora da fila e a Q2P segue normal. O `err` diz o que
+ * falta; o health da ACXE mostra 'indisponivel' (espelho/copia sem tabela) e o cron alerta o ops.
+ */
+function avisarAcxeForaDaFila(err: unknown, onde: string): void {
+  const agora = Date.now();
+  if (agora - ultimoAvisoAcxeAusenteMs < AVISO_ACXE_AUSENTE_MIN_MS) return;
+  ultimoAvisoAcxeAusenteMs = agora;
+  logger.error(
+    { err: (err as Error).message, onde },
+    'Consulta da ACXE falhou (espelho da ACXE ou migration 0058 ausente, corte da ACXE invalido ou outro erro) — NFs da ACXE fora da fila nacional; a fila da Q2P segue normal',
+  );
+}
+
 /**
  * Fila de NFs nacionais pendentes. Degrada para lista vazia em falha de BANCO
  * (a fila e informativa, o manual continua) — mas NAO em falta de configuracao,
  * que e erro de ambiente e precisa ser visivel.
+ * Historia 5 (ACXEGDP-437): a fila traz as empresas ativas (a Q2P sempre; a ACXE so com
+ * `recebimentoNacionalAcxeHabilitado()`), ordenadas por emissao e numero; `empresa` restringe a
+ * uma delas — `q2p` gera exatamente a query da Q2P de sempre. Tabela espelho da ACXE ausente
+ * tira so a ACXE da consulta (log + health), nunca derruba a Q2P.
  */
-export async function getFilaNacional(params: { q?: string | null; fornecedor?: string | null } = {}): Promise<FilaNacionalItem[]> {
+export async function getFilaNacional(
+  params: { q?: string | null; fornecedor?: string | null; empresa?: EmpresaNacional | null } = {},
+): Promise<FilaNacionalItem[]> {
   const dataCorte = getDataCorteFilaNacional();
   const flag = recebimentoFiscalHabilitado();
   const pool = getPool();
-  const canceladaExiste = await colunaCanceladaExiste(pool, 'tbl_nf_header_Q2P');
-  const nfValida = nfValidaSql(canceladaExiste, 'h');
   const descNorm = normalizarDescricaoSql('u.x_prod');
 
-  const args: unknown[] = [Array.from(CFOPS_RECEBIMENTO_NACIONAL), dataCorte];
-  let filtros = '';
-  if (params.fornecedor && params.fornecedor.trim()) {
-    args.push(`%${params.fornecedor.trim()}%`);
-    filtros += `\n        AND (u.dest_cnpj_cpf ILIKE $${args.length} OR u.dest_razao ILIKE $${args.length})`;
-  }
-  if (params.q && params.q.trim()) {
-    args.push(`%${params.q.trim()}%`);
-    filtros += `\n        AND (ltrim(u.n_nf, '0') ILIKE $${args.length} OR u.dest_razao ILIKE $${args.length})`;
-  }
+  const ativas = empresasNacionalAtivas();
+  const alvo = params.empresa ? ativas.filter((e) => e === params.empresa) : ativas;
+  if (alvo.length === 0) return [];
 
   // Com a flag ligada, a NF concluida pelo Atlas sai como "fiscal ja feito" com a
   // data do ledger; desligada, a coluna e constante (comportamento da 015).
@@ -582,19 +728,53 @@ export async function getFilaNacional(params: { q?: string | null; fornecedor?: 
     fiscal: SituacaoFiscal;
     fiscal_concluido_em: string | null;
     estoque_lancado: boolean | null;
+    /** so quando a consulta inclui a ACXE; ausente = Q2P */
+    empresa?: EmpresaNacional;
   }
 
-  try {
+  // `cancelada` existe no espelho de NF da empresa? (consulta barata ao information_schema; uma vez por chamada)
+  const canceladaPorEmpresa = new Map<EmpresaNacional, boolean>();
+  const canceladaExiste = async (e: EmpresaNacional): Promise<boolean> => {
+    if (!canceladaPorEmpresa.has(e)) {
+      canceladaPorEmpresa.set(e, await colunaCanceladaExiste(pool, nomeSemAspas(tabelasNacional(e).nfHeader)));
+    }
+    return canceladaPorEmpresa.get(e)!;
+  };
+
+  const consultar = async (empresas: EmpresaNacional[]) => {
+    // $1 CFOPs; $2 corte da Q2P; filtros; corte da ACXE por ultimo — a numeracao da Q2P sozinha e a de sempre
+    const args: unknown[] = [Array.from(CFOPS_RECEBIMENTO_NACIONAL)];
+    const param = (v: unknown): string => {
+      args.push(v);
+      return `$${args.length}`;
+    };
+    const corteQ2p = empresas.includes('q2p') ? param(dataCorte) : '';
+    let filtros = '';
+    if (params.fornecedor && params.fornecedor.trim()) {
+      const p = param(`%${params.fornecedor.trim()}%`);
+      filtros += `\n        AND (u.dest_cnpj_cpf ILIKE ${p} OR u.dest_razao ILIKE ${p})`;
+    }
+    if (params.q && params.q.trim()) {
+      const p = param(`%${params.q.trim()}%`);
+      filtros += `\n        AND (ltrim(u.n_nf, '0') ILIKE ${p} OR u.dest_razao ILIKE ${p})`;
+    }
+    const corteAcxe = empresas.includes('acxe') ? param(dataCorteAcxe()) : '';
+    const fontes: FonteEmpresa[] = [];
+    for (const e of empresas) {
+      fontes.push({ empresa: e, canceladaExiste: await canceladaExiste(e), corteParam: e === 'q2p' ? corteQ2p : corteAcxe });
+    }
+    const emp = comEmpresaNasLinhas(fontes);
+
     const res = await pool.query<Row>(
       `
-      WITH nf_unificada AS (${nfUnificadaSql(flag, canceladaExiste, nfValida)}
+      WITH nf_unificada AS (${nfUnificadaSql(fontes, flag, true)}
       ),
       linhas AS (
         SELECT
-          u.c_chave_nfe, u.n_nf, u.dest_razao, u.dest_cnpj_cpf, u.d_emi, u.fiscal_pendente,
+          u.c_chave_nfe, u.n_nf, u.dest_razao, u.dest_cnpj_cpf, u.d_emi, u.fiscal_pendente${emp ? ', u.empresa' : ''},
           ${descNorm}                    AS desc_norm,
           u.valor_item                   AS valor_item,
-          ${recebidoSql('u')}            AS recebido,
+          ${recebidoSql('u', emp)}            AS recebido,
           -- FR-030 (research D25): pendencia por RESTANTE do lado da NF. Item com
           -- 1 de N produtos gravado (falha/retomada) continua na fila; legado
           -- (match por numero, sem parcela) NAO cai aqui — nf_atribuida = 0.
@@ -605,11 +785,11 @@ export async function getFilaNacional(params: { q?: string | null; fornecedor?: 
         FROM nf_unificada u
         WHERE u.cfop = ANY($1::text[])
           AND NOT u.cancelada AND NOT u.deletada
-          AND ${fornecedorNaoExcluidoSql('u')}
+          AND ${fornecedorNaoExcluidoSql('u', emp)}
           AND ${naoDispensadaSql('u')}${filtros}
       ),
       itens AS (
-        SELECT c_chave_nfe, n_nf, dest_razao, dest_cnpj_cpf, d_emi, desc_norm,
+        SELECT c_chave_nfe, n_nf, dest_razao, dest_cnpj_cpf, d_emi, desc_norm${emp ? ', empresa' : ''},
                bool_or(fiscal_pendente)                                 AS fiscal_pendente,
                SUM(valor_item)                                          AS valor_item,
                bool_and(recebido)                                       AS recebido,
@@ -617,7 +797,7 @@ export async function getFilaNacional(params: { q?: string | null; fornecedor?: 
                MAX(nf_atribuida)                                        AS nf_atribuida,
                bool_or(estoque_lancado)                                 AS estoque_lancado
         FROM linhas
-        GROUP BY c_chave_nfe, n_nf, dest_razao, dest_cnpj_cpf, d_emi, desc_norm
+        GROUP BY c_chave_nfe, n_nf, dest_razao, dest_cnpj_cpf, d_emi, desc_norm${emp ? ', empresa' : ''}
       ),
       itens_flag AS (
         SELECT *,
@@ -637,25 +817,53 @@ export async function getFilaNacional(params: { q?: string | null; fornecedor?: 
         SUM(valor_item)::float8                                       AS valor_total_brl,
         CASE WHEN bool_or(fiscal_pendente) THEN 'pendente' ELSE 'concluido' END AS fiscal,
         ${fiscalConcluidoEmSql}                                       AS fiscal_concluido_em,
-        COALESCE(bool_or(estoque_lancado) FILTER (WHERE pendente), false) AS estoque_lancado
+        COALESCE(bool_or(estoque_lancado) FILTER (WHERE pendente), false) AS estoque_lancado${emp ? ',\n        empresa' : ''}
       FROM itens_flag
-      GROUP BY c_chave_nfe, n_nf, dest_razao, dest_cnpj_cpf, d_emi
+      GROUP BY c_chave_nfe, n_nf, dest_razao, dest_cnpj_cpf, d_emi${emp ? ', empresa' : ''}
       HAVING COUNT(*) FILTER (WHERE pendente) > 0
-      ORDER BY d_emi ASC, n_nf ASC
+      ORDER BY d_emi ASC, n_nf ASC${emp ? ', empresa ASC' : ''}
       `,
       args,
     );
+    return res;
+  };
+
+  try {
+    let usadas: EmpresaNacional[] = alvo;
+    let res: Awaited<ReturnType<typeof consultar>>;
+    try {
+      res = await consultar(usadas);
+    } catch (err) {
+      // Historia 5: QUALQUER falha da consulta com a ACXE (espelho ausente, corte invalido, dado inesperado)
+      // tira so a ACXE da consulta; a Q2P segue (o proprio erro da Q2P cai no tratamento de baixo, como
+      // sempre). Pedido so da ACXE (`empresa=acxe`) nao tem Q2P para confirmar de quem e o defeito: o erro
+      // sobe, como o da Q2P sozinha.
+      if (usadas.length > 1 && usadas.includes('acxe')) {
+        usadas = usadas.filter((e) => e !== 'acxe');
+        res = await consultar(usadas);
+        avisarAcxeForaDaFila(err, 'fila'); // so depois de a Q2P responder: o defeito era mesmo da ACXE
+      } else {
+        throw err;
+      }
+    }
     if (flag) {
       // Sync parado deixa a fonte "fiscal pendente" incompleta sem nenhum erro —
       // o warn e o unico sinal alem do health (T051).
-      const idade = await idadeEspelhoRecebimentos();
-      if (statusHealthModulo(idade) === 'degraded') {
-        logger.warn({ idadeMin: idade.idadeMin, status: idade.status, limiteMin: idade.limiteMin }, 'Espelho de recebimentos de NF-e defasado — NFs com fiscal pendente podem estar faltando na fila');
+      for (const e of usadas) {
+        const idade = await idadeEspelhoRecebimentos(e);
+        if (statusHealthModulo(idade) === 'degraded') {
+          logger.warn(
+            { empresa: e, idadeMin: idade.idadeMin, status: idade.status, limiteMin: idade.limiteMin },
+            'Espelho de recebimentos de NF-e defasado — NFs com fiscal pendente podem estar faltando na fila',
+          );
+        }
       }
     }
     // 017: selo do PC so para NF com fiscal pendente (e chave ligada) — best-effort.
-    const pendentes = flag ? res.rows.filter((r) => r.fiscal === 'pendente').map((r) => r.nf_chave_acesso) : [];
-    const pcSituacoes = pendentes.length > 0 ? await pcSituacaoPorNf(pendentes, canceladaExiste, dataCorte) : new Map<string, PcSituacaoNf>();
+    const pendentes = flag
+      ? res.rows.filter((r) => r.fiscal === 'pendente').map((r) => ({ chave: r.nf_chave_acesso, empresa: r.empresa ?? ('q2p' as const) }))
+      : [];
+    const pcSituacoes = pendentes.length > 0 ? await pcSituacaoPorNf(pendentes, dataCorte, canceladaExiste) : new Map<string, PcSituacaoNf>();
     return res.rows.map((r) => ({
       nfChaveAcesso: r.nf_chave_acesso,
       notaFiscal: r.nota_fiscal,
@@ -668,7 +876,7 @@ export async function getFilaNacional(params: { q?: string | null; fornecedor?: 
       valorTotalBrl: r.valor_total_brl != null ? Number(r.valor_total_brl) : 0,
       fiscal: r.fiscal === 'pendente' ? 'pendente' : 'concluido',
       fiscalConcluidoPeloAtlasEm: r.fiscal_concluido_em ? new Date(r.fiscal_concluido_em).toISOString() : null,
-      empresa: 'q2p' as const,
+      empresa: r.empresa ?? ('q2p' as const),
       pcSituacao: pcSituacoes.get(r.nf_chave_acesso) ?? 'nao_aplicavel',
       estoqueLancadoPeloOmie: r.estoque_lancado === true,
     }));
@@ -793,78 +1001,107 @@ function conversaoDoGrupo(linhas: Array<{ q_com: number | string; u_com: string 
  * cadastrado no OMIE: 'nao_aplicavel' (o fiscal pelo Atlas e recusado antes do PC).
  * Copia defasada (D13) ou falha de banco: 'nao_aplicavel' (a fila e informativa;
  * o detalhe mostra o motivo e o POST decide).
+ * Historia 5: as NFs se agrupam por empresa — uma leitura da copia de PCs por empresa — e a
+ * falha de uma nao tira o selo da outra.
  */
-async function pcSituacaoPorNf(chaves: string[], canceladaExiste: boolean, dataCorte: string): Promise<Map<string, PcSituacaoNf>> {
+async function pcSituacaoPorNf(
+  nfs: Array<{ chave: string; empresa: EmpresaNacional }>,
+  dataCorte: string,
+  canceladaExiste: (empresa: EmpresaNacional) => Promise<boolean>,
+): Promise<Map<string, PcSituacaoNf>> {
   const out = new Map<string, PcSituacaoNf>();
-  try {
-    if (await copiaPcsDefasada()) return out;
-    const pool = getPool();
-    interface LinhaFilaPc extends LinhaPc {
-      c_chave_nfe: string;
-      x_prod: string;
-      desc_norm: string;
-      u_com: string | null;
-      valor_item: number | string;
-      fornecedor_codigo: number | string | null;
-      recebido: boolean;
+  const porEmpresa = new Map<EmpresaNacional, string[]>();
+  for (const nf of nfs) {
+    const lista = porEmpresa.get(nf.empresa);
+    if (lista) lista.push(nf.chave);
+    else porEmpresa.set(nf.empresa, [nf.chave]);
+  }
+  for (const [empresa, chaves] of porEmpresa) {
+    try {
+      const situacoes = await pcSituacaoPorNfDaEmpresa(empresa, chaves, dataCorte, await canceladaExiste(empresa));
+      for (const [chave, situacao] of situacoes) out.set(chave, situacao);
+    } catch (err) {
+      logger.warn({ err: (err as Error).message, empresa }, 'Situação de PC da fila indisponível — selo omitido');
     }
-    const r = await pool.query<LinhaFilaPc>(
-      `WITH nf_unificada AS (${nfUnificadaSql(true, canceladaExiste, '')}
+  }
+  return out;
+}
+
+async function pcSituacaoPorNfDaEmpresa(
+  empresa: EmpresaNacional,
+  chaves: string[],
+  dataCorte: string,
+  canceladaExiste: boolean,
+): Promise<Map<string, PcSituacaoNf>> {
+  const out = new Map<string, PcSituacaoNf>();
+  if (await copiaPcsDefasada(empresa)) return out;
+  const pool = getPool();
+  interface LinhaFilaPc extends LinhaPc {
+    c_chave_nfe: string;
+    x_prod: string;
+    desc_norm: string;
+    u_com: string | null;
+    valor_item: number | string;
+    fornecedor_codigo: number | string | null;
+    recebido: boolean;
+  }
+  // $1 CFOPs; $2 corte DESTA empresa (Q2P ou ACXE); $3 as chaves das NFs
+  const fonte: FonteEmpresa = { empresa, canceladaExiste, corteParam: '$2' };
+  const emp = comEmpresaNasLinhas([fonte]);
+  const r = await pool.query<LinhaFilaPc>(
+    `WITH nf_unificada AS (${nfUnificadaSql([fonte], true, false)}
        )
        SELECT u.c_chave_nfe, u.x_prod, ${normalizarDescricaoSql('u.x_prod')} AS desc_norm, u.q_com::float8 AS q_com, u.u_com,
               u.valor_item::float8 AS valor_item, u.preco_comercial::float8 AS preco_comercial, u.n_seq,
               u.n_id_pedido::text AS n_id_pedido, u.n_id_it_pedido::text AS n_id_it_pedido, u.n_num_ped_compra,
-              u.fornecedor_codigo::text AS fornecedor_codigo, ${recebidoSql('u')} AS recebido
+              u.fornecedor_codigo::text AS fornecedor_codigo, ${recebidoSql('u', emp)} AS recebido
          FROM nf_unificada u
         WHERE u.c_chave_nfe = ANY($3::text[]) AND u.fiscal_pendente AND u.cfop = ANY($1::text[])
           AND NOT u.cancelada AND NOT u.deletada
         ORDER BY u.c_chave_nfe, u.n_cod_item`,
-      [Array.from(CFOPS_RECEBIMENTO_NACIONAL), dataCorte, chaves],
-    );
-    const porNf = new Map<string, { fornecedor: number | null; grupos: Map<string, LinhaFilaPc[]> }>();
-    for (const l of r.rows) {
-      let nf = porNf.get(l.c_chave_nfe);
-      if (!nf) porNf.set(l.c_chave_nfe, (nf = { fornecedor: null, grupos: new Map() }));
-      if (nf.fornecedor == null) nf.fornecedor = numOuNull(l.fornecedor_codigo);
-      const g = nf.grupos.get(l.desc_norm);
-      if (g) g.push(l);
-      else nf.grupos.set(l.desc_norm, [l]);
-    }
-    const entradas = new Map<string, ItemParaSugestao[]>();
-    for (const [chave, nf] of porNf) {
-      const lista: ItemParaSugestao[] = [];
-      let indice = 0;
-      for (const linhas of nf.grupos.values()) {
-        if (linhas.every((l) => l.recebido)) {
-          indice++;
-          continue;
-        }
-        const conv = conversaoDoGrupo(linhas);
-        if (!conv.ok) {
-          indice++;
-          continue;
-        }
-        lista.push(entradaSugestaoPc(indice++, linhas[0]!.x_prod, conv.quantidadeKg, linhas, conv.unidade, conv.fator));
-      }
-      entradas.set(chave, lista);
-    }
-    const ctx = await carregarContextoPc('q2p', {
-      fornecedores: Array.from(porNf.values()).map((n) => n.fornecedor).filter((n): n is number => n != null),
-      nCodPedsVinculo: Array.from(entradas.values()).flatMap((l) => l.flatMap((e) => e.vinculos.map((v) => v.nIdPedido))),
-    });
-    const tol = toleranciasPc();
-    const opcoes = opcoesPc();
-    for (const [chave, lista] of entradas) {
-      const fornecedor = porNf.get(chave)?.fornecedor ?? null;
-      if (fornecedor == null) {
-        out.set(chave, 'nao_aplicavel');
+    [Array.from(CFOPS_RECEBIMENTO_NACIONAL), empresa === 'q2p' ? dataCorte : dataCorteAcxe(), chaves],
+  );
+  const porNf = new Map<string, { fornecedor: number | null; grupos: Map<string, LinhaFilaPc[]> }>();
+  for (const l of r.rows) {
+    let nf = porNf.get(l.c_chave_nfe);
+    if (!nf) porNf.set(l.c_chave_nfe, (nf = { fornecedor: null, grupos: new Map() }));
+    if (nf.fornecedor == null) nf.fornecedor = numOuNull(l.fornecedor_codigo);
+    const g = nf.grupos.get(l.desc_norm);
+    if (g) g.push(l);
+    else nf.grupos.set(l.desc_norm, [l]);
+  }
+  const entradas = new Map<string, ItemParaSugestao[]>();
+  for (const [chave, nf] of porNf) {
+    const lista: ItemParaSugestao[] = [];
+    let indice = 0;
+    for (const linhas of nf.grupos.values()) {
+      if (linhas.every((l) => l.recebido)) {
+        indice++;
         continue;
       }
-      const situacoes: PcSituacaoItem[] = lista.map((e) => montarPcDoItem(e, ctx, fornecedor, chave, tol, opcoes).situacao);
-      out.set(chave, pcSituacaoDaNf(situacoes));
+      const conv = conversaoDoGrupo(linhas);
+      if (!conv.ok) {
+        indice++;
+        continue;
+      }
+      lista.push(entradaSugestaoPc(indice++, linhas[0]!.x_prod, conv.quantidadeKg, linhas, conv.unidade, conv.fator));
     }
-  } catch (err) {
-    logger.warn({ err: (err as Error).message }, 'Situação de PC da fila indisponível — selo omitido');
+    entradas.set(chave, lista);
+  }
+  const ctx = await carregarContextoPc(empresa, {
+    fornecedores: Array.from(porNf.values()).map((n) => n.fornecedor).filter((n): n is number => n != null),
+    nCodPedsVinculo: Array.from(entradas.values()).flatMap((l) => l.flatMap((e) => e.vinculos.map((v) => v.nIdPedido))),
+  });
+  const tol = toleranciasPc();
+  const opcoes = opcoesPc();
+  for (const [chave, lista] of entradas) {
+    const fornecedor = porNf.get(chave)?.fornecedor ?? null;
+    if (fornecedor == null) {
+      out.set(chave, 'nao_aplicavel');
+      continue;
+    }
+    const situacoes: PcSituacaoItem[] = lista.map((e) => montarPcDoItem(e, ctx, fornecedor, chave, tol, opcoes).situacao);
+    out.set(chave, pcSituacaoDaNf(situacoes));
   }
   return out;
 }
@@ -877,6 +1114,12 @@ export interface ProdutoSugerido {
   codigo: number;
   descricao: string;
   vezesUsada: number;
+  /**
+   * So na NF da ACXE (Historia 5): o produto NAO tem correspondente ativo na Q2P (mesma
+   * descricao), entao so pode entrar em estoque que e so da ACXE (20.0.5, 20.0.7, 21.2) — a
+   * tela desabilita os locais que tambem sao da Q2P para ele. Ausente na NF da Q2P.
+   */
+  semCorrelatoQ2p?: boolean;
 }
 
 /** Um item do detalhe = uma DESCRICAO da NF (linhas de mesma descricao agregadas). */
@@ -948,8 +1191,8 @@ export interface DetalheNfNacional {
   nIdReceb: number | null;
   /** feature 016: gestor pode dispensar (flag ligada, sem dispensa ativa, ao menos um item pendente) */
   dispensavel: boolean;
-  /** feature 017: 'q2p' ate a Historia 5 (ACXE) */
-  empresa: 'q2p';
+  /** feature 017: empresa da NF — a ACXE so aparece com a Historia 5 habilitada */
+  empresa: EmpresaNacional;
   /** feature 017 (D6): STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC — so pesa com fiscal pendente */
   exigePc: boolean;
   /** feature 017 (D7, FR-021a): estoque ja lancado pelo OMIE num item a receber — o POST e recusado */
@@ -1009,20 +1252,22 @@ const pcVazio = (): PcDoItem => ({
  * aberto), o ledger do Atlas e, por ultimo, o cache de PCs vistos (0057 — o PC que
  * saiu da lista de pendentes ou foi recebido por inteiro). Best-effort: sem numero,
  * o chamador mostra "PC vinculado no OMIE" sem numero.
+ * Historia 5: a copia e o cache sao os da empresa da NF (o ledger tambem, para a ACXE — o
+ * texto da Q2P segue o de sempre).
  */
-async function numerosDosPcs(peds: number[]): Promise<Map<number, string>> {
+async function numerosDosPcs(peds: number[], empresa: EmpresaNacional = 'q2p'): Promise<Map<number, string>> {
   const out = new Map<number, string>();
   if (peds.length === 0) return out;
   try {
     const r = await getPool().query<{ ncodped: string; numero: string | null; prio: number }>(
       `SELECT ncodped::text AS ncodped, MIN(btrim(cnumero)) AS numero, 1 AS prio
-         FROM public."tbl_pedidosCompras_Q2P" WHERE ncodped = ANY($1::bigint[]) GROUP BY ncodped
+         FROM public.${tabelaPcs(empresa)} WHERE ncodped = ANY($1::bigint[]) GROUP BY ncodped
        UNION ALL
        SELECT n_cod_ped::text, MIN(btrim(pc_numero)), 2
-         FROM stockbridge.recebimento_fiscal_pc WHERE n_cod_ped = ANY($1::bigint[]) AND status = 'concluido' GROUP BY n_cod_ped
+         FROM stockbridge.recebimento_fiscal_pc WHERE n_cod_ped = ANY($1::bigint[]) AND status = 'concluido'${empresa === 'q2p' ? '' : ` AND empresa = '${empresa}'`} GROUP BY n_cod_ped
        UNION ALL
        SELECT n_cod_ped::text, MIN(NULLIF(btrim(pc_numero), '')), 3
-         FROM stockbridge.pedido_compra_visto WHERE empresa = 'q2p' AND n_cod_ped = ANY($1::bigint[]) GROUP BY n_cod_ped
+         FROM stockbridge.pedido_compra_visto WHERE empresa = '${empresa}' AND n_cod_ped = ANY($1::bigint[]) GROUP BY n_cod_ped
        ORDER BY 3`,
       [peds],
     );
@@ -1070,6 +1315,65 @@ export function itemNfPendente(it: ItemNfNacional): boolean {
   return !recebidoIntegral && !it.baixadoComoExterno;
 }
 
+/**
+ * Codigos de produto da ACXE sugeridos para um item da NF (Historia 5), na ordem de confianca:
+ * primeiro o que o OMIE ja associou as linhas do item (n_cod_prod da NF / n_id_produto do
+ * recebimento) e depois o produto do item do PC — o atribuido ao item no PC pre-selecionado da
+ * nota, o pre-selecionado do proprio item e o vinculo do OMIE elegivel. Sem repeticao.
+ */
+function codigosProdutoAcxeDoItem(
+  indice: number,
+  linhas: Array<{ produto_omie?: string | number | null }>,
+  ctx: ContextoPc | null,
+  resultado: ResultadoPcItem | null,
+  pcsDaNf: PcsDaNf,
+): number[] {
+  const codigos: number[] = [];
+  const add = (n: number | null | undefined): void => {
+    if (n != null && Number.isFinite(n) && n > 0 && !codigos.includes(n)) codigos.push(n);
+  };
+  for (const l of linhas) add(numOuNull(l.produto_omie));
+  if (ctx) {
+    const produtoDoItemDePc = (nCodItem: number | null | undefined): number | undefined =>
+      nCodItem == null ? undefined : ctx.pcs.find((p) => p.nCodItem === nCodItem)?.nCodProd;
+    const doPcDaNf =
+      pcsDaNf.preSelecionado != null
+        ? pcsDaNf.pcs.find((p) => p.nCodPed === pcsDaNf.preSelecionado)?.itens.find((i) => i.indice === indice)?.nCodItem
+        : undefined;
+    add(produtoDoItemDePc(doPcDaNf));
+    add(produtoDoItemDePc(resultado?.pc.preSelecionado?.nCodItem));
+    if (resultado?.pc.vinculoOmie && resultado.pc.vinculoOmieElegivel) add(produtoDoItemDePc(resultado.pc.vinculoOmie.nCodItem));
+  }
+  return codigos;
+}
+
+/**
+ * Produtos sugeridos da NF da ACXE: os codigos viram produtos do catalogo da ACXE, cada um com
+ * `semCorrelatoQ2p` (sem produto Q2P ativo de mesma descricao: so entra em local so da ACXE).
+ * Produto fora do cadastro ou inativo nao e oferecido (o combobox nao o lista). Uma consulta para
+ * a NF inteira; falha de banco = sem sugestao (o operador escolhe no combobox).
+ */
+async function produtosSugeridosAcxe(codigosPorIndice: Map<number, number[]>, chave: string): Promise<Map<number, ProdutoSugerido[]>> {
+  const out = new Map<number, ProdutoSugerido[]>();
+  const todos = Array.from(new Set(Array.from(codigosPorIndice.values()).flat()));
+  if (todos.length === 0) return out;
+  try {
+    const catalogo = await resolverGemeosQ2p(todos);
+    for (const [indice, codigos] of codigosPorIndice) {
+      const lista: ProdutoSugerido[] = [];
+      for (const c of codigos) {
+        const p = catalogo.get(c);
+        if (!p || !p.ativoAcxe || !p.emKgAcxe) continue; // so produto ativo e em kg (o POST recusa os outros)
+        lista.push({ codigo: p.codigoAcxe, descricao: p.descricaoAcxe, vezesUsada: 0, semCorrelatoQ2p: p.gemeoQ2p == null });
+      }
+      out.set(indice, lista);
+    }
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, chave }, 'Produtos sugeridos da NF da ACXE indisponíveis — detalhe segue sem pré-seleção');
+  }
+  return out;
+}
+
 interface LinhaRow {
   nf_chave_acesso: string;
   n_nf: string;
@@ -1109,6 +1413,10 @@ interface LinhaRow {
   receb_recebido: string | null;
   /** o ledger do Atlas tem o fiscal desta NF concluido (ou ja_concluido) */
   ledger_concluido: boolean;
+  // ── Historia 5: so quando a consulta inclui a ACXE (ausente = Q2P) ──
+  empresa?: EmpresaNacional;
+  /** produto que o OMIE associou ao item (tbl_nf_itens.n_cod_prod / recebimento n_id_produto), codigo da empresa da NF */
+  produto_omie?: string | number | null;
 }
 
 /**
@@ -1134,12 +1442,26 @@ export async function montarDetalheNfNacional(
   const dataCorte = getDataCorteFilaNacional();
   const flag = recebimentoFiscalHabilitado();
   const pool = getPool();
-  const canceladaExiste = await colunaCanceladaExiste(pool, 'tbl_nf_header_Q2P');
   const descNorm = normalizarDescricaoSql('u.x_prod');
 
-  const consulta = pool.query<LinhaRow>(
+  // Historia 5: a NF pode ser da Q2P ou da ACXE (habilitada). A chave de acesso e unica entre os
+  // espelhos, entao a consulta olha as empresas ativas e a linha diz de qual veio. O corte da
+  // ACXE e um parametro proprio, depois do da Q2P ($2) — com a Q2P sozinha, os de sempre.
+  const consultar = async (empresas: EmpresaNacional[]) => {
+    const args: unknown[] = [chave, dataCorte];
+    const corteAcxe = empresas.includes('acxe') ? `$${args.push(dataCorteAcxe())}` : '';
+    const fontes: FonteEmpresa[] = [];
+    for (const e of empresas) {
+      fontes.push({
+        empresa: e,
+        canceladaExiste: await colunaCanceladaExiste(pool, nomeSemAspas(tabelasNacional(e).nfHeader)),
+        corteParam: e === 'q2p' ? '$2' : corteAcxe,
+      });
+    }
+    const emp = comEmpresaNasLinhas(fontes);
+    return pool.query<LinhaRow>(
     `
-    WITH nf_unificada AS (${nfUnificadaSql(flag, canceladaExiste, '')}
+    WITH nf_unificada AS (${nfUnificadaSql(fontes, flag, false)}
     )
     SELECT
       u.c_chave_nfe                                    AS nf_chave_acesso,
@@ -1151,7 +1473,7 @@ export async function montarDetalheNfNacional(
       (CURRENT_DATE - u.d_emi::date)::int              AS dias_desde_emissao,
       u.cancelada                                      AS cancelada,
       u.deletada                                       AS deletada,
-      NOT ${fornecedorNaoExcluidoSql('u')}             AS fornecedor_excluido,
+      NOT ${fornecedorNaoExcluidoSql('u', emp)}             AS fornecedor_excluido,
       u.fiscal_pendente                                AS fiscal_pendente,
       u.n_id_receb                                     AS n_id_receb,
       u.n_cod_item                                     AS n_cod_item,
@@ -1161,7 +1483,7 @@ export async function montarDetalheNfNacional(
       u.q_com::float8                                  AS q_com,
       u.u_com                                          AS u_com,
       u.valor_item::float8                             AS valor_item,  -- D26: NAO v_tot_item
-      ${recebidoSql('u')}                              AS recebido,
+      ${recebidoSql('u', emp)}                              AS recebido,
       EXISTS (SELECT 1 FROM stockbridge.aprovacao a
                WHERE a.tipo_aprovacao = 'recebimento_externo' AND a.status = 'aprovada'
                  AND a.nf_chave_acesso = u.c_chave_nfe
@@ -1182,16 +1504,30 @@ export async function montarDetalheNfNacional(
       u.c_ignorar_item                                 AS c_ignorar_item,
       u.c_nao_gerar_mov_estoque                        AS c_nao_gerar_mov_estoque,
       u.receb_recebido                                 AS receb_recebido,
-      ${LEDGER_FISCAL_CONCLUIDO_SQL('u.c_chave_nfe')}  AS ledger_concluido
+      ${LEDGER_FISCAL_CONCLUIDO_SQL('u.c_chave_nfe')}  AS ledger_concluido${emp ? ',\n      u.empresa                                        AS empresa,\n      u.produto_omie::text                             AS produto_omie' : ''}
     FROM nf_unificada u
     WHERE u.c_chave_nfe = $1
     ORDER BY u.n_cod_item
     `,
-    [chave, dataCorte],
-  );
-  let res: Awaited<typeof consulta>;
+    args,
+    );
+  };
+  let res: Awaited<ReturnType<typeof consultar>>;
   try {
-    res = await consulta;
+    let consultadas = empresasNacionalAtivas();
+    try {
+      res = await consultar(consultadas);
+    } catch (err) {
+      // Qualquer falha da consulta com a ACXE tira so a ACXE; a NF da Q2P continua abrindo (a da ACXE
+      // passa a nao ser encontrada, como se a chave da ACXE estivesse desligada).
+      if (consultadas.length > 1 && consultadas.includes('acxe')) {
+        consultadas = consultadas.filter((e) => e !== 'acxe');
+        res = await consultar(consultadas);
+        avisarAcxeForaDaFila(err, 'detalhe'); // so depois de a Q2P responder: o defeito era mesmo da ACXE
+      } else {
+        throw err;
+      }
+    }
   } catch (err) {
     if (ehTabelaAusente(err)) {
       logger.error({ err: (err as Error).message, flag }, 'Detalhe da NF nacional referencia tabela inexistente — migration pendente?');
@@ -1242,11 +1578,14 @@ export async function montarDetalheNfNacional(
 
   const fornecedorCnpj = cab.fornecedor_cnpj ?? '';
   const fornecedorNome = cab.fornecedor_nome ?? FORNECEDOR_NAO_IDENTIFICADO;
+  const empresa: EmpresaNacional = cab.empresa ?? 'q2p';
 
   // Historia 3 (FR-006): sugestao memorizada por (fornecedor, descricao normalizada).
   // Best-effort — falha aqui nao pode derrubar o detalhe da NF.
+  // Historia 5: a memoria e so da Q2P (o CNPJ do fornecedor se repete nas duas empresas e o
+  // codigo memorizado e o da Q2P) — a NF da ACXE sugere pelo produto do item e do PC, mais abaixo.
   let sugestoes = new Map<string, ProdutoSugerido[]>();
-  if (fornecedorCnpj) {
+  if (fornecedorCnpj && empresa === 'q2p') {
     try {
       sugestoes = await sugerirProdutosEmLote(fornecedorCnpj, Array.from(grupos.keys()));
     } catch (err) {
@@ -1340,9 +1679,20 @@ export async function montarDetalheNfNacional(
   );
   let copiaDefasada = false;
   let pcsDaNf: PcsDaNf = { pcs: [], preSelecionado: null };
+  let ctxPcs: ContextoPc | null = null;
   if (fiscal === 'pendente' && flag) {
-    copiaDefasada = await copiaPcsDefasada();
-    const resultados = copiaDefasada ? null : await sugerirPcPorItens('q2p', fornecedorCodigo, chave, entradas);
+    copiaDefasada = await copiaPcsDefasada(empresa);
+    let resultados: Map<number, ResultadoPcItem> | null = null;
+    if (!copiaDefasada) {
+      if (empresa === 'q2p') {
+        resultados = await sugerirPcPorItens(empresa, fornecedorCodigo, chave, entradas);
+      } else {
+        // ACXE: o contexto traz tambem o produto dos itens de PC (sugestao de produto, mais abaixo)
+        const lido = await sugerirPcPorItensComContexto(empresa, fornecedorCodigo, chave, entradas);
+        resultados = lido.resultados;
+        ctxPcs = lido.ctx;
+      }
+    }
     for (const it of itens) {
       const resultado = resultados?.get(it.indice) ?? null;
       it.pc = resultado ? resultado.pc : pcVazio();
@@ -1362,7 +1712,7 @@ export async function montarDetalheNfNacional(
     // Fiscal ja feito: so o PC vinculado a vista, com a chave em qualquer posicao (FR-021).
     // O vinculo gravado pelo Atlas (ledger) vale antes do espelho para a mesma sequencia.
     const ledgerPcs = cab.ledger_concluido === true ? await pcsDoLedgerPorSequencia(chave) : new Map<number, string>();
-    const numeros = await numerosDosPcs(Array.from(new Set(entradas.flatMap((e) => e.vinculos.map((v) => v.nIdPedido)))));
+    const numeros = await numerosDosPcs(Array.from(new Set(entradas.flatMap((e) => e.vinculos.map((v) => v.nIdPedido)))), empresa);
     for (const it of itens) {
       const entrada = entradas[it.indice]!;
       pcPorIndice.set(it.indice, { entrada, resultado: null });
@@ -1386,6 +1736,23 @@ export async function montarDetalheNfNacional(
       // Sem numero na copia nem no ledger: vazio (a tela mostra "PC vinculado no OMIE"). O
       // n_num_ped_compra NAO serve: e o pedido que o fornecedor informou no XML (xPed).
       it.pc = { ...pcVazio(), vinculadoNoOmie: { pcNumero: Array.from(new Set(nums)).join(', ') } };
+    }
+  }
+  // Historia 5: produto da NF da ACXE — o que o OMIE ja associou ao item e o produto do item do PC
+  // (catalogo da ACXE, com a marca de quem nao tem gemeo na Q2P). Best-effort.
+  if (empresa === 'acxe') {
+    const codigosPorIndice = new Map<number, number[]>();
+    for (const it of itens) {
+      codigosPorIndice.set(
+        it.indice,
+        codigosProdutoAcxeDoItem(it.indice, linhasPorIndice.get(it.indice) ?? [], ctxPcs, pcPorIndice.get(it.indice)?.resultado ?? null, pcsDaNf),
+      );
+    }
+    const sugeridos = await produtosSugeridosAcxe(codigosPorIndice, chave);
+    for (const it of itens) {
+      it.produtosSugeridos = sugeridos.get(it.indice) ?? [];
+      // 'sem_correlacao' = nenhuma sugestao (informativo); o bloqueio de unidade continua valendo
+      if (it.bloqueio === 'sem_correlacao' && it.produtosSugeridos.length > 0) it.bloqueio = null;
     }
   }
   // D7: item a receber cujo recebimento foi concluido fora do Atlas com movimento de estoque.
@@ -1421,7 +1788,7 @@ export async function montarDetalheNfNacional(
     fiscal,
     nIdReceb: nIdReceb != null && Number.isFinite(nIdReceb) ? nIdReceb : null,
     dispensavel: flag && itens.some(itemNfPendente),
-    empresa: 'q2p',
+    empresa,
     exigePc: exigePcHabilitado(),
     estoqueLancadoPeloOmie,
     copiaPcsDefasada: copiaDefasada,

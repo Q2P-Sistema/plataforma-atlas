@@ -100,7 +100,9 @@ export function movimentacaoDoItemNacionalSql(args: {
  *     itens nao tem codigo de produto — a descricao e a unica identidade da linha).
  *  2. Historico do formulario manual (145 linhas) e tudo que ele criar daqui em
  *     diante (NF fora do espelho nunca tera chave): casa por NUMERO sem zeros a
- *     esquerda + empresa. Por NF inteira — o manual nao guarda a linha de origem.
+ *     esquerda + empresa (a da linha: `empresaExpr`; a Q2P quando omitida — o numero
+ *     de NF colide entre os espelhos da Q2P e da ACXE, feature 017 Historia 5).
+ *     Por NF inteira — o manual nao guarda a linha de origem.
  *     `subtipo = 'compra_nacional'` NAO e opcional: sem ele o ramo casa com as
  *     saidas automaticas da Q2P, que tambem gravam nota_fiscal + empresa sem chave,
  *     e uma NF de compra pendente sumiria da fila.
@@ -127,9 +129,15 @@ export function itemNacionalRecebidoSql(args: {
   dataEmissaoExpr?: string;
   /** Sequencia do item no recebimento de NF-e (ACXEGDP-412) — via 1 casa por ela tambem. */
   sequenciaExpr?: string;
+  /**
+   * Empresa da linha (ex.: `u.empresa`) — a via 2 so casa lancamento manual da MESMA
+   * empresa. Omitida = a Q2P (`'q2p'`, o SQL de antes da Historia 5, byte a byte).
+   */
+  empresaExpr?: string;
 }): string {
   const desdeEmissao = args.dataEmissaoExpr ? `
                 AND m.created_at >= (${args.dataEmissaoExpr})::date` : '';
+  const empresaMovimentacao = args.empresaExpr ?? "'q2p'";
   return `(
     EXISTS (SELECT 1 FROM stockbridge.movimentacao m
               WHERE m.ativo = true AND m.subtipo = 'compra_nacional'
@@ -142,7 +150,7 @@ export function itemNacionalRecebidoSql(args: {
     OR EXISTS (SELECT 1 FROM stockbridge.movimentacao m
               WHERE m.ativo = true AND m.subtipo = 'compra_nacional'
                 AND m.nf_chave_acesso IS NULL
-                AND m.empresa = 'q2p'
+                AND m.empresa = ${empresaMovimentacao}
                 AND ltrim(m.nota_fiscal, '0') = ltrim(${args.nfNumeroExpr}, '0')${desdeEmissao})
     OR EXISTS (SELECT 1 FROM stockbridge.aprovacao a
               WHERE a.tipo_aprovacao = 'recebimento_externo' AND a.status = 'aprovada'

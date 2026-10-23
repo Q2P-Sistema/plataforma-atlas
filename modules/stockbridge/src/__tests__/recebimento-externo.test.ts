@@ -257,6 +257,7 @@ describe('listarBaixasExternasAprovadas / reverterRecebimentoExterno (T071a/T071
       id: 'ap-9', nfChaveAcesso: CHAVE, notaFiscal: '66724', nfItemDescricao: 'SUCATA PSAI', quantidadeNfKg: 13160,
       motivo: `Recebimento externo · ${MOTIVO}`, lancadoPor: USER, lancadoEm: '2026-09-15T12:00:00.000Z',
       aprovadoPor: GESTOR, aprovadoEm: '2026-09-15T13:00:00.000Z',
+      empresa: 'q2p', // Historia 5: linha sem empresa (formato anterior) = Q2P
     });
     expect(ops[0]!.calls).toEqual(['from', 'where', 'orderBy', 'limit']);
   });

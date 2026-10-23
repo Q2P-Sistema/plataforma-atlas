@@ -101,6 +101,8 @@ describe('registrarPcsVistos — upsert só do que mudou', () => {
     // todos os dados do PC que importam para a sugestão e para a auditoria
     expect(atuais).toEqual([
       'n_cod_ped', 'pc_numero', 'n_cod_for', 'produto_descricao', 'unidade', 'qtde', 'qtde_rec', 'preco_unit', 'etapa', 'dt_previsao', 'valor_total_pc',
+      // Historia 5 (0058): produto e local do item do PC
+      'n_cod_prod', 'codigo_local_estoque',
     ]);
   });
 

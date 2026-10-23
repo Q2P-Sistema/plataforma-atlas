@@ -1289,7 +1289,8 @@ describe('carregarContextoPc', () => {
       linhaPc({ ...base, ncoditem: '5', fornecedor_acxe: false, valor_total_pc: 50 }), // fornecedor comum, valor baixo
       linhaPc({ ...base, ncoditem: '6', fornecedor_acxe: null, valor_total_pc: 50 }), // fornecedor sem cadastro
     ]);
-    const ctx = await carregarContextoPc('acxe', { fornecedores: [9], nCodPedsVinculo: [] });
+    // o PC-espelho da importacao so existe na copia da Q2P (Historia 5: na da ACXE o fornecedor nunca e a propria ACXE)
+    const ctx = await carregarContextoPc('q2p', { fornecedores: [9], nCodPedsVinculo: [] });
     expect(ctx.pcs.map((p) => p.pcEspelho)).toEqual([true, true, false, false, false, false]);
   });
 

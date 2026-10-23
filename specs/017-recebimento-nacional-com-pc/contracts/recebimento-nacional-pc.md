@@ -9,7 +9,7 @@ Chaves:
 - `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED` (a da 016). Desligada: sem sugestão, sem vínculo e sem fiscal pelo Atlas. **Continuam ativos** o PC vinculado à vista nas NFs com fiscal já feito (FR-021) e o bloqueio de estoque já lançado pelo OMIE (FR-021a).
 - `STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC` (default `true`): regra para NF sem PC (D6).
 - `STOCKBRIDGE_PC_UNIDADE_DIFERENTE` (default `bloquear`): PC em unidade diferente da NF (D15). `converter` só depois de teste com NF real.
-- `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED` (default `false`): NFs da ACXE na fila (História 5).
+- `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED` (default `false`): NFs da ACXE na fila (História 5, §8). Só vale com a chave da 016 e com `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_DATA_CORTE`; sem elas a ACXE fica de fora (log e health) e a fila da Q2P segue normal.
 
 Mensagens ao operador identificam a NF, o fornecedor e o PC pelo **número** (ex.: "PC 304"). Nunca mostram `nCodPed`, `nIdReceb` ou códigos de 10 dígitos (ACXEGDP-313).
 
@@ -25,7 +25,7 @@ Cada NF ganha:
 
 - `pcSituacao` segue a regra do data-model §8. Vale `nao_aplicavel` com fiscal já feito ou com a chave da 016 desligada.
 - `estoqueLancadoPeloOmie` é calculado com a chave em qualquer posição (D7).
-- Com a chave da ACXE desligada, só aparecem NFs da Q2P e `empresa` é sempre `"q2p"`.
+- Com a chave da ACXE desligada, só aparecem NFs da Q2P e `empresa` é sempre `"q2p"`. Com ela ligada (§8), a fila une as duas empresas, aceita o filtro `?empresa=q2p|acxe` e o `meta` ganha `recebimentoNacionalAcxeHabilitado`.
 
 ## 2. `GET /fila/:chaveAcesso` (estendida)
 
@@ -188,3 +188,35 @@ Cockpit e pendências fiscais passam a usar saldo (`nqtde − nqtderec`). O form
 - `GET /api/v1/stockbridge/health` (autenticado) ganha `pedidosCompraCopiaIdadeMin`, `degraded` acima de `STOCKBRIDGE_COPIA_PCS_MAX_MIN` (default 120). Na Fase 2, também a cópia e o espelho de recebimentos da ACXE.
 - O cron que já alerta o espelho de recebimentos (`alerta-espelho-recebimentos.service.ts`) alerta também a cópia de PCs, para `STOCKBRIDGE_OPS_EMAIL`, com o mesmo reaviso.
 - O mesmo cron (`5,35 * * * *`) atualiza o cache de PCs vistos da Q2P (`registrarPcsVistos`), sem alertar: falha vira aviso no log e a sugestão segue só com a cópia.
+
+## 8. Compra nacional da ACXE (História 5, research D18)
+
+Valem as rotas acima, com a empresa vinda **da NF** (espelho), nunca do corpo.
+
+**`GET /fila`**: `data[].empresa` (`q2p` | `acxe`); query `empresa` opcional; `meta.recebimentoNacionalAcxeHabilitado`. Qualquer falha da consulta com a ACXE (espelho ausente, corte inválido, outro erro) refaz a consulta só com a Q2P: a ACXE nunca derruba a fila nem o detalhe da Q2P. O corte da ACXE precisa ser data de calendário válida; inválido vale como ausente. NF da ACXE entra com as três condições (chave da ACXE, chave da 016, corte da ACXE) e fica de fora se for da Q2P (intercompany: `fornecedor_exclusao` com `empresa = 'acxe'`). A exclusão de fornecedor vale por empresa nas duas consultas.
+
+**`GET /fila/:chave`**: `empresa`; para NF da ACXE, `itens[].produtosSugeridos[]` do catálogo da ACXE (produto que o OMIE associou ao item e produto do item do PC), com `semCorrelatoQ2p`; candidatos de PC (`PcCandidato`) e `pcsDaNf.pcs[].itens[]` com `localidadeId` e `localDescricao` ("20.0.7 · PRODUÇÃO"), resolvidos no servidor a partir do local do item do PC (nulos na NF da Q2P, em local virtual ou desconhecido).
+
+**`GET /localidades?empresa=acxe&destino=nf`** (nova variação): destinos da entrada por NF da ACXE, `[{ id, codigo, nome, tipo, entradaEm }]`, sem código do OMIE. `entradaEm = ['acxe','q2p']` para 11.1, 12.1, 21.1 e 31.1 (vêm primeiro) e `['acxe']` para 20.0.5, 20.0.7 e 21.2; sem locais virtuais nem só da Q2P. Com `empresa=q2p&destino=nf`, a lista de hoje (11.2, 12.2) com `entradaEm = ['q2p']`. Sem `destino`, a lista do formulário manual, inalterada.
+
+**`GET /produtos?empresa=acxe`**: só produtos ativos **em KG** (o catálogo da ACXE tem 259 de 475 ativos em outras unidades); cada um ganha `semCorrelatoQ2p` (não há produto **ativo e em KG** da Q2P com a mesma descrição). As sugestões do detalhe seguem a mesma regra.
+
+**`POST /por-nf`**: cada `itens[].produtos[]` leva exatamente um de `produto_codigo_q2p` | `produto_codigo_acxe`, o da empresa da NF. Respostas novas, todas no portão 1 (antes do fiscal, nada gravado):
+
+| Status | `code` | Quando |
+|---|---|---|
+| 400 | `PRODUTO_EMPRESA_INCOMPATIVEL` | o campo de produto não é o da empresa da NF |
+| 400 | `LOCALIDADE_NAO_ELEGIVEL` | (já existia) o estoque não está entre os destinos da empresa da NF |
+| 404 | `PRODUTO_NAO_ENCONTRADO` | (já existia) produto fora do catálogo da ACXE ou inativo |
+| 422 | `PRODUTO_SEM_CORRELATO_Q2P` | estoque que entra nas duas empresas com produto sem produto ativo de mesma descrição na Q2P |
+| 422 | `PRODUTO_CORRELATO_Q2P_REPETIDO` | dois produtos da mesma linha da NF com o mesmo correspondente na Q2P, os dois em estoque que entra nas duas |
+| 422 | `PRODUTO_UNIDADE_NAO_KG` | produto da ACXE controlado em outra unidade (metro, unidade, caixa…): o recebimento lança em kg |
+
+O fiscal e a trava de estoque já lançado usam o OMIE da ACXE. Cada produto do resultado ganha `produtoCodigoAcxe` (NF da ACXE), `produtoCodigoQ2p` (na ACXE, o correspondente quando entra nas duas, senão `null`) e `entradaEm` (ausente nos produtos barrados antes da validação do estoque). Sem memória fornecedor × descrição e sem baixa de PC na Q2P.
+
+**`PUT /correlacao`**: NF da ACXE → `422 CORRELACAO_SO_Q2P` (a memória guarda produtos da Q2P).
+
+**Aprovação** (`GET /api/v1/stockbridge/aprovacoes`, `POST …/:id/aprovar`): cada pendência ganha `entradaEm` (`[]` fora da entrada nacional). Aprovar uma entrada da ACXE lança `ENT/INI` na ACXE (`nacional-acxe`) e, quando entra nas duas, na Q2P em seguida (`nacional-q2p`), com o mesmo valor unitário e a mesma data. Respostas: `200` (com `pendenciaOmie: { lado: 'q2p', opId, movimentacaoId, mensagem }` quando só a Q2P falhou: aprovação registrada, movimentação `pendente_q2p`); `502 OMIE_ACXE_FAIL` (a ACXE falhou: nada gravado, a aprovação continua pendente); `422 ENTRADA_NACIONAL_INCONSISTENTE` (sem custo da NF gravado, ou o estoque deixou de ser das duas empresas desde o POST).
+
+**Retentativa** (`GET /api/v1/stockbridge/movimentacoes`, `POST /api/v1/stockbridge/operacoes-pendentes/:id/retentar`): cada movimentação ganha `retentavelQ2p` — só a entrada nacional da ACXE nas duas empresas em `pendente_q2p` sem aprovação pendente (importação e saída manual continuam sem o botão). Os erros da rota trazem `userMessage`. A retentativa da entrada nas duas empresas refaz só a perna da Q2P, com o mesmo valor e a data da perna da ACXE: `200`; `502 OMIE_Q2P_FAIL`; `409 RETENTATIVA_INVALIDA` quando uma guarda recusa antes do OMIE (entrada só de uma empresa, aprovação não concluída, perna da ACXE não feita, perna da Q2P já feita, dado persistido faltando).
+

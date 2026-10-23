@@ -16,7 +16,8 @@ import {
 const logger = createLogger('stockbridge:localidade');
 const router: Router = Router();
 
-const TipoLocalidade = z.enum(['proprio', 'tpl', 'porto_seco', 'virtual_transito', 'virtual_ajuste']);
+// 'operacional' (migration 0058): 20.0.5 PROCESSO e 20.0.7 PRODUCAO da ACXE — destino so do recebimento nacional da ACXE.
+const TipoLocalidade = z.enum(['proprio', 'tpl', 'porto_seco', 'virtual_transito', 'virtual_ajuste', 'operacional']);
 
 const CreateSchema = z.object({
   codigo: z.string().min(1).max(50),

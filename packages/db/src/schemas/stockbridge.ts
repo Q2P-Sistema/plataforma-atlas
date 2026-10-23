@@ -28,7 +28,9 @@ export const localidade = stockbridgeSchema.table(
     nome: varchar('nome', { length: 255 }).notNull(),
     tipo: varchar('tipo', { length: 20 })
       .notNull()
-      .$type<'proprio' | 'tpl' | 'porto_seco' | 'virtual_transito' | 'virtual_ajuste'>(),
+      // 'operacional' (0058): 20.0.5 PROCESSO e 20.0.7 PRODUCAO da ACXE — so destino do
+      // recebimento nacional da ACXE.
+      .$type<'proprio' | 'tpl' | 'porto_seco' | 'virtual_transito' | 'virtual_ajuste' | 'operacional'>(),
     cnpj: varchar('cnpj', { length: 50 }),
     cidade: varchar('cidade', { length: 100 }),
     ativo: boolean('ativo').notNull().default(true),
@@ -218,10 +220,20 @@ export const movimentacao = stockbridgeSchema.table(
     // classificadas no MESMO produto (lotes) — sem ela a segunda colidiria e seria
     // traduzida para 'ja_recebido', perdendo quantidade em silencio. Linhas sem chave
     // (historico + formulario manual) ficam fora do indice.
+    // Migration 0058: so a Q2P (a linha da ACXE que entra nas duas empresas tambem leva
+    // produto_codigo_q2p e fica com o indice da ACXE, abaixo).
     uniqueIndex('movimentacao_nf_nacional_idempotencia_idx')
       .on(t.nfChaveAcesso, t.nfItemDescricaoNormalizada, t.produtoCodigoQ2p)
       .where(
-        sql`subtipo = 'compra_nacional' AND ativo = true AND nf_chave_acesso IS NOT NULL AND produto_codigo_q2p IS NOT NULL`,
+        sql`subtipo = 'compra_nacional' AND ativo = true AND empresa = 'q2p' AND nf_chave_acesso IS NOT NULL AND produto_codigo_q2p IS NOT NULL`,
+      ),
+    // Migration 0058 (feature 017, Historia 5): a NF da ACXE grava produto_codigo_acxe
+    // e so leva produto_codigo_q2p quando o local tambem e da Q2P; o indice acima nao
+    // protege a entrada so na ACXE.
+    uniqueIndex('movimentacao_nf_nacional_acxe_idempotencia_idx')
+      .on(t.nfChaveAcesso, t.nfItemDescricaoNormalizada, t.produtoCodigoAcxe)
+      .where(
+        sql`subtipo = 'compra_nacional' AND ativo = true AND empresa = 'acxe' AND nf_chave_acesso IS NOT NULL AND produto_codigo_acxe IS NOT NULL`,
       ),
   ],
 );
@@ -340,7 +352,13 @@ export const fornecedorExclusao = stockbridgeSchema.table(
     excluidoEm: timestamp('excluido_em', { withTimezone: true }).notNull().defaultNow(),
     reincluidoEm: timestamp('reincluido_em', { withTimezone: true }),
     reincluidoPor: uuid('reincluido_por').references(() => users.id),
+    // Migration 0058: fila de recebimento nacional de qual empresa exclui o fornecedor
+    // (a Q2P fica fora da fila da ACXE; PLASTFIX e a ACXE, fora da fila da Q2P).
+    empresa: varchar('empresa', { length: 4 }).notNull().default('q2p').$type<EmpresaRecebimento>(),
   },
+  (t) => [
+    uniqueIndex('fornecedor_exclusao_ativa_idx').on(t.empresa, t.fornecedorCnpj).where(sql`reincluido_em IS NULL`),
+  ],
 );
 
 // ── Correlacao produto x descricao do fornecedor (feature 015, migration 0052) ──
@@ -757,6 +775,10 @@ export const pedidoCompraVisto = stockbridgeSchema.table(
     etapa: varchar('etapa', { length: 2 }),
     dtPrevisao: date('dt_previsao'),
     valorTotalPc: numeric('valor_total_pc', { precision: 14, scale: 2 }),
+    // 0058: produto e local do item do PC no OMIE da empresa (sugestao de produto e
+    // pre-selecao do local da entrada quando o PC sai da lista de pendentes).
+    nCodProd: bigint('n_cod_prod', { mode: 'number' }),
+    codigoLocalEstoque: bigint('codigo_local_estoque', { mode: 'number' }),
     vistoEm: timestamp('visto_em', { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

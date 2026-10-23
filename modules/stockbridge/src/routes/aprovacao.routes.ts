@@ -13,6 +13,7 @@ import {
   AprovacaoNivelInsuficienteError,
   AprovacaoStatusInvalidoError,
   ResubmissaoDuplicadaError,
+  EntradaNacionalInconsistenteError,
 } from '../services/aprovacao.service.js';
 import { OmieAjusteError } from '../services/recebimento.service.js';
 import {
@@ -209,6 +210,12 @@ function tratarErro(res: Response, err: unknown, ator?: { role: Perfil }) {
   }
   if (err instanceof ResubmissaoDuplicadaError) {
     res.status(409).json({ data: null, error: { code: 'RESUBMISSAO_DUPLICADA', message: err.message } });
+    return;
+  }
+  // Historia 5 (ACXEGDP-437): a entrada nacional da ACXE nao pode ser aprovada como esta gravada (sem custo da NF,
+  // estoque que deixou de ser compartilhado com a Q2P). Nada foi lancado no OMIE; a mensagem orienta o gestor.
+  if (err instanceof EntradaNacionalInconsistenteError) {
+    res.status(422).json({ data: null, error: { code: 'ENTRADA_NACIONAL_INCONSISTENTE', userMessage: err.message, message: err.message } });
     return;
   }
   if (err instanceof OmieAjusteError) {

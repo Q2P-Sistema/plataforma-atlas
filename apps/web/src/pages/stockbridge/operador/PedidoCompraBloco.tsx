@@ -70,6 +70,13 @@ export interface PcCandidato extends PcRef {
   dadosEmCache?: boolean;
   /** unidade do PC no OMIE ('KG', 'TON', ...) */
   unidade?: string;
+  /**
+   * Compra nacional da ACXE (feature 017, Fase 2): estoque do item do PC no Atlas, na lista de destinos da NF (UUID da localidade;
+   * so ids de selecao, nunca texto). null = PC da Q2P, local desconhecido ou que nao recebe a entrada (ex.: trânsito). Ausente = servidor anterior.
+   */
+  localidadeId?: string | null;
+  /** o mesmo estoque em texto, ex.: "20.0.7 · PRODUÇÃO" (nunca o codigo OMIE) */
+  localDescricao?: string | null;
 }
 
 export interface PcDoItem {
@@ -123,6 +130,9 @@ export interface PcDaNfItem {
   origem: 'omie' | 'sugestao' | 'manual';
   /** manter/escolher este item exige justificativa */
   justificativaNecessaria: boolean;
+  /** estoque do item do PC atribuido (NF da ACXE; ver `PcCandidato.localidadeId`) */
+  localidadeId?: string | null;
+  localDescricao?: string | null;
 }
 
 /** Um PC que atende a nota, com a atribuicao item da NF -> item do PC. */
@@ -257,6 +267,38 @@ export function pcBloqueiaRecebimento(pc: PcDoItem, exigePc: boolean): boolean {
 }
 
 export type PcPendencia = { tipo: 'escolher' } | { tipo: 'justificar'; pcNumero: string };
+
+/** Estoque que o PC escolhido para um item sugere como destino da entrada. */
+export interface LocalSugeridoPeloPc {
+  localidadeId: string;
+  /** "20.0.7 · PRODUÇÃO" ('' quando o servidor nao o informa) */
+  localDescricao: string;
+}
+
+/**
+ * Compra nacional da ACXE: estoque do PC que vale para o item (a escolha do operador ou a pre-selecao), para vir marcado no
+ * destino. Le o candidato escolhido (`PcCandidato.localidadeId`) e, se ele nao o trouxer, a atribuicao da nota
+ * (`PcDaNfItem.localidadeId`). null = nenhum PC valendo ou o PC nao indica um estoque que receba a entrada (ex.: trânsito).
+ * Funcao pura: o Panel a usa no destino da linha, na validacao e no corpo do POST — sem estado paralelo a sincronizar.
+ */
+export function localSugeridoPeloPc(
+  pc: PcDoItem | null | undefined,
+  escolhaForm: PcRef | null | undefined,
+  pcsDaNf: readonly PcDaNf[] | null | undefined,
+  indiceItem: number,
+): LocalSugeridoPeloPc | null {
+  if (!pc) return null;
+  const escolha = pcEscolhaEfetiva(pc, escolhaForm);
+  if (!escolha) return null;
+  const opcao = pcOpcaoEscolhida(pc, escolha);
+  const doCandidato = (opcao?.localidadeId ?? '').trim();
+  if (doCandidato) return { localidadeId: doCandidato, localDescricao: (opcao?.localDescricao ?? '').trim() };
+  const atribuicao = (pcsDaNf ?? [])
+    .find((p) => p.nCodPed === escolha.nCodPed)
+    ?.itens?.find((a) => a.indice === indiceItem && a.nCodItem === escolha.nCodItem);
+  const daNota = (atribuicao?.localidadeId ?? '').trim();
+  return daNota ? { localidadeId: daNota, localDescricao: (atribuicao?.localDescricao ?? '').trim() } : null;
+}
 
 /**
  * O que ainda impede de confirmar este item (null = nada). Item sem PC possivel nao tem o que escolher e
@@ -437,6 +479,7 @@ function OpcaoPc({
               {mostrarUnidade && ` · pedido em ${unidadePc}`}
             </span>
           )}
+          {!semDados && (c.localDescricao ?? '').trim() !== '' && <span className="block">Estoque do pedido: {c.localDescricao!.trim()}</span>}
           {motivo && <span className="block">{motivo}</span>}
           {aviso && <span className="mt-1 block text-amber-800 dark:text-amber-300">{aviso}</span>}
         </span>

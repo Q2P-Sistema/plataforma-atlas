@@ -58,6 +58,7 @@ Pedidos do usuário depois da estreia da NF 60199 (Zaraplast × PC 306) em PROD,
 - Q: PC lançado em outro cadastro do mesmo fornecedor (matriz × filial) pode ser sugerido? → A: **Sim**, depois do T033, que mostrou o `ASSOCIAR-PEDIDO` aceito entre cadastros com a mesma raiz de CNPJ. Muda o FR-002 (a): "mesmo fornecedor" passa a incluir o outro cadastro com a mesma raiz.
 - Q: Como tratar PC em unidade diferente da NF (toneladas × kg)? → A: **Bloquear por padrão**, com a conversão (`itensAjustes.nQtdeRecebida` na unidade do PC) atrás de chave, a ligar só depois de teste com NF real (FR-031). Evidência: o OMIE baixou o PC 306 com a quantidade na unidade da NF, e o usuário corrigiu no portal editando a quantidade recebida de cada item.
 - Q: O que mostrar quando o PC sai da lista de pendentes por ter item associado a um recebimento aberto? → A: **O número e o saldo da última vez em que o Atlas viu o PC**, vindos de um cache (migration 0057), com alerta de que a confirmação confere o saldo ao vivo (FR-033). Ler o OMIE ao vivo no detalhe foi descartado (Princípio II).
+- Q: Onde a compra nacional da ACXE dá entrada no estoque? (Fase 2, depois de ver os dados de PROD: de jul/2025 a out/2026, 50 NFs nacionais da ACXE entraram no 20.0.7 PRODUÇÃO, 1 no 20.0.5 PROCESSO, 3 no 21.2 e só 4, de 2025, no 21.1; o PC 580, primeiro PC nacional da ACXE, aponta para o 20.0.7) → A: **O operador escolhe, e o PC sugere.** A lista traz os locais que também são da Q2P (11.1, 12.1, 21.1, 31.1), com entrada na ACXE e na Q2P pelo mesmo valor, e os locais só da ACXE onde ela compra hoje (20.0.7 PRODUÇÃO, 20.0.5 PROCESSO, 21.2 EXTREMA NACIONAL), com entrada só na ACXE. O local do PC vem marcado. Substitui a decisão de 21/10 ("sempre nas duas empresas, nunca só na ACXE"), que tinha sido tomada sem compra nacional da ACXE à vista (FR-028 revisado, research D18).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -139,18 +140,20 @@ O vínculo acrescenta escritas ao clique. Qualquer uma pode falhar, o operador p
 
 ---
 
-### User Story 5 - Compra nacional pela ACXE, com estoque espelhado (Priority: P3)
+### User Story 5 - Compra nacional pela ACXE (Priority: P3)
 
-A compra nacional também pode ser feita pela ACXE. A NF e o PC chegam só ao OMIE da ACXE, e o fiscal é feito na ACXE. O operador recebe essa NF pela mesma fila, com o mesmo fluxo de sugestão e confirmação do PC. No recebimento físico, o Atlas oferece os mesmos locais da importação, todos espelhados, e a entrada é lançada na ACXE e na Q2P. Quando o material chega fisicamente a Extrema, sede da ACXE, o local é o 21.1 EXTREMA, e o estoque também aparece na Q2P para vendas.
+A compra nacional também pode ser feita pela ACXE. A NF e o PC chegam só ao OMIE da ACXE, e o fiscal é feito na ACXE. O operador recebe essa NF pela mesma fila, com o mesmo fluxo de sugestão e confirmação do PC. No recebimento físico, o operador escolhe o local, com o local do PC já marcado: num local que também é da Q2P (11.1, 12.1, 21.1, 31.1) a entrada é lançada na ACXE e na Q2P, pelo mesmo valor; num local só da ACXE (20.0.7 PRODUÇÃO, 20.0.5 PROCESSO, 21.2 EXTREMA NACIONAL) a entrada é lançada só na ACXE. A matéria-prima de produção da ACXE (hoje quase toda no 20.0.7) não aparece no estoque de venda da Q2P. Quando o material chega a Extrema para venda, o local é o 21.1 EXTREMA, e o estoque também aparece na Q2P (revisão de 22/10/2026, research D18).
 
 **Why this priority**: hoje ainda não há PC de fornecedor nacional na ACXE (21/10/2026), e as Histórias 1 a 4 resolvem o caso que já está acontecendo na Q2P. Fica para uma fase posterior.
 
-**Independent Test**: receber pelo Atlas uma NF nacional da ACXE com PC da ACXE num local espelhado e verificar: o fiscal foi concluído na ACXE com o vínculo e sem estoque pelo OMIE; a entrada de estoque foi lançada nas duas empresas; e não há divergência na Conferência de Estoque ACXE×Q2P. Repetir no 21.1 EXTREMA e verificar a entrada nas duas empresas, nos locais 21.1 de cada uma.
+**Independent Test**: receber pelo Atlas uma NF nacional da ACXE com PC da ACXE no local do PC (ex.: PC 580 → 20.0.7 PRODUÇÃO) e verificar: o fiscal foi concluído na ACXE com o vínculo e sem estoque pelo OMIE; na aprovação, a entrada foi lançada só na ACXE, no 20.0.7. Repetir num local que também é da Q2P (21.1 EXTREMA) e verificar a entrada nas duas empresas, nos locais 21.1 de cada uma, com o mesmo valor unitário, e nenhuma divergência nova na Conferência de Estoque ACXE×Q2P.
 
 **Acceptance Scenarios**:
 
 1. **Given** uma NF de compra nacional da ACXE com fiscal pendente, **When** o operador abre a fila, **Then** a NF aparece identificada como da ACXE, com o mesmo tratamento das NFs da Q2P.
-2. **Given** essa NF com o PC da ACXE confirmado e um local espelhado escolhido, **When** o operador confirma o recebimento, **Then** o fiscal é concluído no OMIE da ACXE com o vínculo e sem movimento de estoque, e a entrada de estoque é lançada na ACXE e na Q2P, no par espelhado.
+2. **Given** essa NF com o PC da ACXE confirmado e um local que também é da Q2P escolhido, **When** o operador confirma o recebimento e o gestor aprova, **Then** o fiscal é concluído no OMIE da ACXE com o vínculo e sem movimento de estoque, e a entrada de estoque é lançada na ACXE e na Q2P, no par de locais correspondente, com o mesmo valor unitário.
+2a. **Given** essa NF com o local do PC num local só da ACXE (20.0.7 PRODUÇÃO), **When** o operador confirma sem trocar o local e o gestor aprova, **Then** a entrada é lançada só na ACXE, no 20.0.7.
+2b. **Given** um produto da ACXE sem produto de mesma descrição na Q2P, **When** o operador escolhe um local que também é da Q2P, **Then** a tela e o servidor recusam a combinação antes do fiscal e orientam a escolher um local só da ACXE ou pedir o cadastro do produto na Q2P.
 3. **Given** essa NF com o material chegando a Extrema (local 21.1 EXTREMA), **When** o operador confirma o recebimento, **Then** a entrada de estoque é lançada no 21.1 da ACXE e no 21.1 da Q2P, e o produto fica disponível para venda pela Q2P.
 4. **Given** uma NF emitida pela Q2P para a ACXE (intercompany), **When** a fila da ACXE é montada, **Then** essa NF não aparece, assim como a ACXE não aparece como fornecedor na fila da Q2P.
 5. **Given** a compra nacional pela ACXE, **When** o recebimento é concluído, **Then** nenhuma baixa de PC é feita na Q2P. Não existe PC correspondente lá: o n8n de espelhamento só copia PC de fornecedor estrangeiro (ACXEGDP-376).
@@ -243,7 +246,7 @@ A compra nacional também pode ser feita pela ACXE. A NF e o PC chegam só ao OM
 - **FR-025**: A fila de recebimento nacional MUST incluir as NFs de compra nacional da ACXE, com fiscal pendente e já feito, identificadas pela empresa, com os mesmos critérios de elegibilidade da Q2P.
 - **FR-026**: As NFs emitidas pela Q2P para a ACXE (intercompany) MUST NOT aparecer na fila da ACXE.
 - **FR-027**: O fiscal e o vínculo com o PC de uma NF da ACXE MUST seguir os FR-001 a FR-018 no OMIE da ACXE.
-- **FR-028**: No recebimento físico de uma NF nacional da ACXE, o sistema MUST oferecer os mesmos locais do recebimento de importação (todos espelhados, inclusive o 21.1 EXTREMA), com a mesma aprovação de divergência, e a entrada MUST ser lançada na ACXE e no local correlato da Q2P. Não há entrada só na ACXE. A entrada MUST usar o mesmo valor nas duas empresas: o valor do item na NF. Ela MUST NOT aplicar o acréscimo interno de 14,5% que a importação usa hoje na entrada da Q2P (`ceil(vNF / kg × 1,145)`). Como a compra nacional não tem trânsito, o lado ACXE é uma entrada, não uma transferência.
+- **FR-028** (revisado em 22/10/2026, research D18): No recebimento físico de uma NF nacional da ACXE, o sistema MUST oferecer como destino (a) os locais que também são da Q2P (11.1, 12.1, 21.1, 31.1), com entrada na ACXE e no local correspondente da Q2P, e (b) os locais só da ACXE onde ela compra (20.0.7 PRODUÇÃO, 20.0.5 PROCESSO, 21.2 EXTREMA NACIONAL), com entrada só na ACXE, com a mesma aprovação de divergência, e MUST pré-selecionar o local do PC. Na entrada nas duas empresas, o sistema MUST usar o mesmo valor unitário nas duas: o valor do item na NF. Ela MUST NOT aplicar o acréscimo interno de 14,5% que a importação usa hoje na entrada da Q2P (`ceil(vNF / kg × 1,145)`). Como a compra nacional não tem trânsito, o lado ACXE é uma entrada, não uma transferência. O produto da entrada é o do catálogo da ACXE; a entrada nas duas empresas MUST exigir o produto da Q2P de mesma descrição (ativo), verificado antes do fiscal.
 - **FR-029**: A compra nacional pela ACXE MUST NOT gerar baixa de PC na Q2P. Não existe PC correspondente lá, porque o n8n de espelhamento de PCs (`RDa9ilL3tbx5ETIk`, filtro da ACXEGDP-376) só copia PC de fornecedor estrangeiro. A baixa da ACXEGDP-344 continua só para a importação.
 
 ### Key Entities
@@ -268,7 +271,7 @@ A compra nacional também pode ser feita pela ACXE. A NF e o PC chegam só ao OM
 - **SC-005**: Zero PCs-espelho da importação sugeridos, e nenhuma regressão na baixa do PC Q2P de importação (nenhum "sem saldo" atribuível à feature).
 - **SC-006**: Zero NFs recebidas pelo Atlas que voltam à fila por troca de descrição depois do vínculo.
 - **SC-007**: Depois da ativação, o fiscal deixa de concluir no portal as NFs nacionais com PC, salvo exceções registradas. A contenção de 21/10/2026 pode ser encerrada.
-- **SC-008** (User Story 5): toda NF nacional da ACXE recebida pelo Atlas gera entrada nas duas empresas, no mesmo local espelhado, sem divergência nova na Conferência de Estoque ACXE×Q2P.
+- **SC-008** (User Story 5, revisado em 22/10/2026): toda NF nacional da ACXE recebida pelo Atlas gera entrada no local escolhido: nas duas empresas, no par de locais correspondente e com o mesmo valor, sem divergência nova na Conferência de Estoque ACXE×Q2P; ou só na ACXE, nos locais só da ACXE.
 - **SC-009**: Zero NFs com estoque lançado duas vezes (pelo OMIE no portal e pelo Atlas).
 - **SC-010**: Zero PCs baixados em unidade diferente da NF (kg × tonelada) por recebimento feito pelo Atlas.
 - **SC-011**: Uma confirmação e uma justificativa por nota quando um único PC atende todos os itens (NF 60199: eram 3 de cada).

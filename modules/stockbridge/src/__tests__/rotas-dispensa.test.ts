@@ -272,10 +272,11 @@ describe('fila e POST por-nf — extensoes da feature 016 (T024)', () => {
     let res = await request(app).get(`${BASE}/fila`);
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(1);
-    expect(res.body.meta).toEqual({ recebimentoFiscalHabilitado: true });
+    // Historia 5 (ACXEGDP-437): o meta tambem diz se a compra nacional da ACXE esta valendo (aqui, desligada)
+    expect(res.body.meta).toEqual({ recebimentoFiscalHabilitado: true, recebimentoNacionalAcxeHabilitado: false });
     flagFiscal = false;
     res = await request(app).get(`${BASE}/fila`);
-    expect(res.body.meta).toEqual({ recebimentoFiscalHabilitado: false });
+    expect(res.body.meta).toEqual({ recebimentoFiscalHabilitado: false, recebimentoNacionalAcxeHabilitado: false });
   });
 
   it('GET /fila/:chave devolve recebimentoFiscalHabilitado junto do detalhe', async () => {

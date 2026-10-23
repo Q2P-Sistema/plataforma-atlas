@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../../../stores/auth.store.js';
+import type { Empresa } from '../labels.js';
 
-type Empresa = 'acxe' | 'q2p';
 type Unidade = 't' | 'kg' | 'saco' | 'bigbag';
 
 export interface Localidade {
@@ -16,10 +16,81 @@ export interface Localidade {
   codigoLocalEstoqueOmie: string;
 }
 
+/**
+ * Estoque oferecido como destino da entrada de uma NF (GET .../localidades?empresa=acxe&destino=nf, feature 017
+ * Fase 2). Sem codigo OMIE (ACXEGDP-313): o operador ve so o codigo do Atlas ("21.1") e o nome.
+ */
+export interface DestinoEntrada {
+  id: string;
+  codigo: string;
+  nome: string;
+  tipo: string;
+  /**
+   * Empresas em que a entrada e lancada: ['acxe','q2p'] nos estoques que tambem sao da Q2P, ['acxe'] nos so da ACXE.
+   * Ausente = a lista plana da Q2P, que so lanca na empresa da NF.
+   */
+  entradaEm?: Empresa[];
+}
+
+/** O estoque lanca a entrada na ACXE e na Q2P (11.1, 12.1, 21.1, 31.1). */
+export function entraNasDuas(d: Pick<DestinoEntrada, 'entradaEm'> | null | undefined): boolean {
+  return d?.entradaEm?.includes('acxe') === true && d.entradaEm.includes('q2p');
+}
+
+export const ROTULO_GRUPO_DUAS = 'Entra na ACXE e na Q2P';
+export const ROTULO_GRUPO_SO_ACXE = 'Entra só na ACXE';
+
+/** Onde a entrada de uma NF da ACXE e lancada, em frase (legenda sob o estoque escolhido). */
+export function legendaEntrada(d: Pick<DestinoEntrada, 'entradaEm'>): string {
+  return entraNasDuas(d) ? 'Entra na ACXE e na Q2P, pelo mesmo valor unitário.' : 'Entra só na ACXE.';
+}
+
+/**
+ * Destinos da NF da ACXE em dois grupos para o select (`<optgroup>`): os que tambem sao da Q2P e os so da ACXE.
+ * A ordem do servidor vale dentro de cada grupo; grupo vazio nao aparece.
+ */
+export function agruparDestinos<T extends Pick<DestinoEntrada, 'entradaEm'>>(
+  destinos: readonly T[],
+): Array<{ chave: 'duas' | 'so_acxe'; rotulo: string; locais: T[] }> {
+  const duas = destinos.filter((d) => entraNasDuas(d));
+  const soAcxe = destinos.filter((d) => !entraNasDuas(d));
+  return [
+    { chave: 'duas' as const, rotulo: ROTULO_GRUPO_DUAS, locais: duas },
+    { chave: 'so_acxe' as const, rotulo: ROTULO_GRUPO_SO_ACXE, locais: soAcxe },
+  ].filter((g) => g.locais.length > 0);
+}
+
+/**
+ * Produto da ACXE sem produto de mesma descricao (ativo) na Q2P, num estoque que tambem e da Q2P: a entrada nas duas empresas
+ * nao tem como ser lancada. A tela previne (opcoes desabilitadas) e bloqueia; o servidor recusa antes do fiscal.
+ */
+export function produtoSemCorrelatoNoLocal(
+  produto: { semCorrelatoQ2p?: boolean } | null | undefined,
+  destino: Pick<DestinoEntrada, 'entradaEm'> | null | undefined,
+): boolean {
+  return produto?.semCorrelatoQ2p === true && entraNasDuas(destino);
+}
+
+/** Mesmo texto do 422 PRODUTO_SEM_CORRELATO_Q2P do servidor. */
+export function msgProdutoSemCorrelatoQ2p(descricao: string): string {
+  return `O produto "${descricao}" não tem correspondente na Q2P, então não pode entrar em estoque que também é da Q2P. Escolha um estoque só da ACXE ou peça o cadastro do produto na Q2P.`;
+}
+
+export const ROTULO_SEM_CORRELATO_Q2P = 'Sem correspondente na Q2P';
+
 interface ProdutoNacional {
   codigo: number; // codigo da empresa selecionada (acxe=cod ACXE, q2p=cod Q2P)
   descricao: string;
   unidadeMedida: string | null;
+  /** so com empresa=acxe: nao ha produto ativo de mesma descricao na Q2P (feature 017 Fase 2); ausente = servidor anterior */
+  semCorrelatoQ2p?: boolean;
+}
+
+export interface ProdutoEscolhido {
+  codigo: number;
+  descricao: string;
+  /** produto da ACXE sem correspondente na Q2P (so vem do recebimento por NF da ACXE) */
+  semCorrelatoQ2p?: boolean;
 }
 
 interface ItemForm {
@@ -558,11 +629,17 @@ function ItemRow({ indice, valor, podeRemover, onMudar, onRemover, valorRateadoB
 
 export interface ProdutoComboboxProps {
   empresa: Empresa;
-  valor: { codigo: number; descricao: string } | null;
-  onChange: (p: { codigo: number; descricao: string }) => void;
+  valor: ProdutoEscolhido | null;
+  onChange: (p: ProdutoEscolhido) => void;
+  /**
+   * Recebimento por NF da ACXE: 'sinalizar' marca o produto sem correspondente na Q2P; 'exigir' (estoque escolhido que tambem
+   * e da Q2P) alem de marcar o desabilita, porque a entrada nas duas empresas pede o produto da Q2P de mesma descricao.
+   * Ausente (formulario manual, NF da Q2P) = a lista de sempre.
+   */
+  correlatoQ2p?: 'sinalizar' | 'exigir';
 }
 
-export function ProdutoCombobox({ empresa, valor, onChange }: ProdutoComboboxProps) {
+export function ProdutoCombobox({ empresa, valor, onChange, correlatoQ2p }: ProdutoComboboxProps) {
   const apiFetch = useApiFetch();
   const [aberto, setAberto] = useState(false);
   const [termo, setTermo] = useState('');
@@ -597,10 +674,12 @@ export function ProdutoCombobox({ empresa, valor, onChange }: ProdutoComboboxPro
   });
 
   const escolher = (p: ProdutoNacional) => {
-    onChange({ codigo: p.codigo, descricao: p.descricao });
+    onChange({ codigo: p.codigo, descricao: p.descricao, ...(p.semCorrelatoQ2p !== undefined ? { semCorrelatoQ2p: p.semCorrelatoQ2p } : {}) });
     setAberto(false);
     setTermo('');
   };
+  // so numa NF da ACXE (o servidor so informa `semCorrelatoQ2p` para empresa=acxe)
+  const haSemCorrelato = correlatoQ2p != null && opcoes.some((p) => p.semCorrelatoQ2p === true);
 
   return (
     <div ref={containerRef} className="relative">
@@ -630,20 +709,33 @@ export function ProdutoCombobox({ empresa, valor, onChange }: ProdutoComboboxPro
             {!isFetching && opcoes.length === 0 && (
               <div className="px-3 py-2 text-xs text-atlas-muted italic">Nenhum produto encontrado.</div>
             )}
-            {opcoes.map((p) => (
-              <button
-                key={p.codigo}
-                type="button"
-                onClick={() => escolher(p)}
-                className={`w-full text-left px-3 py-2 text-sm hover:bg-atlas-bg/60 ${
-                  p.codigo === valor?.codigo ? 'bg-atlas-bg font-medium' : ''
-                }`}
-              >
-                <div className="truncate" title={p.descricao}>
-                  {p.descricao}
-                </div>
-              </button>
-            ))}
+            {correlatoQ2p === 'exigir' && haSemCorrelato && (
+              <div className="px-3 py-2 text-[11px] text-atlas-muted border-b border-atlas-border">
+                Neste estoque, que também é da Q2P, só entram produtos que têm correspondente na Q2P.
+              </div>
+            )}
+            {opcoes.map((p) => {
+              const semCorrelato = correlatoQ2p != null && p.semCorrelatoQ2p === true;
+              const bloqueado = correlatoQ2p === 'exigir' && semCorrelato;
+              return (
+                <button
+                  key={p.codigo}
+                  type="button"
+                  disabled={bloqueado}
+                  onClick={() => escolher(p)}
+                  className={`w-full text-left px-3 py-2 text-sm hover:bg-atlas-bg/60 ${bloqueado ? 'cursor-not-allowed opacity-60 ' : ''}${
+                    p.codigo === valor?.codigo ? 'bg-atlas-bg font-medium' : ''
+                  }`}
+                >
+                  <div className="truncate" title={p.descricao}>
+                    {p.descricao}
+                  </div>
+                  {semCorrelato && (
+                    <div className={`text-[11px] ${bloqueado ? 'text-amber-700 dark:text-amber-400' : 'text-atlas-muted'}`}>{ROTULO_SEM_CORRELATO_Q2P}</div>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}

@@ -5,6 +5,7 @@ export { fmtCnpj };
 import { users, userModules } from '@atlas/db';
 import { eq, inArray, and, isNull, sql } from 'drizzle-orm';
 import { fmtQtdUnidade } from './motor.service.js';
+import type { EmpresaNacional } from './empresa-nacional.js';
 
 const logger = createLogger('stockbridge:notificacao');
 
@@ -413,6 +414,11 @@ export async function enviarAlertaNfDispensada(args: {
    * sem número conhecido (nunca id interno — ACXEGDP-313).
    */
   pcsPorItem?: Array<{ descricao: string; pcNumero: string }>;
+  /**
+   * Historia 5 (ACXEGDP-437): empresa da NF. 'acxe' cita a ACXE no assunto e no corpo (o fiscal da ACXE age no
+   * OMIE dela); ausente ou 'q2p' = o texto de sempre.
+   */
+  empresa?: EmpresaNacional;
 }): Promise<void> {
   const destinatarios = getFiscalEmails();
   if (destinatarios.length === 0) {
@@ -421,7 +427,8 @@ export async function enviarAlertaNfDispensada(args: {
   }
   const config = getConfig();
   const fornecedor = args.fornecedorNome && args.fornecedorNome.trim() ? args.fornecedorNome.trim() : 'Fornecedor não identificado no OMIE';
-  const subject = `StockBridge — NF ${args.notaFiscal} (${fornecedor}) dispensada da fila`;
+  const daAcxe = args.empresa === 'acxe' ? ' da ACXE' : '';
+  const subject = `StockBridge — NF ${args.notaFiscal} (${fornecedor}) dispensada da fila${daAcxe}`;
   const valor = args.valorNfBrl.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const quando = args.dispensadoEm ? new Date(args.dispensadoEm) : new Date();
   const quandoFmt = Number.isNaN(quando.getTime()) ? '' : quando.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
@@ -432,9 +439,10 @@ export async function enviarAlertaNfDispensada(args: {
       ? 'Pelo espelho do OMIE no momento da dispensa, o recebimento fiscal desta nota ainda NÃO tinha sido concluído: ela fica na caixa de Recebimento de NF-e (etapa "Faturado pelo fornecedor") aguardando manifestação ou cancelamento, sem conta a pagar gerada pelo recebimento. Confira no OMIE antes de agir.'
       : `O recebimento fiscal desta nota JÁ foi concluído no OMIE: há conta a pagar de ${valor} a estornar ou manter, conforme o acerto com o fornecedor.`;
   const corpoHtml = `
-    <p>O gestor dispensou a <strong>NF ${escapeHtml(args.notaFiscal)}</strong> de <strong>${escapeHtml(fornecedor)}</strong> da fila de recebimento nacional do StockBridge: ela não será recebida no estoque pelo Atlas.</p>
+    <p>O gestor dispensou a <strong>NF ${escapeHtml(args.notaFiscal)}</strong> de <strong>${escapeHtml(fornecedor)}</strong> da fila de recebimento nacional${daAcxe} do StockBridge: ela não será recebida no estoque pelo Atlas.</p>
     ${emailDataList([
       { label: 'Nota fiscal', valor: args.notaFiscal },
+      { label: 'Empresa', valor: args.empresa === 'acxe' ? 'ACXE' : '' },
       { label: 'Fornecedor', valor: fornecedor },
       { label: 'Valor da nota', valor: valor },
       { label: 'Recebimento fiscal no OMIE', valor: args.situacaoFiscalNaDispensa === 'pendente' ? 'Pendente (não concluído)' : 'Concluído' },
@@ -770,28 +778,35 @@ async function enviarAvisoComprasNfSemPcSemLimite(args: ArgsAvisoComprasNfSemPc)
  * ou inacessível. Vai para STOCKBRIDGE_OPS_EMAIL — quem cuida do n8n e da cópia.
  * Devolve true se o sendEmail resolveu e false se falhou (nunca lanca): o job do cron
  * so passa a suprimir o reaviso depois de uma entrega (infra-03).
+ * Historia 5 (ACXEGDP-437): `empresa` ('q2p' por padrao — o texto de sempre) troca o espelho
+ * citado e o workflow do n8n a verificar ("ACXE - Exporta Recebimentos NF-e").
  */
-export async function enviarAlertaEspelhoRecebimentosDefasado(args: {
-  status: 'degraded' | 'sem_dados' | 'indisponivel';
-  idadeMin: number | null;
-  limiteMin: number;
-}): Promise<boolean> {
+export async function enviarAlertaEspelhoRecebimentosDefasado(
+  args: {
+    status: 'degraded' | 'sem_dados' | 'indisponivel';
+    idadeMin: number | null;
+    limiteMin: number;
+  },
+  empresa: EmpresaNacional = 'q2p',
+): Promise<boolean> {
   const to = getOpsEmail();
   const config = getConfig();
+  const da = empresa === 'acxe' ? ' da ACXE' : '';
+  const workflow = empresa === 'acxe' ? 'ACXE - Exporta Recebimentos NF-e' : 'Q2P - Exporta Recebimentos NF-e';
   const situacao =
     args.status === 'sem_dados'
-      ? 'O espelho de recebimentos de NF-e está vazio.'
+      ? `O espelho de recebimentos de NF-e${da} está vazio.`
       : args.status === 'indisponivel'
-        ? 'O espelho de recebimentos de NF-e não pôde ser lido (tabela ausente ou erro de banco).'
-        : `O espelho de recebimentos de NF-e não é atualizado há ${Math.round(args.idadeMin ?? 0)} minutos (limite: ${args.limiteMin} minutos).`;
-  const subject = 'StockBridge — Espelho de recebimentos de NF-e sem atualização';
+        ? `O espelho de recebimentos de NF-e${da} não pôde ser lido (tabela ausente ou erro de banco).`
+        : `O espelho de recebimentos de NF-e${da} não é atualizado há ${Math.round(args.idadeMin ?? 0)} minutos (limite: ${args.limiteMin} minutos).`;
+  const subject = `StockBridge — Espelho de recebimentos de NF-e${da} sem atualização`;
   const corpoHtml = `
     <p>${escapeHtml(situacao)}</p>
-    <p>Enquanto isso, notas de compra nacional que chegaram da SEFAZ com o recebimento fiscal pendente podem não aparecer na fila de recebimento do StockBridge.</p>
-    ${emailActionBox('<ol style="margin:0;padding-left:18px;"><li>Confira no n8n o workflow "Q2P - Exporta Recebimentos NF-e": se está ativo e se as últimas execuções terminaram sem erro.</li><li>No UAT, confira também a cópia do espelho de produção para o UAT.</li></ol>', 'O que verificar')}
+    <p>Enquanto isso, notas de compra nacional${da} que chegaram da SEFAZ com o recebimento fiscal pendente podem não aparecer na fila de recebimento do StockBridge.</p>
+    ${emailActionBox(`<ol style="margin:0;padding-left:18px;"><li>Confira no n8n o workflow "${workflow}": se está ativo e se as últimas execuções terminaram sem erro.</li><li>No UAT, confira também a cópia do espelho de produção para o UAT.</li></ol>`, 'O que verificar')}
   `;
   const { html, text } = buildEmailLayout({
-    titulo: 'Espelho de recebimentos de NF-e sem atualização',
+    titulo: `Espelho de recebimentos de NF-e${da} sem atualização`,
     variante: 'alerta',
     corpoHtml,
     ctaLabel: 'Abrir o StockBridge',
@@ -799,10 +814,10 @@ export async function enviarAlertaEspelhoRecebimentosDefasado(args: {
   });
   try {
     await sendEmail({ to, subject, html, text });
-    logger.info({ status: args.status, idadeMin: args.idadeMin }, 'Alerta de espelho de recebimentos defasado enviado');
+    logger.info({ empresa, status: args.status, idadeMin: args.idadeMin }, 'Alerta de espelho de recebimentos defasado enviado');
     return true;
   } catch (err) {
-    logger.error({ err }, 'Falha ao enviar alerta de espelho de recebimentos defasado');
+    logger.error({ err, empresa }, 'Falha ao enviar alerta de espelho de recebimentos defasado');
     return false;
   }
 }
@@ -814,28 +829,34 @@ export async function enviarAlertaEspelhoRecebimentosDefasado(args: {
  * modo seguro (503 COPIA_PCS_DEFASADA) — por isso o aviso vai ao ops.
  * Devolve true se o sendEmail resolveu e false se falhou (nunca lanca): o job do cron
  * so passa a suprimir o reaviso depois de uma entrega (infra-03).
+ * Historia 5 (ACXEGDP-437): `empresa` ('q2p' por padrao — o texto de sempre) cita a copia da
+ * ACXE; o workflow do n8n e o mesmo para as duas empresas.
  */
-export async function enviarAlertaCopiaPcsDefasada(args: {
-  status: 'degraded' | 'sem_dados' | 'indisponivel';
-  idadeMin: number | null;
-  limiteMin: number;
-}): Promise<boolean> {
+export async function enviarAlertaCopiaPcsDefasada(
+  args: {
+    status: 'degraded' | 'sem_dados' | 'indisponivel';
+    idadeMin: number | null;
+    limiteMin: number;
+  },
+  empresa: EmpresaNacional = 'q2p',
+): Promise<boolean> {
   const to = getOpsEmail();
   const config = getConfig();
+  const da = empresa === 'acxe' ? ' da ACXE' : '';
   const situacao =
     args.status === 'sem_dados'
-      ? 'A cópia local de pedidos de compra está vazia.'
+      ? `A cópia local de pedidos de compra${da} está vazia.`
       : args.status === 'indisponivel'
-        ? 'A cópia local de pedidos de compra não pôde ser lida (tabela ausente ou erro de banco).'
-        : `A cópia local de pedidos de compra não é atualizada há ${Math.round(args.idadeMin ?? 0)} minutos (limite: ${args.limiteMin} minutos).`;
-  const subject = 'StockBridge — Cópia de pedidos de compra sem atualização';
+        ? `A cópia local de pedidos de compra${da} não pôde ser lida (tabela ausente ou erro de banco).`
+        : `A cópia local de pedidos de compra${da} não é atualizada há ${Math.round(args.idadeMin ?? 0)} minutos (limite: ${args.limiteMin} minutos).`;
+  const subject = `StockBridge — Cópia de pedidos de compra${da} sem atualização`;
   const corpoHtml = `
     <p>${escapeHtml(situacao)}</p>
-    <p>Enquanto isso, o recebimento de notas de compra nacional com o recebimento fiscal pendente fica bloqueado no StockBridge, porque a sugestão do pedido de compra de cada item depende dessa cópia. Notas com o recebimento fiscal já feito seguem normalmente.</p>
+    <p>Enquanto isso, o recebimento de notas de compra nacional${da} com o recebimento fiscal pendente fica bloqueado no StockBridge, porque a sugestão do pedido de compra de cada item depende dessa cópia. Notas com o recebimento fiscal já feito seguem normalmente.</p>
     ${emailActionBox('<ol style="margin:0;padding-left:18px;"><li>Confira no n8n o workflow "ACXE e Q2P - Espelho de Pedidos de Compra (Materiais a chegar)": se está ativo e se as últimas execuções terminaram sem erro.</li><li>No UAT, confira também a cópia de produção para o UAT.</li></ol>', 'O que verificar')}
   `;
   const { html, text } = buildEmailLayout({
-    titulo: 'Cópia de pedidos de compra sem atualização',
+    titulo: `Cópia de pedidos de compra${da} sem atualização`,
     variante: 'alerta',
     corpoHtml,
     ctaLabel: 'Abrir o StockBridge',
@@ -843,10 +864,10 @@ export async function enviarAlertaCopiaPcsDefasada(args: {
   });
   try {
     await sendEmail({ to, subject, html, text });
-    logger.info({ status: args.status, idadeMin: args.idadeMin }, 'Alerta de cópia de pedidos de compra defasada enviado');
+    logger.info({ empresa, status: args.status, idadeMin: args.idadeMin }, 'Alerta de cópia de pedidos de compra defasada enviado');
     return true;
   } catch (err) {
-    logger.error({ err }, 'Falha ao enviar alerta de cópia de pedidos de compra defasada');
+    logger.error({ err, empresa }, 'Falha ao enviar alerta de cópia de pedidos de compra defasada');
     return false;
   }
 }
@@ -1144,6 +1165,12 @@ export interface ContextoEntradaNacional {
   produto: string | null;
   quantidadeKg: string | null;
   local: string | null;
+  /**
+   * Historia 5 (ACXEGDP-437): em que empresas a entrada e lancada — "ACXE + Q2P" (compra nacional da ACXE em estoque
+   * que tambem e da Q2P; com "(lançamento na Q2P pendente)" quando a perna da Q2P falhou na aprovacao) ou "ACXE".
+   * null na Q2P: o e-mail segue como sempre.
+   */
+  entradaEm: string | null;
 }
 
 export async function carregarContextoEntradaNacional(aprovacaoId: string): Promise<ContextoEntradaNacional | null> {
@@ -1156,23 +1183,36 @@ export async function carregarContextoEntradaNacional(aprovacaoId: string): Prom
       produto: string | null;
       quantidade_kg: string | null;
       local: string | null;
+      empresa?: string | null;
+      tem_produto_q2p?: boolean | null;
+      q2p_pendente?: boolean | null;
     }>(sql`
       SELECT (a.nf_chave_acesso IS NOT NULL) AS por_nf,
              COALESCE(a.nota_fiscal, m.nota_fiscal) AS nota_fiscal,
-             f.dest_razao AS fornecedor,
+             COALESCE(f.dest_razao, fa.dest_razao) AS fornecedor,
              a.nf_item_descricao AS item_nf,
-             p.descricao AS produto,
+             COALESCE(p.descricao, pa.descricao) AS produto,
              COALESCE(a.quantidade_recebida_kg, a.quantidade_prevista_kg)::text AS quantidade_kg,
-             COALESCE(l.nome, a.galpao) AS local
+             COALESCE(l.nome, a.galpao) AS local,
+             a.empresa AS empresa,
+             (a.produto_codigo_q2p IS NOT NULL) AS tem_produto_q2p,
+             (m.status_omie = 'pendente_q2p' AND m.mv_acxe = 1) AS q2p_pendente
       FROM stockbridge.aprovacao a
       LEFT JOIN stockbridge.movimentacao m ON m.id = a.movimentacao_id
       LEFT JOIN public."tbl_produtos_Q2P" p ON p.codigo_produto = a.produto_codigo_q2p
+      LEFT JOIN public."tbl_produtos_ACXE" pa ON pa.codigo_produto = a.produto_codigo_acxe
       LEFT JOIN stockbridge.localidade l ON l.codigo = a.galpao
       LEFT JOIN LATERAL (
         SELECT h.dest_razao FROM public."tbl_nf_header_Q2P" h
         WHERE h.c_chave_nfe = a.nf_chave_acesso
         LIMIT 1
       ) f ON true
+      -- Historia 5: a chave de acesso e unica entre os espelhos — a NF da ACXE esta no espelho da ACXE.
+      LEFT JOIN LATERAL (
+        SELECT h.dest_razao FROM public."tbl_nf_header_ACXE" h
+        WHERE h.c_chave_nfe = a.nf_chave_acesso
+        LIMIT 1
+      ) fa ON true
       WHERE a.id = ${aprovacaoId}::uuid
         AND a.tipo_aprovacao = 'entrada_manual'
     `);
@@ -1186,6 +1226,16 @@ export async function carregarContextoEntradaNacional(aprovacaoId: string): Prom
       produto: r.produto,
       quantidadeKg: r.quantidade_kg,
       local: r.local,
+      // Entrada nas duas empresas = compra nacional da ACXE por NF com o produto da Q2P gravado (ver entrada-nacional-espelhada.ts).
+      // Perna da Q2P que falhou na aprovacao (ACXE lancada, Q2P pendente de retentativa): o e-mail diz.
+      entradaEm:
+        r.empresa === 'acxe'
+          ? r.por_nf === true && r.tem_produto_q2p === true
+            ? r.q2p_pendente === true
+              ? 'ACXE + Q2P (lançamento na Q2P pendente)'
+              : 'ACXE + Q2P'
+            : 'ACXE'
+          : null,
     };
   } catch (err) {
     logger.warn({ err: (err as Error).message, aprovacaoId }, 'Falha ao carregar contexto da entrada nacional para o e-mail');
@@ -1217,6 +1267,7 @@ function dadosEntradaHtml(ctx: ContextoEntradaNacional): string {
     { label: 'Produto', valor: ctx.produto ?? '' },
     { label: 'Quantidade', valor: ctx.quantidadeKg != null ? fmtKg(ctx.quantidadeKg) : '' },
     { label: 'Local', valor: ctx.local ?? '' },
+    { label: 'Empresas da entrada', valor: ctx.entradaEm ?? '' },
   ]);
 }
 

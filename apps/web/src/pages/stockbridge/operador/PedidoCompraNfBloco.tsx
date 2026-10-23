@@ -176,6 +176,9 @@ function OpcaoPcNf({
       : []),
   ];
   const doc = fmtCnpj(pc.cnpjCadastro);
+  // Compra nacional da ACXE: estoque de cada item do PC. Uma linha so quando e o mesmo em todos os itens (o comum); senao, junto de cada item.
+  const locais = itens.map((a) => (a.localDescricao ?? '').trim());
+  const localUnico = locais.length > 0 && locais.every((l) => l !== '' && l === locais[0]) ? locais[0]! : '';
   const borda = selecionado ? 'border-atlas-btn-bg ring-1 ring-atlas-btn-bg' : 'border-atlas-border';
   return (
     <label className={`flex cursor-pointer items-start gap-3 rounded border bg-atlas-card p-3 focus-within:ring-2 focus-within:ring-atlas-btn-bg ${borda}`}>
@@ -208,9 +211,11 @@ function OpcaoPcNf({
                 <span className="sr-only"> vinculado ao produto do pedido </span>
                 <span className="break-words text-atlas-ink">{produto || 'produto do pedido não informado'}</span>
                 {motivo && <span className="block text-[11px]">{motivo}</span>}
+                {!localUnico && (a.localDescricao ?? '').trim() !== '' && <span className="block text-[11px]">Estoque do pedido: {a.localDescricao!.trim()}</span>}
               </span>
             );
           })}
+          {localUnico && <span className="block">Estoque do pedido: {localUnico}</span>}
           {pc.outroCadastro === true && (
             <span className="block">{doc ? `Pedido lançado no cadastro CNPJ ${doc} do mesmo fornecedor.` : 'Pedido lançado em outro cadastro do mesmo fornecedor.'}</span>
           )}

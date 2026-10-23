@@ -309,37 +309,22 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
 
 ---
 
-## Phase 7: User Story 5 — Compra nacional pela ACXE, com estoque espelhado (Priority: P3) — Fase 2 de entrega
+## Phase 7: User Story 5 — Compra nacional pela ACXE (Priority: P3) — Fase 2 de entrega
 
-**Goal**: NF nacional da ACXE na mesma fila, fiscal com vínculo no OMIE da ACXE, entrada de estoque sempre nas duas empresas, no local espelhado escolhido (Extrema = 21.1), com o mesmo valor unitário, sem os 14,5% e sem baixa de PC na Q2P.
+**Goal**: NF nacional da ACXE na mesma fila, fiscal com vínculo no OMIE da ACXE e entrada de estoque no local escolhido pelo operador, com o local do PC marcado (revisão de 22/10/2026, research D18): local que também é da Q2P (11.1, 12.1, 21.1, 31.1) entra nas duas empresas com o mesmo valor unitário, sem os 14,5%; local só da ACXE (20.0.7 PRODUÇÃO, 20.0.5 PROCESSO, 21.2) entra só na ACXE. Sem baixa de PC na Q2P.
 
 **Independent Test**: quickstart cenário 8.
 
-- [ ] T045 [US5] Criar `packages/db/migrations/0058_stockbridge_recebimento_nacional_acxe.sql` (a `0057` ficou com o cache de PCs vistos, T066):
-  - `CREATE TABLE IF NOT EXISTS public."tbl_recebimentoNFe_ACXE"` e `"tbl_recebimentoNFe_itens_ACXE"` com a DDL das tabelas da Q2P na 0053, mais as 4 colunas de pedido;
-  - `stockbridge.fornecedor_exclusao`: `ADD COLUMN empresa varchar(4) NOT NULL DEFAULT 'q2p' CHECK (empresa IN ('q2p','acxe'))`, índice único incluindo `empresa`, e duas linhas com a Q2P como fornecedor excluído na ACXE: as CNPJs `27.019.059/0001-88` (matriz) e `27.019.059/0002-69` (filial), com máscara, como no cadastro da ACXE e como já está gravada a ACXE (`42.672.052/0001-54`), motivo "intercompany". Não há constante de CNPJ da Q2P: `CNPJ_Q2P_MATRIZ` em `types.ts` é rótulo.
-  Estender `fornecedorExclusao` em `packages/db/src/schemas/stockbridge.ts` e `modules/stockbridge/src/services/fornecedor.service.ts` (listar, excluir e reincluir por CNPJ passam a considerar a empresa), e aplicar em dev (`psql -1 -f`)
-- [ ] T046 [P] [US5] Adicionar `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED` (default `'false'`) em `packages/core/src/config.ts`
-- [ ] T047 [US5] Parametrizar por empresa `modules/stockbridge/src/services/fila-nacional.service.ts`:
-  - `fonteNfSql`/`fonteRecebSql` aceitam `'q2p'|'acxe'` (`tbl_nf_header_ACXE`/`tbl_nf_itens_ACXE`/`tbl_recebimentoNFe_ACXE`, cadastro ACXE);
-  - `fornecedorNaoExcluidoSql` filtra por empresa;
-  - a fila une as duas empresas quando a chave da ACXE está ligada;
-  - `empresa` no formato de linha e nos tipos de resposta
-- [ ] T048 [US5] Parametrizar por empresa `pc-sugestao.service.ts` (`tbl_pedidosCompras_ACXE`, cadastro ACXE) e `recebimento-fiscal.service.ts` (credencial `'acxe'` nas chamadas do cliente OMIE; `recebimento_fiscal.empresa` e `recebimento_fiscal_pc.empresa` preenchidos). A empresa vem da NF, nunca do corpo do POST
-- [ ] T049 [US5] Entrada física da NF nacional da ACXE em `modules/stockbridge/src/services/recebimento-nacional.service.ts`:
-  - locais oferecidos = `listarLocalidadesEspelhadas` (`localidade.service.ts`), com a correspondência em `localidade_correlacao`, incluindo o 21.1 EXTREMA;
-  - criar em `modules/stockbridge/src/services/recebimento.service.ts` a função `executarEntradaNacionalDual` (ou equivalente), no modelo de `executarAjusteOmieDual` (~l.1217), mas com `ENT` nas duas empresas e **o mesmo valor unitário** (valor do item na NF por kg, sem o `× 1,145`);
-  - `cod_int_ajuste` com sufixos `acxe-ent` / `q2p-ent` (`types.ts`);
-  - falha só no lado da Q2P → `status_omie = 'pendente_q2p'`, reaproveitando o painel de retentativa;
-  - **não** chamar a baixa de PC da 344
-- [ ] T050 [US5] Em `apps/web/src/pages/stockbridge/operador/RecebimentoNacionalNfPanel.tsx`: selo de empresa (ACXE/Q2P) na fila e no detalhe; seletor de local com a lista espelhada para NF da ACXE; texto "entrada na ACXE e na Q2P"
-- [ ] T051 [P] [US5] Testes em `modules/stockbridge/src/__tests__/`:
-  - fila com as duas empresas e a exclusão intercompany;
-  - fiscal na ACXE com a credencial certa;
-  - entrada dual com o mesmo valor, sem markup;
-  - `pendente_q2p` em falha parcial;
-  - nenhuma chamada da baixa da 344
-- [ ] T052 [US5] Ativar o workflow n8n "ACXE - Exporta Recebimentos NF-e" (`contracts/espelhos-n8n.md` §2), aplicar a 0058 no UAT e validar o cenário 8 do quickstart antes de ligar `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED` em PROD
+- [X] T045 [US5] `packages/db/migrations/0058_stockbridge_recebimento_nacional_acxe.sql` (validada num Postgres descartável, reaplicável): espelho de recebimentos da ACXE só onde falta; `fornecedor_exclusao.empresa` + CHECK + índice `(empresa, fornecedor_cnpj)` + Q2P matriz/filial excluídas na fila da ACXE; `localidade.tipo` `'operacional'` + seeds 20.0.5/20.0.7 com correlação só da ACXE; índice `movimentacao_nf_nacional_acxe_idempotencia_idx`; `pedido_compra_visto.n_cod_prod`/`codigo_local_estoque`. Schema Drizzle espelhado
+- [X] T046 [P] [US5] `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED` (default `false`) e `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_DATA_CORTE` em `packages/core/src/config.ts`, stacks e exemplos; `services/empresa-nacional.ts` (tabelas por empresa, `recebimentoNacionalAcxeHabilitado()` = chave da ACXE + chave da 016 + corte da ACXE); `COD_INT_AJUSTE_SUFIXO.nacionalAcxe`/`nacionalQ2p` e `TipoLocalidade` `'operacional'` em `types.ts`
+- [X] T047 [US5] Leitura por empresa: `fila-nacional.service.ts` (fontes e união por empresa ativa, corte da ACXE, exclusão por empresa, `empresa` no DTO; com a ACXE desligada o SQL da Q2P não muda), `fiscal-recebida-sql.ts` (via 2 com a empresa), detalhe da ACXE (produtos do catálogo da ACXE com `semCorrelatoQ2p`, local do PC nos candidatos), `pc-sugestao`/`pc-visto` (produto e local do PC), saúde, alertas e cron por empresa
+- [X] T048 [US5] Fiscal e PC na ACXE: empresa da NF em toda chamada do OMIE (inclusive `verificarEstoqueLancadoAoVivo`, hoje fixa na Q2P), ledgers com `empresa`
+- [X] T049 [US5] Entrada física da NF da ACXE: destinos (`?destino=nf`), produto da ACXE com XOR no corpo, gêmeo da Q2P obrigatório no local que também é da Q2P (portão 1), movimentação/aprovação com `empresa = 'acxe'`; na **aprovação** (`aprovacao.service.ts`): perna ACXE `nacional-acxe` e, nas duas empresas, perna Q2P `nacional-q2p` com o mesmo valor; Q2P com falha → `pendente_q2p` + retry próprio (`operacoes-pendentes.service.ts`) + botão em Movimentações; nunca a baixa da 344
+- [X] T050 [US5] Tela (`RecebimentoNacionalNfPanel.tsx` e afins): selo e filtro de empresa, destinos em dois grupos ("Entra na ACXE e na Q2P" / "Entra só na ACXE"), local derivado do PC, produto da ACXE com "Sem correspondente na Q2P", textos por empresa; `AprovacoesPage` ("ACXE + Q2P"), `MovimentacoesPage` ("Retentar Q2P"), `labels.ts` e `LocalidadesPage` com os locais novos
+- [X] T051 [P] [US5] Testes em `modules/stockbridge/src/__tests__/`: fila com as duas empresas e a exclusão intercompany; corte da ACXE; via 2 por empresa; fiscal e trava de estoque na ACXE; destinos; gêmeo; aprovação só na ACXE e nas duas (mesmo valor, ordem, falhas); retry; nenhuma chamada da baixa da 344; SQL validado em Postgres real
+- [ ] T052 [US5] Ativar o workflow n8n "ACXE - Exporta Recebimentos NF-e" (`xqgvUZ1X9P52EDbH`, `contracts/espelhos-n8n.md` §2) com histórico (recebidos e pendentes), conferir o espelho e, opcionalmente, validar o cenário 8 no UAT (que simula as escritas; precisa do espelho da ACXE na cópia PROD→UAT e das 0056–0058)
+- [ ] T076 [US5] Teste controlado em PROD, antes de ligar a chave da ACXE, no modelo do T033: próxima NF da Solutec contra o PC 580 — fiscal com vínculo no OMIE da ACXE (`EDITAR` + `Concluir`, ou `ASSOCIAR-PEDIDO` antes), aprovação com `ENT/INI` só na ACXE no 20.0.7; depois uma entrada nas duas empresas num local também da Q2P (21.1), com o mesmo valor, conferida na Conferência de Estoque. Registrar o resultado em research D18 e na ACXEGDP-437
+- [ ] T077 [US5] Ativação em PROD: 0058 antes da imagem (`psql -1 -f` com o dono `postgres`), imagem, `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_DATA_CORTE` na data da ativação e `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED=true` só depois do T052 e do T076
 
 ---
 

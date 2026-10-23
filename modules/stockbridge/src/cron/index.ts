@@ -4,6 +4,7 @@ import { processarAlertasComodatoVencido } from '../services/cron-comodato.servi
 import { reprocessarBaixasAguardandoVinculo } from '../services/baixa-pedido.service.js';
 import { verificarCopiaPcs, verificarEspelhoRecebimentos } from '../services/alerta-espelho-recebimentos.service.js';
 import { registrarPcsVistos } from '../services/pc-visto.service.js';
+import { recebimentoNacionalAcxeHabilitado } from '../services/empresa-nacional.js';
 
 const logger = createLogger('stockbridge:cron');
 
@@ -59,16 +60,25 @@ export function iniciarCronsStockBridge(): void {
   // sugestao de PC. Com STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED desligada, nao faz nada.
   // O reaviso de 6 h conta a partir da ENTREGA do e-mail: se o envio falhar, o desfecho e
   // 'falha' e a rodada seguinte (30 min depois) tenta de novo.
+  // Historia 5 (ACXEGDP-437): com a compra nacional da ACXE habilitada o mesmo job vigia tambem o
+  // espelho de recebimentos e a copia de PCs da ACXE (estado de reaviso proprio) e mantem o cache
+  // de PCs vistos dela. Sem a chave nada da ACXE roda (o espelho ainda vazio viraria alerta e o
+  // cache so geraria ruido de auditoria). A chave e lida a cada rodada.
   cron.schedule(
     '5,35 * * * *',
     () => {
-      verificarEspelhoRecebimentos().catch((err) => logger.error({ err }, 'Falha ao verificar o espelho de recebimentos de NF-e'));
-      verificarCopiaPcs().catch((err) => logger.error({ err }, 'Falha ao verificar a cópia de pedidos de compra'));
+      verificarEspelhoRecebimentos('q2p').catch((err) => logger.error({ err }, 'Falha ao verificar o espelho de recebimentos de NF-e'));
+      verificarCopiaPcs('q2p').catch((err) => logger.error({ err }, 'Falha ao verificar a cópia de pedidos de compra'));
       // 017 (0057): cache de PCs vistos — o OMIE tira da lista de pendentes o PC com item
       // associado a um recebimento aberto; o cache guarda a ultima versao vista (so o que mudou).
       void registrarPcsVistos('q2p');
+      if (recebimentoNacionalAcxeHabilitado()) {
+        verificarEspelhoRecebimentos('acxe').catch((err) => logger.error({ err }, 'Falha ao verificar o espelho de recebimentos de NF-e da ACXE'));
+        verificarCopiaPcs('acxe').catch((err) => logger.error({ err }, 'Falha ao verificar a cópia de pedidos de compra da ACXE'));
+        void registrarPcsVistos('acxe');
+      }
     },
     { timezone: 'America/Sao_Paulo' },
   );
-  logger.info('Cron registrado: alerta-espelho-recebimentos + cópia de PCs + cache de PCs vistos (5,35 * * * * BR)');
+  logger.info('Cron registrado: alerta-espelho-recebimentos + cópia de PCs + cache de PCs vistos, Q2P e ACXE (5,35 * * * * BR)');
 }

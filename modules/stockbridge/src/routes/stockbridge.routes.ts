@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { idadeCopiaPcs, idadeEspelhoRecebimentos, statusHealthModulo } from '../services/fila-nacional.service.js';
 import { requireAuth, requireModule, csrfProtection } from '@atlas/auth';
 import { createLogger } from '@atlas/core';
+import { recebimentoNacionalAcxeFlag, recebimentoNacionalAcxeHabilitado } from '../services/empresa-nacional.js';
 import filaRouter from './fila.routes.js';
 import recebimentoRouter from './recebimento.routes.js';
 import recebimentoNacionalRouter from './recebimento-nacional.routes.js';
@@ -41,11 +42,19 @@ router.use('/api/v1/stockbridge', requireAuth, csrfProtection, requireModule('st
 // de NF-e (fonte "fiscal pendente" da fila nacional) — `degraded` acima de 120 min
 // com a flag ligada; 'desligado' quando a feature esta off. Feature 017 (D13): o
 // mesmo para a copia de pedidos de compra, que decide a sugestao de PC.
+// Historia 5 (ACXEGDP-437): o mesmo par para a ACXE (`...Acxe`), 'desligado' enquanto a compra
+// nacional da ACXE nao esta habilitada; `recebimentoNacionalAcxe` mostra a chave e se ela esta
+// de fato valendo (chave ligada sem o fiscal pelo Atlas ou sem o corte proprio = fora da fila).
 router.get('/api/v1/stockbridge/health', async (_req: Request, res: Response) => {
-  const [recebimentoNfeEspelho, pedidosCompraCopia] = await Promise.all([idadeEspelhoRecebimentos(), idadeCopiaPcs()]);
+  const [recebimentoNfeEspelho, pedidosCompraCopia, recebimentoNfeEspelhoAcxe, pedidosCompraCopiaAcxe] = await Promise.all([
+    idadeEspelhoRecebimentos(),
+    idadeCopiaPcs(),
+    idadeEspelhoRecebimentos('acxe'),
+    idadeCopiaPcs('acxe'),
+  ]);
   // Com a flag ligada, espelho/copia vazios ('sem_dados') ou inacessiveis ('indisponivel')
   // tambem sao degradacao: a fila e a sugestao ficam cegas (revisao pre-UAT, ROT-6).
-  const status = statusHealthModulo(recebimentoNfeEspelho, pedidosCompraCopia);
+  const status = statusHealthModulo(recebimentoNfeEspelho, pedidosCompraCopia, recebimentoNfeEspelhoAcxe, pedidosCompraCopiaAcxe);
   res.json({
     data: {
       status,
@@ -54,6 +63,11 @@ router.get('/api/v1/stockbridge/health', async (_req: Request, res: Response) =>
       recebimentoNfeEspelho,
       pedidosCompraCopiaIdadeMin: pedidosCompraCopia.idadeMin,
       pedidosCompraCopia,
+      recebimentoNfeEspelhoAcxeIdadeMin: recebimentoNfeEspelhoAcxe.idadeMin,
+      recebimentoNfeEspelhoAcxe,
+      pedidosCompraCopiaAcxeIdadeMin: pedidosCompraCopiaAcxe.idadeMin,
+      pedidosCompraCopiaAcxe,
+      recebimentoNacionalAcxe: { chave: recebimentoNacionalAcxeFlag(), habilitada: recebimentoNacionalAcxeHabilitado() },
     },
     error: null,
   });

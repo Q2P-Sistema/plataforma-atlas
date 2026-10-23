@@ -36,6 +36,12 @@ export interface MovimentacaoListItem {
   criadoPor: { id: string | null; nome: string | null };
   aprovadoPor: { id: string | null; nome: string | null; em: string | null };
   statusOmie: string | null;
+  /**
+   * Feature 017 (Historia 5): a perna Q2P ficou pendente DEPOIS da decisao do gestor — `status_omie='pendente_q2p'` e
+   * nenhuma aprovacao pendente ligada a movimentacao (a que nasce 'pendente_q2p' na submissao e ainda aguarda o gestor
+   * nao conta). A tela mostra "Retentar Q2P" (gestor+), que chama POST /operacoes-pendentes/:id/retentar.
+   */
+  retentavelQ2p: boolean;
   /** ACXEGDP-344: baixa do pedido de compra Q2P (só entradas de importação). */
   baixaPedidoQ2p: string | null;
   ladoAcxe: { status: string | null; dt: string | null; idMovest: string | null; usuario: string | null };
@@ -112,6 +118,7 @@ export async function listar(filtros: ListarFiltros): Promise<ListarResultado> {
     criado_por: string | null;
     criado_por_nome: string | null;
     status_omie: string | null;
+    retentavel_q2p: boolean;
     baixa_pedido_q2p: string | null;
     aprovado_por: string | null;
     aprovado_por_nome: string | null;
@@ -144,6 +151,16 @@ export async function listar(filtros: ListarFiltros): Promise<ListarResultado> {
       m.criado_por,
       uc.name AS criado_por_nome,
       m.status_omie,
+      -- Botao "Retentar Q2P" (Historia 5): so a entrada nacional da ACXE nas duas empresas (mesma regra de
+      -- entrada-nacional-espelhada.ts) com a perna da Q2P pendente depois da aprovacao. Importacao e saida
+      -- manual tambem ficam 'pendente_q2p', mas o retry delas nao tem mensagem pronta para o usuario.
+      (m.status_omie = 'pendente_q2p'
+        AND m.subtipo = 'compra_nacional' AND m.empresa = 'acxe'
+        AND m.nf_chave_acesso IS NOT NULL AND m.produto_codigo_q2p IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM stockbridge.aprovacao ap_pend
+          WHERE ap_pend.movimentacao_id = m.id AND ap_pend.status = 'pendente'
+        )) AS retentavel_q2p,
       m.baixa_pedido_q2p,
       ap.aprovado_por,
       uap.name AS aprovado_por_nome,
@@ -200,6 +217,7 @@ export async function listar(filtros: ListarFiltros): Promise<ListarResultado> {
       em: r.aprovado_em ? new Date(r.aprovado_em).toISOString() : null,
     },
     statusOmie: r.status_omie ?? null,
+    retentavelQ2p: r.retentavel_q2p === true,
     baixaPedidoQ2p: r.baixa_pedido_q2p ?? null,
     ladoAcxe: {
       status: r.mv_acxe === 1 ? 'Sucesso' : r.mv_acxe === -1 ? 'Saída' : r.mv_acxe != null ? `Status ${r.mv_acxe}` : null,

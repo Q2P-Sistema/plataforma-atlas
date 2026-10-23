@@ -2,8 +2,10 @@ import { eq, and, inArray, sql } from 'drizzle-orm';
 import { getDb, createLogger } from '@atlas/core';
 import { aprovacao, lote, movimentacao, localidadeCorrelacao, reservaSaldo, users } from '@atlas/db';
 import type { Perfil, TipoAprovacao } from '../types.js';
-import { NIVEL_APROVACAO_POR_SUBTIPO } from '../types.js';
+import { NIVEL_APROVACAO_POR_SUBTIPO, COD_INT_AJUSTE_SUFIXO, buildCodIntAjuste } from '../types.js';
 import { formatarDataOmie, filtroEmpresaOmie } from './omie-shared.js';
+import { entradaNacionalEspelhada } from './entrada-nacional-espelhada.js';
+import type { EmpresaNacional } from './empresa-nacional.js';
 import {
   executarAjusteOmieDual,
   calcularValorUnitarioQ2p,
@@ -31,6 +33,9 @@ import { incluirAjusteIdempotente } from './omie-idempotente.js';
 import { resolverDescricaoProdutoAcxe } from './produto-descricao.js';
 import { dispararBaixaPedidoQ2p } from './baixa-pedido.service.js';
 
+// Historia 5 (ACXEGDP-437): helper unico da "entrada nas duas empresas" (aprovacao, retry e listagens).
+export { entradaNacionalEspelhada };
+
 const logger = createLogger('stockbridge:aprovacao');
 
 export class AprovacaoNaoEncontradaError extends Error {
@@ -54,6 +59,18 @@ export class AprovacaoStatusInvalidoError extends Error {
   constructor(public readonly id: string, public readonly statusAtual: string) {
     super(`Aprovação ${id} já foi ${statusAtual} — não é possível alterar`);
     this.name = 'AprovacaoStatusInvalidoError';
+  }
+}
+
+/**
+ * Historia 5 (ACXEGDP-437): a entrada nacional da ACXE nao pode ser aprovada como esta gravada (movimentacao
+ * sem custo unitario, estoque que deixou de ser compartilhado com a Q2P...). Nada foi lancado no OMIE e a
+ * aprovacao segue pendente; a mensagem (pt-BR, sem codigo OMIE) diz o que fazer.
+ */
+export class EntradaNacionalInconsistenteError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EntradaNacionalInconsistenteError';
   }
 }
 
@@ -106,6 +123,11 @@ export interface PendenciaItem {
   notaFiscal: string | null;
   nfItemDescricao: string | null;
   nfChaveAcesso: string | null;
+  /**
+   * Historia 5: empresas em que a entrada nacional sera lancada ao aprovar — ['acxe','q2p'] na compra nacional da
+   * ACXE em estoque que tambem e da Q2P, ['acxe'] so na ACXE, ['q2p'] na Q2P. Vazio nos demais tipos de aprovacao.
+   */
+  entradaEm: EmpresaNacional[];
 }
 
 /**
@@ -230,8 +252,28 @@ export async function listarPendencias(perfil: Perfil): Promise<PendenciaItem[]>
       notaFiscal: r.aprov_nota_fiscal,
       nfItemDescricao: r.aprov_nf_item_descricao,
       nfChaveAcesso: r.aprov_nf_chave_acesso,
+      entradaEm: entradaEmDaPendencia({
+        tipoAprovacao: r.tipo_aprovacao,
+        empresa: r.aprov_empresa,
+        nfChaveAcesso: r.aprov_nf_chave_acesso,
+        produtoCodigoQ2p: r.aprov_produto_codigo_q2p,
+      }),
     };
   });
+}
+
+/** Onde a aprovacao de uma entrada nacional lanca o estoque; `[]` para os outros tipos (a tela usa `empresa`). */
+function entradaEmDaPendencia(r: {
+  tipoAprovacao: string;
+  empresa: string | null;
+  nfChaveAcesso: string | null;
+  produtoCodigoQ2p: string | number | null;
+}): EmpresaNacional[] {
+  if (r.tipoAprovacao !== 'entrada_manual' || (r.empresa !== 'acxe' && r.empresa !== 'q2p')) return [];
+  if (entradaNacionalEspelhada({ tipoAprovacao: r.tipoAprovacao, empresa: r.empresa, nfChaveAcesso: r.nfChaveAcesso, produtoCodigoQ2p: r.produtoCodigoQ2p })) {
+    return ['acxe', 'q2p'];
+  }
+  return [r.empresa];
 }
 
 export interface MinhaRejeicaoItem {
@@ -316,8 +358,13 @@ export async function listarMinhasRejeicoes(userId: string): Promise<MinhaRejeic
            pq.descricao AS produto_descricao_q2p,
            -- subquery escalar, nao JOIN: duplicata no espelho multiplicaria a linha.
            -- dest_razao e o FORNECEDOR em NF de entrada (research D7).
-           (SELECT h.dest_razao FROM public."tbl_nf_header_Q2P" h
-             WHERE h.c_chave_nfe = a.nf_chave_acesso LIMIT 1) AS nf_fornecedor_nome
+           -- Historia 5: a chave de acesso e unica entre os espelhos — a NF da ACXE esta no espelho da ACXE.
+           COALESCE(
+             (SELECT h.dest_razao FROM public."tbl_nf_header_Q2P" h
+               WHERE h.c_chave_nfe = a.nf_chave_acesso LIMIT 1),
+             (SELECT h.dest_razao FROM public."tbl_nf_header_ACXE" h
+               WHERE h.c_chave_nfe = a.nf_chave_acesso LIMIT 1)
+           ) AS nf_fornecedor_nome
     FROM stockbridge.aprovacao a
     LEFT JOIN stockbridge.lote l ON l.id = a.lote_id
     LEFT JOIN public."tbl_produtos_ACXE" p
@@ -434,7 +481,12 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
 
   // Recebimento nacional (entrada_manual sem lote, padrao saida manual com
   // movimentacaoId) — fluxo single-empresa, sem dual ACXE<->Q2P.
+  // Historia 5 (ACXEGDP-437): a compra nacional da ACXE em estoque que tambem e da Q2P lanca a entrada
+  // nas DUAS empresas, pelo mesmo valor, nesta mesma aprovacao (a marca e o produto da Q2P gravado no POST).
   if (apPre.tipoAprovacao === 'entrada_manual' && apPre.movimentacaoId) {
+    if (entradaNacionalEspelhada({ tipoAprovacao: apPre.tipoAprovacao, empresa: apPre.empresa, nfChaveAcesso: apPre.nfChaveAcesso, produtoCodigoQ2p: apPre.produtoCodigoQ2p })) {
+      return aprovarEntradaNacionalNasDuasEmpresas(apPre, input);
+    }
     return aprovarEntradaNacional(apPre, input);
   }
 
@@ -987,6 +1039,8 @@ async function aprovarRecebimentoExterno(id: string, input: AprovarInput): Promi
  * Fluxo de aprovacao para recebimento nacional (entrada_manual sem lote).
  * Single-empresa: chama OMIE apenas no CNPJ destino selecionado pelo operador
  * (sem dual ACXE<->Q2P, ja que nacional pode entrar puro Q2P ou puro ACXE).
+ * A entrada da ACXE em estoque que tambem e da Q2P (nas duas empresas) tem fluxo
+ * proprio: `aprovarEntradaNacionalNasDuasEmpresas`.
  *
  * - tipo=ENT, motivo=INI (entrada inicial — mesmo padrao do recebimento de
  *   importacao no lado Q2P)
@@ -994,6 +1048,8 @@ async function aprovarRecebimentoExterno(id: string, input: AprovarInput): Promi
  * - Valor unitario: usa custo medio existente do SKU; se 0 (produto novo no
  *   estoque), envia 0.01 e loga warning — operador pode ajustar via OMIE
  *   diretamente. OMIE rejeita ajuste com valor=0.
+ *   Historia 5: na ACXE NAO ha esse substituto (o preco vivo so enxerga os estoques .1 e
+ *   nao vale para 20.0.x/21.2) — sem custo da NF gravado, a aprovacao e recusada.
  */
 async function aprovarEntradaNacional(
   ap: typeof aprovacao.$inferSelect,
@@ -1016,6 +1072,9 @@ async function aprovarEntradaNacional(
   if (quantidadeKg <= 0) throw new Error(`Aprovação ${ap.id} sem quantidade válida`);
 
   const empresa = ap.empresa as 'acxe' | 'q2p';
+  if (empresa === 'acxe' && ap.produtoCodigoAcxe == null) {
+    throw new Error(`Aprovação ${ap.id} da ACXE sem produto da ACXE — registro inconsistente`);
+  }
 
   // ap.galpao guarda o codigo Atlas (ex: '21.2', '11.2'). Resolve para o codigo
   // OMIE (codigo_local_estoque_acxe/q2p) via localidade_correlacao.
@@ -1050,6 +1109,10 @@ async function aprovarEntradaNacional(
   let valorUnitario: number;
   if (custoNf > 0) {
     valorUnitario = custoNf;
+  } else if (empresa === 'acxe') {
+    throw new EntradaNacionalInconsistenteError(
+      'Esta entrada não tem o valor unitário da NF gravado, então não pode ser lançada na ACXE (o preço de estoque não é usado como substituto). Rejeite a pendência para a NF poder ser recebida de novo.',
+    );
   } else {
     const valorMedio = await consultarValorUnitarioProduto(
       Number(ap.produtoCodigoAcxe),
@@ -1067,8 +1130,16 @@ async function aprovarEntradaNacional(
     }
   }
 
-  const observacaoOmie = (ap.observacoes ?? `Recebimento nacional ${ap.id}`).slice(0, 240);
-  const codInt = `${mov.opId}:nacional-${empresa}`;
+  // ACXE: o OMIE guarda a observacao em Latin-1 e a da entrada traz travessao (motivo de divergencia) —
+  // saneada. A da Q2P segue como sempre.
+  const observacaoOmie =
+    empresa === 'acxe'
+      ? paraLatin1(ap.observacoes ?? `Recebimento nacional ${ap.id}`).slice(0, 240)
+      : (ap.observacoes ?? `Recebimento nacional ${ap.id}`).slice(0, 240);
+  const codInt = buildCodIntAjuste(
+    mov.opId,
+    empresa === 'acxe' ? COD_INT_AJUSTE_SUFIXO.nacionalAcxe : COD_INT_AJUSTE_SUFIXO.nacionalQ2p,
+  );
 
   const dataAtual = formatarDataOmie();
 
@@ -1088,6 +1159,9 @@ async function aprovarEntradaNacional(
     omieRes = { idMovest: r.idMovest, idAjuste: r.idAjuste };
   } catch (err) {
     logger.error({ err, aprovacaoId: ap.id, empresa }, 'OMIE falhou ao aprovar recebimento nacional');
+    // ACXE (Historia 5): erro tipado -> 502 OMIE_ACXE_FAIL com mensagem pt-BR (nada foi registrado). A Q2P
+    // segue propagando o erro cru, como sempre.
+    if (empresa === 'acxe') throw new OmieAjusteError('acxe', err, { opId: mov.opId, movimentacaoId: mov.id });
     throw err;
   }
 
@@ -1140,6 +1214,217 @@ async function aprovarEntradaNacional(
   return {
     id: ap.id,
     loteStatus: 'reconciliado',
+  };
+}
+
+/**
+ * O OMIE guarda a observacao do ajuste em Latin-1: o que esta fora dele (travessao do motivo de
+ * divergencia, aspas curvas, reticencias) vira mojibake no estoque. Troca pelo equivalente ASCII e
+ * descarta o resto — acento comum (Latin-1) passa.
+ */
+export function paraLatin1(texto: string): string {
+  return texto
+    .replace(/[\u2010-\u2015\u2212]/g, '-')
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+    .replace(/\u2026/g, '...')
+    .replace(/[\u2000-\u200B\u202F\u205F\u3000]/g, ' ')
+    .replace(/[^\u0000-\u00FF]/g, '?');
+}
+
+/**
+ * Historia 5 (ACXEGDP-437): aprovacao da compra nacional da ACXE em estoque que tambem e da Q2P
+ * (11.1, 12.1, 21.1, 31.1): ENT/INI na ACXE e depois ENT/INI na Q2P, com o MESMO valor unitario
+ * (`movimentacao.custo_unitario_brl`, o valor do item na NF por kg — sem o x1,145 da importacao).
+ * Uma aprovacao por produto, duas escritas no OMIE.
+ *
+ * - ACXE primeiro: Q2P sem ACXE deixaria a Q2P vendendo material que a compradora ainda nao tem.
+ *   Falha na ACXE = nada gravado, a aprovacao segue pendente (502 OMIE_ACXE_FAIL, pode aprovar de novo).
+ * - Falha so na Q2P: a decisao do gestor nao retrocede — a aprovacao fica 'aprovada' e a movimentacao
+ *   grava os ids da ACXE, status_omie='pendente_q2p', tentativas_q2p=1 e o erro; alerta para o ops e
+ *   `pendenciaOmie` na resposta. A perna Q2P se completa por "Retentar Q2P" (operacoes-pendentes).
+ * - cod_int_ajuste = ${opId}:nacional-acxe e ${opId}:nacional-q2p (idempotencia, inclusive no retry).
+ * - Nunca baixa pedido de compra na Q2P (344): a compra nacional da ACXE nao tem pedido na Q2P.
+ * - Local da Q2P: join direto em localidade_correlacao, SEM filtro de tipo (o 31.1 e 'tpl').
+ */
+async function aprovarEntradaNacionalNasDuasEmpresas(
+  ap: typeof aprovacao.$inferSelect,
+  input: AprovarInput,
+): Promise<AprovarResult> {
+  const db = getDb();
+
+  if (ap.produtoCodigoAcxe == null || ap.produtoCodigoQ2p == null || !ap.galpao || ap.empresa !== 'acxe') {
+    throw new Error(`Aprovação ${ap.id} sem produtos/galpão/empresa para a entrada nas duas empresas — registro inconsistente`);
+  }
+  if (!ap.movimentacaoId) {
+    throw new Error(`Aprovação ${ap.id} sem movimentação linkada — registro inconsistente`);
+  }
+  const [mov] = await db.select().from(movimentacao).where(eq(movimentacao.id, ap.movimentacaoId)).limit(1);
+  if (!mov) throw new Error(`Movimentação ${ap.movimentacaoId} não encontrada`);
+  if (mov.subtipo !== 'compra_nacional' || mov.empresa !== 'acxe') {
+    throw new Error(`Movimentação ${mov.id} não é uma compra nacional da ACXE — registro inconsistente`);
+  }
+
+  const quantidadeKg = Number(ap.quantidadeRecebidaKg ?? 0);
+  if (!(quantidadeKg > 0)) throw new Error(`Aprovação ${ap.id} sem quantidade válida`);
+
+  // Os dois codigos do local, lidos agora: o estoque pode ter deixado de ser compartilhado desde o POST.
+  const localRes = await db.execute<{ codigo_acxe: string | null; codigo_q2p: string | null }>(sql`
+    SELECT lc.codigo_local_estoque_acxe::text AS codigo_acxe,
+           lc.codigo_local_estoque_q2p::text AS codigo_q2p
+    FROM stockbridge.localidade l
+    INNER JOIN stockbridge.localidade_correlacao lc ON lc.localidade_id = l.id
+    WHERE l.codigo = ${ap.galpao}
+    LIMIT 1
+  `);
+  const codigoLocalAcxe = localRes.rows[0]?.codigo_acxe;
+  const codigoLocalQ2p = localRes.rows[0]?.codigo_q2p;
+  if (!codigoLocalAcxe) {
+    throw new Error(`Aprovação ${ap.id}: localidade '${ap.galpao}' sem código OMIE para a ACXE`);
+  }
+  if (!codigoLocalQ2p) {
+    throw new EntradaNacionalInconsistenteError(
+      `O estoque ${ap.galpao} deixou de ser compartilhado com a Q2P, então a entrada não pode ser lançada nas duas empresas. Rejeite a pendência e receba a NF de novo em um estoque só da ACXE.`,
+    );
+  }
+
+  // Mesmo numero nas duas pernas, lido do que o POST gravou (6 casas) — nunca recalculado.
+  const valorUnitario = mov.custoUnitarioBrl != null ? Number(mov.custoUnitarioBrl) : 0;
+  if (!(valorUnitario > 0)) {
+    throw new EntradaNacionalInconsistenteError(
+      'Esta entrada não tem o valor unitário da NF gravado, então não pode ser lançada nas duas empresas (o preço de estoque não é usado como substituto). Rejeite a pendência para a NF poder ser recebida de novo.',
+    );
+  }
+
+  const observacaoOmie = paraLatin1(ap.observacoes ?? `Recebimento nacional ${ap.id}`).slice(0, 240);
+  // Mesma data nas duas empresas — e a do retry da perna Q2P (usa dt_acxe).
+  const lancadoEm = new Date();
+  const dataAtual = formatarDataOmie(lancadoEm);
+
+  let acxe: { idMovest: string; idAjuste: string };
+  try {
+    const r = await incluirAjusteIdempotente('acxe', buildCodIntAjuste(mov.opId, COD_INT_AJUSTE_SUFIXO.nacionalAcxe), {
+      codigoLocalEstoque: codigoLocalAcxe,
+      idProduto: Number(ap.produtoCodigoAcxe),
+      dataAtual,
+      quantidade: quantidadeKg,
+      observacao: observacaoOmie,
+      origem: 'AJU',
+      tipo: 'ENT',
+      motivo: 'INI',
+      valor: valorUnitario,
+    });
+    acxe = { idMovest: r.idMovest, idAjuste: r.idAjuste };
+  } catch (err) {
+    // Nada gravado no Atlas: a aprovacao segue pendente e o gestor pode aprovar de novo (cod_int idempotente).
+    logger.error({ err, aprovacaoId: ap.id, movimentacaoId: mov.id }, 'OMIE ACXE falhou ao aprovar a compra nacional nas duas empresas — nada gravado');
+    throw new OmieAjusteError('acxe', err, { opId: mov.opId, movimentacaoId: mov.id });
+  }
+
+  let q2p: { idMovest: string; idAjuste: string } | null = null;
+  let pendenciaQ2p: { mensagem: string } | null = null;
+  try {
+    const r = await incluirAjusteIdempotente('q2p', buildCodIntAjuste(mov.opId, COD_INT_AJUSTE_SUFIXO.nacionalQ2p), {
+      codigoLocalEstoque: codigoLocalQ2p,
+      idProduto: Number(ap.produtoCodigoQ2p),
+      dataAtual,
+      quantidade: quantidadeKg,
+      observacao: observacaoOmie,
+      origem: 'AJU',
+      tipo: 'ENT',
+      motivo: 'INI',
+      valor: valorUnitario,
+    });
+    q2p = { idMovest: r.idMovest, idAjuste: r.idAjuste };
+  } catch (err) {
+    pendenciaQ2p = { mensagem: (err as Error)?.message ?? 'erro desconhecido' };
+    logger.error(
+      { err, aprovacaoId: ap.id, movimentacaoId: mov.id, idAcxe: acxe },
+      'ALERTA: entrada na ACXE lançada, mas a da Q2P falhou. Persistirá a movimentação em pendente_q2p.',
+    );
+  }
+
+  try {
+    await db.transaction(async (tx) => {
+      // Claim atomico (STK-01): so quem muda pendente->aprovada prossegue.
+      const [apFresh] = await tx
+        .update(aprovacao)
+        .set({ status: 'aprovada', aprovadoPor: input.usuarioId, aprovadoEm: new Date() })
+        .where(and(eq(aprovacao.id, ap.id), eq(aprovacao.status, 'pendente')))
+        .returning();
+      if (!apFresh) {
+        const [check] = await tx.select().from(aprovacao).where(eq(aprovacao.id, ap.id)).limit(1);
+        if (!check) throw new AprovacaoNaoEncontradaError(ap.id);
+        throw new AprovacaoStatusInvalidoError(ap.id, check.status);
+      }
+
+      const updateMov: Record<string, unknown> = {
+        mvAcxe: 1,
+        dtAcxe: lancadoEm,
+        idMovestAcxe: acxe.idMovest,
+        idAjusteAcxe: acxe.idAjuste,
+        idUserAcxe: input.usuarioId,
+        updatedAt: new Date(),
+      };
+      if (q2p) {
+        updateMov.mvQ2p = 1;
+        updateMov.dtQ2p = new Date();
+        updateMov.idMovestQ2p = q2p.idMovest;
+        updateMov.idAjusteQ2p = q2p.idAjuste;
+        updateMov.idUserQ2p = input.usuarioId;
+        updateMov.statusOmie = 'concluida';
+        updateMov.ultimoErroOmie = null;
+      } else {
+        updateMov.statusOmie = 'pendente_q2p';
+        updateMov.tentativasQ2p = 1;
+        updateMov.ultimoErroOmie = {
+          lado: 'q2p',
+          mensagem: pendenciaQ2p!.mensagem,
+          timestamp: new Date().toISOString(),
+        };
+      }
+      await tx.update(movimentacao).set(updateMov).where(eq(movimentacao.id, mov.id));
+    });
+  } catch (err) {
+    // O OMIE ja recebeu a(s) entrada(s) (cod_int idempotente) e o Atlas nao registrou a aprovacao — tipicamente
+    // uma rejeicao/aprovacao concorrente. Os ids vao no log para o ops conferir e, se preciso, estornar.
+    logger.error(
+      { err, aprovacaoId: ap.id, movimentacaoId: mov.id, opId: mov.opId, idAcxe: acxe, idQ2p: q2p },
+      'ALERTA: entrada nacional lançada no OMIE mas a aprovação não pôde ser registrada — conferir e, se preciso, estornar',
+    );
+    throw err;
+  }
+
+  logger.info(
+    { aprovacaoId: ap.id, movimentacaoId: mov.id, acxe, q2p, pendenciaQ2p: pendenciaQ2p?.mensagem ?? null, quantidadeKg, valorUnitario },
+    pendenciaQ2p ? 'Compra nacional da ACXE aprovada: ACXE lançada, Q2P pendente' : 'Compra nacional da ACXE aprovada e lançada no OMIE (ACXE e Q2P)',
+  );
+
+  if (pendenciaQ2p) {
+    void enviarAlertaPendenciaOmie({
+      movimentacaoId: mov.id,
+      opId: mov.opId,
+      notaFiscal: mov.notaFiscal,
+      ladoPendente: 'q2p',
+      mensagemErro: pendenciaQ2p.mensagem,
+      // 1ª tentativa acabou de falhar (tentativas_q2p=1); os retries notificam pelo contador real (EML-19).
+      tentativas: 1,
+    });
+  }
+
+  void enviarNotificacaoAprovacaoOperador({
+    operadorUserId: ap.lancadoPor,
+    aprovacaoId: ap.id,
+    tipoAprovacao: ap.tipoAprovacao,
+    loteId: mov.id, // sem lote — usa movimentacaoId como referencia textual
+  });
+
+  return {
+    id: ap.id,
+    loteStatus: 'reconciliado',
+    pendenciaOmie: pendenciaQ2p
+      ? { lado: 'q2p', opId: mov.opId, movimentacaoId: mov.id, mensagem: pendenciaQ2p.mensagem }
+      : undefined,
   };
 }
 

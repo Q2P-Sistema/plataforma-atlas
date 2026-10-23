@@ -1,12 +1,26 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '@atlas/ui';
 import { useAuthStore } from '../../../stores/auth.store.js';
-import { ProdutoCombobox, useApiFetch, type Localidade } from './RecebimentoNacionalForm.js';
+import { ROTULO_EMPRESA, type Empresa } from '../labels.js';
+import {
+  ProdutoCombobox,
+  ROTULO_SEM_CORRELATO_Q2P,
+  agruparDestinos,
+  entraNasDuas,
+  legendaEntrada,
+  msgProdutoSemCorrelatoQ2p,
+  produtoSemCorrelatoNoLocal,
+  useApiFetch,
+  type DestinoEntrada,
+  type Localidade,
+  type ProdutoEscolhido,
+} from './RecebimentoNacionalForm.js';
 import {
   PedidoCompraBloco,
   fmtBrlKg,
   fmtKg,
+  localSugeridoPeloPc,
   mesmoPc,
   pcBloqueiaRecebimento,
   pcEscolhaEfetiva,
@@ -14,6 +28,7 @@ import {
   pcParaEnvio,
   pcPendencia,
   rotuloPc,
+  type LocalSugeridoPeloPc,
   type PcCompactoNota,
   type PcDaNf,
   type PcDoItem,
@@ -60,6 +75,13 @@ import {
  * 409/422/503 novos e o bloqueio quando o estoque ja entrou pelo OMIE. Item pendente que o Atlas nao recebe (unidade que nao
  * converte para kg) e que nao tem PC vinculado no OMIE (`itensSemAvaliacaoPc`): no modo "bloquear" barra a NF inteira, como o
  * 422 NF_SEM_PC do servidor; no modo "receber sem vinculo" so informa que o OMIE o conclui sem vinculo.
+ *
+ * Historia 5 (Fase 2) — compra nacional da ACXE na mesma fila. A empresa vem da NF (`empresa`), nunca do operador: selo e filtro
+ * de empresa na fila so aparecem quando ha ACXE (a tela so da Q2P fica como sempre foi). Na NF da ACXE: o produto e o do catalogo da
+ * ACXE (`produto_codigo_acxe`), o destino vem de uma lista propria (`destino=nf`) em dois grupos — "Entra na ACXE e na Q2P" e
+ * "Entra só na ACXE" — e o estoque do PC escolhido vem marcado (derivado, sem useEffect; a escolha manual nunca e sobrescrita).
+ * Produto sem correspondente na Q2P nao entra em estoque que tambem e da Q2P: a tela previne e bloqueia, e o servidor recusa antes do
+ * fiscal. A memoria fornecedor x descricao e so da Q2P: a NF da ACXE nao chama o PUT /correlacao.
  */
 
 interface FilaNacionalItem {
@@ -76,7 +98,7 @@ interface FilaNacionalItem {
   fiscal: SituacaoFiscal;
   /** quando o Atlas concluiu o fiscal — null se foi no OMIE/portal */
   fiscalConcluidoPeloAtlasEm: string | null;
-  /** feature 017 (campos novos: ausentes = backend anterior) — por ora sempre 'q2p', sem UI */
+  /** feature 017 (campos novos: ausentes = backend anterior): empresa da NF; ausente = Q2P */
   empresa?: Empresa;
   /** resumo do PC da NF (pior caso entre os itens); 'nao_aplicavel' = fiscal ja feito ou fiscal pelo Atlas desligado */
   pcSituacao?: PcSituacao;
@@ -85,21 +107,25 @@ interface FilaNacionalItem {
 }
 
 type SituacaoFiscal = 'pendente' | 'concluido';
-type Empresa = 'q2p' | 'acxe';
 type PcSituacao = 'vinculado_omie' | 'sugerido' | 'escolha_necessaria' | 'aguardando_aprovacao' | 'sem_pc' | 'nao_aplicavel';
 
 /** GET /fila devolve a lista em `data` e a flag da feature 016 em `meta`. */
 interface FilaResposta {
   fila: FilaNacionalItem[];
   fiscalHabilitado: boolean;
+  /** `meta.recebimentoNacionalAcxeHabilitado` (Historia 5): a ACXE entra na fila neste ambiente; ausente = backend anterior = nao */
+  acxeHabilitada: boolean;
 }
 
 type Bloqueio = 'unidade_nao_conversivel' | 'unidade_incoerente' | 'sem_correlacao' | null;
 
 interface ProdutoSugerido {
+  /** codigo no catalogo da empresa da NF (Q2P: memoria do fornecedor; ACXE: produto do item da nota ou do PC) */
   codigo: number;
   descricao: string;
   vezesUsada: number;
+  /** so NF da ACXE: nao ha produto ativo de mesma descricao na Q2P (nao entra em estoque que tambem e da Q2P) */
+  semCorrelatoQ2p?: boolean;
 }
 
 interface ItemNf {
@@ -149,7 +175,7 @@ interface DetalheNf {
   dispensavel: boolean;
   /** flag STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED — selo/banner fiscal somem quando false */
   recebimentoFiscalHabilitado?: boolean;
-  /** feature 017 (campos novos: ausentes = backend anterior) */
+  /** feature 017 (campos novos: ausentes = backend anterior): empresa da NF (Historia 5); ausente = Q2P */
   empresa?: Empresa;
   /** true = item sem PC possivel bloqueia a NF; false = esse item e recebido sem vinculo */
   exigePc?: boolean;
@@ -175,7 +201,16 @@ type StatusProduto = 'aguardando_aprovacao' | 'ja_recebido' | 'bloqueado_unidade
 
 interface ResultadoPorNf {
   notaFiscal: string;
-  produtos: Array<{ indice: number; produto: string; descricaoFornecedor: string; status: StatusProduto; quantidadeKg: number; mensagemErro?: string }>;
+  produtos: Array<{
+    indice: number;
+    produto: string;
+    descricaoFornecedor: string;
+    status: StatusProduto;
+    quantidadeKg: number;
+    mensagemErro?: string;
+    /** Historia 5: empresas em que a entrada sera lancada na aprovacao ('acxe','q2p' nos estoques das duas); ausente = backend anterior */
+    entradaEm?: Empresa[];
+  }>;
   resumo: { enviadosParaAprovacao: number; jaRecebidos: number; bloqueados: number; falhas: number };
   /** feature 016: o que o Atlas fez com o recebimento FISCAL neste envio */
   fiscal?: {
@@ -248,7 +283,8 @@ interface AvisoComprasResposta {
 
 /** Uma linha "produto no estoque" de um item da NF (Historia 4: pode haver N). */
 interface LinhaProduto {
-  produto: { codigo: number; descricao: string } | null;
+  produto: ProdutoEscolhido | null;
+  /** estoque escolhido pelo operador; '' = ainda nao escolheu (na NF da ACXE vale o estoque do PC, se houver — `localDaLinha`) */
   localidadeId: string;
   /** input controlado; so usado quando ha mais de uma linha */
   quantidade: string;
@@ -313,9 +349,18 @@ function itemBaixavel(it: ItemNf): boolean {
 
 /** Form inicial de um item: os produtos memorizados ja vem selecionados (Historia 3). */
 function formInicial(it: ItemNf): ItemForm {
+  // NF da ACXE (as sugestoes dela trazem semCorrelatoQ2p): as sugestoes sao ALTERNATIVAS em ordem de confianca (produto
+  // que o OMIE associou ao item, depois o do item do PC), nao os produtos do item como a memoria da Q2P — so a 1a
+  // vira linha; as outras continuam no combobox. Senao o item abriria com N linhas para ratear o peso.
+  const ehSugestaoAcxe = it.produtosSugeridos.some((s) => s.semCorrelatoQ2p !== undefined);
+  const sugestoes = ehSugestaoAcxe ? it.produtosSugeridos.slice(0, 1) : it.produtosSugeridos;
   const linhas: LinhaProduto[] =
-    it.produtosSugeridos.length > 0
-      ? it.produtosSugeridos.map((s) => ({ produto: { codigo: s.codigo, descricao: s.descricao }, localidadeId: '', quantidade: '' }))
+    sugestoes.length > 0
+      ? sugestoes.map((s) => ({
+          produto: { codigo: s.codigo, descricao: s.descricao, ...(s.semCorrelatoQ2p !== undefined ? { semCorrelatoQ2p: s.semCorrelatoQ2p } : {}) },
+          localidadeId: '',
+          quantidade: '',
+        }))
       : [{ produto: null, localidadeId: '', quantidade: '' }];
   return { linhas, quantidadeConferida: '', motivoDivergencia: '', pcJustificativa: '' };
 }
@@ -339,6 +384,9 @@ const ERROS_QUE_RECARREGAM_NOTA = new Set([
   'PC_NAO_ESCOLHIDO',
   'PC_JUSTIFICATIVA_OBRIGATORIA',
   'COPIA_PCS_DEFASADA',
+  // Historia 5: a tela mandou o campo de produto de uma empresa que nao e a da NF (detalhe velho): a nota volta com a empresa certa.
+  // PRODUTO_SEM_CORRELATO_Q2P e PRODUTO_CORRELATO_Q2P_REPETIDO ficam de fora: a nota nao mudou, a mensagem diz o que escolher.
+  'PRODUTO_EMPRESA_INCOMPATIVEL',
   // a NF mudou desde que a tela abriu (item que passou a ser recebivel ou sumiu): a mensagem do
   // servidor manda recarregar — a tela recarrega e mantem o formulario (achado portao-r02)
   'NF_INCOMPLETA',
@@ -421,6 +469,59 @@ const SELO_PC: Record<Exclude<PcSituacao, 'nao_aplicavel'>, { label: string; tit
   },
 };
 
+// ── Empresa da NF (Historia 5) ──────────────────────────────────────────────
+
+/**
+ * Contorno na cor da marca (ACXE azul, Q2P verde) e texto na cor do tema. Preenchido, o verde da Q2P se confunde com o verde de
+ * "tudo certo" dos outros selos, e o texto colorido sobre o card escuro nao passa no contraste.
+ */
+const BORDA_EMPRESA: Record<Empresa, string> = { acxe: 'border-acxe', q2p: 'border-q2p' };
+
+export function SeloEmpresa({ empresa }: { empresa: Empresa }) {
+  return (
+    <span className={`text-xs font-medium px-1.5 py-0.5 rounded border text-atlas-ink ${BORDA_EMPRESA[empresa]}`}>
+      <span className="sr-only">Empresa </span>
+      {ROTULO_EMPRESA[empresa]}
+    </span>
+  );
+}
+
+/** Onde a entrada de um produto e lancada na aprovacao, em frase ("entra na ACXE e na Q2P" | "entra só na ACXE"); '' fora da ACXE. */
+export function textoEntradaEm(entradaEm: readonly Empresa[] | null | undefined): string {
+  if (!entradaEm?.includes('acxe')) return '';
+  return entradaEm.includes('q2p') ? 'entra na ACXE e na Q2P' : 'entra só na ACXE';
+}
+
+/**
+ * Linha de produto do corpo do POST /por-nf: exatamente UM dos dois campos de codigo, o da empresa da NF (o servidor recusa o
+ * outro com 400 PRODUTO_EMPRESA_INCOMPATIVEL). Na NF da ACXE o servidor acha o produto da Q2P de mesma descricao quando o
+ * estoque tambem e da Q2P.
+ */
+export function produtoParaEnvio(empresa: Empresa, codigo: number, quantidadeKg: number, localidadeId: string) {
+  return {
+    ...(empresa === 'acxe' ? { produto_codigo_acxe: codigo } : { produto_codigo_q2p: codigo }),
+    quantidade_kg: quantidadeKg,
+    localidade_id: localidadeId,
+  };
+}
+
+/**
+ * Estoque que vale para uma linha de produto. NF da Q2P: so a escolha do operador (como sempre foi). NF da ACXE: a escolha do
+ * operador, se a lista de destinos ainda a oferece; senao o estoque do PC escolhido (`sugerido`, tambem so se oferecido) — derivado,
+ * sem estado paralelo: trocar o PC da nota muda so as linhas que o operador nao escolheu. `doPedido` diz que veio do PC.
+ */
+export function localEfetivo(
+  empresa: Empresa,
+  escolhido: string,
+  sugerido: LocalSugeridoPeloPc | null,
+  destinos: readonly Pick<DestinoEntrada, 'id'>[],
+): { id: string; doPedido: boolean } {
+  if (empresa !== 'acxe') return { id: escolhido, doPedido: false };
+  if (escolhido && destinos.some((d) => d.id === escolhido)) return { id: escolhido, doPedido: false };
+  if (sugerido && destinos.some((d) => d.id === sugerido.localidadeId)) return { id: sugerido.localidadeId, doPedido: true };
+  return { id: '', doPedido: false };
+}
+
 interface Props {
   /** Abre o formulario manual (NF fora do espelho / fornecedor sem NF-e). */
   onAbrirManual: () => void;
@@ -428,33 +529,65 @@ interface Props {
 
 export function RecebimentoNacionalNfPanel({ onAbrirManual }: Props) {
   const [chave, setChave] = useState<string | null>(null);
+  /** a fila diz se a ACXE esta ligada; o detalhe usa para mostrar a empresa tambem numa NF da Q2P (a lista pode sair do cache enquanto a nota esta aberta) */
+  const [acxeAtiva, setAcxeAtiva] = useState(false);
   return chave ? (
-    <DetalheSection chave={chave} onVoltar={() => setChave(null)} onAbrirManual={onAbrirManual} />
+    <DetalheSection chave={chave} acxeAtiva={acxeAtiva} onVoltar={() => setChave(null)} onAbrirManual={onAbrirManual} />
   ) : (
-    <FilaSection onSelecionar={setChave} onAbrirManual={onAbrirManual} />
+    <FilaSection onSelecionar={setChave} onAcxeAtiva={setAcxeAtiva} onAbrirManual={onAbrirManual} />
   );
 }
 
 // ── Fila ────────────────────────────────────────────────────────────────────
 
-function FilaSection({ onSelecionar, onAbrirManual }: { onSelecionar: (chave: string) => void; onAbrirManual: () => void }) {
+type FiltroEmpresa = 'todas' | Empresa;
+
+const CHIP_EMPRESA = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded border text-xs transition-colors';
+const CHIP_EMPRESA_ATIVO = `${CHIP_EMPRESA} border-atlas-ink bg-atlas-bg text-atlas-ink font-medium`;
+const CHIP_EMPRESA_INATIVO = `${CHIP_EMPRESA} border-atlas-border text-atlas-muted hover:text-atlas-ink`;
+
+function FilaSection({
+  onSelecionar,
+  onAbrirManual,
+  onAcxeAtiva,
+}: {
+  onSelecionar: (chave: string) => void;
+  onAbrirManual: () => void;
+  onAcxeAtiva: (ativa: boolean) => void;
+}) {
   const apiFetch = useApiFetch();
   const [filtro, setFiltro] = useState('');
+  const [filtroEmpresa, setFiltroEmpresa] = useState<FiltroEmpresa>('todas');
 
   const { data, isLoading, error } = useQuery<FilaResposta, Error>({
     queryKey: ['sb', 'rec-nacional', 'fila'],
     queryFn: async () => {
-      const body = (await apiFetch('/api/v1/stockbridge/recebimento/nacional/fila')) as { data: unknown; meta?: { recebimentoFiscalHabilitado?: boolean } };
-      return { fila: body.data as FilaNacionalItem[], fiscalHabilitado: body.meta?.recebimentoFiscalHabilitado === true };
+      const body = (await apiFetch('/api/v1/stockbridge/recebimento/nacional/fila')) as {
+        data: unknown;
+        meta?: { recebimentoFiscalHabilitado?: boolean; recebimentoNacionalAcxeHabilitado?: boolean };
+      };
+      return {
+        fila: body.data as FilaNacionalItem[],
+        fiscalHabilitado: body.meta?.recebimentoFiscalHabilitado === true,
+        acxeHabilitada: body.meta?.recebimentoNacionalAcxeHabilitado === true,
+      };
     },
   });
   const fila = data?.fila ?? [];
   const fiscalHabilitado = data?.fiscalHabilitado ?? false;
+  /** a ACXE esta ligada ou ha NF dela na lista: so entao a tela mostra a empresa (sem ACXE ela e a de sempre) */
+  const mostrarEmpresa = (data?.acxeHabilitada ?? false) || fila.some((x) => x.empresa === 'acxe');
+  useEffect(() => {
+    onAcxeAtiva(mostrarEmpresa);
+  }, [mostrarEmpresa, onAcxeAtiva]);
+  const empresaAtiva: FiltroEmpresa = mostrarEmpresa ? filtroEmpresa : 'todas';
 
   const f = filtro.trim().toLowerCase();
+  const daEmpresa = empresaAtiva === 'todas' ? fila : fila.filter((x) => (x.empresa ?? 'q2p') === empresaAtiva);
   const filtrada = f
-    ? fila.filter((x) => x.notaFiscal.toLowerCase().includes(f) || x.fornecedorNome.toLowerCase().includes(f))
-    : fila;
+    ? daEmpresa.filter((x) => x.notaFiscal.toLowerCase().includes(f) || x.fornecedorNome.toLowerCase().includes(f))
+    : daEmpresa;
+  const filtrando = f !== '' || empresaAtiva !== 'todas';
 
   return (
     <div>
@@ -463,11 +596,27 @@ function FilaSection({ onSelecionar, onAbrirManual }: { onSelecionar: (chave: st
           Notas fiscais aguardando recebimento
           {!isLoading && fila.length > 0 && (
             <span className="ml-2 text-xs font-sans font-normal text-atlas-muted">
-              {f ? `${filtrada.length} de ${fila.length}` : `${fila.length} ${fila.length === 1 ? 'nota fiscal' : 'notas fiscais'}`}
+              {filtrando ? `${filtrada.length} de ${fila.length}` : `${fila.length} ${fila.length === 1 ? 'nota fiscal' : 'notas fiscais'}`}
             </span>
           )}
         </h2>
-        <div className="flex items-center gap-2">
+        <div className={`flex items-center gap-2${mostrarEmpresa ? ' flex-wrap' : ''}`}>
+          {!isLoading && fila.length > 0 && mostrarEmpresa && (
+            <div role="group" aria-label="Filtrar notas por empresa" className="flex items-center gap-1">
+              {(['todas', 'acxe', 'q2p'] as const).map((op) => (
+                <button
+                  key={op}
+                  type="button"
+                  aria-pressed={empresaAtiva === op}
+                  onClick={() => setFiltroEmpresa(op)}
+                  className={empresaAtiva === op ? CHIP_EMPRESA_ATIVO : CHIP_EMPRESA_INATIVO}
+                >
+                  {op !== 'todas' && <span aria-hidden="true" className={`h-2 w-2 rounded-full ${op === 'acxe' ? 'bg-acxe' : 'bg-q2p'}`} />}
+                  {op === 'todas' ? 'Todas' : ROTULO_EMPRESA[op]}
+                </button>
+              ))}
+            </div>
+          )}
           {!isLoading && fila.length > 0 && (
             <input
               value={filtro}
@@ -490,7 +639,8 @@ function FilaSection({ onSelecionar, onAbrirManual }: { onSelecionar: (chave: st
         {fiscalHabilitado ? (
           <>
             <p>
-              A lista traz as notas de compra que chegaram ao OMIE. As marcadas como <strong className="text-atlas-ink font-medium">fiscal pendente</strong> terão o
+              {mostrarEmpresa ? 'A lista traz as notas de compra da Q2P e da ACXE que chegaram ao OMIE de cada empresa.' : 'A lista traz as notas de compra que chegaram ao OMIE.'}{' '}
+              As marcadas como <strong className="text-atlas-ink font-medium">fiscal pendente</strong> terão o
               recebimento fiscal concluído ao confirmar, com cada item vinculado ao pedido de compra (PC) escolhido; as demais já tiveram o fiscal feito e recebem só o estoque.
               Quantidade e valor vêm do documento.
             </p>
@@ -522,7 +672,11 @@ function FilaSection({ onSelecionar, onAbrirManual }: { onSelecionar: (chave: st
 
       {!isLoading && fila.length > 0 && filtrada.length === 0 && (
         <div className="p-12 text-center text-sm text-atlas-muted border border-dashed border-atlas-border rounded-lg">
-          Nenhuma nota corresponde ao filtro "{filtro.trim()}".
+          {empresaAtiva === 'todas'
+            ? `Nenhuma nota corresponde ao filtro "${filtro.trim()}".`
+            : f
+              ? `Nenhuma nota da ${ROTULO_EMPRESA[empresaAtiva]} corresponde ao filtro "${filtro.trim()}".`
+              : `Nenhuma nota da ${ROTULO_EMPRESA[empresaAtiva]} aguardando recebimento.`}
         </div>
       )}
 
@@ -535,6 +689,7 @@ function FilaSection({ onSelecionar, onAbrirManual }: { onSelecionar: (chave: st
                 <div className="flex-1 min-w-0">
                   <div className="flex items-baseline gap-3 flex-wrap">
                     <span className="font-mono text-sm text-atlas-ink">NF {x.notaFiscal}</span>
+                    {mostrarEmpresa && <SeloEmpresa empresa={x.empresa ?? 'q2p'} />}
                     <span className="text-sm text-atlas-ink truncate" title={x.fornecedorNome}>
                       <span className="text-xs text-atlas-muted mr-1">Fornecedor</span>
                       {x.fornecedorCnpj ? x.fornecedorNome : <span className="text-atlas-muted">não identificado no OMIE</span>}
@@ -622,7 +777,18 @@ function FilaSection({ onSelecionar, onAbrirManual }: { onSelecionar: (chave: st
 
 type PedidoBaixa = { modo: 'item'; item: ItemNf } | { modo: 'todos' };
 
-function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onVoltar: () => void; onAbrirManual: () => void }) {
+function DetalheSection({
+  chave,
+  acxeAtiva,
+  onVoltar,
+  onAbrirManual,
+}: {
+  chave: string;
+  /** a fila avisou que a ACXE esta ligada: a empresa aparece no cabecalho tambem numa NF da Q2P */
+  acxeAtiva: boolean;
+  onVoltar: () => void;
+  onAbrirManual: () => void;
+}) {
   const apiFetch = useApiFetch();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<Record<number, ItemForm>>({});
@@ -660,10 +826,35 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
     queryFn: async () => (await apiFetch(`/api/v1/stockbridge/recebimento/nacional/fila/${chave}`)).data as DetalheNf,
   });
 
+  /** Historia 5: empresa da NF (ausente = backend anterior = Q2P). So se sabe com o detalhe carregado. */
+  const empresaNf: Empresa = nf?.empresa ?? 'q2p';
+  const ehAcxe = empresaNf === 'acxe';
+  /** o OMIE em que o fiscal acontece, nos textos da tela (a Q2P segue dizendo so "OMIE") */
+  const omieDaNf = ehAcxe ? 'OMIE da ACXE' : 'OMIE';
+  const mostrarEmpresa = acxeAtiva || ehAcxe;
+
+  // NF da Q2P: a lista plana de sempre (sai em paralelo com o detalhe; deixa de ser buscada quando a NF se mostra da ACXE)
   const { data: localidades = [] } = useQuery<Localidade[], Error>({
     queryKey: ['sb', 'rec-nacional', 'localidades', 'q2p'],
+    enabled: !ehAcxe,
     queryFn: async () => (await apiFetch('/api/v1/stockbridge/recebimento/nacional/localidades?empresa=q2p')).data as Localidade[],
   });
+
+  // NF da ACXE: destinos da entrada por NF (locais da ACXE com a empresa(s) em que cada um lanca). Chave propria — a do formulario
+  // manual (`localidades`) lista so estoques de uma empresa — e so depois do detalhe, para nao oferecer a lista errada.
+  const {
+    data: destinosAcxe = [],
+    error: destinosErro,
+    isSuccess: destinosCarregados,
+    isFetching: destinosBuscando,
+    refetch: recarregarDestinos,
+  } = useQuery<DestinoEntrada[], Error>({
+    queryKey: ['sb', 'rec-nacional', 'destinos', 'acxe'],
+    enabled: ehAcxe,
+    queryFn: async () => (await apiFetch('/api/v1/stockbridge/recebimento/nacional/localidades?empresa=acxe&destino=nf')).data as DestinoEntrada[],
+  });
+  /** estoques oferecidos nesta NF: os destinos da ACXE ou a lista plana da Q2P */
+  const destinos: DestinoEntrada[] = ehAcxe ? destinosAcxe : localidades;
 
   const getForm = (it: ItemNf): ItemForm => form[it.indice] ?? formInicial(it);
   const setItem = (it: ItemNf, patch: Partial<ItemForm>) => setForm((prev) => ({ ...prev, [it.indice]: { ...getForm(it), ...patch } }));
@@ -701,6 +892,14 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
   /** escolha do formulario do item com a pre-selecao da nota: `undefined` = nem o operador nem a nota escolheram (vale a pre-selecao do item) */
   const escolhaFormDoItem = (it: ItemNf, fi: ItemForm = getForm(it)): PcRef | null | undefined =>
     fi.pcEscolha !== undefined ? fi.pcEscolha : preSelecaoNf.get(it.indice);
+  /**
+   * Historia 5: estoque do PC que vale para o item (a escolha do operador ou a pre-selecao), so na NF da ACXE — o fluxo da Q2P nao
+   * muda. Derivado a cada render (sem useEffect): acompanha a troca de PC da nota e nunca sobrescreve uma escolha manual.
+   */
+  const localSugeridoDoItem = (it: ItemNf): LocalSugeridoPeloPc | null =>
+    ehAcxe && pcAtivo && !copiaPcsDefasada ? localSugeridoPeloPc(it.pc, escolhaFormDoItem(it), nf?.pcsDaNf?.pcs, it.indice) : null;
+  /** estoque que vale para a linha (a escolha do operador, ou o do PC) — o mesmo na tela, na validacao e no corpo do POST */
+  const localDaLinha = (it: ItemNf, l: LinhaProduto) => localEfetivo(empresaNf, l.localidadeId, localSugeridoDoItem(it), destinos);
   const indicesRecebiveis = new Set(recebiveis.map((it) => it.indice));
   const estadoPcItens: PcNfItemEstado[] = pcNfDisponivel
     ? recebiveis.flatMap((it) => (it.pc ? [{ indice: it.indice, pc: it.pc, escolhaForm: escolhaFormDoItem(it) }] : []))
@@ -849,7 +1048,10 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
         if (!l.produto) return `Escolha o produto para ${rot}${n}.`;
         if (vistos.has(l.produto.codigo)) return `O produto "${l.produto.descricao}" aparece mais de uma vez em ${rot}. Some as quantidades numa linha só.`;
         vistos.add(l.produto.codigo);
-        if (!l.localidadeId) return `Escolha o estoque destino para ${rot}${n}.`;
+        const local = localDaLinha(it, l);
+        if (!local.id) return `Escolha o estoque destino para ${rot}${n}.`;
+        // Historia 5: produto da ACXE sem correspondente na Q2P nao entra em estoque que tambem e da Q2P (a tela ja desabilita; o servidor recusa antes do fiscal)
+        if (ehAcxe && produtoSemCorrelatoNoLocal(l.produto, destinos.find((d) => d.id === local.id))) return msgProdutoSemCorrelatoQ2p(l.produto.descricao);
         const q = qtds[i];
         if (q === null || q === undefined || Number.isNaN(q) || q <= 0) return `Informe a quantidade de "${l.produto.descricao}" em ${rot}.`;
       }
@@ -887,7 +1089,8 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
             descricao_fornecedor: it.descricaoFornecedor,
             ...(conferida !== null ? { quantidade_conferida_kg: conferida } : {}),
             ...(fi.motivoDivergencia.trim() ? { motivo_divergencia: fi.motivoDivergencia.trim() } : {}),
-            produtos: fi.linhas.map((l, i) => ({ produto_codigo_q2p: l.produto!.codigo, quantidade_kg: qtds[i] ?? 0, localidade_id: l.localidadeId })),
+            // o campo de codigo e o da empresa da NF; o estoque, o escolhido ou o do PC (derivado)
+            produtos: fi.linhas.map((l, i) => produtoParaEnvio(empresaNf, l.produto!.codigo, qtds[i] ?? 0, localDaLinha(it, l).id)),
             ...(pcEnvio ? { pc: pcEnvio } : {}),
           };
         }),
@@ -902,7 +1105,8 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
       // Historia 3/4: o servidor memoriza o que foi GRAVADO; se o operador tirou um
       // produto que vinha sugerido, o conjunto memorizado e corrigido aqui (best-effort).
       for (const it of recebiveis) {
-        if (it.produtosSugeridos.length === 0) continue;
+        // a memoria fornecedor x descricao e so da Q2P: a NF da ACXE nao a grava nem a corrige (o PUT /correlacao e Q2P-only)
+        if (ehAcxe || it.produtosSugeridos.length === 0) continue;
         const escolhidos = getForm(it).linhas.map((l) => l.produto!.codigo);
         const sugeridos = it.produtosSugeridos.map((s) => s.codigo);
         const mesmoConjunto = escolhidos.length === sugeridos.length && sugeridos.every((c) => escolhidos.includes(c));
@@ -1064,6 +1268,14 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
               <div className="text-[11px] uppercase tracking-wide text-atlas-muted">Nota fiscal</div>
               <div className="font-mono text-lg text-atlas-ink">NF {nf.notaFiscal}</div>
             </div>
+            {mostrarEmpresa && (
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-atlas-muted">Empresa</div>
+                <div className="mt-0.5">
+                  <SeloEmpresa empresa={empresaNf} />
+                </div>
+              </div>
+            )}
             <div className="min-w-0">
               <div className="text-[11px] uppercase tracking-wide text-atlas-muted">Fornecedor</div>
               <div className="text-sm text-atlas-ink truncate" title={nf.fornecedorNome}>
@@ -1082,7 +1294,7 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
               <div>
                 <div className="text-[11px] uppercase tracking-wide text-atlas-muted">Recebimento fiscal</div>
                 <div className={`text-sm ${nf.fiscal === 'pendente' ? 'text-amber-700 dark:text-amber-400' : 'text-atlas-muted'}`}>
-                  {nf.fiscal === 'pendente' ? 'Pendente no OMIE' : 'Concluído no OMIE'}
+                  {nf.fiscal === 'pendente' ? `Pendente no ${omieDaNf}` : `Concluído no ${omieDaNf}`}
                 </div>
               </div>
             )}
@@ -1091,6 +1303,24 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
               <div className="font-serif text-lg text-atlas-ink">{fmtBrl(nf.valorTotalBrl)}</div>
             </div>
           </div>
+
+          {ehAcxe && !resultado && (destinosErro != null || (destinosCarregados && destinosAcxe.length === 0)) && (
+            <div className="mb-3 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-sm text-amber-900 dark:text-amber-200 flex items-start gap-3 flex-wrap">
+              <p role="alert" className="flex-1 min-w-[16rem]">
+                {destinosErro != null
+                  ? `Não foi possível carregar os estoques de destino da ACXE. ${destinosErro.message}`
+                  : 'Nenhum estoque de destino está cadastrado para a entrada da ACXE. Avise o suporte.'}
+              </p>
+              <button
+                type="button"
+                onClick={() => void recarregarDestinos()}
+                disabled={destinosBuscando}
+                className="px-3 py-1 border border-amber-700 dark:border-amber-500 rounded text-xs font-medium hover:bg-amber-100 dark:hover:bg-amber-900/40 whitespace-nowrap disabled:opacity-50"
+              >
+                {destinosBuscando ? 'Carregando…' : 'Tentar de novo'}
+              </button>
+            </div>
+          )}
 
           {estoqueLancadoPeloOmie && !resultado && (
             <div className="mb-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-sm text-red-800 dark:text-red-300">
@@ -1179,13 +1409,13 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
           {fiscalPendente && !resultado && (fiscalSemFornecedor || recebiveis.length === 0 || !recebimentoBarrado) && (
             <div className="mb-3 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-sm text-amber-900 dark:text-amber-200">
               {fiscalSemFornecedor
-                ? 'Esta nota está sem fornecedor cadastrado no OMIE, então o recebimento fiscal não pode ser concluído. Peça ao fiscal para cadastrar o fornecedor; a nota pode ser recebida depois da próxima atualização do espelho do OMIE.'
+                ? `Esta nota está sem fornecedor cadastrado no ${omieDaNf}, então o recebimento fiscal não pode ser concluído. Peça ao fiscal para cadastrar o fornecedor; a nota pode ser recebida depois da próxima atualização do espelho do ${omieDaNf}.`
                 : recebiveis.length === 0
-                  ? 'Nenhum item desta nota pode ser recebido por aqui agora (veja o motivo em cada item), e o recebimento fiscal continua pendente no OMIE. Se a nota não for recebida, peça ao gestor para dispensá-la.'
+                  ? `Nenhum item desta nota pode ser recebido por aqui agora (veja o motivo em cada item), e o recebimento fiscal continua pendente no ${omieDaNf}. Se a nota não for recebida, peça ao gestor para dispensá-la.`
                   : (
                     <>
                       <p>
-                        O recebimento fiscal desta nota será concluído no OMIE ao confirmar — a conta a pagar é gerada e nenhum estoque é movimentado por ele. O estoque continua entrando pela aprovação do gestor.
+                        O recebimento fiscal desta nota será concluído no {omieDaNf} ao confirmar — a conta a pagar é gerada e nenhum estoque é movimentado por ele. O estoque continua entrando pela aprovação do gestor.
                       </p>
                       {haPcParaConfirmar && <p className="mt-1">Cada item fica vinculado ao pedido de compra escolhido abaixo.</p>}
                       {semAvaliacaoInforma && <p className="mt-1">{textoSemAvaliacaoInforma(nomesSemAvaliacao)}</p>}
@@ -1226,7 +1456,9 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
                 key={it.indice}
                 item={it}
                 form={getForm(it)}
-                localidades={localidades}
+                empresa={empresaNf}
+                destinos={destinos}
+                resolverLocal={(l) => localDaLinha(it, l)}
                 alvoKg={alvoKg(it, getForm(it))}
                 onChange={(patch) => setItem(it, patch)}
                 onSolicitarBaixa={baixaPermitida && itemBaixavel(it) && !resultado ? () => setPedidoBaixa({ modo: 'item', item: it }) : undefined}
@@ -1302,6 +1534,7 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
                     <span className={STATUS_LABEL[p.status].cls}>{STATUS_LABEL[p.status].label}</span>
                     <span className="text-atlas-ink">{p.produto || p.descricaoFornecedor.trim()}</span>
                     <span className="text-atlas-muted">{fmtKg(p.quantidadeKg)} kg</span>
+                    {p.status === 'aguardando_aprovacao' && textoEntradaEm(p.entradaEm) && <span className="text-atlas-muted">· {textoEntradaEm(p.entradaEm)} na aprovação</span>}
                     {p.mensagemErro && <span className="text-atlas-muted">— {p.mensagemErro}</span>}
                   </li>
                 ))}
@@ -1350,8 +1583,10 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
           {!resultado && (
             <div className="mt-4 flex items-center justify-between gap-4 flex-wrap">
               <div className="text-xs text-atlas-muted">
-                Cada item vira uma aprovação do gestor. O ajuste no OMIE acontece na aprovação.
-                {fiscalNoClique && !recebimentoBarrado && ` O recebimento fiscal é concluído no OMIE agora, ao confirmar${haPcParaConfirmar ? ', com cada item vinculado ao pedido de compra escolhido' : ''}.`}
+                {ehAcxe
+                  ? 'Cada item vira uma aprovação do gestor. O ajuste de estoque no OMIE acontece na aprovação: na ACXE e, nos estoques que também são da Q2P, na Q2P.'
+                  : 'Cada item vira uma aprovação do gestor. O ajuste no OMIE acontece na aprovação.'}
+                {fiscalNoClique && !recebimentoBarrado && ` O recebimento fiscal é concluído no ${omieDaNf} agora, ao confirmar${haPcParaConfirmar ? ', com cada item vinculado ao pedido de compra escolhido' : ''}.`}
                 {baixaPermitida && baixaveis.length > 0 && (
                   <>
                     {' '}
@@ -1497,7 +1732,9 @@ function DetalheSection({ chave, onVoltar, onAbrirManual }: { chave: string; onV
 function ItemCard({
   item,
   form,
-  localidades,
+  empresa,
+  destinos,
+  resolverLocal,
   alvoKg,
   onChange,
   onSolicitarBaixa,
@@ -1513,7 +1750,12 @@ function ItemCard({
 }: {
   item: ItemNf;
   form: ItemForm;
-  localidades: Localidade[];
+  /** empresa da NF: define o catalogo de produtos, o campo do POST e se o destino vem em grupos (ACXE) ou em lista plana (Q2P) */
+  empresa: Empresa;
+  /** estoques oferecidos como destino (ACXE: com `entradaEm`; Q2P: a lista plana de sempre) */
+  destinos: DestinoEntrada[];
+  /** estoque que vale para a linha: o escolhido ou, na NF da ACXE, o do PC (`doPedido`) — o mesmo da validacao e do POST */
+  resolverLocal: (l: LinhaProduto) => { id: string; doPedido: boolean };
   /** peso que este envio vai distribuir entre as linhas */
   alvoKg: number;
   onChange: (p: Partial<ItemForm>) => void;
@@ -1538,6 +1780,8 @@ function ItemCard({
   /** nota de um item e um PC: o item que segue o pedido da nota nao mostra nada de PC (nao ha o que trocar) */
   pcSemTrocaNoItem?: boolean;
 }) {
+  const idBase = useId();
+  const ehAcxe = empresa === 'acxe';
   const bloqueadoUnidade = item.bloqueio === 'unidade_nao_conversivel' || item.bloqueio === 'unidade_incoerente';
   const recebidoIntegral = item.jaRecebido && (item.quantidadeRestanteKg ?? 0) <= TOLERANCIA_KG;
   const parcial = item.quantidadeNfJaAtribuidaKg > 0 && !recebidoIntegral;
@@ -1645,57 +1889,106 @@ function ItemCard({
             <div className="flex items-baseline justify-between">
               <label className="block text-xs font-medium text-atlas-muted">
                 {multi ? 'Produtos no estoque' : 'Produto no estoque'}
+                {ehAcxe && ' da ACXE'}
               </label>
               {item.produtosSugeridos.length > 0 && (
                 <span className="text-[11px] text-atlas-muted">
-                  {item.produtosSugeridos.length === 1 ? 'sugestão pelo histórico deste fornecedor' : `${item.produtosSugeridos.length} produtos pelo histórico deste fornecedor`}
+                  {ehAcxe
+                    ? 'sugestão pela nota ou pelo pedido de compra'
+                    : item.produtosSugeridos.length === 1
+                      ? 'sugestão pelo histórico deste fornecedor'
+                      : `${item.produtosSugeridos.length} produtos pelo histórico deste fornecedor`}
                 </span>
               )}
             </div>
-            {form.linhas.map((l, i) => (
-              <div key={i} className="grid grid-cols-12 gap-2 items-start">
-                <div className={multi ? 'col-span-6' : 'col-span-7'}>
-                  <ProdutoCombobox empresa="q2p" valor={l.produto} onChange={(p) => setLinha(i, { produto: p })} />
-                  {l.produto && sugeridos.has(l.produto.codigo) && (
-                    <div className="text-[11px] text-atlas-muted mt-0.5">sugerido pelo histórico — pode trocar</div>
+            {form.linhas.map((l, i) => {
+              const local = resolverLocal(l);
+              const destino = destinos.find((d) => d.id === local.id) ?? null;
+              /** NF da ACXE: produto sem correspondente na Q2P no estoque que tambem e da Q2P — a entrada nao tem como ser lancada */
+              const semCorrelatoNoLocal = ehAcxe && produtoSemCorrelatoNoLocal(l.produto, destino);
+              const idLegenda = `${idBase}-destino-${i}`;
+              return (
+                <div key={i} className="grid grid-cols-12 gap-2 items-start">
+                  <div className={multi ? 'col-span-6' : 'col-span-7'}>
+                    <ProdutoCombobox
+                      empresa={empresa}
+                      valor={l.produto}
+                      onChange={(p) => setLinha(i, { produto: p })}
+                      correlatoQ2p={ehAcxe ? (entraNasDuas(destino) ? 'exigir' : 'sinalizar') : undefined}
+                    />
+                    {l.produto && sugeridos.has(l.produto.codigo) && (
+                      <div className="text-[11px] text-atlas-muted mt-0.5">
+                        {ehAcxe ? 'sugerido pela nota ou pelo pedido de compra — pode trocar' : 'sugerido pelo histórico — pode trocar'}
+                      </div>
+                    )}
+                    {ehAcxe && l.produto?.semCorrelatoQ2p === true && (
+                      <div className="text-[11px] text-atlas-muted mt-0.5">{ROTULO_SEM_CORRELATO_Q2P}: não entra em estoque que também é da Q2P.</div>
+                    )}
+                  </div>
+                  <div className={multi ? 'col-span-3' : 'col-span-5'}>
+                    <select
+                      value={local.id}
+                      onChange={(e) => setLinha(i, { localidadeId: e.target.value })}
+                      aria-label="Estoque destino"
+                      aria-describedby={ehAcxe && destino ? idLegenda : undefined}
+                      className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
+                    >
+                      <option value="">Estoque destino…</option>
+                      {ehAcxe
+                        ? agruparDestinos(destinos).map((g) => (
+                            <optgroup key={g.chave} label={g.rotulo}>
+                              {g.locais.map((d) => {
+                                const bloqueado = produtoSemCorrelatoNoLocal(l.produto, d);
+                                return (
+                                  <option key={d.id} value={d.id} disabled={bloqueado}>
+                                    {d.codigo} — {d.nome}
+                                    {bloqueado ? ' (produto sem correspondente na Q2P)' : ''}
+                                  </option>
+                                );
+                              })}
+                            </optgroup>
+                          ))
+                        : destinos.map((loc) => (
+                            <option key={loc.id} value={loc.id}>{loc.codigo} — {loc.nome}</option>
+                          ))}
+                    </select>
+                    {ehAcxe && destino && (
+                      <div id={idLegenda} className="mt-0.5 text-[11px]">
+                        {semCorrelatoNoLocal ? (
+                          <span className="text-amber-800 dark:text-amber-300">
+                            Este produto não tem correspondente na Q2P e não pode entrar neste estoque, que também é da Q2P. Escolha um estoque só da ACXE ou peça o cadastro do produto na Q2P.
+                          </span>
+                        ) : (
+                          <span className="text-atlas-muted">{legendaEntrada(destino)}</span>
+                        )}
+                        {local.doPedido && <span className="block text-atlas-muted">Estoque sugerido pelo pedido de compra — pode trocar</span>}
+                      </div>
+                    )}
+                  </div>
+                  {multi && (
+                    <div className="col-span-3 flex items-start gap-1">
+                      <input
+                        inputMode="decimal"
+                        value={l.quantidade}
+                        onChange={(e) => setLinha(i, { quantidade: e.target.value })}
+                        placeholder="kg"
+                        aria-label="Quantidade deste produto em kg"
+                        className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm font-mono"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeLinha(i)}
+                        aria-label="Remover produto"
+                        title="Remover produto"
+                        className="px-2 py-2 text-atlas-muted hover:text-red-700 dark:hover:text-red-400"
+                      >
+                        ×
+                      </button>
+                    </div>
                   )}
                 </div>
-                <div className={multi ? 'col-span-3' : 'col-span-5'}>
-                  <select
-                    value={l.localidadeId}
-                    onChange={(e) => setLinha(i, { localidadeId: e.target.value })}
-                    aria-label="Estoque destino"
-                    className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm"
-                  >
-                    <option value="">Estoque destino…</option>
-                    {localidades.map((loc) => (
-                      <option key={loc.id} value={loc.id}>{loc.codigo} — {loc.nome}</option>
-                    ))}
-                  </select>
-                </div>
-                {multi && (
-                  <div className="col-span-3 flex items-start gap-1">
-                    <input
-                      inputMode="decimal"
-                      value={l.quantidade}
-                      onChange={(e) => setLinha(i, { quantidade: e.target.value })}
-                      placeholder="kg"
-                      aria-label="Quantidade deste produto em kg"
-                      className="w-full px-3 py-2 border border-atlas-border bg-atlas-bg rounded text-sm font-mono"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => removeLinha(i)}
-                      aria-label="Remover produto"
-                      title="Remover produto"
-                      className="px-2 py-2 text-atlas-muted hover:text-red-700 dark:hover:text-red-400"
-                    >
-                      ×
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
             <div className="flex items-center justify-between gap-2">
               <button type="button" onClick={addLinha} className="text-xs text-atlas-muted underline hover:text-atlas-ink self-start">
                 + Este item vira mais de um produto
