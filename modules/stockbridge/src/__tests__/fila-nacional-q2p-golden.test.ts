@@ -13,9 +13,14 @@ import { fileURLToPath } from 'node:url';
 // Como a garantia e provada: os arquivos de `golden/fila-nacional-q2p/` foram gerados pelo codigo do commit
 // a62ea88 (a main, ANTES da Historia 5), rodando ESTE MESMO arquivo de teste dentro de uma copia daquele commit
 // com UPDATE_GOLDEN=1. Aqui o codigo de hoje roda os mesmos cenarios e o texto tem de ser igual (so o espaco no FIM do
-// arquivo e ignorado). UNICA diferenca de proposito em relacao a a62ea88: a exclusao de fornecedor da consulta so da Q2P
+// arquivo e ignorado). Primeira de duas diferencas de proposito em relacao a a62ea88: a exclusao de fornecedor da consulta so da Q2P
 // ganhou `AND fe.empresa = 'q2p'` (sem ela, um CNPJ excluido so na fila da ACXE sumiria tambem da fila da Q2P — defeito
 // achado por fila-nacional-acxe-db.test.ts); os 5 .sql que tem o NOT EXISTS foram regenerados com essa linha a mais.
+// Segunda diferenca de proposito (23/10/2026, NF 67988): as duas fontes ganharam `q_com_xml`/`u_com_xml` (quantidade e
+// unidade do XML, do espelho de recebimentos) e a pendencia por restante da fila olha as duas quantidades oficiais — a
+// nota de entrada do OMIE (quantidade RECEBIDA, editavel no portal) e a via do XML (`nf_kg_xml`, o XML so na faixa
+// comparavel, metade a dobro da nota de entrada) —: o restante e a menor distancia ate uma delas ainda nao atingida
+// (RESTANTE_PENDENCIA_SQL). Os 6 .sql foram regenerados com isso.
 //
 // Se o SQL da Q2P mudar DE PROPOSITO (outra feature), regenere:
 //   UPDATE_GOLDEN=1 pnpm --filter @atlas/stockbridge exec vitest run src/__tests__/fila-nacional-q2p-golden.test.ts

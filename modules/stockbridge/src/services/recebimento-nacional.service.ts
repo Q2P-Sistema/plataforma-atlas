@@ -1130,11 +1130,24 @@ export async function processarRecebimentoNacionalPorNf(
     //   valor(p)            = valor_item × fracao   (= valor_item × nf(p) / nf_do_item)
     //   custo_unitario      = valor(p) / kg_p        (= valor_item / conferida)
     // Soma fecha no valor do item independentemente de quantas submissoes houver.
+    // Retomada (D19 da 017): o lado da NF reparte o restante da fila (restantePendenciaKg) pelo que falta
+    // distribuir. A soma fecha numa das quantidades oficiais mesmo quando a 1a leva ancorou na outra (XML na
+    // fonte "fiscal pendente", nota de entrada depois do sync) ou a conferida mudou; com a mesma base e a
+    // mesma conferida da 1a leva da o mesmo numero que a formula do 1o envio.
     const vTotItem = new Decimal(item.valorTotalItemBrl);
     const conferidaDec = new Decimal(conferida);
+    const restanteNfRetomada =
+      item.quantidadeNfJaAtribuidaKg > 0 && item.quantidadeRestanteKg != null && item.quantidadeRestanteKg > TOLERANCIA_DIVERGENCIA_KG
+        ? new Decimal(item.quantidadeRestanteKg)
+        : null;
     for (const p of it.produtos) {
       const fracao = new Decimal(p.quantidadeKg).dividedBy(conferidaDec);
-      const nfParcela = Number(new Decimal(quantidadeNfKg).times(fracao).toFixed(3));
+      const nfParcela = Number(
+        (restanteNfRetomada
+          ? restanteNfRetomada.times(p.quantidadeKg).dividedBy(aDistribuir)
+          : new Decimal(quantidadeNfKg).times(fracao)
+        ).toFixed(3),
+      );
       const valor = vTotItem.times(fracao);
       const custoUnitario = Number(valor.dividedBy(p.quantidadeKg).toFixed(6));
       preparados.push({

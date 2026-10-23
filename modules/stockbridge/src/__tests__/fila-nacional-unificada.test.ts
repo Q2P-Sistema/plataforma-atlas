@@ -38,6 +38,9 @@ import {
   FilaNacionalIncompletaError,
   FORNECEDOR_NAO_IDENTIFICADO,
   CFOPS_RECEBIMENTO_NACIONAL,
+  itemNfPendente,
+  kgXmlComparavel,
+  restantePendenciaKg,
 } from '../services/fila-nacional.service.js';
 
 const CHAVE = '35261014555032000753550010000068421827355174';
@@ -469,6 +472,128 @@ describe('identidade do item pela sequencia no recebimento (ACXEGDP-412)', () =>
     const d = await getDetalheNfNacional(CHAVE);
     expect(d.itens[0]).toMatchObject({ jaRecebido: true, quantidadeRestanteKg: 0, sequenciasRecebimento: [1] });
     expect(d.dispensavel).toBe(false);
+  });
+});
+
+// NF 67988 (Isoforma, 23/10/2026): recebida pelo Atlas com 13.500 kg conferidos de uma NF de 13.382 kg; depois o fiscal
+// editou a quantidade RECEBIDA para 13.500 no portal e o OMIE refez a nota de entrada com 13.500 — o item voltou a fila com
+// 118 kg "pendentes". A nota de entrada traz a quantidade RECEBIDA; o XML vem do espelho de recebimentos.
+describe('quantidade recebida editada no portal (NF 67988): pendencia pelas duas quantidades oficiais (nota de entrada e XML)', () => {
+  it('fila: as duas fontes expoem a quantidade e a unidade do XML, e a pendencia usa as duas quantidades', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    await getFilaNacional();
+    const { sql } = sqlFila();
+    expect(sql).toContain('rv.n_qtde_nfe                                        AS q_com_xml');
+    expect(sql).toContain('rv.c_unidade_nfe                                     AS u_com_xml');
+    expect(sql).toContain('ri.n_qtde_nfe                                        AS q_com_xml');
+    expect(sql).toContain('ri.c_unidade_nfe                                     AS u_com_xml');
+    // a via do XML so usa o XML na faixa comparavel (metade a dobro da nota de entrada); fora dela, a nota de entrada
+    expect(sql).toMatch(/CASE WHEN \(u\.q_com_xml \* CASE upper\(btrim\(u\.u_com_xml\)\)[^;]*BETWEEN \(u\.q_com \* CASE upper\(btrim\(u\.u_com\)\)[^;]*\* 0\.5 AND [^;]*\* 2 THEN \(u\.q_com_xml[^;]*ELSE \(u\.q_com[^;]*END AS nf_kg_xml/);
+    expect(sql).toContain('SUM(nf_kg_xml)');
+    // restante = menor distancia para cima ate uma quantidade oficial ainda nao atingida
+    expect(sql).toContain('CASE WHEN nf_kg >= nf_atribuida - 1 THEN nf_kg - nf_atribuida END');
+    expect(sql).toContain('CASE WHEN nf_kg_xml >= nf_atribuida - 1 THEN nf_kg_xml - nf_atribuida END');
+    expect(sql).not.toContain('nf_atribuida < nf_kg - 1');
+  });
+
+  it('fila com a chave da 016 desligada: so a fonte (a), que tambem le o XML pelo recebimento casado', async () => {
+    await getFilaNacional();
+    const { sql } = sqlFila();
+    expect(sql).not.toContain('UNION ALL');
+    expect(sql).toContain('rv.n_qtde_nfe                                        AS q_com_xml');
+    expect(sql).toContain('AS nf_kg_xml');
+  });
+
+  it('detalhe: item recebido com 13.382 kg (o XML) e nota de entrada com 13.500 kg — sem restante, fora da pendencia', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    detalheRows = [
+      linhaDetalhe({
+        fiscal_pendente: false, n_seq: 1, x_prod: 'PS CRISTAL B', desc_norm: 'PS CRISTAL B', q_com: 13500, q_com_xml: 13382, u_com_xml: 'KG',
+        valor_item: 152554.8, recebido: true, nf_ja_atribuida_kg: 13382, conferida_ja_gravada_kg: 13500,
+      }),
+    ];
+    const d = await getDetalheNfNacional(CHAVE);
+    const { sql } = sqlDetalhe();
+    expect(sql).toContain('u.q_com_xml::float8                              AS q_com_xml');
+    expect(sql).toContain('u.u_com_xml                                      AS u_com_xml');
+    expect(d.itens[0]).toMatchObject({ jaRecebido: true, quantidadeNfKg: 13500, quantidadeNfJaAtribuidaKg: 13382, quantidadeRestanteKg: 0 });
+    expect(itemNfPendente(d.itens[0]!)).toBe(false);
+  });
+
+  it('detalhe: sem o XML no espelho vale a nota de entrada, como antes — a diferenca segue pendente', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    detalheRows = [
+      linhaDetalhe({
+        fiscal_pendente: false, n_seq: null, x_prod: 'PS CRISTAL B', desc_norm: 'PS CRISTAL B', q_com: 13500, q_com_xml: null, u_com_xml: null,
+        valor_item: 152554.8, recebido: true, nf_ja_atribuida_kg: 13382, conferida_ja_gravada_kg: 13500,
+      }),
+    ];
+    const d = await getDetalheNfNacional(CHAVE);
+    expect(d.itens[0]).toMatchObject({ jaRecebido: true, quantidadeRestanteKg: 118 });
+    expect(itemNfPendente(d.itens[0]!)).toBe(true);
+  });
+
+  it('kgXmlComparavel: o XML na faixa comparavel, linha a linha, com a unidade de cada uma; fora dela, a nota de entrada', () => {
+    expect(kgXmlComparavel([{ q_com: 13500, q_com_xml: 13382, u_com_xml: 'KG' }], 1)).toBe(13382);
+    expect(kgXmlComparavel([{ q_com: 24700.005, q_com_xml: 24750, u_com_xml: 'KG' }], 1)).toBe(24750);
+    // XML em toneladas (TL) e nota de entrada em kg (NF 60199): 8,25 TL = 8.250 kg
+    expect(kgXmlComparavel([{ q_com: 8250, q_com_xml: 8.25, u_com_xml: ' tl ' }], 1)).toBe(8250);
+    // sem XML, XML vazio ou unidade fora da tabela: a nota de entrada
+    expect(kgXmlComparavel([{ q_com: 13500, q_com_xml: null, u_com_xml: null }], 1)).toBe(13500);
+    expect(kgXmlComparavel([{ q_com: 13500, q_com_xml: '', u_com_xml: 'KG' }], 1)).toBe(13500);
+    expect(kgXmlComparavel([{ q_com: 13500, q_com_xml: 13382, u_com_xml: 'SC' }], 1)).toBe(13500);
+    // XML em toneladas rotulado KG (1,375) contra 1.375 kg na nota de entrada: unidade trocada, vale a nota de entrada
+    expect(kgXmlComparavel([{ q_com: 1375, q_com_xml: 1.375, u_com_xml: 'KG' }], 1)).toBe(1375);
+    // bordas da faixa: metade e dobro entram; logo fora, nao
+    expect(kgXmlComparavel([{ q_com: 1000, q_com_xml: 500, u_com_xml: 'KG' }], 1)).toBe(500);
+    expect(kgXmlComparavel([{ q_com: 1000, q_com_xml: 2000, u_com_xml: 'KG' }], 1)).toBe(2000);
+    expect(kgXmlComparavel([{ q_com: 1000, q_com_xml: 499, u_com_xml: 'KG' }], 1)).toBe(1000);
+    // cada linha decide a sua; fator da nota de entrada vem da conversao (TON)
+    expect(kgXmlComparavel([{ q_com: 3000, q_com_xml: 2900, u_com_xml: 'KG' }, { q_com: '3000', q_com_xml: '3100', u_com_xml: 'KG' }], 1)).toBe(6000);
+    expect(kgXmlComparavel([{ q_com: 8.25 }], 1000)).toBe(8250);
+  });
+
+  it('restantePendenciaKg: menor distancia, para cima, ate a quantidade oficial ainda nao atingida (tolerancia 1 kg)', () => {
+    // NF 67988: o Atlas atribuiu o XML (13.382) e a nota de entrada foi editada para 13.500 depois: recebido
+    expect(restantePendenciaKg(13500, 13382, 13382)).toBe(0);
+    // revisao de 23/10 (achado da fila): nota de entrada editada para mais ANTES do fisico, gravacao parcial
+    // ancorada nela (13.400 de 13.500): o restante continua 100, nao some atras do XML menor
+    expect(restantePendenciaKg(13500, 13382, 13400)).toBe(100);
+    // ancorada no XML (fonte "fiscal pendente") e gravacao parcial: o restante e o do XML
+    expect(restantePendenciaKg(13500, 13382, 13282)).toBe(100);
+    // completo pela nota de entrada; dentro da tolerancia; acima das duas
+    expect(restantePendenciaKg(13500, 13382, 13500)).toBe(0);
+    expect(restantePendenciaKg(13500, 13382, 13499.5)).toBe(0.5);
+    expect(restantePendenciaKg(13500, 13382, 14000)).toBe(0);
+    // sem XML (as duas iguais): a regra de antes
+    expect(restantePendenciaKg(13500, 13500, 13382)).toBe(118);
+    expect(restantePendenciaKg(13500, 13500, 0)).toBe(13500);
+  });
+
+  it('detalhe: gravacao parcial com XML de unidade trocada continua pendente pelo restante da nota de entrada', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    detalheRows = [
+      linhaDetalhe({
+        fiscal_pendente: false, n_seq: 1, q_com: 1375, q_com_xml: 1.375, u_com_xml: 'KG', valor_item: 9625,
+        recebido: true, nf_ja_atribuida_kg: 600, conferida_ja_gravada_kg: 600,
+      }),
+    ];
+    const d = await getDetalheNfNacional(CHAVE);
+    expect(d.itens[0]).toMatchObject({ quantidadeRestanteKg: 775 });
+    expect(itemNfPendente(d.itens[0]!)).toBe(true);
+  });
+
+  it('detalhe: nota de entrada editada para mais antes do fisico e gravacao parcial (13.400 de 13.500): faltam 100 kg, segue pendente', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    detalheRows = [
+      linhaDetalhe({
+        fiscal_pendente: false, n_seq: 1, x_prod: 'PS CRISTAL B', desc_norm: 'PS CRISTAL B', q_com: 13500, q_com_xml: 13382, u_com_xml: 'KG',
+        valor_item: 152554.8, recebido: true, nf_ja_atribuida_kg: 13400, conferida_ja_gravada_kg: 13400,
+      }),
+    ];
+    const d = await getDetalheNfNacional(CHAVE);
+    expect(d.itens[0]).toMatchObject({ quantidadeRestanteKg: 100 });
+    expect(itemNfPendente(d.itens[0]!)).toBe(true);
   });
 });
 

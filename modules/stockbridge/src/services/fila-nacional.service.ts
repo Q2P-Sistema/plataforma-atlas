@@ -6,7 +6,7 @@ import {
   movimentacaoDoItemNacionalSql,
   normalizarDescricaoSql,
 } from './fiscal-recebida-sql.js';
-import { converterItemNfParaKg, type ConversaoNf } from './unidade-nf.js';
+import { converterItemNfParaKg, FATOR_UNIDADE_NF, isUnidadeNfConhecida, normalizarGrafiaUnidadeNf, type ConversaoNf } from './unidade-nf.js';
 import { sugerirProdutosEmLote } from './correlacao-produto.service.js';
 import {
   carregarContextoPc,
@@ -415,6 +415,12 @@ export class EstoqueJaLancadoPeloOmieError extends Error {
 //   e, desde a 017: preco_comercial, fornecedor_codigo, n_id_pedido, n_id_it_pedido,
 //   n_num_ped_compra, c_associar_existente, c_ignorar_item, c_nao_gerar_mov_estoque,
 //   receb_recebido (c_recebido do recebimento — deteccao de estoque ja lancado, D7)
+//   e q_com_xml/u_com_xml: quantidade e unidade do XML (espelho de recebimentos). Na fonte (a)
+//   a nota de entrada do OMIE traz a quantidade RECEBIDA, que o fiscal pode editar no portal
+//   (NF 67988, 23/10/2026: 13.382 kg no XML, 13.500 kg na nota de entrada); a pendencia por
+//   restante olha as duas: e a menor distancia, para cima, ate uma que o atribuido pelo Atlas
+//   ainda nao atingiu (tolerancia de 1 kg; RESTANTE_PENDENCIA_SQL, D19 da 017). Na fonte (b)
+//   as duas sao a do XML.
 
 const LEDGER_FISCAL_CONCLUIDO_SQL = (chaveExpr: string): string =>
   `EXISTS (SELECT 1 FROM stockbridge.recebimento_fiscal rf
@@ -496,7 +502,9 @@ function fonteNfSql(f: FonteEmpresa, nfValida: string, comEmpresa = false): stri
     : '';
   return `
         SELECT a.*,${VINCULO_PC_COLUNAS('rv')},
-               rv.c_recebido                                        AS receb_recebido
+               rv.c_recebido                                        AS receb_recebido,
+               rv.n_qtde_nfe                                        AS q_com_xml,  -- a nota de entrada traz a quantidade RECEBIDA
+               rv.c_unidade_nfe                                     AS u_com_xml
         FROM (
           SELECT h.c_chave_nfe, h.n_nf, h.dest_razao, h.dest_cnpj_cpf, h.d_emi::date AS d_emi,
                  h.n_id_receb::bigint                                 AS n_id_receb,
@@ -562,7 +570,9 @@ function fonteRecebSql(f: FonteEmpresa, comEmpresa = false): string {
                ri.n_sequencia::int                                  AS n_seq,
                ri.n_preco_unit                                      AS preco_comercial,  -- 017: preco SEM tributos (D3)
                NULLIF(r.n_id_fornecedor, 0)                         AS fornecedor_codigo${extras},${VINCULO_PC_COLUNAS('ri')},
-               r.c_recebido                                         AS receb_recebido
+               r.c_recebido                                         AS receb_recebido,
+               ri.n_qtde_nfe                                        AS q_com_xml,
+               ri.c_unidade_nfe                                     AS u_com_xml
         FROM public.${t.recebimento} r
         JOIN public.${t.recebimentoItens} ri ON ri.n_id_receb = r.n_id_receb
         WHERE r.d_emissao >= ${f.corteParam}::date
@@ -648,8 +658,39 @@ function naoDispensadaSql(alias = 'u'): string {
 // restante na query da fila (FR-030). Unidade fora da tabela -> NULL -> o item
 // segue a regra simples (recebido/nao recebido); a conferencia de coerencia e
 // o bloqueio continuam sendo feitos em TS, no detalhe.
-const fatorKgSql = (alias = 'u'): string =>
-  `CASE upper(btrim(${alias}.u_com)) WHEN 'KG' THEN 1 WHEN 'TON' THEN 1000 WHEN 'TL' THEN 1000 END`;
+const fatorKgSql = (alias = 'u', coluna = 'u_com'): string =>
+  `CASE upper(btrim(${alias}.${coluna})) WHEN 'KG' THEN 1 WHEN 'TON' THEN 1000 WHEN 'TL' THEN 1000 END`;
+
+/**
+ * Faixa em que o XML e comparavel com a nota de entrada (razao XML / nota de entrada): edicao da
+ * quantidade recebida no portal muda alguns por cento; fora da faixa e leitura de unidade trocada (XML em
+ * toneladas rotulado KG, research D24 da 015) e o XML nao entra (D19, revisao de 23/10/2026).
+ */
+export const RAZAO_XML_MIN = 0.5;
+export const RAZAO_XML_MAX = 2;
+
+/**
+ * kg da linha pela via do XML (D19 da 017): o XML quando esta na faixa comparavel (RAZAO_XML_MIN..MAX da
+ * nota de entrada); senao a propria nota de entrada. Sem o XML no espelho, a nota de entrada. Nota de
+ * entrada fora da tabela de unidades: NULL, como antes. Mesma regra de kgXmlComparavel, no detalhe.
+ */
+function nfKgXmlSql(alias = 'u'): string {
+  const entrada = `(${alias}.q_com * ${fatorKgSql(alias)})`;
+  const xml = `(${alias}.q_com_xml * ${fatorKgSql(alias, 'u_com_xml')})`;
+  return `CASE WHEN ${xml} BETWEEN ${entrada} * ${RAZAO_XML_MIN} AND ${entrada} * ${RAZAO_XML_MAX} THEN ${xml} ELSE ${entrada} END`;
+}
+
+/**
+ * Restante do item (FR-030 da 015, D19 da 017), sobre as colunas agregadas `nf_kg` (nota de entrada), `nf_kg_xml`
+ * (via do XML) e `nf_atribuida`: a menor distancia, para cima, ate uma das duas quantidades oficiais que o
+ * atribuido ainda nao atingiu (tolerancia de 1 kg); 0 quando ja atingiu alguma. O item recebido pela NF do XML
+ * nao reabre quando a nota de entrada e editada para mais (NF 67988), e a gravacao parcial ancorada na nota de
+ * entrada continua visivel quando ela e maior que o XML (revisao de 23/10/2026). Sem XML as duas sao iguais e a
+ * regra e a de antes. Mesma regra de restantePendenciaKg, no detalhe.
+ */
+const RESTANTE_PENDENCIA_SQL = `GREATEST(0, LEAST(
+                  CASE WHEN nf_kg >= nf_atribuida - 1 THEN nf_kg - nf_atribuida END,
+                  CASE WHEN nf_kg_xml >= nf_atribuida - 1 THEN nf_kg_xml - nf_atribuida END))`;
 
 /** Σ quantidade_nf_kg ja gravada (caminho novo) para a linha `u` — lado da NF. */
 function nfJaAtribuidaSql(alias = 'u'): string {
@@ -778,7 +819,10 @@ export async function getFilaNacional(
           -- FR-030 (research D25): pendencia por RESTANTE do lado da NF. Item com
           -- 1 de N produtos gravado (falha/retomada) continua na fila; legado
           -- (match por numero, sem parcela) NAO cai aqui — nf_atribuida = 0.
+          -- Duas quantidades oficiais (D19): a nota de entrada (quantidade RECEBIDA, editavel no portal) e
+          -- o XML (so na faixa comparavel; fora dela e unidade trocada e vale a nota de entrada).
           (u.q_com * ${fatorKgSql('u')}) AS nf_kg,
+          ${nfKgXmlSql('u')} AS nf_kg_xml,
           ${nfJaAtribuidaSql('u')}       AS nf_atribuida,
           -- 017 (D7): recebimento concluido fora do Atlas COM movimento de estoque no OMIE
           (u.receb_recebido = 'S' AND u.c_ignorar_item = 'N' AND u.c_nao_gerar_mov_estoque = 'N') AS estoque_lancado
@@ -794,6 +838,7 @@ export async function getFilaNacional(
                SUM(valor_item)                                          AS valor_item,
                bool_and(recebido)                                       AS recebido,
                SUM(nf_kg)                                               AS nf_kg,
+               SUM(nf_kg_xml)                                           AS nf_kg_xml,
                MAX(nf_atribuida)                                        AS nf_atribuida,
                bool_or(estoque_lancado)                                 AS estoque_lancado
         FROM linhas
@@ -802,7 +847,7 @@ export async function getFilaNacional(
       itens_flag AS (
         SELECT *,
                (NOT recebido
-                OR (nf_kg IS NOT NULL AND nf_atribuida > 0 AND nf_atribuida < nf_kg - 1)) AS pendente
+                OR (nf_kg IS NOT NULL AND nf_atribuida > 0 AND ${RESTANTE_PENDENCIA_SQL} > 1)) AS pendente
         FROM itens
       )
       SELECT
@@ -1147,7 +1192,7 @@ export interface ItemNfNacional {
   quantidadeNfJaAtribuidaKg: number;
   /** Σ quantidade_kg (conferida) ja gravada — base do que falta distribuir na retomada */
   quantidadeConferidaJaGravadaKg: number;
-  /** quantidadeNfKg − quantidadeNfJaAtribuidaKg (null quando bloqueado) */
+  /** o que falta do lado da NF: restantePendenciaKg (D19 da 017; null quando bloqueado). A retomada reparte este valor */
   quantidadeRestanteKg: number | null;
   baixadoComoExterno: boolean;
   /** ha solicitacao de baixa externa PENDENTE de aprovacao — o item continua na fila, marcado */
@@ -1306,6 +1351,38 @@ async function pcsDoLedgerPorSequencia(chave: string): Promise<Map<number, strin
 }
 
 /**
+ * kg do item pela via do XML (D19), linha a linha: o XML (`q_com_xml`, unidade da tabela explicita) quando
+ * esta na faixa comparavel (RAZAO_XML_MIN..MAX da nota de entrada); senao a nota de entrada (`q_com` x fator
+ * da conversao). O OMIE grava na nota de entrada a quantidade RECEBIDA, que o fiscal pode editar no portal
+ * (NF 67988, 23/10/2026: XML 13.382 kg, nota de entrada 13.500 kg). Mesma regra de nfKgXmlSql, na fila.
+ */
+export function kgXmlComparavel(
+  linhas: Array<{ q_com: number | string; q_com_xml?: number | string | null; u_com_xml?: string | null }>,
+  fatorNf: number,
+): number {
+  return linhas.reduce((soma, l) => {
+    const entrada = Number(l.q_com) * fatorNf;
+    const u = normalizarGrafiaUnidadeNf(l.u_com_xml);
+    const xml = l.q_com_xml != null && l.q_com_xml !== '' && isUnidadeNfConhecida(u) ? Number(l.q_com_xml) * FATOR_UNIDADE_NF[u] : NaN;
+    // XML fora da faixa comparavel (unidade trocada): vale a nota de entrada
+    const comparavel = Number.isFinite(xml) && xml >= entrada * RAZAO_XML_MIN && xml <= entrada * RAZAO_XML_MAX;
+    return soma + (comparavel ? xml : entrada);
+  }, 0);
+}
+
+/**
+ * Restante do item (FR-030 da 015, D19 da 017): a menor distancia, para cima, ate uma das duas quantidades
+ * oficiais (nota de entrada e via do XML) que o atribuido ainda nao atingiu, com tolerancia de 1 kg; 0 quando
+ * ja atingiu alguma. Recebido pela NF do XML nao reabre com a nota de entrada editada para mais (NF 67988), e
+ * a gravacao parcial ancorada na nota de entrada continua visivel quando ela e maior que o XML. Mesma regra de
+ * RESTANTE_PENDENCIA_SQL, na fila.
+ */
+export function restantePendenciaKg(entradaKg: number, xmlKg: number, atribuidaKg: number): number {
+  const distancias = [entradaKg, xmlKg].filter((c) => Number.isFinite(c) && c >= atribuidaKg - 1).map((c) => c - atribuidaKg);
+  return distancias.length === 0 ? 0 : Math.max(0, Math.min(...distancias));
+}
+
+/**
  * Item ainda pendente para fins de dispensa/baixa: nao recebido por inteiro
  * (restante acima da tolerancia) e nao baixado como externo. Mesma regra de
  * `recebimento-externo.service.ts`.
@@ -1393,6 +1470,9 @@ interface LinhaRow {
   cfop: string;
   q_com: number;
   u_com: string | null;
+  /** quantidade e unidade do XML (espelho de recebimentos); null sem o recebimento no espelho */
+  q_com_xml?: number | string | null;
+  u_com_xml?: string | null;
   /** valor do item COM tributos — `v_prod` (fonte a) ou `v_total_item` (fonte b); ver D26/D7 no topo */
   valor_item: number;
   recebido: boolean;
@@ -1482,6 +1562,8 @@ export async function montarDetalheNfNacional(
       u.cfop                                           AS cfop,
       u.q_com::float8                                  AS q_com,
       u.u_com                                          AS u_com,
+      u.q_com_xml::float8                              AS q_com_xml,
+      u.u_com_xml                                      AS u_com_xml,
       u.valor_item::float8                             AS valor_item,  -- D26: NAO v_tot_item
       ${recebidoSql('u', emp)}                              AS recebido,
       EXISTS (SELECT 1 FROM stockbridge.aprovacao a
@@ -1650,7 +1732,7 @@ export async function montarDetalheNfNacional(
       jaRecebido,
       quantidadeNfJaAtribuidaKg: nfJaAtribuida,
       quantidadeConferidaJaGravadaKg: conferidaJaGravada,
-      quantidadeRestanteKg: quantidadeNfKg != null ? Math.max(0, quantidadeNfKg - nfJaAtribuida) : null,
+      quantidadeRestanteKg: conversao.ok ? restantePendenciaKg(conversao.quantidadeKg, kgXmlComparavel(linhas, conversao.fator), nfJaAtribuida) : null,
       baixadoComoExterno: linhas.some((l) => l.baixado_externo),
       baixaSolicitada: linhas.some((l) => l.baixa_solicitada),
       conversao,

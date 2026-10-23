@@ -120,7 +120,7 @@ Todas no schema Zod de `packages/core/src/config.ts` e listadas nas stacks (`atl
 specs/017-recebimento-nacional-com-pc/
 ├── plan.md                                  # Este arquivo
 ├── spec.md                                  # 5 histórias, FR-000..033, SC-001..011, clarificações de 21/10 e 22/10/2026
-├── research.md                              # Phase 0: 17 decisões D1..D17 (teste NF 7813, T033, gate ACXEGDP-376, cache de PCs, unidade)
+├── research.md                              # Phase 0: 19 decisões D1..D19 (teste NF 7813, T033, gate ACXEGDP-376, cache de PCs, unidade, ACXE, quantidade recebida)
 ├── data-model.md                            # Phase 1: colunas do espelho, 3 tabelas novas (§11 = cache de PCs vistos), extensões, shapes
 ├── quickstart.md                            # Phase 1: 10 cenários + ordem de deploy
 ├── contracts/

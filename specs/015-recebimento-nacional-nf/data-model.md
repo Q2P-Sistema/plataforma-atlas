@@ -141,7 +141,7 @@ Confiabilidade medida do segundo ramo, sobre os 144 pares (NF, produto) do fluxo
 | `bloqueio` | `null` \| `'unidade_nao_conversivel'` \| `'unidade_incoerente'` \| `'sem_correlacao'` |
 | `jaRecebido` | pela checagem de duas vias (§3.1) |
 | `quantidadeNfJaAtribuidaKg` | `Σ quantidade_nf_kg` das movimentações ativas do item — quanto da **quantidade da NF** já foi lançado |
-| `quantidadeRestanteKg` | `quantidadeNfKg(item) − quantidadeNfJaAtribuidaKg`; o que falta lançar, medido **do lado da NF** |
+| `quantidadeRestanteKg` | `restantePendenciaKg(quantidadeNfKg, kgXmlComparavel, quantidadeNfJaAtribuidaKg)` (feature 017, research D19): o que falta lançar, medido **do lado da NF** — a menor distância, para cima, do atribuído até a nota de entrada (`quantidadeNfKg`) ou até a quantidade do XML do espelho de recebimentos, descartando a que ele já ultrapassou em mais de 1 kg (mínimo 0). Sem o XML no espelho, ou com o XML fora da faixa de 0,5 a 2 vezes a nota de entrada, vale só a nota de entrada: a subtração simples |
 
 **Item parcialmente recebido.** Num item distribuído entre N produtos (US4), um `EXISTS` puro marcaria o item como recebido assim que **uma** movimentação existisse — mesmo que os outros produtos tenham falhado, tenham sido rejeitados pelo gestor ou nunca tenham sido enviados (operador fechou a tela). O peso restante nunca entraria no estoque e não haveria caminho de volta. Por isso o item permanece na fila enquanto `quantidadeRestanteKg > 1` (a mesma tolerância de 1 kg de FR-018), mostrando o que já entrou e o que falta.
 

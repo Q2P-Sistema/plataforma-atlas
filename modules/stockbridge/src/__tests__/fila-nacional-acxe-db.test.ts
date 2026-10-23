@@ -55,13 +55,14 @@ const CORTE_Q2P = '2026-09-11';
 const CORTE_ACXE = '2026-10-01';
 
 // Fornecedores e CNPJs de teste
-const FORN = { replas: id(1), zaraplast: id(2), solutec: id(3), gga: id(4), tritec: id(5) };
+const FORN = { replas: id(1), zaraplast: id(2), solutec: id(3), gga: id(4), tritec: id(5), isoforma: id(6) };
 const CNPJ = {
   replas: '99.000.001/0001-01',
   zaraplast: '99.000.002/0001-02',
   solutec: '11.222.333/0001-81',
   gga: '99.000.004/0001-04',
   tritec: '99.000.005/0001-05',
+  isoforma: '99.000.006/0001-06',
   intercompanyAcxe: '99.001.001/0001-01', // a ACXE como fornecedor da Q2P: excluida da fila da Q2P
   intercompanyQ2p: '99.001.002/0001-02', // a Q2P como fornecedora da ACXE: excluida da fila da ACXE
   soAcxe: '99.001.003/0001-03', // excluido SO na ACXE: a mesma empresa vende para a Q2P e continua na fila dela
@@ -199,7 +200,7 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
   };
 
   // ── Cenario ──────────────────────────────────────────────────────────────────────────────────────────────────
-  // Q = Q2P, A = ACXE. Os 14 casos e o que cada um prova:
+  // Q = Q2P, A = ACXE. Os casos e o que cada um prova:
   //  Q5   Q2P pendente emitida 20/09 (apos o corte da Q2P, antes do da ACXE)        -> na fila (o corte da Q2P e o dela)
   //  Q2   Q2P pendente NF 5832 (mesmo numero que a A-5832)                           -> na fila
   //  A2   ACXE pendente NF 5832, com lancamento manual da ACXE                       -> FORA (via 2 casa a empresa)
@@ -218,15 +219,25 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
   //  A5 / Q4  intercompany (Q2P fornece a ACXE / ACXE fornece a Q2P)                 -> FORA das duas filas
   //  A6   ACXE pendente emitida 20/09 (antes do corte da ACXE)                       -> FORA (corte proprio)
   //  A8   ACXE pendente dispensada                                                   -> FORA
+  //  Q6   Q2P recebida pelo Atlas (13.382 kg da NF), depois o fiscal editou a quantidade RECEBIDA para 13.500 no portal: a
+  //       nota de entrada passou a 13.500 e o XML segue 13.382 (NF 67988, 23/10/2026)                      -> FORA
+  //  Q7   a mesma situacao SEM o recebimento no espelho (sem o XML): vale a nota de entrada, como antes   -> na fila, restante 118 kg
+  //  Q8   gravacao parcial (600 de 1.375 kg) com o XML em toneladas rotulado KG (1,375): o XML fica fora da faixa
+  //       comparavel e vale a nota de entrada                                                             -> na fila, restante 775 kg
+  //  Q9   nota de entrada editada para mais (13.500) ANTES do fisico, XML 13.382; gravacao parcial ancorada na nota de
+  //       entrada (13.400 de 13.500): o XML menor nao pode esconder os 100 kg (revisao de 23/10/2026)  -> na fila, restante 100 kg
+  //  Q10  nota de entrada editada para MENOS (13.382) que o XML (13.500), item 1:N recebido em duas levas com bases diferentes:
+  //       8.070,543 na 1a (ancorada no XML) + 5.311,457 na retomada, que reparte o restante da fila (2a revisao) -> FORA
   const C = {
     q5: chave(5), q2: chave(6), a2: chave(7), q1: chave(8), a1: chave(9), q8201: chave(10), a8200: chave(11), q3: chave(12), a3: chave(13), a4: chave(14),
     a9: chave(15), a7: chave(16), a5: chave(17), q4: chave(18), a6: chave(19), a8: chave(20), a10: chave(21), a11: chave(22), a12: chave(23), a13: chave(24), a14: chave(25),
+    q6: chave(26), q7: chave(27), q8: chave(28), q9: chave(29), q10: chave(30),
   };
   // O que a consulta SO da Q2P (ACXE desligada ou ?empresa=q2p) devolve: a Q8201 esta la, porque a exclusao feita so para a
   // ACXE nao vale na Q2P (defeito achado por este teste e corrigido com `fe.empresa = 'q2p'` na consulta so da Q2P).
-  const ESPERADA_Q2P = [C.q5, C.q2, C.q8201, C.q3];
+  const ESPERADA_Q2P = [C.q5, C.q2, C.q8201, C.q3, C.q7, C.q8, C.q9];
   const ESPERADA_ACXE = [C.a1, C.a3, C.a4, C.a9, C.a7, C.a11, C.a12];
-  const ESPERADA_AMBAS = [C.q5, C.q2, C.a1, C.q8201, C.q3, C.a3, C.a4, C.a9, C.a7, C.a11, C.a12]; // por emissao, numero, empresa
+  const ESPERADA_AMBAS = [C.q5, C.q2, C.a1, C.q8201, C.q3, C.a3, C.a4, C.a9, C.a7, C.a11, C.a12, C.q7, C.q8, C.q9]; // por emissao, numero, empresa
 
   async function semear(): Promise<void> {
     await cadastro('q2p', FORN.replas, CNPJ.replas, 'REPLAS COMERCIAL LTDA');
@@ -333,6 +344,71 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
       [C.a12, usuario],
     );
     idsLedger.push(String(lf.rows[0]!.id));
+
+    // Q6 / Q7: NF 67988 (23/10/2026). O Atlas recebeu 13.500 kg conferidos de uma NF de 13.382 kg; depois o fiscal editou a
+    // quantidade RECEBIDA para 13.500 no portal e o OMIE refez a nota de entrada com 13.500. A movimentacao guardou a
+    // descricao do item no recebimento ('PS AI A') e a sequencia; os espelhos trazem a do produto ('PS CRISTAL B').
+    await cadastro('q2p', FORN.isoforma, CNPJ.isoforma, 'ISOFORMA PLASTICOS LTDA');
+    for (const [k, nIdNf, nCodItem, numero, dEmi, comRecebimento, descricaoMov] of [
+      ['q6', id(114), id(120), '000067988', '2026-10-22', true, 'PS AI A'],
+      ['q7', id(115), id(121), '000067989', '2026-10-23', false, 'PS CRISTAL B'],
+    ] as const) {
+      await nf('q2p', { nIdNf, chave: C[k], numero, razao: 'ISOFORMA PLASTICOS LTDA', cnpj: CNPJ.isoforma, dEmi, nIdReceb: comRecebimento ? id(104) : null,
+        itens: [{ nCodItem, xProd: 'PS CRISTAL B', cfop: '1.102', qCom: 13500, uCom: 'KG', vProd: 152554.8, vUnCom: 11.3004 }] });
+      if (comRecebimento) {
+        await receb('q2p', { nIdReceb: id(104), chave: C[k], numero, dEmissao: dEmi, fornecedor: FORN.isoforma, cnpj: CNPJ.isoforma, razao: 'ISOFORMA PLASTICOS LTDA', recebido: 'S', etapa: '60',
+          itens: [{ seq: 1, descricao: 'PS CRISTAL B', cfopEntrada: '1.102', qtde: 13382, un: 'KG', preco: 11.4, total: 152554.8, nIdItem: nCodItem, naoGerarMov: 'S' }] });
+      }
+      const m = await q(
+        `INSERT INTO stockbridge.movimentacao (nota_fiscal, tipo_movimento, subtipo, quantidade_kg, empresa, galpao, produto_codigo_q2p, status_omie, ativo,
+            nf_chave_acesso, nf_item_descricao, nf_item_descricao_normalizada, nf_item_sequencias, quantidade_nf_kg)
+         VALUES ($1, 'entrada_manual', 'compra_nacional', 13500, 'q2p', '11.2', $2, 'concluida', true, $3, $4, $4, ARRAY[1], 13382) RETURNING id`,
+        [numero.replace(/^0+/, ''), id(98), C[k], descricaoMov],
+      );
+      idsMovimentacao.push(String(m.rows[0]!.id));
+    }
+
+    // Q8: CATA-like — o XML veio em toneladas rotulado KG (1,375) e o fiscal lancou 1.375 kg na nota de entrada; o
+    // Atlas gravou so um dos produtos do item (600 kg da NF): a gravacao parcial precisa continuar visivel
+    await nf('q2p', { nIdNf: id(116), chave: C.q8, numero: '000067995', razao: 'ISOFORMA PLASTICOS LTDA', cnpj: CNPJ.isoforma, dEmi: '2026-10-23', nIdReceb: id(105),
+      itens: [{ nCodItem: id(122), xProd: 'PP COPO 40', cfop: '1.102', qCom: 1375, uCom: 'KG', vProd: 9625, vUnCom: 7 }] });
+    await receb('q2p', { nIdReceb: id(105), chave: C.q8, numero: '000067995', dEmissao: '2026-10-23', fornecedor: FORN.isoforma, cnpj: CNPJ.isoforma, razao: 'ISOFORMA PLASTICOS LTDA', recebido: 'S', etapa: '60',
+      itens: [{ seq: 1, descricao: 'PP COPO 40', cfopEntrada: '1.102', qtde: 1.375, un: 'KG', preco: 7000, total: 9625, nIdItem: id(122), naoGerarMov: 'S' }] });
+    const m8 = await q(
+      `INSERT INTO stockbridge.movimentacao (nota_fiscal, tipo_movimento, subtipo, quantidade_kg, empresa, galpao, produto_codigo_q2p, status_omie, ativo,
+          nf_chave_acesso, nf_item_descricao, nf_item_descricao_normalizada, nf_item_sequencias, quantidade_nf_kg)
+       VALUES ('67995', 'entrada_manual', 'compra_nacional', 600, 'q2p', '11.2', $1, 'concluida', true, $2, 'PP COPO 40', 'PP COPO 40', ARRAY[1], 600) RETURNING id`,
+      [id(98), C.q8],
+    );
+    idsMovimentacao.push(String(m8.rows[0]!.id));
+    // Q9: nota de entrada 13.500 (editada para mais no portal antes do fisico), XML 13.382; um dos dois produtos gravado
+    await nf('q2p', { nIdNf: id(117), chave: C.q9, numero: '000067996', razao: 'ISOFORMA PLASTICOS LTDA', cnpj: CNPJ.isoforma, dEmi: '2026-10-23', nIdReceb: id(106),
+      itens: [{ nCodItem: id(123), xProd: 'PS CRISTAL B', cfop: '1.102', qCom: 13500, uCom: 'KG', vProd: 152554.8, vUnCom: 11.3004 }] });
+    await receb('q2p', { nIdReceb: id(106), chave: C.q9, numero: '000067996', dEmissao: '2026-10-23', fornecedor: FORN.isoforma, cnpj: CNPJ.isoforma, razao: 'ISOFORMA PLASTICOS LTDA', recebido: 'S', etapa: '60',
+      itens: [{ seq: 1, descricao: 'PS CRISTAL B', cfopEntrada: '1.102', qtde: 13382, un: 'KG', preco: 11.4, total: 152554.8, nIdItem: id(123), naoGerarMov: 'S' }] });
+    const m9 = await q(
+      `INSERT INTO stockbridge.movimentacao (nota_fiscal, tipo_movimento, subtipo, quantidade_kg, empresa, galpao, produto_codigo_q2p, status_omie, ativo,
+          nf_chave_acesso, nf_item_descricao, nf_item_descricao_normalizada, nf_item_sequencias, quantidade_nf_kg)
+       VALUES ('67996', 'entrada_manual', 'compra_nacional', 13400, 'q2p', '11.2', $1, 'concluida', true, $2, 'PS CRISTAL B', 'PS CRISTAL B', ARRAY[1], 13400) RETURNING id`,
+      [id(98), C.q9],
+    );
+    idsMovimentacao.push(String(m9.rows[0]!.id));
+    // Q10: XML 13.500, nota de entrada 13.382. 1a leva na fonte "fiscal pendente" (base XML, conferida 13.382): A = 8.000 kg
+    // gravou 13.500 x 8.000/13.382 = 8.070,543 e B falhou. A retomada (base nota de entrada) repartiu o restante da fila
+    // (13.382 - 8.070,543 = 5.311,457) para B = 5.382 kg: a soma fecha na nota de entrada.
+    await nf('q2p', { nIdNf: id(118), chave: C.q10, numero: '000067997', razao: 'ISOFORMA PLASTICOS LTDA', cnpj: CNPJ.isoforma, dEmi: '2026-10-23', nIdReceb: id(107),
+      itens: [{ nCodItem: id(124), xProd: 'PS CRISTAL B', cfop: '1.102', qCom: 13382, uCom: 'KG', vProd: 153900, vUnCom: 11.5005 }] });
+    await receb('q2p', { nIdReceb: id(107), chave: C.q10, numero: '000067997', dEmissao: '2026-10-23', fornecedor: FORN.isoforma, cnpj: CNPJ.isoforma, razao: 'ISOFORMA PLASTICOS LTDA', recebido: 'S', etapa: '60',
+      itens: [{ seq: 1, descricao: 'PS CRISTAL B', cfopEntrada: '1.102', qtde: 13500, un: 'KG', preco: 11.4, total: 153900, nIdItem: id(124), naoGerarMov: 'S' }] });
+    for (const [produto, kg, nfKg] of [[id(98), 8000, 8070.543], [id(97), 5382, 5311.457]] as const) {
+      const m10 = await q(
+        `INSERT INTO stockbridge.movimentacao (nota_fiscal, tipo_movimento, subtipo, quantidade_kg, empresa, galpao, produto_codigo_q2p, status_omie, ativo,
+            nf_chave_acesso, nf_item_descricao, nf_item_descricao_normalizada, nf_item_sequencias, quantidade_nf_kg)
+         VALUES ('67997', 'entrada_manual', 'compra_nacional', $1, 'q2p', '11.2', $2, 'concluida', true, $3, 'PS CRISTAL B', 'PS CRISTAL B', ARRAY[1], $4) RETURNING id`,
+        [kg, produto, C.q10, nfKg],
+      );
+      idsMovimentacao.push(String(m10.rows[0]!.id));
+    }
 
     // stockbridge: lancamentos manuais (via 2), exclusoes por empresa, dispensa
     await movimentoManual('q2p', '6842', '2026-10-20T12:00:00Z');
@@ -611,6 +687,63 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
     });
   });
 
+  describe('quantidade recebida editada no portal depois do recebimento pelo Atlas (NF 67988, 23/10/2026)', () => {
+    it('nota de entrada com a quantidade RECEBIDA (13.500) e XML com 13.382: o item recebido pelo Atlas com 13.382 nao volta a fila', async (ctx) => {
+      if (!pronto) return ctx.skip();
+      for (const empresa of [undefined, 'q2p'] as const) {
+        expect(chaves(await svc.getFilaNacional(empresa ? { empresa } : {}))).not.toContain(C.q6);
+      }
+      const d = await svc.getDetalheNfNacional(C.q6);
+      expect(d.itens).toHaveLength(1);
+      expect(d.itens[0]).toMatchObject({ jaRecebido: true, quantidadeNfKg: 13500, quantidadeNfJaAtribuidaKg: 13382, quantidadeRestanteKg: 0 });
+      expect(svc.itemNfPendente(d.itens[0]!)).toBe(false);
+    });
+
+    it('com a chave da 016 desligada (so a fonte do espelho de NF) a regra e a mesma', async (ctx) => {
+      if (!pronto) return ctx.skip();
+      configurar({ fiscal: false });
+      try {
+        expect(chaves(await svc.getFilaNacional())).not.toContain(C.q6);
+      } finally {
+        configurar();
+      }
+    });
+
+    it('XML com unidade trocada (1,375 "KG" x nota de entrada 1.375 kg) fica fora da faixa comparavel: a gravacao parcial segue pendente', async (ctx) => {
+      if (!pronto) return ctx.skip();
+      expect(chaves(await svc.getFilaNacional({ empresa: 'q2p' }))).toContain(C.q8);
+      const d = await svc.getDetalheNfNacional(C.q8);
+      expect(d.itens[0]).toMatchObject({ quantidadeNfKg: 1375, quantidadeNfJaAtribuidaKg: 600, quantidadeRestanteKg: 775 });
+      expect(svc.itemNfPendente(d.itens[0]!)).toBe(true);
+    });
+
+    it('nota de entrada editada para mais antes do fisico e gravacao parcial ancorada nela: o XML menor nao esconde os 100 kg', async (ctx) => {
+      if (!pronto) return ctx.skip();
+      expect(chaves(await svc.getFilaNacional({ empresa: 'q2p' }))).toContain(C.q9);
+      const d = await svc.getDetalheNfNacional(C.q9);
+      expect(d.itens[0]).toMatchObject({ quantidadeNfKg: 13500, quantidadeNfJaAtribuidaKg: 13400, quantidadeRestanteKg: 100 });
+      expect(svc.itemNfPendente(d.itens[0]!)).toBe(true);
+    });
+
+    it('nota de entrada MENOR que o XML e item 1:N recebido em duas levas com bases diferentes: fecha na nota de entrada e sai da fila', async (ctx) => {
+      if (!pronto) return ctx.skip();
+      for (const empresa of [undefined, 'q2p'] as const) {
+        expect(chaves(await svc.getFilaNacional(empresa ? { empresa } : {}))).not.toContain(C.q10);
+      }
+      const d = await svc.getDetalheNfNacional(C.q10);
+      expect(d.itens[0]).toMatchObject({ jaRecebido: true, quantidadeNfKg: 13382, quantidadeNfJaAtribuidaKg: 13382, quantidadeRestanteKg: 0 });
+      expect(svc.itemNfPendente(d.itens[0]!)).toBe(false);
+    });
+
+    it('sem o recebimento no espelho (sem o XML) vale a nota de entrada, como antes: a diferenca de 118 kg segue pendente', async (ctx) => {
+      if (!pronto) return ctx.skip();
+      expect(chaves(await svc.getFilaNacional({ empresa: 'q2p' }))).toContain(C.q7);
+      const d = await svc.getDetalheNfNacional(C.q7);
+      expect(d.itens[0]).toMatchObject({ jaRecebido: true, quantidadeNfKg: 13500, quantidadeRestanteKg: 118 });
+      expect(svc.itemNfPendente(d.itens[0]!)).toBe(true);
+    });
+  });
+
   describe('fila — a ACXE desligada (ou sem alguma das tres condicoes) e so a Q2P', () => {
     const CASOS: Array<[string, { acxe?: boolean; fiscal?: boolean; corteAcxe?: string | null }]> = [
       ['chave da ACXE desligada', { acxe: false }],
@@ -625,7 +758,7 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
           const fila = await svc.getFilaNacional();
           // sem a chave do fiscal pelo Atlas a fonte (b) some tambem na Q2P; com ela, a Q2P e a de sempre
           const q2p = chaves(fila);
-          expect(q2p.every((k) => [C.q5, C.q2, C.q8201, C.q3, C.q1, C.q4].includes(k))).toBe(true);
+          expect(q2p.every((k) => [C.q5, C.q2, C.q8201, C.q3, C.q1, C.q4, C.q7, C.q8, C.q9].includes(k))).toBe(true);
           expect(doTeste(fila).every((f) => f.empresa === 'q2p')).toBe(true);
           if (opts.fiscal !== false) expect(q2p).toEqual(ESPERADA_Q2P);
           expect(await svc.getFilaNacional({ empresa: 'acxe' })).toEqual([]);

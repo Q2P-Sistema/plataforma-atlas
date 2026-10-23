@@ -98,7 +98,7 @@ import {
   ProdutoNaoEncontradoError,
 } from '../services/recebimento-nacional.service.js';
 import { converterItemNfParaKg } from '../services/unidade-nf.js';
-import type { DetalheNfNacional, ItemNfNacional } from '../services/fila-nacional.service.js';
+import { restantePendenciaKg, type DetalheNfNacional, type ItemNfNacional } from '../services/fila-nacional.service.js';
 
 const CHAVE = '35260868176072000128550010000667241693158505';
 const LOC_A = '11111111-1111-4111-8111-111111111111';
@@ -399,6 +399,63 @@ describe('distribuicao 1:N e rateio ancorado na NF (FR-021/FR-022, D25)', () => 
     await expect(processarRecebimentoNacionalPorNf(base({
       itens: [{ indice: 0, descricaoFornecedor: 'SUCATA  PSAI MOIDO MESCLADO GROSSO', produtos: [{ produtoCodigoQ2p: 3033097763, quantidadeKg: 13160, localidadeId: LOC_A }] }],
     }))).rejects.toMatchObject({ code: 'DISTRIBUICAO_NAO_FECHA' });
+  });
+
+  // D19 da 017 (2a revisao, achados 1 a 3): a 1a leva ancora no XML (fonte "fiscal pendente") e a retomada,
+  // depois do sync, na nota de entrada — que o fiscal pode ter mudado. A retomada reparte o restante da fila,
+  // e a soma de quantidade_nf_kg fecha numa das quantidades oficiais (antes sobrava resto e o item nao saia da fila).
+  const DESC = 'SUCATA  PSAI MOIDO MESCLADO GROSSO';
+  const VALOR = 120000;
+  async function duasLevasComTrocaDeBase(o: { xmlKg: number; entradaKg: number; conferidaKg: number; aKg: number; conferidaRetomadaKg?: number }) {
+    detalheMock.mockResolvedValue(detalhe([item({ q: o.xmlKg, v: VALOR })]));
+    falharMovNaChamada = 2; // o 2o produto falha na 1a leva (ou o gestor rejeita a entrada dele)
+    const bKg = o.conferidaKg - o.aKg;
+    await processarRecebimentoNacionalPorNf(base({
+      itens: [{ indice: 0, descricaoFornecedor: DESC, quantidadeConferidaKg: o.conferidaKg, motivoDivergencia: 'balança', produtos: [
+        { produtoCodigoQ2p: 3033097757, quantidadeKg: o.aKg, localidadeId: LOC_A },
+        { produtoCodigoQ2p: 3033097763, quantidadeKg: bKg, localidadeId: LOC_A },
+      ] }],
+    }));
+    expect(movs()).toHaveLength(1);
+    const atribuida = Number(movs()[0]!.quantidadeNfKg);
+    detalheMock.mockResolvedValue(detalhe([item({
+      q: o.entradaKg, v: VALOR, jaRecebido: true,
+      quantidadeNfJaAtribuidaKg: atribuida, quantidadeConferidaJaGravadaKg: o.aKg,
+      quantidadeRestanteKg: restantePendenciaKg(o.entradaKg, o.xmlKg, atribuida),
+    })]));
+    const conferidaRetomada = o.conferidaRetomadaKg ?? o.entradaKg;
+    await processarRecebimentoNacionalPorNf(base({
+      itens: [{ indice: 0, descricaoFornecedor: DESC, ...(o.conferidaRetomadaKg != null ? { quantidadeConferidaKg: o.conferidaRetomadaKg, motivoDivergencia: 'balança' } : {}), produtos: [
+        { produtoCodigoQ2p: 3033097763, quantidadeKg: conferidaRetomada - o.aKg, localidadeId: LOC_A },
+      ] }],
+    }));
+    const ms = movs();
+    expect(ms).toHaveLength(2);
+    const somaNf = Number(ms.reduce((acc, m) => acc + Number(m.quantidadeNfKg), 0).toFixed(3));
+    const somaValor = ms.reduce((acc, m) => acc + Number(m.custoUnitarioBrl) * Number(m.quantidadeKg), 0);
+    return { ms, somaNf, somaValor, restante: restantePendenciaKg(o.entradaKg, o.xmlKg, somaNf) };
+  }
+
+  it('RETOMADA com troca de base (XML 10.000 e nota de entrada 10.500 depois do fiscal): fecha no XML e o item sai da fila', async () => {
+    const r = await duasLevasComTrocaDeBase({ xmlKg: 10000, entradaKg: 10500, conferidaKg: 10500, aKg: 6000 });
+    expect(Number(r.ms[0]!.quantidadeNfKg)).toBeCloseTo(5714.286, 3);
+    expect(Number(r.ms[1]!.quantidadeNfKg)).toBeCloseTo(4285.714, 3); // nao 4.500 (a formula do 1o envio deixava 285,7 kg "faltando")
+    expect(r.somaNf).toBeCloseTo(10000, 3);
+    expect(r.restante).toBe(0);
+    expect(r.somaValor).toBeCloseTo(VALOR, 0);
+  });
+
+  it('RETOMADA com a nota de entrada MENOR que o XML (13.382 x 13.500): fecha na nota de entrada e o item sai da fila', async () => {
+    const r = await duasLevasComTrocaDeBase({ xmlKg: 13500, entradaKg: 13382, conferidaKg: 13382, aKg: 8000 });
+    expect(r.somaNf).toBeCloseTo(13382, 3);
+    expect(r.restante).toBe(0);
+    expect(r.somaValor).toBeCloseTo(VALOR, 0);
+  });
+
+  it('RETOMADA com a conferida menor que a da 1a leva (mesma base): fecha na NF, sem resto', async () => {
+    const r = await duasLevasComTrocaDeBase({ xmlKg: 13160, entradaKg: 13160, conferidaKg: 13500, aKg: 6750, conferidaRetomadaKg: 13400 });
+    expect(r.somaNf).toBeCloseTo(13160, 3);
+    expect(r.restante).toBe(0);
   });
 });
 

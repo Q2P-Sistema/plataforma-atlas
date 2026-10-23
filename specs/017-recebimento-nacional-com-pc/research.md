@@ -330,6 +330,26 @@ O **POST continua por item** (`itens[].pc`): a tela aplica a escolha da nota em 
 
 ---
 
+## D19. A nota de entrada traz a quantidade recebida: a pendência olha ela e o XML (23/10/2026)
+
+**Achado em PROD (NF 67988, Isoforma × PC 305)**: o Atlas recebeu 13.500 kg conferidos de uma NF de 13.382 kg e gravou 13.382 como quantidade da NF na movimentação. O fiscal reabriu o recebimento no portal, editou a quantidade recebida para 13.500 e concluiu de novo. O OMIE refez a nota de entrada com 13.500 kg no item (`tbl_nf_itens_Q2P.q_com`), e a fila passou a mostrar 118 kg pendentes. Receber esses 118 kg lançaria estoque em dobro.
+
+**Fato**: a nota de entrada do OMIE (`tbl_nf_itens_*`) traz a **quantidade recebida** (`nQtdeRecebida` do recebimento), não a do XML. Em PROD, todo item com quantidade recebida diferente da do XML segue essa regra, inclusive a conversão de toneladas para kg feita pelo fiscal (NF 60199: XML 8,25 TL, nota de entrada 8.250 KG). O XML continua no espelho de recebimentos (`n_qtde_nfe`, `c_unidade_nfe`).
+
+**Decisão**: a pendência por restante (FR-030 da 015) passa a olhar as **duas quantidades oficiais** do item: a nota de entrada e a via do XML (linha a linha, o XML quando está entre a metade e o dobro da nota de entrada; fora dessa faixa é unidade trocada, como o XML em toneladas rotulado KG da D24 da 015, e vale a nota de entrada). O item está recebido quando o atribuído pelo Atlas atinge **uma** delas, com tolerância de 1 kg. O restante é a menor distância, para cima, até uma quantidade oficial que o atribuído ainda não atingiu. Na fila, `nf_kg`, `nf_kg_xml` e `RESTANTE_PENDENCIA_SQL`; no detalhe, `kgXmlComparavel` e `restantePendenciaKg`. Sem o recebimento no espelho as duas são iguais e vale a regra de antes; com a nota de entrada em unidade fora da tabela, também. A quantidade exibida e o cálculo da divergência não mudam.
+
+**Por que não "a menor das duas"** (primeira versão, revisão adversarial de 23/10): com a nota de entrada editada para mais **antes** do físico, o rateio do Atlas fica ancorado nela. Uma gravação parcial (13.400 de 13.500, com XML 13.382) sumiria atrás do XML menor. Com as duas quantidades oficiais, o restante continua 100 kg.
+
+**Retomada** (segunda revisão adversarial, 23/10): a regra pede que a soma do lado da NF caia numa das quantidades oficiais. A 1ª leva de um item 1:N ancora no XML (fonte "fiscal pendente"). Se um produto falha ou o gestor rejeita a entrada dele, a retomada depois do sync ancorava na nota de entrada. Com a nota de entrada diferente do XML (edição da quantidade recebida no portal), a soma caía entre as duas: o item ficava na fila com um resto que nenhum envio fechava, porque o POST já não tinha o que distribuir. Na retomada, o lado da NF de cada produto passa a ser o restante da fila rateado pelo que falta distribuir (`restante × kg ÷ a distribuir`). Com a mesma base e a mesma conferida da 1ª leva, dá o mesmo número de antes; também fecha quando o operador muda a conferida na retomada, caso que antes deixava resto. O primeiro envio e o valor (fração da conferida, D25 da 015) não mudam.
+
+**Efeito**: a quantidade recebida editada para cima depois do Atlas, como neste caso, não reabre o item. A editada para baixo antes do Atlas, quando o fiscal lança o peso real no portal, também não. Um recebimento parcial de verdade continua pendente pelo que falta até a quantidade oficial mais próxima que ele ainda não atingiu (nota de entrada ou XML), que não é necessariamente aquela em que foi ancorado: ancorado em 13.500, com XML de 13.382 e 5.000 atribuídos, faltam 8.382, não 8.500.
+
+**Consequência para a baixa do PC pelo peso conferido (ainda não implementada)**: quando o Atlas passar a mandar o peso conferido em `nQtdeRecebida`, a nota de entrada virá com ele. Sem esta regra, toda NF recebida "a mais" voltaria à fila.
+
+**Validação**: a consulta nova, rodada em PROD só para leitura em 23/10, tira só a 67988 da fila; as outras 3 NFs pendentes seguem iguais. O teste com Postgres real (`fila-nacional-acxe-db`) reproduz o caso e falha com o código anterior; outro caso prova que a gravação parcial com XML de unidade trocada continua pendente (revisão independente de 23/10). A retomada com troca de base tem testes no POST (`recebimento-nacional-nf`, que falham sem a correção) e o caso Q10 no Postgres real.
+
+---
+
 ## Pendências de pesquisa (não bloqueiam o plano)
 
 1. ~~**Teste de D2** com NF real sem vínculo~~: **feito em 22/10/2026 (T033)** e aprovado (D2). Restam (c) a troca de um vínculo existente e (d) a NF menor que o saldo do PC, para quando houver NF. Não bloqueiam.
