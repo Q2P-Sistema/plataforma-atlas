@@ -11,6 +11,8 @@ import { EstoqueJaLancadoPeloOmieError, FORNECEDOR_NAO_IDENTIFICADO } from './fi
 import {
   relerEReservarPcs,
   anteriorDaSequencia,
+  colunaKgRecebidoPcExiste,
+  fatorUnidadePc,
   PcRecemUsadoAguardeError,
   PcVinculoInvalidoError,
   type EmpresaPc,
@@ -415,9 +417,10 @@ function extrairErroOmie(err: unknown): { codigo: string | null; mensagem: strin
 const RE_SEM_FORNECEDOR = /fornecedor[^.!]*(n[aã]o (cadastrad|informad|encontrad|identificad)|inv[aá]lid|inexist)/i;
 
 /**
- * Ajustes do EDITAR ja gravados no item: nao movimentar estoque, gerar financeiro e, quando
- * o PC esta em unidade diferente da NF (modo 'converter'), a quantidade recebida ja na
- * unidade do PC (`qtdRecebida`; undefined = nao se aplica).
+ * Ajustes do EDITAR ja gravados no item: nao movimentar estoque, gerar financeiro e, quando o
+ * Atlas manda a quantidade recebida (PC em unidade diferente da NF no modo 'converter', ou peso
+ * conferido acima da NF — research D20), essa quantidade na unidade do PC (`qtdRecebida`;
+ * undefined = nao se aplica, o OMIE usa a da NF).
  */
 const ajustesJaAplicados = (it: ItemRecebimentoNfe, qtdRecebida?: number) =>
   it.cNaoGerarMovEstoque === 'S' &&
@@ -432,8 +435,9 @@ const vinculoVivo = (it: ItemRecebimentoNfe): { nIdPedido: number; nIdItPedido: 
 const editarItem = (nSequencia: number, qtdRecebida?: number): ItemRecebimentoEditar => ({
   nSequencia,
   cAcao: 'EDITAR',
-  // nQtdeRecebida so quando a unidade do PC difere da NF (trava de unidade, modo 'converter'):
-  // o OMIE copia o valor para nQtdeRec do PC sem converter (NF 60199 x PC 306, 22/10/2026).
+  // nQtdeRecebida so quando o Atlas a define: unidade do PC diferente da NF (modo 'converter') ou
+  // peso conferido acima da NF (research D20). O OMIE copia o valor para nQtdeRec do PC sem
+  // converter (NF 60199 x PC 306, 22/10/2026) e refaz a nota de entrada com ele (NF 67988, D19).
   itensAjustes: { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', ...(qtdRecebida !== undefined ? { nQtdeRecebida: qtdRecebida } : {}) },
 });
 
@@ -457,7 +461,7 @@ function planejarAcoes(
   rec: RecebimentoNfeConsultado,
   escolhas: EscolhaPcValidada[],
   semVinculo: Set<number>,
-  /** quantidade recebida na unidade do PC, por sequencia — so nas que precisam de conversao (reserva) */
+  /** quantidade recebida na unidade do PC, por sequencia — so nas que o Atlas define (reserva: conversao ou peso conferido) */
   qtdRecebidaPorSeq: Map<number, number> = new Map(),
 ): PlanoFiscal {
   const escolhaPorSeq = new Map<number, EscolhaPcValidada>();
@@ -585,24 +589,40 @@ async function marcarVinculosSeguro(...a: Parameters<typeof marcarVinculos>): Pr
 }
 
 /**
+ * kg que o OMIE baixou no PC por este item (quantidade recebida viva x fator da unidade do PC), so quando
+ * difere do kg da NF da sequencia (acima de 1 g); senao null. Sem a quantidade ou sem o fator, null.
+ * Revisao da D20 (achados 6a/6b): no ja_concluido o ledger guarda o que o OMIE de fato baixou — e o que a
+ * rejeicao do gestor usa para avisar compras (pc-peso-conferido.service.ts).
+ */
+export function kgRecebidoVivo(it: ItemRecebimentoNfe | undefined, fatorPc: number | null | undefined, kgNfSeq: number): number | null {
+  if (!it || it.nQtdeRecebida == null || fatorPc == null || !Number.isFinite(it.nQtdeRecebida)) return null;
+  const kg = Math.round(it.nQtdeRecebida * fatorPc * 1000) / 1000;
+  return kg > 0 && Math.abs(kg - kgNfSeq) > 0.001 ? kg : null;
+}
+
+/**
  * Fiscal ja concluido no OMIE (portal, ou clique anterior): cada reserva vira
  * `concluido` se o vinculo vivo e o escolhido (nada a escrever — T038), senao
  * `falha` (o fiscal foi concluido sem este vinculo).
  */
 async function fecharVinculosJaConcluido(ledgerId: string, rec: RecebimentoNfeConsultado, reservas: ReservaPc[]): Promise<VinculoFiscalConcluido[]> {
   const concluidos: VinculoFiscalConcluido[] = [];
+  const temColuna0059 = reservas.some((r) => r.fatorPc != null) ? await colunaKgRecebidoPcExiste() : false;
   for (const r of reservas) {
     const it = rec.itens.find((i) => i.nSequencia === r.nSequencia);
     const vivo = it ? vinculoVivo(it) : null;
     const igual = vivo != null && vivo.nIdPedido === r.nCodPed && vivo.nIdItPedido === r.nCodItemPed;
+    // Revisao da D20 (achado 6b): o kg planejado so vale se o EDITAR foi aplicado — confere a quantidade
+    // viva (concluido no portal sem o EDITAR, por exemplo, deixa a da NF e o ledger nao pode dizer o contrario).
+    const conferirKg = temColuna0059 && igual && r.fatorPc != null && r.kgNfSeq != null;
     try {
       await getPool().query(
         `UPDATE stockbridge.recebimento_fiscal_pc
             SET status = $2::text, concluido_em = CASE WHEN $2::text = 'concluido' THEN now() ELSE NULL END,
                 erro_omie_mensagem = CASE WHEN $2::text = 'falha' THEN 'Fiscal concluído fora do Atlas sem este vínculo' ELSE erro_omie_mensagem END,
-                updated_at = now()
+                updated_at = now()${conferirKg ? ', kg_recebido_pc = $3' : ''}
           WHERE id = $1 AND status IN ('confirmado', 'associado')`,
-        [r.id, igual ? 'concluido' : 'falha'],
+        [r.id, igual ? 'concluido' : 'falha', ...(conferirKg ? [kgRecebidoVivo(it, r.fatorPc, r.kgNfSeq!)?.toFixed(3) ?? null] : [])],
       );
     } catch (err) {
       logger.error({ err, ledgerId, reserva: r.id }, 'Não foi possível fechar a reserva de PC no ja_concluido');
@@ -685,25 +705,31 @@ async function registrarVinculosJaConcluido(
   const pool = getPool();
   await fecharReservasOrfasDaNf(ctx.nfChaveAcesso, ctx.empresa);
   const concluidoEm = instanteConclusaoOmie(rec);
+  const temColuna0059 = escolhas.length > 0 ? await colunaKgRecebidoPcExiste() : false;
   for (const e of escolhas) {
     for (const seq of e.sequencias) {
       const it = rec.itens.find((i) => i.nSequencia === seq);
       const vivo = it ? vinculoVivo(it) : null;
       const igual = vivo != null && vivo.nIdPedido === e.candidato.nCodPed && vivo.nIdItPedido === e.candidato.nCodItem;
       const anterior = anteriorDaSequencia(e, seq);
+      // Revisao da D20 (achado 6a): o OMIE ja concluiu com a quantidade recebida do item — quando ela difere da
+      // NF (peso conferido mandado por uma tentativa cuja resposta se perdeu, ou edicao no portal), o ledger
+      // guarda o kg baixado no PC.
+      const kgVivo = igual ? kgRecebidoVivo(it, fatorUnidadePc(e.candidato.unidade), e.kgPorSequencia[seq] ?? 0) : null;
       try {
         await pool.query(
           `INSERT INTO stockbridge.recebimento_fiscal_pc
              (recebimento_fiscal_id, empresa, nf_chave_acesso, n_sequencia, origem, n_cod_ped, n_cod_item_ped, pc_numero,
               n_cod_ped_omie_anterior, n_cod_item_ped_omie_anterior, dentro_tolerancia, justificativa, candidatos,
-              qtd_nf_kg, preco_nf, status, erro_omie_mensagem, confirmado_por, concluido_em)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17, $18, $19)`,
+              qtd_nf_kg, preco_nf, status, erro_omie_mensagem, confirmado_por, concluido_em${temColuna0059 ? ', kg_recebido_pc' : ''})
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17, $18, $19${temColuna0059 ? ', $20' : ''})`,
           [
             ledgerId, ctx.empresa, ctx.nfChaveAcesso, seq, e.origem, e.candidato.nCodPed, e.candidato.nCodItem, e.candidato.pcNumero ?? '',
             anterior?.nIdPedido ?? null, anterior?.nIdItPedido ?? null, e.dentroTolerancia, e.justificativa, JSON.stringify(e.oferecidos),
             (e.kgPorSequencia[seq] ?? 0).toFixed(3), e.precoNfKg.toFixed(6),
             igual ? 'concluido' : 'falha', igual ? null : 'Fiscal concluído fora do Atlas sem este vínculo', ctx.userId,
             igual && concluidoEm ? concluidoEm.toISOString() : null,
+            ...(temColuna0059 ? [kgVivo != null ? kgVivo.toFixed(3) : null] : []),
           ],
         );
       } catch (err) {

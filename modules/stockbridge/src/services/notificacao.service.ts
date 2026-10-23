@@ -476,8 +476,12 @@ export async function enviarAlertaNfDispensada(args: {
   }
 }
 
-/** Motivo do aviso a compras (feature 017, research D6) — CHECK de stockbridge.nf_aviso_compras. */
-export type MotivoAvisoCompras = 'sem_pc' | 'pc_aguardando_aprovacao' | 'recebida_sem_vinculo';
+/**
+ * Motivo do aviso a compras (feature 017, research D6) — CHECK de stockbridge.nf_aviso_compras.
+ * 'excedente_rejeitado' (0059, research D20): entrada rejeitada pelo gestor depois de o PC ser
+ * baixado pelo peso conferido acima da NF.
+ */
+export type MotivoAvisoCompras = 'sem_pc' | 'pc_aguardando_aprovacao' | 'recebida_sem_vinculo' | 'excedente_rejeitado';
 
 /**
  * Janela de deduplicacao do aviso a compras: um por NF, motivo e DESTINATARIO a
@@ -568,7 +572,7 @@ function oQueFazerSemPc(unidade: UnidadeIncompativelAviso | null | undefined): s
  * Destinatarios do aviso a compras: STOCKBRIDGE_COMPRAS_EMAILS (sem repeticao, sem
  * diferenciar caixa); vazio, a caixa do ops (`viaOps`) — o aviso nunca se perde.
  */
-function destinatariosAvisoCompras(): { destinatarios: string[]; viaOps: boolean } {
+export function destinatariosAvisoCompras(): { destinatarios: string[]; viaOps: boolean } {
   const bruto: unknown = getConfig().STOCKBRIDGE_COMPRAS_EMAILS;
   const lista: unknown[] = Array.isArray(bruto) ? bruto : typeof bruto === 'string' ? bruto.split(',') : [];
   const unicos = new Map<string, string>();
@@ -698,7 +702,57 @@ export async function enviarAvisoComprasNfSemPc(args: ArgsAvisoComprasNfSemPc): 
 }
 
 async function enviarAvisoComprasNfSemPcSemLimite(args: ArgsAvisoComprasNfSemPc): Promise<'enviado' | 'deduplicado' | 'falha'> {
-  const ctx = { notaFiscal: args.notaFiscal, motivo: args.motivo };
+  return enviarAvisoComprasDeduplicado(
+    {
+      empresa: args.empresa,
+      nfChaveAcesso: args.nfChaveAcesso,
+      notaFiscal: args.notaFiscal,
+      fornecedorNome: args.fornecedorNome,
+      motivo: args.motivo,
+      itens: args.itens,
+      disparadoPor: args.disparadoPor,
+    },
+    () => montarEmailAvisoCompras(args),
+    { assunto: 'NF sem PC', tipo: 'aviso_compras_nf_sem_pc' },
+  );
+}
+
+/** O que vai para stockbridge.nf_aviso_compras (e para a trava) em qualquer aviso a compras. */
+interface DadosAvisoCompras {
+  empresa: 'q2p' | 'acxe';
+  nfChaveAcesso: string;
+  notaFiscal: string;
+  fornecedorNome: string | null;
+  motivo: MotivoAvisoCompras;
+  itens: unknown[];
+  disparadoPor: string | null;
+  /**
+   * Deduplicacao por item (revisao da D20, achado 2a): so contam os avisos anteriores cujo `itens`
+   * CONTEM estes elementos (jsonb @>), ex. [{nSequencia: 2}]. Ausente = qualquer aviso da NF e motivo.
+   */
+  cobertura?: unknown[];
+  /**
+   * Ancora da janela da deduplicacao (2a revisao da D20, achado 4): contam os avisos enviados depois de
+   * `coberturaDesde` menos AVISO_COMPRAS_DEDUP_HORAS. Ausente = agora. A varredura do cron passa a hora da
+   * rejeicao, a mesma ancora que ela usa para achar quem falta; com `now()`, passado um dia, quem ja tinha
+   * sido avisado daquela rejeicao receberia de novo junto com o destinatario que faltava.
+   */
+  coberturaDesde?: Date | string;
+}
+
+/**
+ * Miolo de todo aviso a compras (research D6): numa transacao com trava consultiva por
+ * (NF, motivo), le quem ja foi avisado nas ultimas 24 h (ou desde 24 h antes de `coberturaDesde`),
+ * envia so aos pendentes e grava SO
+ * os enderecos entregues. Nunca lanca. `rotulo.assunto` entra nas mensagens de log e
+ * `rotulo.tipo` no log de falha de envio.
+ */
+async function enviarAvisoComprasDeduplicado(
+  dados: DadosAvisoCompras,
+  montar: () => { subject: string; html: string; text: string },
+  rotulo: { assunto: string; tipo: string },
+): Promise<'enviado' | 'deduplicado' | 'falha'> {
+  const ctx = { notaFiscal: dados.notaFiscal, motivo: dados.motivo };
   try {
     const { destinatarios, viaOps } = destinatariosAvisoCompras();
     const client = await getPool().connect();
@@ -716,13 +770,26 @@ async function enviarAvisoComprasNfSemPcSemLimite(args: ArgsAvisoComprasNfSemPc)
     try {
       await client.query('BEGIN');
       await client.query(`SET LOCAL lock_timeout = '${AVISO_COMPRAS_LOCK_TIMEOUT}'`);
-      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`sb:aviso-compras:${args.nfChaveAcesso}:${args.motivo}`]);
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`sb:aviso-compras:${dados.nfChaveAcesso}:${dados.motivo}`]);
 
-      // Quem ja foi avisado nas ultimas 24 h (enviado_para guarda a lista separada por ', ').
+      // Quem ja foi avisado nas ultimas 24 h, ou desde 24 h antes de `coberturaDesde` (enviado_para guarda a
+      // lista separada por ', ').
+      const params: unknown[] = [dados.nfChaveAcesso, dados.motivo, AVISO_COMPRAS_DEDUP_HORAS];
+      let filtroItens = '';
+      if (dados.cobertura) {
+        params.push(JSON.stringify(dados.cobertura));
+        filtroItens = ` AND itens @> $${params.length}::jsonb`;
+      }
+      let ancora = 'now()';
+      const desde = dados.coberturaDesde != null ? new Date(dados.coberturaDesde) : null;
+      if (desde && !Number.isNaN(desde.getTime())) {
+        params.push(desde.toISOString());
+        ancora = `$${params.length}::timestamptz`;
+      }
       const previos = await client.query<{ enviado_para: string | null }>(
         `SELECT enviado_para FROM stockbridge.nf_aviso_compras
-          WHERE nf_chave_acesso = $1 AND motivo = $2 AND enviado_em > now() - make_interval(hours => $3)`,
-        [args.nfChaveAcesso, args.motivo, AVISO_COMPRAS_DEDUP_HORAS],
+          WHERE nf_chave_acesso = $1 AND motivo = $2 AND enviado_em > ${ancora} - make_interval(hours => $3)${filtroItens}`,
+        params,
       );
       const jaAvisados = new Set<string>();
       for (const linha of previos.rows) {
@@ -734,14 +801,14 @@ async function enviarAvisoComprasNfSemPcSemLimite(args: ArgsAvisoComprasNfSemPc)
       const pendentes = destinatarios.filter((d) => !jaAvisados.has(d.toLowerCase()));
       if (pendentes.length === 0) {
         await rollback();
-        logger.info(ctx, 'Aviso a compras já enviado a todos os destinatários nas últimas 24 h — não reenviado');
+        logger.info(ctx, 'Aviso a compras já enviado a todos os destinatários na janela da deduplicação — não reenviado');
         return 'deduplicado';
       }
-      if (viaOps) logger.warn({ notaFiscal: args.notaFiscal }, 'STOCKBRIDGE_COMPRAS_EMAILS vazio — aviso de NF sem PC vai para STOCKBRIDGE_OPS_EMAIL');
+      if (viaOps) logger.warn({ notaFiscal: dados.notaFiscal }, `STOCKBRIDGE_COMPRAS_EMAILS vazio — aviso de ${rotulo.assunto} vai para STOCKBRIDGE_OPS_EMAIL`);
 
-      const { subject, html, text } = montarEmailAvisoCompras(args);
+      const { subject, html, text } = montar();
       const results = await Promise.allSettled(pendentes.map((to) => sendEmail({ to, subject, html, text })));
-      const falhas = logFalhasEnvio(results, pendentes, { notaFiscal: args.notaFiscal, tipo: 'aviso_compras_nf_sem_pc' });
+      const falhas = logFalhasEnvio(results, pendentes, { notaFiscal: dados.notaFiscal, tipo: rotulo.tipo });
       const entregues = pendentes.filter((_, i) => results[i]?.status === 'fulfilled');
       if (entregues.length === 0) {
         await rollback();
@@ -753,12 +820,12 @@ async function enviarAvisoComprasNfSemPcSemLimite(args: ArgsAvisoComprasNfSemPc)
            (empresa, nf_chave_acesso, nota_fiscal, fornecedor_nome, motivo, itens, enviado_para, disparado_por)
          VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)`,
         [
-          args.empresa, args.nfChaveAcesso, args.notaFiscal, args.fornecedorNome, args.motivo,
-          JSON.stringify(args.itens), entregues.join(', '), args.disparadoPor,
+          dados.empresa, dados.nfChaveAcesso, dados.notaFiscal, dados.fornecedorNome, dados.motivo,
+          JSON.stringify(dados.itens), entregues.join(', '), dados.disparadoPor,
         ],
       );
       await client.query('COMMIT');
-      logger.info({ ...ctx, enviados: entregues.length, falhas }, 'Aviso a compras de NF sem PC enviado');
+      logger.info({ ...ctx, enviados: entregues.length, falhas }, `Aviso a compras de ${rotulo.assunto} enviado`);
       return 'enviado';
     } catch (err) {
       await rollback();
@@ -767,8 +834,140 @@ async function enviarAvisoComprasNfSemPcSemLimite(args: ArgsAvisoComprasNfSemPc)
       client.release(descartarConexao);
     }
   } catch (err) {
-    logger.error({ err, ...ctx }, 'Falha no aviso a compras de NF sem PC');
+    logger.error({ err, ...ctx }, `Falha no aviso a compras de ${rotulo.assunto}`);
     return 'falha';
+  }
+}
+
+// ── Entrada rejeitada depois da baixa do PC pelo peso conferido (research D20) ──
+
+/** Linha do PC baixado pelo peso conferido acima da NF, para o aviso a compras. */
+export interface LinhaExcedentePc {
+  nSequencia: number;
+  /** numero legivel do PC (nunca o codigo interno do OMIE) */
+  pcNumero: string;
+  qtdNfKg: number;
+  /** kg declarados como recebidos no PC (o peso conferido, com teto no saldo) */
+  kgRecebidoPc: number;
+}
+
+export interface ArgsAvisoComprasExcedenteRejeitado {
+  empresa: 'q2p' | 'acxe';
+  nfChaveAcesso: string;
+  notaFiscal: string;
+  fornecedorNome: string | null;
+  itemDescricao: string | null;
+  produto: string | null;
+  motivoRejeicao: string;
+  linhas: LinhaExcedentePc[];
+  disparadoPor: string | null;
+  /** hora da rejeicao, quando o aviso sai pela varredura do cron: ancora da deduplicacao (DadosAvisoCompras.coberturaDesde) */
+  coberturaDesde?: Date | string;
+}
+
+function montarEmailExcedenteRejeitado(args: ArgsAvisoComprasExcedenteRejeitado): { subject: string; html: string; text: string } {
+  const config = getConfig();
+  const fornecedor = args.fornecedorNome && args.fornecedorNome.trim() ? args.fornecedorNome.trim() : 'Fornecedor não identificado no OMIE';
+  const empresaRotulo = args.empresa === 'acxe' ? 'ACXE' : 'Q2P';
+  // So o numero legivel do PC; vazio ou com cara de codigo interno do OMIE (10+ digitos) vira "—" (ACXEGDP-313).
+  const numeroPc = (n: string) => {
+    const v = String(n ?? '').trim();
+    return v && !/^\d{10,}$/.test(v) ? `PC ${v}` : '—';
+  };
+  const pcs = Array.from(new Set(args.linhas.map((l) => numeroPc(l.pcNumero)).filter((v) => v !== '—')));
+  const subject = `StockBridge — NF ${args.notaFiscal} de ${fornecedor}: entrada rejeitada com o pedido baixado acima da nota`;
+  const linhas = args.linhas
+    .map(
+      (l) => `<tr>
+        <td style="padding:6px 12px 6px 0;font-size:13px;color:#111827;white-space:nowrap;">${escapeHtml(numeroPc(l.pcNumero))}</td>
+        <td style="padding:6px 12px;font-size:13px;color:#111827;text-align:right;white-space:nowrap;">${fmtKg(l.qtdNfKg)}</td>
+        <td style="padding:6px 12px;font-size:13px;color:#111827;text-align:right;white-space:nowrap;">${fmtKg(l.kgRecebidoPc)}</td>
+        <td style="padding:6px 0 6px 12px;font-size:13px;color:#b45309;text-align:right;white-space:nowrap;">${fmtKg(l.kgRecebidoPc - l.qtdNfKg)}</td>
+      </tr>`,
+    )
+    .join('');
+  const corpoHtml = `
+    <p>No recebimento da <strong>NF ${escapeHtml(args.notaFiscal)}</strong> de <strong>${escapeHtml(fornecedor)}</strong> (${empresaRotulo}), o pedido de compra foi baixado com <strong>quantidade acima da nota</strong>. Depois, o gestor <strong>rejeitou</strong> a entrada desse item no estoque.</p>
+    ${emailDataList([
+      { label: 'Nota fiscal', valor: args.notaFiscal },
+      { label: 'Fornecedor', valor: fornecedor },
+      { label: 'Empresa', valor: empresaRotulo },
+      { label: 'Item da NF', valor: (args.itemDescricao ?? '').trim() },
+      { label: 'Produto', valor: (args.produto ?? '').trim() },
+      { label: 'Pedido de compra', valor: pcs.join(', ') },
+    ])}
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 16px;margin:16px 0;">
+      <table role="presentation" width="100%" style="border-collapse:collapse;">
+        <thead><tr>
+          <th style="text-align:left;padding:4px 12px 8px 0;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Pedido</th>
+          <th style="text-align:right;padding:4px 12px 8px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Na nota</th>
+          <th style="text-align:right;padding:4px 12px 8px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Baixado no pedido</th>
+          <th style="text-align:right;padding:4px 0 8px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Acima da nota</th>
+        </tr></thead>
+        <tbody>${linhas}</tbody>
+      </table>
+    </div>
+    <p><strong>Motivo da rejeição:</strong></p>
+    <blockquote style="border-left:3px solid #dc2626;padding-left:12px;color:#555;margin:8px 0;">${escapeHtml(args.motivoRejeicao)}</blockquote>
+    ${emailActionBox(
+      '<p style="margin:0;">A rejeição no StockBridge não desfaz a baixa do pedido no OMIE. Confira com o fiscal a quantidade recebida deste pedido. Se a quantidade acima da nota não se confirmar, ajuste o recebimento no OMIE para a quantidade certa. A nota volta à fila do StockBridge para o recebimento físico ser refeito.</p>',
+      'O que fazer',
+    )}
+  `;
+  const { html, text } = buildEmailLayout({
+    titulo: 'Entrada rejeitada com o pedido já baixado',
+    variante: 'alerta',
+    corpoHtml,
+    ctaLabel: 'Abrir o StockBridge',
+    ctaUrl: `${config.APP_URL}/stockbridge/fila`,
+  });
+  return { subject, html, text };
+}
+
+/**
+ * Research D20 (ACXEGDP-437): avisa COMPRAS que o gestor rejeitou a entrada de um item da NF
+ * cujo pedido de compra ja foi baixado acima da nota (peso conferido) — a rejeicao nao desfaz
+ * a baixa no OMIE. Deduplicado por NF, motivo, destinatario E itens (as sequencias do e-mail
+ * precisam estar num aviso anterior das ultimas 24 h — na varredura, enviado a partir de 24 h antes
+ * da rejeicao): rejeitar dois produtos do mesmo item gera um so e-mail; rejeitar outro item da NF
+ * gera outro. Sem codigo OMIE. Nunca lanca.
+ */
+export async function enviarAvisoComprasExcedenteRejeitado(
+  args: ArgsAvisoComprasExcedenteRejeitado,
+): Promise<'enviado' | 'deduplicado' | 'falha'> {
+  if (avisosComprasEmEnvio >= AVISO_COMPRAS_MAX_SIMULTANEOS) {
+    logger.warn(
+      { notaFiscal: args.notaFiscal, motivo: 'excedente_rejeitado', emEnvio: avisosComprasEmEnvio },
+      'Aviso a compras não enviado agora: limite de envios simultâneos',
+    );
+    return 'falha';
+  }
+  avisosComprasEmEnvio++;
+  try {
+    return await enviarAvisoComprasDeduplicado(
+      {
+        empresa: args.empresa,
+        nfChaveAcesso: args.nfChaveAcesso,
+        notaFiscal: args.notaFiscal,
+        fornecedorNome: args.fornecedorNome,
+        motivo: 'excedente_rejeitado',
+        itens: args.linhas.map((l) => ({
+          nSequencia: l.nSequencia,
+          descricao: (args.itemDescricao ?? '').trim(),
+          qtdKg: l.kgRecebidoPc,
+          precoUnit: null,
+          pcNumero: l.pcNumero,
+          qtdNfKg: l.qtdNfKg,
+        })),
+        disparadoPor: args.disparadoPor,
+        cobertura: args.linhas.map((l) => ({ nSequencia: l.nSequencia })),
+        coberturaDesde: args.coberturaDesde,
+      },
+      () => montarEmailExcedenteRejeitado(args),
+      { assunto: 'entrada rejeitada com PC baixado acima da nota', tipo: 'aviso_compras_excedente_rejeitado' },
+    );
+  } finally {
+    avisosComprasEmEnvio--;
   }
 }
 

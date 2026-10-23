@@ -242,8 +242,9 @@ PC de outro cadastro, trava de unidade e cache de PCs vistos) tem os seus passos
   21/10/2026 22:40). As 4 colunas de pedido foram aplicadas em PROD com o mesmo texto da 0056.
 - Teste do `ASSOCIAR-PEDIDO` com NF real (T033): feito e aprovado em 22/10/2026, na NF 60199 da
   Zaraplast contra o PC 306, inclusive com PC de outro cadastro do mesmo fornecedor. Detalhes em
-  `specs/017-recebimento-nacional-com-pc/research.md` (D2). Não testados: troca de um vínculo
-  existente e NF menor que o saldo do PC.
+  `specs/017-recebimento-nacional-com-pc/research.md` (D2). Não testada: troca de um vínculo
+  existente. A NF menor que o saldo do PC foi confirmada em 23/10/2026 (NF 67988 contra o PC 305):
+  o OMIE aceita, e o PC fica "recebido parcialmente", com o saldo em aberto.
 
 **Ordem** (não inverter os passos 1 e 3):
 
@@ -469,3 +470,58 @@ passo separado, depois do n8n da ACXE e de um teste controlado no OMIE da ACXE. 
 **Desligar**: `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED=false` e "Update the stack": as NFs da
 ACXE saem da fila; aprovações já criadas continuam aprovando normalmente.
 
+## Baixa do PC pelo peso conferido (ACXEGDP-437, research D20) e correção da fila (D19)
+
+Duas peças, em dois PRs. A correção da fila sobe primeiro, sozinha, e não depende de migration nem de variável.
+O PR dela mexe em `fila-nacional.service.ts` e, na retomada de item 1:N, em `recebimento-nacional.service.ts`,
+além dos testes, do golden da Q2P, da D19 e do `CLAUDE.md`:
+
+- **Correção da fila (D19)**: sem migration e sem variável. A fila passa a considerar o item recebido quando o
+  Atlas já atingiu a quantidade do XML ou a da nota de entrada. Resolve a NF 67988, que
+  voltou à fila com 118 kg depois do ajuste da quantidade recebida no portal. Com a imagem nova, ela sai da
+  fila sozinha. Na retomada de um item dividido em vários produtos (um falhou ou foi rejeitado), o lado da NF
+  de cada produto refeito passa a ser o restante da fila.
+- **Baixa pelo peso conferido (D20)**: atrás da chave `STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO`, **desligada** por
+  padrão. Com a chave desligada, o Atlas não manda ao PC quantidade acima da NF e o recebimento segue como hoje.
+
+**Ordem**
+
+1. **Migration 0059** em PROD, **antes** da imagem que traz a D20, com o dono dos objetos (`postgres`):
+
+   ```bash
+   export PROD_USER=<usuario-prod>
+   PGOPTIONS='-c lock_timeout=5s' psql -h db.manager01.q2p.com.br -p 5432 -U "$PROD_USER" -d acxe_q2p \
+     -1 -q -v ON_ERROR_STOP=1 -f packages/db/migrations/0059_stockbridge_pc_peso_conferido.sql
+   echo "exit=$?"
+   ```
+
+   - Esperado: `exit=0`. Reaplicar é seguro (`NOTICE ... already exists, skipping`).
+   - O que muda: a coluna `stockbridge.recebimento_fiscal_pc.kg_recebido_pc` (nula, com CHECK `> 0`) e o
+     motivo `excedente_rejeitado` no CHECK de `stockbridge.nf_aviso_compras`. As duas tabelas são pequenas.
+   - Sem a 0059, a imagem nova sobe e o fiscal segue pela NF: o código confere a coluna, as reservas usam
+     a quantidade da NF e a chave fica sem efeito, com erro no log ("Coluna ... kg_recebido_pc ausente").
+     Mesmo assim, aplicar antes da imagem.
+   - **UAT**: o mesmo arquivo, com `psql -1 -f` no banco do UAT (como a 0053), antes da imagem `:uat`.
+   - Conferência (somente leitura):
+
+     ```sql
+     SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'stockbridge'
+               AND table_name = 'recebimento_fiscal_pc' AND column_name = 'kg_recebido_pc') AS coluna,      -- 1
+            (SELECT pg_get_constraintdef(oid) LIKE '%excedente_rejeitado%' FROM pg_constraint
+               WHERE conname = 'nf_aviso_compras_motivo_check') AS motivo_novo;                              -- true
+     ```
+
+2. **Imagem nova** com `STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO: ${…:-false}` e
+   `STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT: ${…:-10}` no YAML (já no `atlas.stack.yml`). Conferir a fila (a
+   67988 sumiu), o detalhe de uma NF com PC e que o log não tem "kg_recebido_pc ausente".
+3. **Primeiro uso acompanhado** (T085, com autorização): ligar a chave com "Update the stack" e conferir ao
+   vivo a próxima NF recebida "a mais" (quickstart, cenário 11): `nQtdeRec` do PC = peso conferido (ou o
+   saldo), `nQtdeNFe` da NF inalterada, um título e nenhum movimento de estoque pelo OMIE.
+
+**Desligar**: `STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO=false` e "Update the stack". Os vínculos já concluídos
+ficam como estão; o aviso a compras na rejeição continua valendo para eles (o cron :05/:35 manda o que
+falhou). Uma NF cuja tentativa anterior mandou o peso conferido e não concluiu volta a mandar a da NF.
+
+**Peso muito acima da nota**: excedente acima de `STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT` (padrão 10%) da NF
+do item não vai ao PC (provável erro de digitação). O item segue pela NF e o log registra "acima do limite
+relativo".

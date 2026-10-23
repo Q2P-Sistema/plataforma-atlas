@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   registrarPcsVistos: vi.fn(),
   processarAlertasComodatoVencido: vi.fn(),
   reprocessarBaixasAguardandoVinculo: vi.fn(),
+  varrerExcedentesRejeitadosSemAviso: vi.fn(),
 }));
 
 vi.mock('node-cron', () => ({
@@ -36,6 +37,10 @@ vi.mock('../services/alerta-espelho-recebimentos.service.js', () => ({
   verificarCopiaPcs: (...a: unknown[]) => mocks.verificarCopiaPcs(...a),
 }));
 vi.mock('../services/pc-visto.service.js', () => ({ registrarPcsVistos: (...a: unknown[]) => mocks.registrarPcsVistos(...a) }));
+// 017 (D20): varredura dos avisos a compras de entrada rejeitada com o PC baixado acima da nota
+vi.mock('../services/pc-peso-conferido.service.js', () => ({
+  varrerExcedentesRejeitadosSemAviso: (...a: unknown[]) => mocks.varrerExcedentesRejeitadosSemAviso(...a),
+}));
 
 import { iniciarCronsStockBridge } from '../cron/index.js';
 import { __resetEmpresaNacional } from '../services/empresa-nacional.js';
@@ -159,3 +164,27 @@ describe('cron 5,35 — falhas nao se propagam', () => {
     await new Promise((r) => setImmediate(r));
   });
 });
+
+describe('cron 5,35 — varredura dos avisos a compras de entrada rejeitada com o PC baixado acima da nota (research D20)', () => {
+  beforeAll(() => {
+    if (mocks.agendados.length === 0) iniciarCronsStockBridge();
+  });
+  beforeEach(() => {
+    mocks.varrerExcedentesRejeitadosSemAviso.mockReset();
+    mocks.varrerExcedentesRejeitadosSemAviso.mockResolvedValue(0);
+    mocks.verificarEspelhoRecebimentos.mockResolvedValue(undefined);
+    mocks.verificarCopiaPcs.mockResolvedValue(undefined);
+    mocks.registrarPcsVistos.mockResolvedValue(0);
+    __resetEmpresaNacional();
+  });
+
+  it('roda uma vez por rodada, com a ACXE ligada ou nao (a varredura independe da empresa)', async () => {
+    configurar({ acxe: false });
+    await rodar();
+    expect(mocks.varrerExcedentesRejeitadosSemAviso).toHaveBeenCalledTimes(1);
+    configurar({ acxe: true });
+    await rodar();
+    expect(mocks.varrerExcedentesRejeitadosSemAviso).toHaveBeenCalledTimes(2);
+  });
+});
+

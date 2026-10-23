@@ -540,6 +540,7 @@ describe('cron :05/:35 — registra o cache de PCs vistos (junto dos alertas de 
     vi.doMock('../services/baixa-pedido.service.js', () => ({ reprocessarBaixasAguardandoVinculo: vi.fn() }));
     vi.doMock('../services/alerta-espelho-recebimentos.service.js', () => ({ verificarEspelhoRecebimentos: espelhoSpy, verificarCopiaPcs: copiaSpy }));
     vi.doMock('../services/pc-visto.service.js', () => ({ registrarPcsVistos: registrarSpy }));
+    vi.doMock('../services/pc-peso-conferido.service.js', () => ({ varrerExcedentesRejeitadosSemAviso: vi.fn().mockResolvedValue(0) }));
     const { iniciarCronsStockBridge } = await import('../cron/index.js');
     iniciarCronsStockBridge();
 
@@ -559,6 +560,7 @@ describe('cron :05/:35 — registra o cache de PCs vistos (junto dos alertas de 
     vi.doUnmock('../services/baixa-pedido.service.js');
     vi.doUnmock('../services/alerta-espelho-recebimentos.service.js');
     vi.doUnmock('../services/pc-visto.service.js');
+    vi.doUnmock('../services/pc-peso-conferido.service.js');
     vi.resetModules();
   });
 
@@ -574,6 +576,7 @@ describe('cron :05/:35 — registra o cache de PCs vistos (junto dos alertas de 
       verificarCopiaPcs: vi.fn().mockRejectedValue(new Error('banco fora')),
     }));
     vi.doMock('../services/pc-visto.service.js', () => ({ registrarPcsVistos: registrarSpy }));
+    vi.doMock('../services/pc-peso-conferido.service.js', () => ({ varrerExcedentesRejeitadosSemAviso: vi.fn().mockResolvedValue(0) }));
     const { iniciarCronsStockBridge } = await import('../cron/index.js');
     iniciarCronsStockBridge();
 
@@ -586,6 +589,7 @@ describe('cron :05/:35 — registra o cache de PCs vistos (junto dos alertas de 
     vi.doUnmock('../services/baixa-pedido.service.js');
     vi.doUnmock('../services/alerta-espelho-recebimentos.service.js');
     vi.doUnmock('../services/pc-visto.service.js');
+    vi.doUnmock('../services/pc-peso-conferido.service.js');
     vi.resetModules();
   });
 });

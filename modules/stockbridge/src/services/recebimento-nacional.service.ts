@@ -1205,6 +1205,9 @@ export async function processarRecebimentoNacionalPorNf(
           kgPorSequencia: info.entrada.kgPorSequencia,
           unidadeNf: info.entrada.unidadeNf,
           fatorUnidadeNf: info.entrada.fatorUnidadeNf,
+          // peso da balanca do item inteiro: com STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO, o que passa da NF
+          // vai como quantidade recebida no PC (research D20)
+          quantidadeConferidaKg: conferida,
         });
         if (validada) escolhasPc.push(validada);
         else {

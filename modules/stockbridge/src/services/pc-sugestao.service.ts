@@ -259,6 +259,102 @@ export function modoUnidadeDiferentePc(): ModoUnidadeDiferentePc {
   return cfg.STOCKBRIDGE_PC_UNIDADE_DIFERENTE === 'converter' ? 'converter' : 'bloquear';
 }
 
+/**
+ * STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO (default desligada, research D20): o OMIE baixa o PC
+ * pela quantidade RECEBIDA do item, que por padrao e a da NF. Ligada, o peso conferido acima
+ * da NF vai como itensAjustes.nQtdeRecebida no EDITAR do fiscal, com teto no saldo do PC
+ * (NF 67988 x PC 305, 23/10/2026: 13.500 kg na balanca, 13.382 na NF; o usuario corrigiu a
+ * quantidade recebida no portal e o PC ficou 13.500/13.500).
+ */
+export function baixaPcPesoConferidoHabilitada(): boolean {
+  const cfg = getConfig() as { STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO?: boolean };
+  return cfg.STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO === true;
+}
+
+/**
+ * Quantidade com 4 casas, a precisao com que o OMIE guarda a quantidade do item (o espelho de
+ * recebimentos traz `n_qtde_recebida` numeric(14,4)). Mandar ja arredondado faz a retomada
+ * reconhecer o EDITAR aplicado (ajustesJaAplicados compara com tolerancia de 1e-6); a divisao
+ * do excedente entre sequencias produz dizimas (118 x 10.000 / 13.382).
+ */
+export const arredondarQtdOmie = (v: number): number => Math.round(v * 1e4) / 1e4;
+
+/**
+ * Como arredondarQtdOmie, mas para BAIXO (com folga para o ruido de ponto flutuante): o peso conferido
+ * dividido entre sequencias, somado, nunca passa do teto (saldo do PC). 3.411,82185 -> 3.411,8218.
+ */
+export const arredondarQtdOmieParaBaixo = (v: number): number => Math.floor(v * 1e4 + 1e-6) / 1e4;
+
+/**
+ * STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT (default 10, research D20, revisao de 23/10/2026): excedente do
+ * peso conferido acima deste percentual da NF do item NAO vai ao PC — provavel erro de digitacao (13.382
+ * digitado 133.820, com motivo). O item segue pela NF, como com a chave desligada, e o log avisa. Sem o
+ * limite, so o saldo do PC seguraria a baixa, e a rejeicao do gestor nao a desfaz no OMIE.
+ */
+export function limitePesoConferidoPct(): number {
+  const cfg = getConfig() as { STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT?: number };
+  const v = Number(cfg.STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT);
+  return Number.isFinite(v) && v > 0 ? v : 10;
+}
+
+/** Excedente que pode ir ao PC: o do item, desde que nao passe do limite relativo (limitePesoConferidoPct). */
+export function excessoAplicavelKg(e: Pick<EscolhaPcValidada, 'qtdNfKg' | 'qtdConferidaKg' | 'fatorUnidadeNf'>, limitePct: number): number {
+  const excesso = excessoConferidoKg(e);
+  return excesso > (e.qtdNfKg * limitePct) / 100 + EPS ? 0 : excesso;
+}
+
+/**
+ * A coluna recebimento_fiscal_pc.kg_recebido_pc (migration 0059) existe? Sem ela a imagem nova nao
+ * pode quebrar o fiscal (achado de deploy da revisao de 23/10/2026): reservas e sugestao seguem pela
+ * quantidade da NF, o INSERT nao leva a coluna e a baixa pelo peso conferido fica desligada (log).
+ * "Existe" fica guardado para sempre; "nao existe" e conferido de novo depois de 5 min (a 0059 pode
+ * ser aplicada com a API no ar). Erro na consulta conta como "nao existe".
+ */
+const COLUNA_0059_RECHECAR_MS = 5 * 60 * 1000;
+/** Erro ao conferir (banco instavel) vale pouco: a proxima chamada depois disto confere de novo. */
+const COLUNA_0059_RECHECAR_APOS_ERRO_MS = 30 * 1000;
+let coluna0059: { existe: boolean; em: number; validadeMs: number } | null = null;
+export async function colunaKgRecebidoPcExiste(): Promise<boolean> {
+  if (coluna0059 && (coluna0059.existe || Date.now() - coluna0059.em < coluna0059.validadeMs)) return coluna0059.existe;
+  let existe = false;
+  let validadeMs = COLUNA_0059_RECHECAR_MS;
+  try {
+    const r = await getPool().query<{ ok: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'stockbridge' AND table_name = 'recebimento_fiscal_pc' AND column_name = 'kg_recebido_pc'
+       ) AS ok`,
+    );
+    existe = r.rows[0]?.ok === true;
+    if (!existe) logger.error('Coluna stockbridge.recebimento_fiscal_pc.kg_recebido_pc ausente (migration 0059): reservas pela NF, sem baixa pelo peso conferido');
+  } catch (err) {
+    validadeMs = COLUNA_0059_RECHECAR_APOS_ERRO_MS;
+    logger.warn({ err: (err as Error).message }, 'Não foi possível conferir a coluna kg_recebido_pc (0059) — tratada como ausente por 30 s');
+  }
+  coluna0059 = { existe, em: Date.now(), validadeMs };
+  return existe;
+}
+/** Para testes: esquece o que foi conferido sobre a coluna da 0059. */
+export function __resetColunaKgRecebidoPc(): void {
+  coluna0059 = null;
+}
+
+/**
+ * Tolerancia de peso do recebimento nacional: a mesma da divergencia
+ * (TOLERANCIA_DIVERGENCIA_KG em recebimento-nacional.service.ts — importa-la daqui faria ciclo).
+ */
+export const TOLERANCIA_PESO_CONFERIDO_KG = 1;
+
+/**
+ * Peso conferido acima da NF no item (kg), so quando passa da tolerancia (divergencia "a mais",
+ * a que exige motivo e aprovacao do gestor). Peso a menos ou dentro da tolerancia: 0.
+ */
+export function excessoConferidoKg(e: Pick<EscolhaPcValidada, 'qtdNfKg' | 'qtdConferidaKg' | 'fatorUnidadeNf'>): number {
+  if (e.fatorUnidadeNf == null || e.qtdConferidaKg == null) return 0;
+  const excesso = e.qtdConferidaKg - e.qtdNfKg;
+  return Number.isFinite(excesso) && excesso > TOLERANCIA_PESO_CONFERIDO_KG ? excesso : 0;
+}
+
 /** true = PC em unidade diferente da NF nao pode ser vinculado (modo 'bloquear'). */
 export function exigeMesmaUnidadePc(): boolean {
   return modoUnidadeDiferentePc() === 'bloquear';
@@ -537,7 +633,9 @@ export async function carregarContextoPc(
   let usos: UsoPcAtlas[] = [];
   if (itensPc.length > 0) {
     // Concluidos depois do sync mais antigo entre os PCs lidos (o filtro fino, por
-    // linha, e feito em TS) e reservas vivas. Tudo do ledger do Atlas (0056).
+    // linha, e feito em TS) e reservas vivas. Tudo do ledger do Atlas (0056). Cada uso
+    // conta pelo que baixa do PC: o peso conferido quando foi como quantidade recebida
+    // (kg_recebido_pc, research D20), senao a quantidade da NF.
     const desdeMs = Math.min(...pcs.map((p) => p.atualizadoEmMs).filter((v) => v > 0), agoraMs);
     const u = await pool.query<{
       n_cod_item_ped: string;
@@ -546,7 +644,8 @@ export async function carregarContextoPc(
       qtd_nf_kg: number | string;
       em_ms: number | string;
     }>(
-      `SELECT n_cod_item_ped::text AS n_cod_item_ped, nf_chave_acesso, status, qtd_nf_kg::float8 AS qtd_nf_kg,
+      `SELECT n_cod_item_ped::text AS n_cod_item_ped, nf_chave_acesso, status,
+              ${(await colunaKgRecebidoPcExiste()) ? 'COALESCE(kg_recebido_pc, qtd_nf_kg)' : 'qtd_nf_kg'}::float8 AS qtd_nf_kg,
               (EXTRACT(EPOCH FROM CASE WHEN status = 'concluido' THEN concluido_em ELSE confirmado_em END) * 1000)::float8 AS em_ms
          FROM stockbridge.recebimento_fiscal_pc
         WHERE empresa = $1
@@ -1184,6 +1283,11 @@ export interface EscolhaPcValidada {
   /** retrato do que foi oferecido (jsonb candidatos) */
   oferecidos: Array<{ nCodPed: number; nCodItem: number; pcNumero: string; saldoKg: number; precoUnit: number; motivo: string; dentroTolerancia: boolean }>;
   qtdNfKg: number;
+  /**
+   * Peso conferido do item na balanca (kg). Ausente = o da NF. So o que passa da NF acima da
+   * tolerancia conta para a baixa do PC pelo peso conferido (excessoConferidoKg, research D20).
+   */
+  qtdConferidaKg?: number;
   precoNfKg: number;
   /** kg de cada sequencia do item (soma = qtdNfKg) */
   kgPorSequencia: Record<number, number>;
@@ -1302,6 +1406,8 @@ export function validarEscolhaPc(args: {
   /** unidade da NF e fator para kg (trava de unidade na releitura ao vivo) */
   unidadeNf?: string;
   fatorUnidadeNf?: number | null;
+  /** peso conferido do item (kg); ausente = o da NF (baixa do PC pelo peso conferido, research D20) */
+  quantidadeConferidaKg?: number;
 }): EscolhaPcValidada | null {
   const { resultado, escolha } = args;
   const pc = resultado.pc;
@@ -1370,6 +1476,7 @@ export function validarEscolhaPc(args: {
     vinculosPorSequencia: Object.fromEntries(args.vinculos.map((v) => [v.nSequencia, { nIdPedido: v.nIdPedido, nIdItPedido: v.nIdItPedido }])),
     oferecidos,
     qtdNfKg: args.quantidadeKg,
+    qtdConferidaKg: args.quantidadeConferidaKg ?? args.quantidadeKg,
     // preco da NF na base que foi comparada com o PC escolhido (comercial ou valor do item — D3)
     precoNfKg: candidato.precoNfKgComparado ?? args.precoNfKg ?? 0,
     kgPorSequencia: args.kgPorSequencia,
@@ -1435,10 +1542,15 @@ export interface ReservaPc {
   origem: OrigemVinculoPc;
   /**
    * Quantidade recebida desta sequencia NA UNIDADE DO PC, para o EDITAR mandar em
-   * itensAjustes.nQtdeRecebida — so quando a unidade do PC difere da NF (modo
-   * 'converter'); null = nao se aplica (mesma unidade, ou modo 'bloquear').
+   * itensAjustes.nQtdeRecebida: quando a unidade do PC difere da NF (modo 'converter') ou
+   * quando o peso conferido passa da NF (research D20). null = o OMIE usa a da NF.
    */
   nQtdeRecebida: number | null;
+  /** o mesmo em kg (recebimento_fiscal_pc.kg_recebido_pc); null quando nQtdeRecebida e null */
+  kgRecebidoPc?: number | null;
+  /** kg da NF desta sequencia e fator da unidade do PC: conferem a quantidade viva quando o fiscal fecha como ja_concluido */
+  kgNfSeq?: number;
+  fatorPc?: number;
 }
 
 interface LeituraPc {
@@ -1485,6 +1597,10 @@ export async function relerEReservarPcs(args: {
   if (args.escolhas.length === 0) return [];
   const tol = toleranciasPc();
   const modoUnidade = modoUnidadeDiferentePc();
+  const temColuna0059 = await colunaKgRecebidoPcExiste();
+  // sem a coluna da 0059 nao ha onde guardar o kg baixado no PC: a baixa pelo peso conferido fica desligada
+  const pesoConferido = baixaPcPesoConferidoHabilitada() && temColuna0059;
+  const limitePct = limitePesoConferidoPct();
 
   // 1. Leitura ao vivo — uma por PC distinto, fora da transacao (chamada externa nao segura trava).
   const leituras = new Map<number, LeituraPc>();
@@ -1533,7 +1649,25 @@ export async function relerEReservarPcs(args: {
       [args.nfChaveAcesso],
     );
 
-    const lidos = new Map<number, { saldoKg: number; precoKg: number | null; etapa: string; pcNumero: string; fatorPc: number }>();
+    // Retomada (revisao da D20, achado 1): uma tentativa anterior desta NF pode ter mandado a quantidade
+    // recebida (peso conferido ou conversao) e falhado antes de concluir — o OMIE guarda o valor no item.
+    // Sequencia que agora nao tem quantidade definida (chave desligada, peso corrigido, saldo consumido)
+    // manda a da NF de volta; senao o Concluir baixaria o PC pelo valor antigo. So o que o proprio Atlas
+    // mandou: edicao de quantidade feita no portal antes do Atlas segue intocada.
+    const comQtdAnterior = new Set<number>();
+    if (temColuna0059) {
+      const ant = await client.query<{ n_sequencia: number | string }>(
+        `SELECT DISTINCT n_sequencia FROM stockbridge.recebimento_fiscal_pc
+          WHERE nf_chave_acesso = $1 AND empresa = $2 AND kg_recebido_pc IS NOT NULL`,
+        [args.nfChaveAcesso, args.empresa],
+      );
+      for (const r of ant.rows) comQtdAnterior.add(Number(r.n_sequencia));
+    }
+
+    const lidos = new Map<
+      number,
+      { saldoKg: number; precoKg: number | null; etapa: string; pcNumero: string; fatorPc: number; excessoPedidoKg: number; excessoAplicadoKg: number }
+    >();
     for (const item of itensOrdenados) {
       const escolhas = porItemPc.get(item)!;
       const c = escolhas[0]!.candidato;
@@ -1596,8 +1730,10 @@ export async function relerEReservarPcs(args: {
         );
       }
 
+      // Reservas de OUTRAS NFs pelo que cada uma vai baixar do PC: o peso conferido, quando foi
+      // como quantidade recebida (kg_recebido_pc, research D20), senao a quantidade da NF.
       const reservas = await client.query<{ kg: number | string }>(
-        `SELECT COALESCE(SUM(qtd_nf_kg), 0)::float8 AS kg
+        `SELECT COALESCE(SUM(${temColuna0059 ? 'COALESCE(kg_recebido_pc, qtd_nf_kg)' : 'qtd_nf_kg'}), 0)::float8 AS kg
            FROM stockbridge.recebimento_fiscal_pc
           WHERE empresa = $1 AND n_cod_item_ped = $2 AND status IN ('confirmado', 'associado')
             AND nf_chave_acesso <> $3 AND confirmado_em > now() - make_interval(mins => $4)`,
@@ -1619,6 +1755,29 @@ export async function relerEReservarPcs(args: {
           idPc,
         );
       }
+      // Peso conferido a mais (research D20): vai como quantidade recebida, com teto no saldo
+      // disponivel. A NF ocupa o saldo primeiro; NF que ja passa do saldo nao leva excedente.
+      if (pesoConferido) {
+        for (const e of escolhas) {
+          const bruto = excessoConferidoKg(e);
+          if (bruto > 0 && excessoAplicavelKg(e, limitePct) === 0) {
+            logger.warn(
+              { nf: args.notaFiscal, pc: numeroVivo, item: e.itemDescricao, nfKg: e.qtdNfKg, conferidoKg: e.qtdConferidaKg, limitePct },
+              'Peso conferido acima do limite relativo: não vai ao PC (provável erro de digitação) — o item segue pela NF',
+            );
+          }
+        }
+      }
+      const excessoPedidoKg = pesoConferido ? escolhas.reduce((acc, e) => acc + excessoAplicavelKg(e, limitePct), 0) : 0;
+      const excessoAplicadoKg = Math.min(excessoPedidoKg, Math.max(0, disponivelKg - precisaKg));
+      if (excessoPedidoKg > 0) {
+        logger.info(
+          { nf: args.notaFiscal, pc: numeroVivo, excessoPedidoKg, excessoAplicadoKg, disponivelKg, precisaKg },
+          excessoAplicadoKg < excessoPedidoKg - EPS
+            ? 'Peso conferido acima da NF limitado ao saldo do PC'
+            : 'Peso conferido acima da NF vai como quantidade recebida no PC',
+        );
+      }
       lidos.set(item, {
         // data-model §4: o saldo RELIDO do OMIE (nQtde - nQtdeRec), nao o disponivel apos as reservas
         saldoKg: saldoVivoKg,
@@ -1628,6 +1787,8 @@ export async function relerEReservarPcs(args: {
         pcNumero: numeroVivo,
         // fator da unidade do PC: a reserva devolve a quantidade recebida nessa unidade quando difere da NF
         fatorPc: fator,
+        excessoPedidoKg,
+        excessoAplicadoKg,
       });
     }
 
@@ -1635,21 +1796,43 @@ export async function relerEReservarPcs(args: {
     const reservasGravadas: ReservaPc[] = [];
     for (const e of args.escolhas) {
       const l = lidos.get(e.candidato.nCodItem)!;
+      // Parte deste item da NF no excedente aplicado ao item do PC: proporcional ao excedente de cada item.
+      const excessoItem = l.excessoPedidoKg > 0 ? (l.excessoAplicadoKg * excessoAplicavelKg(e, limitePct)) / l.excessoPedidoKg : 0;
       for (const seq of e.sequencias) {
         const kg = e.kgPorSequencia[seq] ?? 0;
+        // ... e a desta sequencia, proporcional ao kg da NF (sem kg na NF, em partes iguais).
+        const extra = excessoItem > 0 ? (e.qtdNfKg > 0 ? (excessoItem * kg) / e.qtdNfKg : excessoItem / e.sequencias.length) : 0;
+        const kgRecebido = kg + extra;
+        // Quantidade recebida explicita na unidade do PC: com a unidade do PC diferente da NF (modo
+        // 'converter': 8.250 kg -> 8,25 em PC de TON), com peso conferido a mais ou para desfazer a de
+        // uma tentativa anterior (comQtdAnterior). Senao null (o OMIE usa a da NF). Com excedente, para
+        // baixo: a soma das sequencias nunca passa do teto.
+        const converter = e.fatorUnidadeNf != null && l.fatorPc !== e.fatorUnidadeNf;
+        const comExcesso = extra > EPS;
+        const nQtdeRecebida =
+          converter || comExcesso || comQtdAnterior.has(seq)
+            ? comExcesso
+              ? arredondarQtdOmieParaBaixo(kgRecebido / l.fatorPc)
+              : arredondarQtdOmie(kgRecebido / l.fatorPc)
+            : null;
+        // kg do que foi mandado (a quantidade arredondada x fator do PC); sem kg (sequencia sem quantidade
+        // na NF) fica nulo — CHECK > 0 da 0059.
+        const kgEnviado = nQtdeRecebida != null ? Math.round(nQtdeRecebida * l.fatorPc * 1000) / 1000 : null;
+        const kgRecebidoPc = kgEnviado != null && kgEnviado > 0 ? kgEnviado : null;
         const anterior = anteriorDaSequencia(e, seq);
         const ins = await client.query<{ id: string }>(
           `INSERT INTO stockbridge.recebimento_fiscal_pc
              (recebimento_fiscal_id, empresa, nf_chave_acesso, n_sequencia, origem, n_cod_ped, n_cod_item_ped, pc_numero,
               n_cod_ped_omie_anterior, n_cod_item_ped_omie_anterior, dentro_tolerancia, justificativa, candidatos,
-              qtd_nf_kg, preco_nf, saldo_pc_kg_lido, preco_pc_lido, etapa_pc_lida, status, confirmado_por)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17, $18, 'confirmado', $19)
+              qtd_nf_kg, preco_nf, saldo_pc_kg_lido, preco_pc_lido, etapa_pc_lida, status, confirmado_por${temColuna0059 ? ', kg_recebido_pc' : ''})
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17, $18, 'confirmado', $19${temColuna0059 ? ', $20' : ''})
            RETURNING id`,
           [
             args.ledgerId, args.empresa, args.nfChaveAcesso, seq, e.origem, e.candidato.nCodPed, e.candidato.nCodItem,
             l.pcNumero || e.candidato.pcNumero || '', anterior?.nIdPedido ?? null, anterior?.nIdItPedido ?? null, e.dentroTolerancia, e.justificativa,
             JSON.stringify(e.oferecidos), kg.toFixed(3), e.precoNfKg.toFixed(6), l.saldoKg.toFixed(3),
             l.precoKg != null ? l.precoKg.toFixed(6) : null, l.etapa.slice(0, 2), args.userId,
+            ...(temColuna0059 ? [kgRecebidoPc != null ? kgRecebidoPc.toFixed(3) : null] : []),
           ],
         );
         reservasGravadas.push({
@@ -1660,15 +1843,19 @@ export async function relerEReservarPcs(args: {
           nCodItemPed: e.candidato.nCodItem,
           pcNumero: l.pcNumero || e.candidato.pcNumero,
           origem: e.origem,
-          // So com a unidade do PC diferente da NF (modo 'converter'): kg da linha na unidade do PC
-          // (8.250 kg -> 8250 em PC de KG; 8,25 em PC de TON). Mesma unidade: null (nada a mandar).
-          nQtdeRecebida: e.fatorUnidadeNf != null && l.fatorPc !== e.fatorUnidadeNf ? Math.round((kg / l.fatorPc) * 1e6) / 1e6 : null,
+          nQtdeRecebida,
+          kgRecebidoPc,
+          kgNfSeq: kg,
+          fatorPc: l.fatorPc,
         });
       }
     }
     await client.query('COMMIT');
     logger.info(
-      { nf: args.notaFiscal, ledgerId: args.ledgerId, reservas: reservasGravadas.length, itensPc: itensOrdenados.length },
+      {
+        nf: args.notaFiscal, ledgerId: args.ledgerId, reservas: reservasGravadas.length, itensPc: itensOrdenados.length,
+        comQuantidadeRecebida: reservasGravadas.filter((r) => r.nQtdeRecebida != null).length,
+      },
       'PCs relidos no OMIE e reservados',
     );
     return reservasGravadas;

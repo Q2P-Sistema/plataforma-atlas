@@ -626,6 +626,10 @@ export const recebimentoFiscalPc = stockbridgeSchema.table(
     candidatos: jsonb('candidatos').notNull().default([]).$type<RecebimentoFiscalPcCandidato[]>(),
     qtdNfKg: numeric('qtd_nf_kg', { precision: 14, scale: 3 }).notNull(),
     precoNf: numeric('preco_nf', { precision: 14, scale: 6 }).notNull(),
+    // 0059 (research D20): kg que o item baixou no PC quando a quantidade recebida nao e a da NF
+    // (o que o Atlas mandou: modo converter, peso conferido acima da NF ou a da NF de volta na
+    // retomada; ou o que o OMIE mostrou no ja_concluido); null = sem quantidade definida (vale a da NF)
+    kgRecebidoPc: numeric('kg_recebido_pc', { precision: 14, scale: 3 }),
     saldoPcKgLido: numeric('saldo_pc_kg_lido', { precision: 14, scale: 3 }),
     precoPcLido: numeric('preco_pc_lido', { precision: 14, scale: 6 }),
     etapaPcLida: varchar('etapa_pc_lida', { length: 2 }),
@@ -653,7 +657,9 @@ export const recebimentoFiscalPc = stockbridgeSchema.table(
 // ── Aviso a compras sobre NF sem PC (feature 017, migration 0056) ─────────────
 // Um aviso por (NF, motivo, destinatário) a cada 24 h — o serviço consulta esta
 // tabela antes de enviar (research D6); quem falhou fica pendente.
-export type MotivoAvisoCompras = 'sem_pc' | 'pc_aguardando_aprovacao' | 'recebida_sem_vinculo';
+// 'excedente_rejeitado' (0059, research D20): o gestor rejeitou a entrada de um item cujo PC ja foi
+// baixado pelo peso conferido acima da NF — a rejeicao nao desfaz a baixa no OMIE.
+export type MotivoAvisoCompras = 'sem_pc' | 'pc_aguardando_aprovacao' | 'recebida_sem_vinculo' | 'excedente_rejeitado';
 
 export interface NfAvisoComprasItem {
   nSequencia: number | null;
@@ -663,6 +669,9 @@ export interface NfAvisoComprasItem {
   precoUnit: number | null;
   /** quantidade nativa da NF ("40 UN") quando qtdKg e null */
   quantidadeTexto?: string | null;
+  /** excedente_rejeitado: numero legivel do PC e a quantidade da NF (qtdKg = o que foi baixado no PC) */
+  pcNumero?: string | null;
+  qtdNfKg?: number | null;
 }
 
 export const nfAvisoCompras = stockbridgeSchema.table(

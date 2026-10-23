@@ -44,8 +44,9 @@
    - `STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC=true`;
    - `STOCKBRIDGE_COMPRAS_EMAILS`, com os destinatários de compras, separados por vírgula (sem ponto e vírgula): valor inválido derruba a API no boot;
    - `STOCKBRIDGE_PC_UNIDADE_DIFERENTE` (default `bloquear`): PC em unidade diferente da NF (research D15). `converter` só depois do teste com NF real do cenário 10.
+   - `STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO` (default `false`, research D20): peso conferido acima da NF como quantidade recebida, com teto no saldo do PC. A 0059 vai antes da imagem (sem ela a chave fica sem efeito); ligar com o primeiro uso acompanhado (cenário 11). `STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT` (default 10): excedente acima disso não vai ao PC.
    - `STOCKBRIDGE_COPIA_PCS_MAX_MIN` (default 120), a idade máxima da cópia de PCs antes do alerta e do modo seguro (research D13). No UAT, calibrar pela frequência com que a cópia chega lá (o espelho de recebimentos usa 360): com o limite curto demais, o modo seguro recusa toda NF com fiscal pendente.
-5. Teste do vínculo novo (research D2): **feito em 22/10/2026 (T033, NF 60199)** e aprovado, antes de religar a chave em PROD. Pendentes, para quando houver NF: troca de um vínculo existente e NF menor que o saldo do PC.
+5. Teste do vínculo novo (research D2): **feito em 22/10/2026 (T033, NF 60199)** e aprovado, antes de religar a chave em PROD. Pendente, para quando houver NF: troca de um vínculo existente. A NF menor que o saldo do PC foi confirmada em 23/10/2026 (NF 67988 contra o PC 305, research D20): o OMIE aceita, e o PC fica "recebido parcialmente", com o saldo em aberto.
 6. No UAT (`OMIE_MODE=leitura`): as escritas são simuladas. A sombra precisa refletir a associação e o `nQtdeRec` do PC.
 
 > **Ordem de deploy em PROD**: 0056 → imagem com a 017 → teste D2 → religar `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED`. Em 22/10/2026 isso foi feito (0056, v1.1.20, T033, chave religada às ~14h50). A rodada de ajustes do mesmo dia acrescenta **0057 → imagem seguinte** (trava de unidade, cache de PCs vistos, PC por NF e PC de outro cadastro). A 0056 vem antes da imagem: é aditiva e convive com a imagem atual, e a 017 lê as colunas novas (sem elas, a fila responde 503). O n8n com as colunas está no ar desde 21/10/2026. Religar a chave com uma imagem anterior à 017 volta o `IGNORAR`, que é o problema original. Passo a passo em `docs/prod-golive-runbook.md`, seção "Ativação da feature 017".
@@ -158,6 +159,23 @@ Base: uma NF de 4 itens contra um PC de 3 itens do mesmo fornecedor, lançado em
 5. O PC em kg é oferecido normalmente para a NF em toneladas. O `EDITAR` sai com `itensAjustes.nQtdeRecebida` = kg da linha na unidade do PC (8250 para 8,25 t), e o `ConsultarRecebimento` do mock devolve o valor. Depois de uma falha, a retomada só refaz o `EDITAR` se `nQtdeRecebida` do item difere.
 6. **A validar com NF real antes de ligar `converter` em PROD** (n8n de teste, passo a passo, com autorização do usuário): NF em toneladas contra PC em kg, `EDITAR` com `nQtdeRecebida` e `Concluir`. Conferir o `nQtdeRec` do PC na unidade do PC (8250 etc.), a `nQtdeNFe` da NF inalterada, um só título de conta a pagar e nenhum movimento de estoque. Registrar o resultado em research D15 e na ACXEGDP-437.
 
+## Cenário 11 — Peso conferido acima da NF (baixa do PC pela balança, research D20)
+
+**Com a chave desligada (padrão)**: nada muda. A NF 67988 (13.382 kg na NF, 13.500 na balança) baixa o PC pela NF, e o PC fica "recebido parcialmente".
+
+**Com `STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO=true`**:
+
+1. NF com PC e peso conferido acima da NF por mais de 1 kg, com motivo: o `EDITAR` sai com `itensAjustes.nQtdeRecebida` igual ao peso conferido (no mock, o `ConsultarRecebimento` devolve o valor). `recebimento_fiscal_pc.kg_recebido_pc` guarda o mesmo valor em kg.
+2. PC com saldo menor que o peso conferido: a quantidade recebida para no saldo, e o log diz "limitado ao saldo do PC".
+3. Peso a menos, ou a mais por até 1 kg: o `EDITAR` não leva `nQtdeRecebida`.
+4. Duas NFs no mesmo item de PC: a segunda vê a reserva da primeira pelo peso conferido.
+5. Depois do recebimento, a NF não volta à fila: a nota de entrada vem com o peso conferido, e a fila olha ela e o XML (D19). Item 1:N com um produto rejeitado e refeito depois do sync também sai da fila (a retomada reparte o restante).
+6. O gestor rejeita a entrada: compras recebe um e-mail ("entrada rejeitada com o pedido baixado acima da nota") com o PC, a quantidade da NF, o baixado no pedido e o motivo. A rejeição do segundo produto do mesmo item no mesmo dia não manda outro e-mail; a de outro item da NF manda. Rejeição sem peso a mais não manda e-mail. Com o SendGrid fora na hora, o cron :05/:35 manda depois. Destinatário acrescentado a `STOCKBRIDGE_COMPRAS_EMAILS` depois do aviso recebe pela varredura; quem já tinha o aviso não recebe de novo.
+7. Peso a mais acima de 10% da NF (ex.: 15.000 numa NF de 13.382): nada vai ao PC e o log avisa.
+8. Retomada: a primeira tentativa manda 13.500 e falha antes de concluir; com a chave desligada, a segunda manda 13.382 de volta no `EDITAR`.
+
+**Primeiro uso em PROD, acompanhado** (T085): ligar a chave, receber a próxima NF "a mais" e conferir ao vivo (workflow de leitura `4OnbxvfALn9OoXLH`): `nQtdeRec` do PC igual ao peso conferido (ou ao saldo), `nQtdeNFe` da NF inalterada, `nQtdeRecebida` do item igual ao peso conferido, `cNaoGerarMovEstoque = S`, um só título de conta a pagar e nenhum movimento de estoque pelo OMIE. Registrar em research D20 e na ACXEGDP-437.
+
 ## Testes automatizados
 
 - `packages/integrations/omie/src/__tests__/recebimento-nfe.test.ts`: `ASSOCIAR-PEDIDO`, parse de `nIdPedido`/`itensInfoAdic`, mock com associação e `nQtdeRec`; rodada de 22/10: `itensAjustes.nQtdeRecebida` no `EDITAR`, no parser e no mock.
@@ -170,6 +188,7 @@ Base: uma NF de 4 itens contra um PC de 3 itens do mesmo fornecedor, lançado em
   - `pc-visto.test.ts` (novo, 22/10): upsert só do que mudou e com `DISTINCT ON` (item repetido na cópia), leitura só do que a cópia não trouxe com validade de 7 dias (vínculo sempre), limite de 5 min, falha de banco sem exceção, cron e fiação com `carregarContextoPc`;
   - `notificacao-aviso-compras.test.ts` (estender): quadro "Pedido em unidade diferente da nota", sem o quadro de outro cadastro;
   - `recebimento-nacional-pc.test.ts` (novo): portão 1 com `NF_SEM_PC` nos dois modos, vínculo do OMIE em unidade diferente recusado nos dois modos, `PC_NAO_ESCOLHIDO`, `COPIA_PCS_DEFASADA`, estoque já lançado, aviso deduplicado;
+  - `pc-peso-conferido-reserva.test.ts`, `pc-peso-conferido-aviso.test.ts` e `pc-peso-conferido-rejeicao.test.ts` (novos, 23/10, D20): excedente com teto no saldo, divisão por item e por sequência, unidade do PC, chave desligada; e-mail a compras sem código do OMIE e deduplicado; gatilho na rejeição; `pc-peso-conferido-db.test.ts` (opt-in, Postgres real com a 0059): gravação e auditoria de `kg_recebido_pc`, reserva entre duas NFs pelo peso conferido, consulta da rejeição e CHECKs;
   - `alerta-espelho-recebimentos.test.ts` (estender): cópia de PCs velha, vazia e em dia;
   - `recebimento-nacional-nf.routes.test.ts` (estender): o schema `.strict()` aceita `itens[].pc` e recusa campos extras;
   - `fila-nacional-unificada.test.ts` (estender): `pcSituacao`, `estoqueLancadoPeloOmie`;

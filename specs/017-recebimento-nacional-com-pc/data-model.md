@@ -1,6 +1,6 @@
 # Data Model — Recebimento Nacional com Pedido de Compra
 
-**Feature**: `017-recebimento-nacional-com-pc` | **Migrations**: `0056` (Q2P, Histórias 1 a 4), `0057` (cache de PCs vistos, ajuste de 22/10/2026) e `0058` (ACXE, História 5)
+**Feature**: `017-recebimento-nacional-com-pc` | **Migrations**: `0056` (Q2P, Histórias 1 a 4), `0057` (cache de PCs vistos, ajuste de 22/10/2026), `0058` (ACXE, História 5) e `0059` (baixa do PC pelo peso conferido, research D20)
 
 Base: o modelo da feature 016 (`specs/016-recebimento-fiscal-nf/data-model.md`). Aqui ficam só as extensões.
 
@@ -60,6 +60,7 @@ Vínculo item de NF → item de PC, uma linha por item e por tentativa (D5). FR-
 | `justificativa` | `text` | obrigatória quando `dentro_tolerancia = false` ou há troca do vínculo do OMIE (`n_cod_ped_omie_anterior IS NOT NULL`), por CHECK. Ver a matriz abaixo |
 | `candidatos` | `jsonb NOT NULL` | retrato do que foi oferecido: `[{nCodPed, nCodItem, pcNumero, saldoKg, precoUnit, motivo, dentroTolerancia}]` |
 | `qtd_nf_kg` | `numeric(14,3) NOT NULL` | quantidade do item da NF, em kg |
+| `kg_recebido_pc` | `numeric(14,3)` | kg que o item baixou no PC quando a quantidade recebida não é a da NF: o que o Atlas mandou em `itensAjustes.nQtdeRecebida` (modo `converter`, D15; peso conferido acima da NF, D20; ou a da NF de volta na retomada) ou o que o OMIE mostrou ao concluir (`ja_concluido`, quando difere da NF em mais de 1 g). Nulo = sem quantidade definida (vale a da NF). CHECK `> 0` (0059) |
 | `preco_nf` | `numeric(14,6) NOT NULL` | preço do item da NF por kg, na base comparada com o PC escolhido: comercial ou valor do item (research D3) |
 | `saldo_pc_kg_lido` | `numeric(14,3)` | saldo do item do PC relido ao vivo na confirmação |
 | `preco_pc_lido` | `numeric(14,6)` | preço do item do PC relido |
@@ -75,7 +76,7 @@ Vínculo item de NF → item de PC, uma linha por item e por tentativa (D5). FR-
 
 - único parcial `(nf_chave_acesso, n_sequencia) WHERE status IN ('confirmado','associado','concluido')`: um vínculo vivo por item (FR-015);
 - `(n_cod_item_ped, concluido_em)` para a regra "PC recém-usado" (D4) e para o desconto, na cópia local, dos vínculos concluídos depois de `data_atualizacao` (D3);
-- parcial `(n_cod_item_ped) WHERE status IN ('confirmado','associado')` para as **reservas** em andamento (D4). Na releitura ao vivo, o saldo disponível é `nQtde − nQtdeRec` menos as reservas de outras NFs iniciadas há menos de 15 min; vínculos concluídos não são descontados, porque o OMIE já os mostra.
+- parcial `(n_cod_item_ped) WHERE status IN ('confirmado','associado')` para as **reservas** em andamento (D4). Na releitura ao vivo, o saldo disponível é `nQtde − nQtdeRec` menos as reservas de outras NFs iniciadas há menos de 15 min, cada uma pelo que baixa do PC (`COALESCE(kg_recebido_pc, qtd_nf_kg)`, D20); vínculos concluídos não são descontados, porque o OMIE já os mostra.
 
 **Quando a justificativa é obrigatória** (FR-007, matriz única para o CHECK, o portão 1, a releitura e a tela):
 
@@ -108,13 +109,13 @@ Aviso a compras sobre NF sem PC (D6), deduplicado.
 | `empresa` | `varchar(4) NOT NULL` | — |
 | `nf_chave_acesso` | `varchar(44) NOT NULL` | — |
 | `nota_fiscal`, `fornecedor_nome` | `varchar` | exibição |
-| `motivo` | `varchar(30) NOT NULL` | `sem_pc` \| `pc_aguardando_aprovacao` \| `recebida_sem_vinculo` — CHECK |
-| `itens` | `jsonb NOT NULL` | `[{nSequencia, descricao, qtdKg, precoUnit, quantidadeTexto?}]` — `qtdKg` nulo para item de unidade não convertida, com `quantidadeTexto` ("40 UN") |
+| `motivo` | `varchar(30) NOT NULL` | `sem_pc` \| `pc_aguardando_aprovacao` \| `recebida_sem_vinculo` \| `excedente_rejeitado` (0059, D20: entrada rejeitada pelo gestor depois de o PC ser baixado pelo peso conferido) — CHECK |
+| `itens` | `jsonb NOT NULL` | `[{nSequencia, descricao, qtdKg, precoUnit, quantidadeTexto?}]` — `qtdKg` nulo para item de unidade não convertida, com `quantidadeTexto` ("40 UN"). No `excedente_rejeitado`, `qtdKg` é o baixado no PC, com `pcNumero` e `qtdNfKg` |
 | `enviado_para` | `text NOT NULL` | destinatários efetivos |
 | `enviado_em` | `timestamptz NOT NULL DEFAULT now()` | — |
 | `disparado_por` | `uuid` → `atlas.users(id)` | operador que tentou receber |
 
-**Deduplicação** (revista em 22/10/2026): por destinatário. Numa transação com trava consultiva por `(nf_chave_acesso, motivo)`, o envio vai só a quem ainda não consta no `enviado_para` das linhas das últimas 24 h; sem ninguém pendente, `deduplicado`. A linha grava em `enviado_para` só os destinatários **entregues**: quem falhou fica pendente para a próxima tentativa. Duas chamadas simultâneas não enviam duas vezes. **Trigger**: padrão `audit_*`.
+**Deduplicação** (revista em 22/10/2026): por destinatário. No `excedente_rejeitado` (D20), também por item: só conta aviso anterior cujo `itens` contém as sequências do novo (`itens @> [{nSequencia}]`). Numa transação com trava consultiva por `(nf_chave_acesso, motivo)`, o envio vai só a quem ainda não consta no `enviado_para` das linhas das últimas 24 h; sem ninguém pendente, `deduplicado`. A linha grava em `enviado_para` só os destinatários **entregues**: quem falhou fica pendente para a próxima tentativa. Duas chamadas simultâneas não enviam duas vezes. **Trigger**: padrão `audit_*`.
 
 ## 6. `stockbridge.fornecedor_exclusao`: empresa (0058, História 5)
 
@@ -265,6 +266,8 @@ fiscal: {
 | `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED` | `false` | D11: História 5 |
 | `STOCKBRIDGE_COPIA_PCS_MAX_MIN` | `120` | D13: idade máxima da cópia de PCs antes do alerta e do modo seguro |
 | `STOCKBRIDGE_PC_UNIDADE_DIFERENTE` | `bloquear` | D15: PC em unidade diferente da NF. `bloquear` = o PC não é oferecido e a NF é recusada sem outro PC; `converter` = o `EDITAR` manda `itensAjustes.nQtdeRecebida` na unidade do PC (só depois de teste com NF real) |
+| `STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO` | `false` | D20: peso conferido acima da NF como quantidade recebida no `EDITAR`, com teto no saldo do PC; rejeição do gestor depois disso avisa compras. Sem a 0059 fica desligada (log) |
+| `STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT` | `10` | D20: excedente acima deste percentual da NF do item não vai ao PC (provável erro de digitação) |
 
 Reaproveitada: `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED` (D8).
 

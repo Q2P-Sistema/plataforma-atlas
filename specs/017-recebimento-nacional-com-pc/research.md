@@ -45,7 +45,7 @@ Efeito colateral esperado: a descrição do item no recebimento passou a ser a d
 | (b) `EDITAR` (`cNaoGerarMovEstoque = S`, `cNaoGerarFinanceiro = N`) depois da associação | **Preserva o vínculo.** Chamadas com vários itens numa só (3 `ASSOCIAR-PEDIDO`, depois 3 `EDITAR`, no formato do Atlas) foram aceitas, e duas linhas da NF (itens 3 e 4, 2,75 t cada) no mesmo item do PC também. Depois da associação, a descrição do item passa a ser a do produto do PC e o `nIdItem` do recebimento passa a ser o do item do PC |
 | Durante o teste | PC sem baixa, estoque inalterado, nenhuma conta a pagar |
 | (c) troca de um vínculo existente | **Não testada.** Vale o plano B abaixo |
-| (d) NF menor que o saldo do PC | **Não testada** (as quantidades eram exatas). O fiscal falha fechado: se o OMIE recusar, o Atlas responde 502 e não grava nada no estoque |
+| (d) NF menor que o saldo do PC | **Não testada no T033** (as quantidades eram exatas); **confirmada em 23/10/2026** pela NF 67988 contra o PC 305 (D20): o OMIE aceita, e o PC fica "recebido parcialmente" na etapa 15, com o saldo em aberto. O fiscal continua falhando fechado: se o OMIE recusar, o Atlas responde 502 e não grava nada no estoque |
 
 **Primeira NF recebida pelo Atlas com a chave religada** (22/10/2026, 15h02, pelo usuário): a NF 60199 terminou com o fiscal `concluido` e os 4 vínculos mantidos (só `EDITAR` + `Concluir`, porque a associação do teste ainda valia), e 3 entradas físicas por ajuste de estoque, aprovadas. Foi nela que apareceram o problema da unidade na baixa do PC (D15) e a janela em que o PC some da lista de pendentes (D16).
 
@@ -268,7 +268,7 @@ O **POST continua por item** (`itens[].pc`): a tela aplica a escolha da nota em 
   - sem outro PC possível, o motivo interno é `unidade_pc` e a situação, `sem_pc`: `422 NF_SEM_PC` com texto próprio e aviso a compras com o quadro "Pedido em unidade diferente da nota" (gravado em `nf_aviso_compras` com o motivo `sem_pc`, que o CHECK já aceita). PC aguardando aprovação tem precedência na mensagem;
   - `pc` do corpo que é um `unidadeIncompativel` → `422 PC_NAO_ELEGIVEL`;
   - releitura ao vivo com PC em unidade diferente (inclusive o vínculo que o OMIE já fez) → `409 PC_VINCULO_INVALIDO`.
-- **`converter`**: o PC em unidade diferente é oferecido normalmente, e o `EDITAR` manda `itensAjustes.nQtdeRecebida` = kg da linha ÷ fator da unidade do PC (arredondado em 6 casas): 8.250 kg → 8250 em PC de KG; 8,25 em PC de TON. A reserva devolve o valor (`ReservaPc.nQtdeRecebida`, nulo se a unidade é a mesma), `ajustesJaAplicados` confere também esse valor (a retomada só refaz o `EDITAR` se a quantidade difere), e o saldo do PC continua comparado em kg.
+- **`converter`**: o PC em unidade diferente é oferecido normalmente, e o `EDITAR` manda `itensAjustes.nQtdeRecebida` = kg da linha ÷ fator da unidade do PC (arredondado em 4 casas desde 23/10/2026, a precisão com que o OMIE guarda a quantidade; antes, 6): 8.250 kg → 8250 em PC de KG; 8,25 em PC de TON. A reserva devolve o valor (`ReservaPc.nQtdeRecebida`, nulo se a unidade é a mesma e não há peso conferido a mais nem quantidade de tentativa anterior a desfazer, D20), `ajustesJaAplicados` confere também esse valor (a retomada só refaz o `EDITAR` se a quantidade difere), e o saldo do PC continua comparado em kg.
 
 **Estado**: default `bloquear`. O modo `converter` **não foi testado pela API**: o campo foi validado só pelo portal. Ligar em PROD depende de um teste com NF real em toneladas contra PC em kg (quickstart, cenário 10). No UAT (`OMIE_MODE=leitura`) as escritas são simuladas, então o modo pode ser exercitado lá, mas isso não prova o comportamento do OMIE.
 
@@ -340,19 +340,57 @@ O **POST continua por item** (`itens[].pc`): a tela aplica a escolha da nota em 
 
 **Por que não "a menor das duas"** (primeira versão, revisão adversarial de 23/10): com a nota de entrada editada para mais **antes** do físico, o rateio do Atlas fica ancorado nela. Uma gravação parcial (13.400 de 13.500, com XML 13.382) sumiria atrás do XML menor. Com as duas quantidades oficiais, o restante continua 100 kg.
 
-**Retomada** (segunda revisão adversarial, 23/10): a regra pede que a soma do lado da NF caia numa das quantidades oficiais. A 1ª leva de um item 1:N ancora no XML (fonte "fiscal pendente"). Se um produto falha ou o gestor rejeita a entrada dele, a retomada depois do sync ancorava na nota de entrada. Com a nota de entrada diferente do XML (edição da quantidade recebida no portal), a soma caía entre as duas: o item ficava na fila com um resto que nenhum envio fechava, porque o POST já não tinha o que distribuir. Na retomada, o lado da NF de cada produto passa a ser o restante da fila rateado pelo que falta distribuir (`restante × kg ÷ a distribuir`). Com a mesma base e a mesma conferida da 1ª leva, dá o mesmo número de antes; também fecha quando o operador muda a conferida na retomada, caso que antes deixava resto. O primeiro envio e o valor (fração da conferida, D25 da 015) não mudam.
+**Retomada** (segunda revisão adversarial, 23/10): a regra pede que a soma do lado da NF caia numa das quantidades oficiais. A 1ª leva de um item 1:N ancora no XML (fonte "fiscal pendente"). Se um produto falha ou o gestor rejeita a entrada dele, a retomada depois do sync ancorava na nota de entrada. Com a nota de entrada diferente do XML (peso conferido da D20 ou edição no portal), a soma caía entre as duas: o item ficava na fila com um resto que nenhum envio fechava, porque o POST já não tinha o que distribuir. Na retomada, o lado da NF de cada produto passa a ser o restante da fila rateado pelo que falta distribuir (`restante × kg ÷ a distribuir`). Com a mesma base e a mesma conferida da 1ª leva, dá o mesmo número de antes; também fecha quando o operador muda a conferida na retomada, caso que antes deixava resto. O primeiro envio e o valor (fração da conferida, D25 da 015) não mudam.
 
 **Efeito**: a quantidade recebida editada para cima depois do Atlas, como neste caso, não reabre o item. A editada para baixo antes do Atlas, quando o fiscal lança o peso real no portal, também não. Um recebimento parcial de verdade continua pendente pelo que falta até a quantidade oficial mais próxima que ele ainda não atingiu (nota de entrada ou XML), que não é necessariamente aquela em que foi ancorado: ancorado em 13.500, com XML de 13.382 e 5.000 atribuídos, faltam 8.382, não 8.500.
 
-**Consequência para a baixa do PC pelo peso conferido (ainda não implementada)**: quando o Atlas passar a mandar o peso conferido em `nQtdeRecebida`, a nota de entrada virá com ele. Sem esta regra, toda NF recebida "a mais" voltaria à fila.
+**Consequência para a baixa do PC pelo peso conferido (D20)**: quando o Atlas mandar o peso conferido em `nQtdeRecebida`, a nota de entrada virá com ele. Sem esta regra, toda NF recebida "a mais" voltaria à fila.
 
 **Validação**: a consulta nova, rodada em PROD só para leitura em 23/10, tira só a 67988 da fila; as outras 3 NFs pendentes seguem iguais. O teste com Postgres real (`fila-nacional-acxe-db`) reproduz o caso e falha com o código anterior; outro caso prova que a gravação parcial com XML de unidade trocada continua pendente (revisão independente de 23/10). A retomada com troca de base tem testes no POST (`recebimento-nacional-nf`, que falham sem a correção) e o caso Q10 no Postgres real.
 
 ---
 
+## D20. Baixa do PC pelo peso conferido acima da NF (23/10/2026)
+
+**Achado em PROD (NF 67988, Isoforma × PC 305)**: o operador recebeu pelo Atlas com 13.500 kg na balança contra 13.382 kg na NF (motivo: 9 paletes fechados de 1.500 kg), e o gestor aprovou. O OMIE baixou o PC pela quantidade da NF: o PC ficou "recebido parcialmente", na etapa 15, com 118 kg em aberto. Isso também confirma o T033 (d). O fiscal reabriu o recebimento no portal, editou a quantidade recebida para 13.500 e concluiu de novo. O PC ficou 13.500/13.500, sem estoque pelo OMIE e com um só título.
+
+**Fato**: o OMIE baixa o PC pela **quantidade recebida** do item (`nQtdeRecebida`), que por padrão é a da NF. É o mesmo campo que corrigiu o PC 306 (D15).
+
+**Decisão do usuário (23/10/2026)**: mandar o peso conferido como quantidade recebida **só quando for a mais** que a NF e **com teto no saldo do PC**. A regra fica atrás de uma chave desligada (`STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO`), com o primeiro uso acompanhado, porque o campo nunca foi escrito pela API. O fiscal continua no clique do operador e a ordem da aprovação não muda.
+
+**Desenho**:
+
+- A escolha validada leva o peso conferido do item (`qtdConferidaKg`). Na releitura ao vivo, por item de PC: o excedente pedido é a soma de (conferido − NF) dos itens acima da tolerância de 1 kg. O excedente aplicado é o menor entre ele e a folga do saldo disponível depois da NF (saldo vivo − reservas de outras NFs − NF). NF que já passa do saldo não leva excedente. O excedente aplicado se divide entre os itens pelo excedente de cada um e, dentro do item, entre as sequências pelo kg da NF.
+- A reserva devolve `nQtdeRecebida` (kg recebido na unidade do PC) e grava `kg_recebido_pc` (0059). O `EDITAR` manda `itensAjustes.nQtdeRecebida` só nessas sequências, pelo mesmo mecanismo do modo `converter`.
+- As reservas de outras NFs e o saldo da sugestão passam a contar `COALESCE(kg_recebido_pc, qtd_nf_kg)`, isto é, o que cada vínculo baixa do PC.
+- Peso a menos nunca vai: o PC fica com o saldo em aberto, como hoje, e compras decide.
+- **Rejeição do gestor**: o PC já foi baixado no clique, e a rejeição não desfaz isso no OMIE. `rejeitar` procura no ledger o vínculo `concluido` com `kg_recebido_pc` acima de `qtd_nf_kg` nas sequências do item rejeitado. Se achar, avisa compras por e-mail (`nf_aviso_compras`, motivo `excedente_rejeitado`, 0059, deduplicado por NF, destinatário e item em 24 h).
+- Com o peso conferido como quantidade recebida, a nota de entrada do OMIE vem com ele. A fila depende da regra das duas quantidades oficiais (D19).
+
+**Revisão independente (23/10/2026)**, achados corrigidos:
+
+- **Limite relativo** (`STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT`, default 10): excedente acima desse percentual da NF do item não vai ao PC, e o item segue pela NF com aviso no log. É provável erro de digitação (13.382 digitado 133.820, com motivo), que só o saldo do PC seguraria e que a rejeição não desfaz no OMIE.
+- **Retomada**: uma tentativa que mandou a quantidade e morreu antes de concluir deixa o valor no item do OMIE. Se a tentativa seguinte não define quantidade para a sequência (chave desligada, peso corrigido, saldo consumido), ela manda a da NF de volta. Só o que o próprio Atlas mandou é desfeito (`kg_recebido_pc` de tentativa anterior da NF); edição feita no portal antes do Atlas fica intocada (8 recebimentos pendentes em PROD têm uma).
+- **`ja_concluido`**: na primeira consulta já concluída, o ledger guarda o kg que o OMIE baixou (quantidade recebida viva × fator do PC, quando difere da NF). Na reconsulta depois de falha, o kg planejado só fica se o OMIE mostrar a quantidade mandada; senão vale a viva.
+- **Aviso a compras**: deduplicado por item (as sequências do e-mail precisam estar num aviso anterior), para a rejeição de um segundo item da NF não ficar sem e-mail. O cron :05/:35 varre as rejeições dos últimos 7 dias com o PC baixado acima da nota em que algum destinatário atual de compras ainda não tem aviso da sequência enviado depois da rejeição (ou até 24 h antes dela), porque o aviso da hora da rejeição pode falhar, inteiro ou para um destinatário (`varrerExcedentesRejeitadosSemAviso`). Aviso de uma rejeição antiga do mesmo item não cobre a nova. O envio deduplica pela mesma janela, ancorada na hora da rejeição (segunda revisão: com a janela em "agora", passado um dia, quem já tinha o aviso o recebia de novo junto com o destinatário que faltava). O fornecedor vem do ledger do fiscal quando a NF ainda não chegou ao espelho de NF. O texto é neutro ("baixado acima da nota"), porque no `ja_concluido` o valor pode ter vindo do portal.
+- **Arredondamento**: 4 casas, a precisão em que o OMIE guarda a quantidade, e para baixo quando há excedente (a soma das sequências nunca passa do teto). `kg_recebido_pc` é o kg do que foi mandado; sequência sem kg fica nula (CHECK > 0).
+- **Imagem antes da 0059**: o código confere a coluna (`colunaKgRecebidoPcExiste`, guardado no processo, revisto a cada 5 min enquanto falta e a cada 30 s depois de erro na consulta). Sem ela, reservas e sugestão seguem pela NF, o INSERT não leva a coluna e a baixa pelo peso conferido fica desligada com erro no log. O fiscal não quebra.
+
+**Por que o fiscal não vai para depois da aprovação**: o fiscal é por NF inteira e a aprovação é por produto. A NF ficaria presa na etapa 40 até a última aprovação, e a conta a pagar atrasaria. O usuário concordou em manter a ordem.
+
+**Limitações conhecidas**:
+
+1. O campo nunca foi escrito pela API com quantidade acima da NF. Ligar a chave e acompanhar a primeira NF (quickstart, cenário 11).
+2. Com vários recebimentos simultâneos no mesmo item de PC, o arredondamento para baixo pode deixar até 0,0001 da unidade do PC por sequência sem baixa.
+3. Destinatário que o SendGrid recusa sempre é tentado a cada rodada do cron (:05/:35) até a rejeição sair da janela de 7 dias; a varredura trata até 10 rejeições por rodada.
+
+**Alternativas descartadas**: mandar o peso conferido também a menos (o usuário escolheu só a mais); passar do saldo do PC (o Atlas nunca baixa o PC além do pedido); fiscal depois da aprovação (acima).
+
+---
+
 ## Pendências de pesquisa (não bloqueiam o plano)
 
-1. ~~**Teste de D2** com NF real sem vínculo~~: **feito em 22/10/2026 (T033)** e aprovado (D2). Restam (c) a troca de um vínculo existente e (d) a NF menor que o saldo do PC, para quando houver NF. Não bloqueiam.
+1. ~~**Teste de D2** com NF real sem vínculo~~: **feito em 22/10/2026 (T033)** e aprovado (D2). Resta (c), a troca de um vínculo existente, para quando houver NF. A (d), NF menor que o saldo do PC, foi confirmada em 23/10/2026 pela NF 67988 (D20): o OMIE aceita, e o PC fica "recebido parcialmente" na etapa 15, com o saldo em aberto. Não bloqueiam.
 2. ~~**Se a etapa do PC muda depois** do recebimento total~~: resolvido. O PC 306, recebido por inteiro, continuou na etapa 15, como o 304 (D15). A elegibilidade usa o saldo (`nqtde − nqtderec`) além da etapa.
 3. **Como o OMIE associa sozinho.** Na NF 7813, o recebimento foi incluído por `cUsuarioInc = P000548700` já com o vínculo. Ainda não se sabe se foi automático (pelo `xPed` do XML) ou manual. Não afeta o desenho: o vínculo existente é sempre a sugestão principal.
 4. ~~Local da ACXE em Extrema~~: resolvido em D18 (22/10/2026): o operador escolhe; 21.1 EXTREMA entra nas duas empresas, 21.2 e os locais de produção entram só na ACXE.

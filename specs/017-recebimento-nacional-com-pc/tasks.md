@@ -235,7 +235,7 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
   - `ASSOCIAR-PEDIDO` aceito na etapa 40, inclusive com PC de outro cadastro do mesmo fornecedor;
   - o `EDITAR` seguinte preservou o vínculo; chamadas com vários itens numa só (3 associações, depois 3 `EDITAR`, no formato do Atlas) e duas linhas da NF (itens 3 e 4, 2,75 t cada) no mesmo item do PC foram aceitas; depois da associação a descrição do item passou a ser a do produto do PC;
   - durante o teste: PC sem baixa, estoque inalterado, nenhuma conta a pagar;
-  - **não testados**: (c) troca de um vínculo existente e (d) NF menor que o saldo do PC (as quantidades batiam exatas): ver T075;
+  - **não testado**: (c) troca de um vínculo existente: ver T075. A (d), NF menor que o saldo do PC (as quantidades batiam exatas no T033), foi confirmada em 23/10/2026 pela NF 67988 contra o PC 305: o OMIE aceita, e o PC fica "recebido parcialmente" (etapa 15), com o saldo em aberto (research D20);
   - a chave `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED` foi religada em PROD às ~14h50. A primeira NF recebida pelo Atlas (a própria 60199, 15h02) concluiu o fiscal com os 4 vínculos mantidos e 3 entradas físicas aprovadas, e revelou a unidade na baixa do PC (T059 a T063) e o PC fora da lista de pendentes (T066 e T067).
   Resultado registrado em `specs/017-recebimento-nacional-com-pc/research.md` (D2).
 
@@ -385,11 +385,27 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
 - [X] T072 [P] Documentação da rodada: research D14 a D17 (e D2, D3, D4, D8, D12), spec (Clarifications de 22/10, FR-002, FR-031 a FR-033), data-model §8 e §11, contrato (§2, §3, §5, §6), quickstart (cenários 9 e 10), plano, `CLAUDE.md` (parágrafo da 017), `docs/prod-golive-runbook.md` e a seção 2 de `specs/007-stockbridge-module/research.md`
 - [ ] T073 [US2] Teste do modo `converter` com NF real (quickstart, cenário 10.6), **com autorização do usuário**: NF em toneladas contra PC em kg, `EDITAR` com `nQtdeRecebida` e `Concluir`, em workflow n8n de teste nos moldes do T033. Conferir `nQtdeRec` do PC na unidade do PC, `nQtdeNFe` da NF inalterada, um só título de conta a pagar e estoque sem movimento. Registrar em research D15
 - [ ] T074 [US2] Decisão de ligar `STOCKBRIDGE_PC_UNIDADE_DIFERENTE=converter` em PROD, só depois do T073 aprovado. Até lá o padrão é `bloquear`
-- [ ] T075 [US2] T033 (c) e (d) quando houver NF: (c) troca de um vínculo existente por `ASSOCIAR-PEDIDO` (inclusive entre cadastros) e (d) NF menor que o saldo do PC (o saldo fica aberto?). Registrar em research D2. Se o OMIE recusar a troca, vale o plano B da D2
+- [ ] T075 [US2] T033 (c) quando houver NF: troca de um vínculo existente por `ASSOCIAR-PEDIDO` (inclusive entre cadastros). A (d), NF menor que o saldo do PC, já foi respondida pela NF 67988 em 23/10/2026 (o OMIE aceita e o saldo fica aberto, research D20). Registrar em research D2. Se o OMIE recusar a troca, vale o plano B da D2
 
 **Checkpoint**: PC por NF, PC de outro cadastro, trava de unidade e cache de PCs vistos no ar; `converter` só depois do T073 e do T074.
 
 ---
+
+## Phase 10: Fila e baixa do PC pelo peso conferido (23/10/2026, NF 67988 × PC 305)
+
+**Goal**: a NF recebida com peso a mais não volta à fila (D19) e, com a chave ligada, o PC é baixado pelo peso conferido, com teto no saldo (D20).
+
+- [X] T078 Fila: pendência por restante pelas duas quantidades oficiais, nota de entrada e XML (`RESTANTE_PENDENCIA_SQL` em `fila-nacional.service.ts`, `restantePendenciaKg`/`kgXmlComparavel` no detalhe), golden da Q2P regenerado; testes em `fila-nacional-unificada.test.ts` e `fila-nacional-acxe-db.test.ts` (research D19). Correção de produção da NF 67988
+- [X] T079 Migration `packages/db/migrations/0059_stockbridge_pc_peso_conferido.sql` (`recebimento_fiscal_pc.kg_recebido_pc` e o motivo `excedente_rejeitado` em `nf_aviso_compras`) e schema Drizzle em `packages/db/src/schemas/stockbridge.ts`
+- [X] T080 Chave `STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO` em `packages/core/src/config.ts`, nos `.env.example` e nas duas stacks
+- [X] T081 [US2] Peso conferido do item na escolha (`recebimento-nacional.service.ts`) e excedente com teto na reserva (`relerEReservarPcs` em `pc-sugestao.service.ts`), reservas pelo que cada vínculo baixa do PC, `EDITAR` com `nQtdeRecebida` (`recebimento-fiscal.service.ts`)
+- [X] T082 [US4] Aviso a compras na rejeição do gestor: `pc-peso-conferido.service.ts`, `enviarAvisoComprasExcedenteRejeitado` em `notificacao.service.ts` e `rejeitar` em `aprovacao.service.ts`
+- [X] T083 Testes: `pc-peso-conferido-reserva`, `-aviso`, `-rejeicao`, `-db` (opt-in), extensões em `recebimento-fiscal-pc.test.ts`, `aprovacao.test.ts`, `pc-reserva.test.ts` e `pc-unidade.test.ts`
+- [X] T086 Revisão independente da Phase 10 (23/10/2026), achados corrigidos: limite relativo do excedente (`STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT`), retomada que desfaz a quantidade mandada antes, kg vivo no `ja_concluido`, aviso deduplicado por item com varredura no cron (janela da rejeição e destinatários que faltam), fornecedor do ledger no e-mail, arredondamento em 4 casas para baixo, conferência da coluna da 0059 e, na fila, faixa comparável do XML e restante pelas duas quantidades oficiais (revisão adversarial em 5 frentes). Segunda revisão adversarial (23/10): a retomada de item 1:N reparte o restante da fila (`recebimento-nacional.service.ts`, D19) e o envio da varredura deduplica pela janela da rejeição (`coberturaDesde`, D20); testes em `recebimento-nacional-nf`, `pc-peso-conferido-aviso`/`-rejeicao` e nos opt-in `fila-nacional-acxe-db` (Q10) e `pc-peso-conferido-db`
+- [ ] T084 Implantar: a correção da fila (T078) pode ir antes, sozinha. Para o resto: 0059 em PROD **antes** da imagem (`psql -1 -f` com o dono `postgres`), imagem com `STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO=false` (runbook, "Baixa do PC pelo peso conferido")
+- [ ] T085 [US2] Primeiro uso acompanhado, **com autorização do usuário**: ligar a chave e conferir ao vivo a próxima NF recebida "a mais" (quickstart, cenário 11). Registrar em research D20
+
+**Checkpoint**: NF 67988 fora da fila; chave do peso conferido no ar desligada; ligada só no T085.
 
 ## Dependencies & Execution Order
 
@@ -428,9 +444,9 @@ T003 (n8n) ───────────────────────
 
 ## Format Validation
 
-Todas as tarefas seguem `- [ ] T### [P?] [US?] descrição com caminho de arquivo`. Setup, Foundational e Polish não têm rótulo de história; US1 a US5 têm. O T003, o T033, o T052, o T057, o T070, o T071, o T073, o T074 e o T075 são tarefas operacionais (n8n, teste com NF real, deploy, validação em UAT) e citam os artefatos onde o resultado é registrado.
+Todas as tarefas seguem `- [ ] T### [P?] [US?] descrição com caminho de arquivo`. Setup, Foundational e Polish não têm rótulo de história; US1 a US5 têm. O T003, o T033, o T052, o T057, o T070, o T071, o T073, o T074, o T075, o T076, o T077, o T084 e o T085 são tarefas operacionais (n8n, teste com NF real, deploy, validação em UAT) e citam os artefatos onde o resultado é registrado.
 
-Total: **75 tarefas**:
+Total: **86 tarefas**:
 
 | Fase | Tarefas |
 |---|---|
@@ -440,6 +456,7 @@ Total: **75 tarefas**:
 | US2 | 8 |
 | US3 | 4 |
 | US4 | 7 |
-| US5 | 8 |
+| US5 | 10 |
 | Polish | 6 |
 | Ajustes pós-estreia (22/10/2026) | 17 |
+| Fila e peso conferido (23/10/2026) | 9 |

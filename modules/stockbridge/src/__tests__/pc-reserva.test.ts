@@ -150,7 +150,7 @@ const reservar = (escolhas: EscolhaPcValidada[], over: Partial<Omit<ArgsReserva,
 
 // ── Dublê do banco e do OMIE ─────────────────────────────────────────────────
 
-type TipoSql = 'BEGIN' | 'COMMIT' | 'ROLLBACK' | 'LOCK' | 'UPDATE' | 'RECENTE' | 'RESERVAS' | 'INSERT' | 'DESCONHECIDO';
+type TipoSql = 'BEGIN' | 'COMMIT' | 'ROLLBACK' | 'LOCK' | 'UPDATE' | 'ANTERIORES' | 'RECENTE' | 'RESERVAS' | 'INSERT' | 'DESCONHECIDO';
 
 interface Chamada {
   tipo: TipoSql;
@@ -164,8 +164,11 @@ function tipoDe(sql: string): TipoSql {
   if (s.includes('pg_advisory_xact_lock')) return 'LOCK';
   if (s.startsWith('UPDATE stockbridge.recebimento_fiscal_pc')) return 'UPDATE';
   if (s.startsWith('INSERT INTO stockbridge.recebimento_fiscal_pc')) return 'INSERT';
+  // retomada (D20): sequencias desta NF em que tentativa anterior mandou quantidade recebida
+  if (s.startsWith('SELECT DISTINCT n_sequencia FROM stockbridge.recebimento_fiscal_pc')) return 'ANTERIORES';
   if (s.includes('AS segundos')) return 'RECENTE';
-  if (s.includes('SUM(qtd_nf_kg)')) return 'RESERVAS';
+  // reservas de outras NFs pelo que cada uma baixa do PC: kg_recebido_pc (peso conferido, D20) ou a NF
+  if (s.includes('SUM(COALESCE(kg_recebido_pc, qtd_nf_kg))')) return 'RESERVAS';
   return 'DESCONHECIDO';
 }
 
@@ -206,6 +209,8 @@ const client = {
       case 'UPDATE':
         estado.gravadas = estado.gravadas.filter((r) => r.chave !== params[0]);
         return { rows: [], rowCount: 0 };
+      case 'ANTERIORES':
+        return { rows: [] };
       case 'RECENTE': {
         const segundos = estado.recentePorItem.get(Number(params[1]));
         return { rows: segundos == null ? [] : [{ segundos }] };
@@ -216,7 +221,8 @@ const client = {
         return { rows: [{ kg: (estado.reservasPorItem.get(item) ?? 0) + deOutrasNfs }] };
       }
       case 'INSERT':
-        estado.gravadas.push({ chave: String(params[2]), item: Number(params[6]), kg: Number(params[13]) });
+        // COALESCE(kg_recebido_pc, qtd_nf_kg), como no SQL real: $20 e o kg recebido no PC, $14 o da NF
+        estado.gravadas.push({ chave: String(params[2]), item: Number(params[6]), kg: Number(params[19] ?? params[13]) });
         return { rows: [{ id: `reserva-${++estado.seqId}` }] };
       default:
         throw new Error(`SQL inesperado no dublê do client: ${sql.replace(/\s+/g, ' ').slice(0, 120)}`);
@@ -246,7 +252,9 @@ beforeEach(() => {
   });
   // raiz do CNPJ dos cadastros (so consultada quando algum PC lido esta em outro cadastro): padrao = sem cadastros
   mocks.poolQuery.mockReset();
-  mocks.poolQuery.mockImplementation(async () => {
+  mocks.poolQuery.mockImplementation(async (sql: string) => {
+    // coluna kg_recebido_pc da 0059: banco migrado (sem evento — a conferencia fica guardada no processo)
+    if (String(sql).includes('information_schema')) return { rows: [{ ok: true }] };
     estado.eventos.push('RAIZ');
     return { rows: [] };
   });
@@ -801,9 +809,9 @@ describe('relerEReservarPcs — linhas `confirmado` (a reserva)', () => {
     });
     const r = await reservar([e1, e2]);
     expect(r).toEqual([
-      { id: 'reserva-1', nSequencia: 1, indice: 0, nCodPed: NCODPED_304, nCodItemPed: NCODITEM_304, pcNumero: '304', origem: 'sugestao', nQtdeRecebida: null },
-      { id: 'reserva-2', nSequencia: 2, indice: 0, nCodPed: NCODPED_304, nCodItemPed: NCODITEM_304, pcNumero: '304', origem: 'sugestao', nQtdeRecebida: null },
-      { id: 'reserva-3', nSequencia: 3, indice: 1, nCodPed: NCODPED_302, nCodItemPed: NCODITEM_302, pcNumero: '302', origem: 'manual', nQtdeRecebida: null },
+      { id: 'reserva-1', nSequencia: 1, indice: 0, nCodPed: NCODPED_304, nCodItemPed: NCODITEM_304, pcNumero: '304', origem: 'sugestao', nQtdeRecebida: null, kgRecebidoPc: null, kgNfSeq: 5000, fatorPc: 1 },
+      { id: 'reserva-2', nSequencia: 2, indice: 0, nCodPed: NCODPED_304, nCodItemPed: NCODITEM_304, pcNumero: '304', origem: 'sugestao', nQtdeRecebida: null, kgRecebidoPc: null, kgNfSeq: 4000, fatorPc: 1 },
+      { id: 'reserva-3', nSequencia: 3, indice: 1, nCodPed: NCODPED_302, nCodItemPed: NCODITEM_302, pcNumero: '302', origem: 'manual', nQtdeRecebida: null, kgRecebidoPc: null, kgNfSeq: 2000, fatorPc: 1 },
     ]);
   });
 

@@ -42,6 +42,11 @@ vi.mock('@atlas/integration-omie', () => ({
   isMockMode: () => true,
 }));
 
+// Research D20 (017): aviso a compras na rejeicao de entrada com PC baixado pelo peso conferido — dublê.
+vi.mock('../services/pc-peso-conferido.service.js', () => ({
+  avisarComprasSeRejeitouExcedente: vi.fn().mockResolvedValue('sem_excedente'),
+}));
+
 // STK-06: aprovarSaidaManual/retorno_comodato — as funcoes OMIE de saida sao
 // mockadas pra controlar o resultado dual (sucesso vs pendenciaQ2p) sem
 // depender das correlacoes reais (db.execute).
@@ -507,6 +512,44 @@ describe('aprovacao.service#rejeitar', () => {
     expect(new Set(tabelasAtualizadas)).toEqual(new Set([dbMod.aprovacao, dbMod.reservaSaldo, dbMod.movimentacao]));
     expect(db.insert).not.toHaveBeenCalled();
     expect(omie.incluirAjusteEstoque).not.toHaveBeenCalled();
+  });
+
+  // Research D20 (017): o PC pode ter sido baixado pelo peso conferido no clique do operador; a rejeicao nao desfaz
+  // isso no OMIE, entao a entrada nacional rejeitada passa pelo aviso a compras (que so envia se o ledger mostrar
+  // quantidade recebida acima da NF).
+  it('entrada nacional por NF rejeitada: verifica a baixa do PC pelo peso conferido para avisar compras', async () => {
+    const { getDb } = await import('@atlas/core');
+    const { avisarComprasSeRejeitouExcedente } = await import('../services/pc-peso-conferido.service.js');
+    vi.mocked(getDb).mockReturnValue(
+      criarDbComTabelas(await tabelas({
+        id: 'apr-nf', loteId: null, movimentacaoId: 'mov-1', status: 'pendente',
+        precisaNivel: 'gestor', tipoAprovacao: 'entrada_manual', lancadoPor: 'op-1',
+      })) as never,
+    );
+    await rejeitar({ id: 'apr-nf', usuarioId: 'u1', perfilUsuario: 'gestor', motivo: 'Peso real igual ao da nota' });
+    expect(avisarComprasSeRejeitouExcedente).toHaveBeenCalledWith({
+      aprovacaoId: 'apr-nf', movimentacaoId: 'mov-1', motivo: 'Peso real igual ao da nota', usuarioId: 'u1',
+    });
+  });
+
+  it('rejeicao com lote (sem movimentacao) ou de saida: nenhuma verificacao de PC', async () => {
+    const { getDb } = await import('@atlas/core');
+    const { avisarComprasSeRejeitouExcedente } = await import('../services/pc-peso-conferido.service.js');
+    vi.mocked(getDb).mockReturnValue(
+      criarDbComTabelas(await tabelas({
+        id: 'apr-1', loteId: 'lote-1', status: 'pendente',
+        precisaNivel: 'gestor', tipoAprovacao: 'entrada_manual', lancadoPor: 'op-1',
+      })) as never,
+    );
+    await rejeitar({ id: 'apr-1', usuarioId: 'u1', perfilUsuario: 'gestor', motivo: 'x' });
+    vi.mocked(getDb).mockReturnValue(
+      criarDbComTabelas(await tabelas({
+        id: 'apr-s', loteId: null, movimentacaoId: 'mov-s', status: 'pendente',
+        precisaNivel: 'gestor', tipoAprovacao: 'saida_descarte', lancadoPor: 'op-1',
+      })) as never,
+    );
+    await rejeitar({ id: 'apr-s', usuarioId: 'u1', perfilUsuario: 'gestor', motivo: 'y' });
+    expect(avisarComprasSeRejeitouExcedente).not.toHaveBeenCalled();
   });
 });
 

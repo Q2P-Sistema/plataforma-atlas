@@ -5,6 +5,7 @@ import { reprocessarBaixasAguardandoVinculo } from '../services/baixa-pedido.ser
 import { verificarCopiaPcs, verificarEspelhoRecebimentos } from '../services/alerta-espelho-recebimentos.service.js';
 import { registrarPcsVistos } from '../services/pc-visto.service.js';
 import { recebimentoNacionalAcxeHabilitado } from '../services/empresa-nacional.js';
+import { varrerExcedentesRejeitadosSemAviso } from '../services/pc-peso-conferido.service.js';
 
 const logger = createLogger('stockbridge:cron');
 
@@ -72,6 +73,9 @@ export function iniciarCronsStockBridge(): void {
       // 017 (0057): cache de PCs vistos — o OMIE tira da lista de pendentes o PC com item
       // associado a um recebimento aberto; o cache guarda a ultima versao vista (so o que mudou).
       void registrarPcsVistos('q2p');
+      // 017 (research D20): entrada rejeitada com o PC baixado acima da nota (peso conferido) sem aviso a
+      // compras — o aviso da hora da rejeicao pode ter falhado. Nunca lanca.
+      void varrerExcedentesRejeitadosSemAviso();
       if (recebimentoNacionalAcxeHabilitado()) {
         verificarEspelhoRecebimentos('acxe').catch((err) => logger.error({ err }, 'Falha ao verificar o espelho de recebimentos de NF-e da ACXE'));
         verificarCopiaPcs('acxe').catch((err) => logger.error({ err }, 'Falha ao verificar a cópia de pedidos de compra da ACXE'));
@@ -80,5 +84,5 @@ export function iniciarCronsStockBridge(): void {
     },
     { timezone: 'America/Sao_Paulo' },
   );
-  logger.info('Cron registrado: alerta-espelho-recebimentos + cópia de PCs + cache de PCs vistos, Q2P e ACXE (5,35 * * * * BR)');
+  logger.info('Cron registrado: alerta-espelho-recebimentos + cópia de PCs + cache de PCs vistos + avisos de PC baixado acima da nota, Q2P e ACXE (5,35 * * * * BR)');
 }
