@@ -107,6 +107,12 @@ services:
       # oferecido e a NF e recusada; converter = o EDITAR manda a quantidade recebida ja na unidade do
       # PC (o OMIE baixa o pedido na unidade da NF sem converter — NF 60199 x PC 306, 22/10/2026).
       STOCKBRIDGE_PC_UNIDADE_DIFERENTE: ${STOCKBRIDGE_PC_UNIDADE_DIFERENTE:-bloquear}
+      # Baixa do PC pelo peso conferido (research D20 da 017): o peso da balanca acima da NF vai como
+      # quantidade recebida no fiscal, com teto no saldo do PC (NF 67988 x PC 305, 23/10/2026). Default
+      # false; exige a migration 0059 antes da imagem; ligar com o primeiro uso acompanhado.
+      STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO: ${STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO:-false}
+      # Excedente acima deste % da NF do item nao vai ao PC (provavel erro de digitacao).
+      STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT: ${STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT:-10}
       # Feature 017, Historia 5: NF de compra nacional da ACXE na fila (default false). So vale com
       # STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED=true e com o corte da ACXE (YYYY-MM-DD, definido na ativacao;
       # a ACXE recebe hoje pelo portal com estoque e NF anterior ao corte nunca entra na fila).

@@ -9,6 +9,7 @@ Chaves:
 - `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED` (a da 016). Desligada: sem sugestão, sem vínculo e sem fiscal pelo Atlas. **Continuam ativos** o PC vinculado à vista nas NFs com fiscal já feito (FR-021) e o bloqueio de estoque já lançado pelo OMIE (FR-021a).
 - `STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC` (default `true`): regra para NF sem PC (D6).
 - `STOCKBRIDGE_PC_UNIDADE_DIFERENTE` (default `bloquear`): PC em unidade diferente da NF (D15). `converter` só depois de teste com NF real.
+- `STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO` (default `false`, D20): o peso conferido acima da NF vai como `itensAjustes.nQtdeRecebida` no `EDITAR`, com teto no saldo do PC; excedente acima de `STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT` (default 10%) da NF do item não vai (provável erro de digitação). O corpo e as respostas do POST não mudam. Rejeição do gestor depois disso avisa compras por e-mail.
 - `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED` (default `false`): NFs da ACXE na fila (História 5, §8). Só vale com a chave da 016 e com `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_DATA_CORTE`; sem elas a ACXE fica de fora (log e health) e a fila da Q2P segue normal.
 
 Mensagens ao operador identificam a NF, o fornecedor e o PC pelo **número** (ex.: "PC 304"). Nunca mostram `nCodPed`, `nIdReceb` ou códigos de 10 dígitos (ACXEGDP-313).

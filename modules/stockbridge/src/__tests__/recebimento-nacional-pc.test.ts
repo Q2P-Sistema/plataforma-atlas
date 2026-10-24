@@ -326,6 +326,26 @@ describe('escolha do PC no portao 1 (T023)', () => {
     expect(input.vinculos[0]).toMatchObject({ unidadeNf: 'TON', fatorUnidadeNf: 1000 });
   });
 
+  // Research D20: o peso conferido do item inteiro vai na escolha validada (a releitura decide o que vai ao PC).
+  it('sem divergencia: a escolha validada leva o peso conferido igual ao da NF', async () => {
+    await processarRecebimentoNacionalPorNf(post({ n_cod_ped: PC304.nCodPed, n_cod_item: PC304.nCodItem }));
+    const input = spies.fiscal.mock.calls[0]![0] as { vinculos: Array<Record<string, unknown>> };
+    expect(input.vinculos[0]).toMatchObject({ qtdNfKg: 18000, qtdConferidaKg: 18000 });
+  });
+
+  it('peso a mais com motivo: a escolha validada leva o peso da balanca do item (18.500), nao a NF', async () => {
+    const corpo = post({ n_cod_ped: PC304.nCodPed, n_cod_item: PC304.nCodItem });
+    corpo.itens[0] = {
+      ...corpo.itens[0]!,
+      quantidadeConferidaKg: 18500,
+      motivoDivergencia: '9 paletes fechados de 1.500 kg mais sobra',
+      produtos: [{ produtoCodigoQ2p: 3033097757, quantidadeKg: 18500, localidadeId: LOC_A }],
+    } as (typeof corpo.itens)[number];
+    await processarRecebimentoNacionalPorNf(corpo);
+    const input = spies.fiscal.mock.calls[0]![0] as { vinculos: Array<Record<string, unknown>> };
+    expect(input.vinculos[0]).toMatchObject({ qtdNfKg: 18000, qtdConferidaKg: 18500 });
+  });
+
   it('NF em kg: unidadeNf KG e fator 1 no que vai ao fiscal', async () => {
     await processarRecebimentoNacionalPorNf(post({ n_cod_ped: PC304.nCodPed, n_cod_item: PC304.nCodItem }));
     const input = spies.fiscal.mock.calls[0]![0] as { vinculos: Array<Record<string, unknown>> };

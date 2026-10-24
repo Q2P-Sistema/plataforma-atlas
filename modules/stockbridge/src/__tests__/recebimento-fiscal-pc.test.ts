@@ -313,7 +313,7 @@ let marcacoes: Marcacao[] = [];
  * UPDATEs por reserva no ja_concluido da RECONSULTA apos falha com escrita (fecharVinculosJaConcluido).
  * Na PRIMEIRA consulta nao ha nenhum: nada foi reservado (achado fiscal-03).
  */
-let reservasFechadas: Array<{ id: string; para: string }> = [];
+let reservasFechadas: Array<{ id: string; para: string; kg?: string | null }> = [];
 /** SQL que o harness nao conhece: o afterEach exige lista vazia (nada passa despercebido). */
 let sqlNaoReconhecido: string[] = [];
 let insertFalha: unknown = null;
@@ -340,6 +340,8 @@ const registro = (p: unknown[]) => ({
 });
 
 function responder(sql: string, params: unknown[] = []) {
+  // coluna kg_recebido_pc da 0059 (research D20): banco migrado
+  if (sql.includes('information_schema')) return { rows: [{ ok: true }] };
   // A tabela filha vem PRIMEIRO: 'UPDATE stockbridge.recebimento_fiscal' e prefixo de '..._pc'.
   if (sql.includes('stockbridge.recebimento_fiscal_pc')) {
     if (/^\s*SELECT/.test(sql)) {
@@ -357,7 +359,8 @@ function responder(sql: string, params: unknown[] = []) {
     if (sql.includes('WHERE id = $1 AND status IN')) {
       const [id, para] = params as [string, string];
       ordem.push(`pc:reserva-${para}`);
-      reservasFechadas.push({ id, para });
+      // 3o parametro so quando o fechamento confere a quantidade viva (revisao da D20, achado 6b)
+      reservasFechadas.push(params.length > 2 ? { id, para, kg: params[2] as string | null } : { id, para });
       if (reservaFechaLanca) throw new Error('connection terminated');
       return { rows: [] };
     }
@@ -2272,6 +2275,45 @@ describe('instanteConclusaoOmie — dRec + hRec do recebimento (horário de Bras
   });
 });
 
+// ── Peso conferido acima da NF (research D20, NF 67988 x PC 305): nQtdeRecebida no EDITAR ─────────────
+//
+// Com STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO ligada, a reserva devolve nQtdeRecebida = peso conferido (com teto no
+// saldo, provado em pc-peso-conferido-reserva.test.ts) tambem na MESMA unidade. O EDITAR e o mesmo mecanismo do
+// modo converter: a chave nQtdeRecebida so nas sequencias que a reserva definiu.
+describe('concluirRecebimentoFiscal com PC — peso conferido acima da NF vai como nQtdeRecebida (research D20)', () => {
+  const reservasComPeso = (qtdPorSeq: Record<number, number | null>) =>
+    relerSpy.mockImplementationOnce(async (a: { escolhas: EscolhaPcValidada[] }) => {
+      ordem.push('pc:reler');
+      return reservasDe(a.escolhas).map((r) => ({ ...r, nQtdeRecebida: qtdPorSeq[r.nSequencia] ?? null, kgRecebidoPc: qtdPorSeq[r.nSequencia] ?? null }));
+    });
+
+  it('item sem vínculo (NF 67988): ASSOCIAR-PEDIDO e EDITAR com a quantidade recebida = 13.500 kg da balança', async () => {
+    consultaUnica({ itens: [itemRec(1, { nQtdeNFe: 13382 })] });
+    reservasComPeso({ 1: 13500 });
+    await concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304, { qtdNfKg: 13382, qtdConferidaKg: 13500, kgPorSequencia: { 1: 13382 } })] }));
+    expect(acoesPorChamada()).toEqual([['ASSOCIAR-PEDIDO'], ['EDITAR']]);
+    expect(chamadasAlterar()[1]!.itens[0]!.itensAjustes).toEqual({ cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', nQtdeRecebida: 13500 });
+    expect(concluirSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('vínculo vivo = escolhido com os ajustes já aplicados, mas o OMIE com a quantidade da NF (13.382): o EDITAR roda para mandar 13.500', async () => {
+    consultaUnica({ itens: [itemRec(1, { ...vinculadoA(PC304), ...comAjustes, nQtdeNFe: 13382, nQtdeRecebida: 13382 })] });
+    reservasComPeso({ 1: 13500 });
+    await concluirRecebimentoFiscal(input({ vinculos: [escolhaVendo(PC304, PC304, { origem: 'omie', qtdNfKg: 13382, qtdConferidaKg: 13500, kgPorSequencia: { 1: 13382 } })] }));
+    expect(seqsDaAcao('ASSOCIAR-PEDIDO')).toEqual([]);
+    expect(seqsDaAcao('EDITAR')).toEqual([1]);
+    expect(chamadasAlterar()[0]!.itens[0]!.itensAjustes).toEqual({ cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', nQtdeRecebida: 13500 });
+  });
+
+  it('retomada: o OMIE já tem 13.500 e os ajustes — nenhum AlterarRecebimento, só o Concluir', async () => {
+    consultaUnica({ itens: [itemRec(1, { ...vinculadoA(PC304), ...comAjustes, nQtdeNFe: 13382, nQtdeRecebida: 13500 })] });
+    reservasComPeso({ 1: 13500 });
+    await concluirRecebimentoFiscal(input({ vinculos: [escolhaVendo(PC304, PC304, { origem: 'omie' })] }));
+    expect(alterarSpy).not.toHaveBeenCalled();
+    expect(concluirSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
 // ── Trava de unidade, modo 'converter' (22/10/2026): nQtdeRecebida no EDITAR ───────────────────────
 //
 // O OMIE copia para nQtdeRec do PC a quantidade recebida do item NA UNIDADE DA NF, sem converter (NF 60199 em
@@ -2396,5 +2438,75 @@ describe('concluirRecebimentoFiscal com PC — nQtdeRecebida no EDITAR (trava de
     await concluirRecebimentoFiscal(input({ vinculos: [escolhaVendo(PC304, PC304)] }));
     expect(alterarSpy).not.toHaveBeenCalled();
     expect(ordemSemEspera()).toEqual(['ledger:insert', 'omie:consultar', 'pc:reler', 'pc:associado', 'omie:concluir', 'ledger:concluido', 'pc:concluido']);
+  });
+});
+
+// ── Revisao da D20 (achados 6a e 6b): no ja_concluido o ledger guarda o kg que o OMIE de fato baixou no PC ──
+//
+// A rejeicao do gestor so avisa compras quando kg_recebido_pc esta acima da NF. Na 1a consulta ja concluida
+// (resposta do Concluir perdida, ou portal) o valor vem da quantidade recebida viva; na reconsulta depois de
+// falha, o kg planejado so vale se o EDITAR foi aplicado — senao o ledger diria que o PC foi baixado acima da
+// nota sem isso ter acontecido.
+describe('concluirRecebimentoFiscal com PC — ja_concluido guarda o kg baixado no PC (revisao da D20)', () => {
+  const comKg = (pc: PcRef, over: Partial<EscolhaPcValidada> = {}) =>
+    escolha(pc, { candidato: { ...escolha(pc).candidato, unidade: 'KG' }, qtdNfKg: 13382, kgPorSequencia: { 1: 13382 }, ...over });
+  const kgDoRegistro = () => registros.map((p) => p[19]);
+
+  it('1a consulta ja concluida com a quantidade recebida acima da NF (13.500 x 13.382): o registro leva kg_recebido_pc', async () => {
+    consultaUnica(concluidoComEstoque({ cNaoGerarMovEstoque: 'S', nQtdeNFe: 13382, nQtdeRecebida: 13500 }));
+    const r = await concluirRecebimentoFiscal(input({ vinculos: [comKg(PC304, { origem: 'omie' })] }));
+    expect(r.status).toBe('ja_concluido');
+    expect(sqlDe('INSERT INTO stockbridge.recebimento_fiscal_pc')[0]).toContain('kg_recebido_pc');
+    expect(kgDoRegistro()).toEqual(['13500.000']);
+  });
+
+  it('1a consulta ja concluida com a quantidade da NF: kg_recebido_pc nulo (nada acima da nota)', async () => {
+    consultaUnica(concluidoComEstoque({ cNaoGerarMovEstoque: 'S', nQtdeNFe: 13382, nQtdeRecebida: 13382 }));
+    await concluirRecebimentoFiscal(input({ vinculos: [comKg(PC304, { origem: 'omie' })] }));
+    expect(kgDoRegistro()).toEqual([null]);
+  });
+
+  it('vinculo vivo diferente do escolhido (falha): kg_recebido_pc nulo — o PC escolhido nao foi baixado', async () => {
+    consultaUnica(concluidoComEstoque({ ...vinculadoA(PC302), cNaoGerarMovEstoque: 'S', nQtdeNFe: 13382, nQtdeRecebida: 13500 }));
+    await concluirRecebimentoFiscal(input({ vinculos: [comKg(PC304)] }));
+    expect(registros.map(registro)).toEqual([expect.objectContaining({ status: 'falha' })]);
+    expect(kgDoRegistro()).toEqual([null]);
+  });
+
+  describe('reconsulta depois de falha com escrita', () => {
+    const timeoutNoConcluir = (reconsulta: Record<string, unknown>) => {
+      concluirSpy.mockImplementationOnce(async () => {
+        ordem.push('omie:concluir');
+        throw new Error('timeout of 30000ms exceeded');
+      });
+      consultarSpy.mockImplementationOnce(consulta({ itens: [itemRec(1, { nQtdeNFe: 13382 })] })).mockImplementationOnce(consulta(reconsulta));
+    };
+    const reservaComPeso = () =>
+      relerSpy.mockImplementationOnce(async (a: { escolhas: EscolhaPcValidada[] }) => {
+        ordem.push('pc:reler');
+        return reservasDe(a.escolhas).map((r) => ({ ...r, nQtdeRecebida: 13500, kgRecebidoPc: 13500, kgNfSeq: 13382, fatorPc: 1 }));
+      });
+
+    it('o OMIE ficou com 13.500 (EDITAR aplicado): o fechamento confirma 13.500 kg no ledger', async () => {
+      reservaComPeso();
+      timeoutNoConcluir(concluidoSemEstoque([itemRec(1, { ...vinculadoA(PC304), ...comAjustes, nQtdeNFe: 13382, nQtdeRecebida: 13500 })]));
+      await concluirRecebimentoFiscal(input({ vinculos: [comKg(PC304)] }));
+      expect(reservasFechadas).toEqual([{ id: 'reserva-1', para: 'concluido', kg: '13500.000' }]);
+      expect(sqlDe('WHERE id = $1 AND status IN')[0]).toContain('kg_recebido_pc = $3');
+    });
+
+    it('o OMIE ficou com a NF (EDITAR nao aplicado, concluido por fora): o ledger fica sem kg — nenhum e-mail falso na rejeicao', async () => {
+      reservaComPeso();
+      timeoutNoConcluir(concluidoSemEstoque([itemRec(1, { ...vinculadoA(PC304), ...comAjustes, nQtdeNFe: 13382, nQtdeRecebida: 13382 })]));
+      await concluirRecebimentoFiscal(input({ vinculos: [comKg(PC304)] }));
+      expect(reservasFechadas).toEqual([{ id: 'reserva-1', para: 'concluido', kg: null }]);
+    });
+
+    it('reserva sem o fator do PC (chamador antigo): o fechamento nao mexe na coluna', async () => {
+      timeoutNoConcluir(concluidoSemEstoque([itemRec(1, { ...vinculadoA(PC304), ...comAjustes })]));
+      await concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304)] }));
+      expect(reservasFechadas).toEqual([{ id: 'reserva-1', para: 'concluido' }]);
+      expect(sqlDe('WHERE id = $1 AND status IN')[0]).not.toContain('kg_recebido_pc');
+    });
   });
 });

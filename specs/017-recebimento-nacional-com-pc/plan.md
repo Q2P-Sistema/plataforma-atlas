@@ -27,7 +27,7 @@ Desde 19/10/2026, compras lança pedido de compra (PC) no OMIE para a compra nac
 - O teste da NF 7813 mostrou que `EDITAR` preserva o vínculo, que `Concluir` gera a conta a pagar sem movimentar estoque e que o OMIE atualiza sozinho o `nQtdeRec` do PC. O Atlas não precisa mexer no PC.
 - O n8n que espelha PCs da ACXE na Q2P ignora PC nacional (ACXEGDP-376). Por isso não há PC na Q2P na compra nacional pela ACXE.
 - `ConsultarPedCompra` tem cache de cerca de 1 minuto, daí a regra "PC recém-usado".
-- O vínculo novo pela API (`ASSOCIAR-PEDIDO`) foi **testado com NF real em 22/10/2026** (T033, NF 60199) e aceito, inclusive com PC de outro cadastro do mesmo fornecedor. Faltam a troca de um vínculo existente e a NF menor que o saldo do PC.
+- O vínculo novo pela API (`ASSOCIAR-PEDIDO`) foi **testado com NF real em 22/10/2026** (T033, NF 60199) e aceito, inclusive com PC de outro cadastro do mesmo fornecedor. Falta a troca de um vínculo existente. A NF menor que o saldo do PC foi confirmada em 23/10/2026 (NF 67988, D20): o OMIE aceita, e o PC fica "recebido parcialmente", com o saldo em aberto.
 - O OMIE grava no PC a quantidade recebida **na unidade da NF**, sem converter (NF em toneladas × PC em kg). Daí a trava de unidade (D15).
 - O OMIE tira da lista de pendentes o PC com item associado a um recebimento aberto. Daí o cache de PCs vistos (D16).
 
@@ -74,6 +74,7 @@ Desde 19/10/2026, compras lança pedido de compra (PC) no OMIE para a compra nac
 - `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED` (default `false`);
 - `STOCKBRIDGE_COPIA_PCS_MAX_MIN` (default 120);
 - `STOCKBRIDGE_PC_UNIDADE_DIFERENTE` (default `bloquear`, 22/10/2026).
+- `STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO` (default `false`, 23/10/2026, research D20; migration 0059) e `STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT` (default 10).
 
 Todas no schema Zod de `packages/core/src/config.ts` e listadas nas stacks (`atlas.stack.yml`, YAML do UAT, `.env.example`). Reaproveitada: `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED`.
 
@@ -94,7 +95,7 @@ Todas no schema Zod de `packages/core/src/config.ts` e listadas nas stacks (`atl
 
 **Scale/Scope**:
 - Volume: cerca de 3 PCs nacionais por dia na Q2P (19 a 21/10), zero na ACXE; fila nacional de unidades por dia.
-- Mudanças: cerca de 8 arquivos de backend estendidos e 3 novos (com `pc-visto.service.ts`), 3 migrations (0056, 0057 e, na Fase 2, 0058), 3 arquivos do cliente OMIE, 1 tela estendida, 2 workflows n8n (1 revisão e 1 novo).
+- Mudanças: cerca de 8 arquivos de backend estendidos e 3 novos (com `pc-visto.service.ts`), 4 migrations (0056, 0057, na Fase 2 a 0058 e, para a baixa do PC pelo peso conferido, a 0059), 3 arquivos do cliente OMIE, 1 tela estendida, 2 workflows n8n (1 revisão e 1 novo).
 
 ## Constitution Check
 
@@ -119,10 +120,10 @@ Todas no schema Zod de `packages/core/src/config.ts` e listadas nas stacks (`atl
 ```text
 specs/017-recebimento-nacional-com-pc/
 ├── plan.md                                  # Este arquivo
-├── spec.md                                  # 5 histórias, FR-000..033, SC-001..011, clarificações de 21/10 e 22/10/2026
-├── research.md                              # Phase 0: 19 decisões D1..D19 (teste NF 7813, T033, gate ACXEGDP-376, cache de PCs, unidade, ACXE, quantidade recebida)
+├── spec.md                                  # 5 histórias, FR-000..034, SC-001..011, clarificações de 21/10, 22/10 e 23/10/2026
+├── research.md                              # Phase 0: 20 decisões D1..D20 (teste NF 7813, T033, gate ACXEGDP-376, cache de PCs, unidade, ACXE, quantidade recebida, peso conferido)
 ├── data-model.md                            # Phase 1: colunas do espelho, 3 tabelas novas (§11 = cache de PCs vistos), extensões, shapes
-├── quickstart.md                            # Phase 1: 10 cenários + ordem de deploy
+├── quickstart.md                            # Phase 1: 11 cenários + ordem de deploy
 ├── contracts/
 │   ├── recebimento-nacional-pc.md           # API Atlas: fila/detalhe/POST/ledger estendidos, erros novos
 │   └── espelhos-n8n.md                      # n8n: colunas de pedido (Q2P) + espelho ACXE
@@ -140,12 +141,14 @@ packages/db/
 │   │                                                  #   recebimento_fiscal_pc + trigger (dentro_tolerancia, índice de reservas);
 │   │                                                  #   nf_aviso_compras + trigger
 │   ├── 0057_stockbridge_pedido_compra_visto.sql       # NOVA (22/10/2026): cache de PCs vistos + trigger de auditoria
-│   └── 0058_stockbridge_recebimento_nacional_acxe.sql # NOVA (História 5): espelho de recebimentos ACXE;
-│                                                      #   fornecedor_exclusao.empresa (+ Q2P excluída na ACXE)
+│   ├── 0058_stockbridge_recebimento_nacional_acxe.sql # NOVA (História 5): espelho de recebimentos ACXE;
+│   │                                                  #   fornecedor_exclusao.empresa (+ Q2P excluída na ACXE)
+│   └── 0059_stockbridge_pc_peso_conferido.sql         # NOVA (23/10/2026, D20): recebimento_fiscal_pc.kg_recebido_pc;
+│                                                      #   motivo 'excedente_rejeitado' em nf_aviso_compras
 └── src/schemas/stockbridge.ts                         # ESTENDER: recebimentoFiscal (+campos), recebimentoFiscalPc,
                                                        #   nfAvisoCompras, fornecedorExclusao.empresa
 
-packages/core/src/config.ts                            # ESTENDER: 7 variáveis novas (data-model §10)
+packages/core/src/config.ts                            # ESTENDER: 9 variáveis novas (data-model §10)
 
 packages/integrations/omie/src/
 ├── stockbridge/recebimento-nfe.ts                     # ESTENDER: AcaoItemRecebimento += 'ASSOCIAR-PEDIDO'
@@ -203,7 +206,7 @@ deploy/portainer/atlas.stack.yml, YAML UAT, .env.example   # ESTENDER: variávei
 
 Quatro notas de desenho, nenhuma delas violação:
 
-**1. Teste com NF real antes de ativar.** O vínculo novo (`ASSOCIAR-PEDIDO`) foi exercitado contra o OMIE de produção, que é o único disponível, na NF 60199 (T033, 22/10/2026), e a chave foi religada depois (quickstart, pré-requisito 5). Não foram testadas a troca de um vínculo existente (plano B em D2) nem a NF menor que o saldo do PC, e o modo `converter` da trava de unidade (D15) exige o próprio teste antes de ser ligado.
+**1. Teste com NF real antes de ativar.** O vínculo novo (`ASSOCIAR-PEDIDO`) foi exercitado contra o OMIE de produção, que é o único disponível, na NF 60199 (T033, 22/10/2026), e a chave foi religada depois (quickstart, pré-requisito 5). Não foi testada a troca de um vínculo existente (plano B em D2); a NF menor que o saldo do PC foi confirmada em 23/10/2026 (NF 67988, D20). O modo `converter` da trava de unidade (D15) exige o próprio teste antes de ser ligado.
 
 **2. Religar a chave com imagem antiga reabre o problema.** A chave é a mesma da 016 por decisão do usuário. O risco operacional (ligar antes do deploy da 017) fica no quickstart e no runbook de deploy, e não em código.
 

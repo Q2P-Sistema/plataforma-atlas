@@ -149,8 +149,24 @@ const envSchema = z.object({
   // recusada (NF_SEM_PC, aviso a compras pedindo o pedido na unidade da nota);
   // 'converter' = o Atlas manda no EDITAR a quantidade recebida ja na unidade do PC
   // (itensAjustes.nQtdeRecebida — o mesmo campo que, editado no portal, corrigiu o
-  // PC 306). Ligar 'converter' depois de testar com NF real (quickstart cenario 8).
+  // PC 306). Ligar 'converter' depois de testar com NF real (quickstart cenario 10).
   STOCKBRIDGE_PC_UNIDADE_DIFERENTE: z.enum(['bloquear', 'converter']).default('bloquear'),
+  // Feature 017 (23/10/2026, NF 67988 x PC 305): o OMIE baixa o PC pela quantidade
+  // RECEBIDA do item (itensAjustes.nQtdeRecebida), que por padrao e a da NF. Ligada:
+  // quando o peso conferido passa da NF (divergencia "a mais", acima da tolerancia de
+  // 1 kg), o EDITAR do fiscal manda o peso conferido como quantidade recebida, com teto
+  // no saldo disponivel do PC — o pedido e baixado pelo que entrou de fato. Peso a menos
+  // nunca e mandado. Se o gestor rejeitar a entrada depois, compras e avisado por e-mail
+  // (o OMIE mantem a baixa). Default DESLIGADA: o campo so foi editado no portal; ligar
+  // com o primeiro uso acompanhado (quickstart cenario 11, research D20).
+  STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO: z
+    .enum(['true', 'false', '1', '0', ''])
+    .default('false')
+    .transform((v) => v === 'true' || v === '1'),
+  // Limite relativo da baixa pelo peso conferido (research D20, revisao de 23/10/2026): excedente acima
+  // deste percentual da NF do item nao vai ao PC (provavel erro de digitacao, ex.: 133.820 em vez de
+  // 13.382, com motivo); o item segue pela NF. Default 10.
+  STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT: z.coerce.number().min(0.1).max(100).default(10),
   // Feature 017, Historia 5 (ACXEGDP-437): NF de compra nacional da ACXE na mesma
   // fila, com fiscal e vinculo de PC no OMIE da ACXE e entrada de estoque no local
   // escolhido pelo operador: local que tambem e da Q2P (11.1, 12.1, 21.1, 31.1) entra

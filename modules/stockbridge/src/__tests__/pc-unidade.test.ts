@@ -696,7 +696,8 @@ const client = {
     if (s === 'BEGIN' || s === 'COMMIT' || s === 'ROLLBACK' || s.includes('pg_advisory_xact_lock')) return { rows: [] };
     if (s.startsWith('UPDATE stockbridge.recebimento_fiscal_pc')) return { rows: [], rowCount: 0 };
     if (s.includes('AS segundos')) return { rows: [] };
-    if (s.includes('SUM(qtd_nf_kg)')) return { rows: [{ kg: reservasDeOutrasNfs }] };
+    if (s.includes('SUM(COALESCE(kg_recebido_pc, qtd_nf_kg))')) return { rows: [{ kg: reservasDeOutrasNfs }] };
+    if (s.startsWith('SELECT DISTINCT n_sequencia FROM stockbridge.recebimento_fiscal_pc')) return { rows: [] };
     if (s.startsWith('INSERT INTO stockbridge.recebimento_fiscal_pc')) return { rows: [{ id: `reserva-${++seqId}` }] };
     throw new Error(`SQL inesperado no dublê do client: ${s.slice(0, 120)}`);
   }),
@@ -728,7 +729,8 @@ describe('relerEReservarPcs — trava de unidade na releitura ao vivo', () => {
     mocks.connect.mockReset();
     mocks.connect.mockResolvedValue(client);
     mocks.poolQuery.mockReset();
-    mocks.poolQuery.mockResolvedValue({ rows: [] });
+    // coluna kg_recebido_pc da 0059 presente; o resto (raiz de CNPJ) vazio
+    mocks.poolQuery.mockImplementation(async (sql: string) => (String(sql).includes('information_schema') ? { rows: [{ ok: true }] } : { rows: [] }));
     mocks.consultarPedidoCompra.mockReset();
     mocks.consultarPedidoCompra.mockResolvedValue(pedidoOmie('KG', 13750));
   });
@@ -825,10 +827,12 @@ describe('relerEReservarPcs — trava de unidade na releitura ao vivo', () => {
       expect(r.map((x) => [x.nSequencia, x.nQtdeRecebida])).toEqual([[1, 5000], [2, 3250]]);
     });
 
-    it('arredonda em 6 casas: 1.234,5678901 kg em PC de toneladas -> 1,234568', async () => {
+    // 23/10/2026 (research D20): 4 casas, a precisao com que o OMIE guarda a quantidade (antes, 6). Com 6 casas o
+    // OMIE arredondaria e a retomada nunca reconheceria o EDITAR ja aplicado.
+    it('arredonda em 4 casas, como o OMIE guarda: 1.234,5678901 kg em PC de toneladas -> 1,2346', async () => {
       mocks.consultarPedidoCompra.mockResolvedValue(pedidoOmie('TON', 13.75));
       const r = await reservar([escolhaValidada({ unidadeNf: 'KG', fatorUnidadeNf: 1, qtdNfKg: 1234.5678901, kgPorSequencia: { 1: 1234.5678901 } })]);
-      expect(r[0]!.nQtdeRecebida).toBe(1.234568);
+      expect(r[0]!.nQtdeRecebida).toBe(1.2346);
     });
 
     it('sequência sem kg informado: 0 (nunca NaN)', async () => {

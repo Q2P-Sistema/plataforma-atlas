@@ -32,6 +32,7 @@ import {
 import { incluirAjusteIdempotente } from './omie-idempotente.js';
 import { resolverDescricaoProdutoAcxe } from './produto-descricao.js';
 import { dispararBaixaPedidoQ2p } from './baixa-pedido.service.js';
+import { avisarComprasSeRejeitouExcedente } from './pc-peso-conferido.service.js';
 
 // Historia 5 (ACXEGDP-437): helper unico da "entrada nas duas empresas" (aprovacao, retry e listagens).
 export { entradaNacionalEspelhada };
@@ -853,10 +854,23 @@ export async function rejeitar(input: RejeitarInput): Promise<{ id: string }> {
       loteId: ap.loteId ?? ap.movimentacaoId ?? '',
       temLote: ap.loteId !== null,
       tipoAprovacao: ap.tipoAprovacao,
+      movimentacaoId: ap.movimentacaoId,
     };
   });
 
   logger.info({ aprovacaoId: input.id, perfilUsuario: input.perfilUsuario }, 'Aprovação rejeitada');
+
+  // Feature 017 (research D20): entrada nacional rejeitada depois de o PC ser baixado pelo peso
+  // conferido acima da NF — a rejeicao nao desfaz a baixa no OMIE; compras e avisado. Fora da
+  // transacao e sem esperar: so ha e-mail quando o ledger mostra quantidade recebida acima da NF.
+  if (resultado.tipoAprovacao === 'entrada_manual' && resultado.movimentacaoId) {
+    void avisarComprasSeRejeitouExcedente({
+      aprovacaoId: input.id,
+      movimentacaoId: resultado.movimentacaoId,
+      motivo: input.motivo,
+      usuarioId: input.usuarioId,
+    });
+  }
 
   // Notifica o operador que lancou a divergencia/saida (fora da transacao)
   void enviarNotificacaoRejeicaoOperador({
