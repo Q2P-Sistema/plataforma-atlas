@@ -117,7 +117,10 @@ describe('getFilaNacional — exclusoes obrigatorias (T026)', () => {
     expect(sql).toContain("CASE upper(btrim(u.u_com)) WHEN 'KG' THEN 1 WHEN 'TON' THEN 1000 WHEN 'TL' THEN 1000 END");
     expect(sql).toContain('SUM(m.quantidade_nf_kg)');
     expect(sql).toContain('m.nf_item_descricao_normalizada = upper(regexp_replace(btrim(unaccent(u.x_prod))');
-    expect(sql).toMatch(/NOT recebido\s+OR \(nf_kg IS NOT NULL AND nf_atribuida > 0 AND nf_atribuida < nf_kg - 1\)/);
+    // restante > 1 kg ate uma das quantidades oficiais (nota de entrada ou XML, D19 da 017) mantem o item pendente;
+    // sem XML as duas sao iguais e vale a regra de antes (nf_atribuida < nf_kg - 1)
+    expect(sql).toMatch(/NOT recebido\s+OR \(nf_kg IS NOT NULL AND nf_atribuida > 0 AND GREATEST\(0, LEAST\(/);
+    expect(sql).toContain('CASE WHEN nf_kg >= nf_atribuida - 1 THEN nf_kg - nf_atribuida END');
     // legado (match por numero, sem parcela): nf_atribuida = 0 -> NAO reentra pela regra do restante
     expect(sql).toContain("m.subtipo = 'compra_nacional'");
   });

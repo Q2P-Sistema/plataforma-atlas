@@ -5,7 +5,9 @@
                CASE WHEN COALESCE(rv.n_id_pedido, 0) > 0 THEN rv.n_id_it_pedido END AS n_id_it_pedido,
                NULLIF(btrim(rv.n_num_ped_compra), '')                                  AS n_num_ped_compra,
                rv.c_associar_existente, rv.c_ignorar_item, rv.c_nao_gerar_mov_estoque,
-               rv.c_recebido                                        AS receb_recebido
+               rv.c_recebido                                        AS receb_recebido,
+               rv.n_qtde_nfe                                        AS q_com_xml,  -- a nota de entrada traz a quantidade RECEBIDA
+               rv.c_unidade_nfe                                     AS u_com_xml
         FROM (
           SELECT h.c_chave_nfe, h.n_nf, h.dest_razao, h.dest_cnpj_cpf, h.d_emi::date AS d_emi,
                  h.n_id_receb::bigint                                 AS n_id_receb,
@@ -61,6 +63,8 @@
       u.cfop                                           AS cfop,
       u.q_com::float8                                  AS q_com,
       u.u_com                                          AS u_com,
+      u.q_com_xml::float8                              AS q_com_xml,
+      u.u_com_xml                                      AS u_com_xml,
       u.valor_item::float8                             AS valor_item,  -- D26: NAO v_tot_item
       (
     EXISTS (SELECT 1 FROM stockbridge.movimentacao m

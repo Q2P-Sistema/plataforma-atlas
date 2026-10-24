@@ -4,7 +4,9 @@ WITH nf_unificada AS (
                CASE WHEN COALESCE(rv.n_id_pedido, 0) > 0 THEN rv.n_id_it_pedido END AS n_id_it_pedido,
                NULLIF(btrim(rv.n_num_ped_compra), '')                                  AS n_num_ped_compra,
                rv.c_associar_existente, rv.c_ignorar_item, rv.c_nao_gerar_mov_estoque,
-               rv.c_recebido                                        AS receb_recebido
+               rv.c_recebido                                        AS receb_recebido,
+               rv.n_qtde_nfe                                        AS q_com_xml,  -- a nota de entrada traz a quantidade RECEBIDA
+               rv.c_unidade_nfe                                     AS u_com_xml
         FROM (
           SELECT h.c_chave_nfe, h.n_nf, h.dest_razao, h.dest_cnpj_cpf, h.d_emi::date AS d_emi,
                  h.n_id_receb::bigint                                 AS n_id_receb,
@@ -60,7 +62,9 @@ WITH nf_unificada AS (
                CASE WHEN COALESCE(ri.n_id_pedido, 0) > 0 THEN ri.n_id_it_pedido END AS n_id_it_pedido,
                NULLIF(btrim(ri.n_num_ped_compra), '')                                  AS n_num_ped_compra,
                ri.c_associar_existente, ri.c_ignorar_item, ri.c_nao_gerar_mov_estoque,
-               r.c_recebido                                         AS receb_recebido
+               r.c_recebido                                         AS receb_recebido,
+               ri.n_qtde_nfe                                        AS q_com_xml,
+               ri.c_unidade_nfe                                     AS u_com_xml
         FROM public."tbl_recebimentoNFe_Q2P" r
         JOIN public."tbl_recebimentoNFe_itens_Q2P" ri ON ri.n_id_receb = r.n_id_receb
         WHERE r.d_emissao >= $2::date
