@@ -499,11 +499,13 @@ function LegendaPc({ dica }: { dica?: ReactNode }) {
   );
 }
 
-/** O item segue o pedido escolhido na nota: a linha compacta mostra qual e deixa trocar. */
+/** O item segue o pedido escolhido na nota (ou espera a escolha dela): a linha compacta so deixa trocar. */
 export interface PcCompactoNota {
   pcNumero: string;
   /** produto do item do PC atribuido a este item ('' quando o servidor nao o informa) */
   produtoDescricao: string;
+  /** nenhum pedido marcado na nota ainda: o item vai seguir o que for escolhido nela (`pcNumero`/`produtoDescricao` vazios) */
+  aguardandoNota?: boolean;
 }
 
 interface PedidoCompraBlocoProps {
@@ -520,8 +522,8 @@ interface PedidoCompraBlocoProps {
   /** lista local de PCs desatualizada: sem sugestao confiavel */
   copiaDefasada: boolean;
   /**
-   * A escolha efetiva do item e a atribuicao do PC escolhido na nota: so a linha "PC 306 · produto · Trocar"; as opcoes
-   * abrem ao clicar em "Trocar".
+   * A escolha efetiva do item e a atribuicao do PC escolhido na nota, ou o item espera a escolha da nota (`aguardandoNota`):
+   * so o link "Usar outro pedido de compra neste item"; as opcoes abrem ao clicar nele.
    */
   compactoNota?: PcCompactoNota | null;
   /** a justificativa deste item e a da nota (um unico campo no bloco da nota): o campo por item nao aparece */
@@ -721,8 +723,13 @@ export function PedidoCompraBloco({
   // A lista de opcoes fica SEMPRE na mesma posicao da arvore (so o `hidden` e a linha compacta mudam): se ela fosse remontada ao
   // alternar entre compacto e aberto, o radio que o operador acabou de marcar perderia o foco.
   const produto = compactoNota?.produtoDescricao.trim() ?? '';
+  const hojeSr = compactoNota?.aguardandoNota ? 'segue o pedido de compra escolhido na nota' : `hoje: ${rotuloPc(compactoNota?.pcNumero)}${produto ? `, ${produto}` : ''}`;
+  // o alerta do vinculo do OMIE (fora da tolerancia, pedido-espelho, linhas divergentes...) mora na linha do vinculo, dentro das
+  // opcoes; com elas fechadas ele aparece aqui, para a escolha na nota nao esconder o aviso
+  const alertaCompacto = compacto && !trocando ? (pc.alertaVinculoOmie ?? '').trim() : '';
   return (
     <div ref={raiz} className={compacto ? 'mt-3' : undefined}>
+      {alertaCompacto && <div className={`mb-2 ${AVISO_AMBAR}`}>{alertaCompacto}</div>}
       <div className={compacto && trocando ? 'rounded border border-atlas-border' : undefined}>
         {compactoNota && (
           <button
@@ -736,8 +743,7 @@ export function PedidoCompraBloco({
             {trocando ? 'Fechar os pedidos de compra deste item' : 'Usar outro pedido de compra neste item'}
             <span className="sr-only">
               {' '}
-              {descricaoItem} (hoje: {rotuloPc(compactoNota.pcNumero)}
-              {produto ? `, ${produto}` : ''})
+              {descricaoItem} ({hojeSr})
             </span>
           </button>
         )}
