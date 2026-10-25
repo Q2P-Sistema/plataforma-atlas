@@ -908,6 +908,20 @@ function DetalheSection({
   const pcEscolhidoNf = pcNfDisponivel ? pcDaNfEscolhido(pcsDaNf, estadoPcItens) : null;
   /** item a receber coberto pelo pedido marcado -> atribuicao dele */
   const atribuicaoNf = new Map((pcEscolhidoNf?.itens ?? []).filter((a) => indicesRecebiveis.has(a.indice)).map((a) => [a.indice, a] as const));
+  /**
+   * Linha compacta do PC no item ("Usar outro pedido de compra neste item"): o item segue o pedido marcado na nota, ou nenhum
+   * pedido esta marcado ainda e algum pedido da nota atende o item sem que ele tenha escolha propria. Nesse segundo caso a
+   * escolha e feita no bloco da nota — antes, as mesmas opcoes apareciam tambem no item (NF 19252, 25/10/2026).
+   */
+  const compactoNotaDoItem = (it: ItemNf): PcCompactoNota | null => {
+    const atribuicao = atribuicaoNf.get(it.indice);
+    if (pcEscolhidoNf && atribuicao) return { pcNumero: pcEscolhidoNf.pcNumero, produtoDescricao: atribuicao.produtoDescricao ?? '' };
+    const atendidoPelaNota = pcsDaNf.some((p) => (p.itens ?? []).some((a) => a.indice === it.indice));
+    if (pcNfDisponivel && pcEscolhidoNf == null && it.pc && atendidoPelaNota && pcEscolhaEfetiva(it.pc, escolhaFormDoItem(it)) == null) {
+      return { pcNumero: '', produtoDescricao: '', aguardandoNota: true };
+    }
+    return null;
+  };
   /** uma so justificativa por nota: gravada em `pcJustificativa` de todos os itens cobertos */
   const justNotaInfo = pcJustificativaDaNota(pcEscolhidoNf, estadoPcItens);
   const modoJustNota = pcEscolhidoNf != null && justNotaInfo.obrigatoria;
@@ -1468,11 +1482,7 @@ function DetalheSection({
                 copiaPcsDefasada={copiaPcsDefasada}
                 escolhaPcForm={escolhaFormDoItem(it)}
                 justificativaPc={justificativaPcDoItem(it)}
-                pcCompactoNota={
-                  pcEscolhidoNf && atribuicaoNf.has(it.indice)
-                    ? { pcNumero: pcEscolhidoNf.pcNumero, produtoDescricao: atribuicaoNf.get(it.indice)?.produtoDescricao ?? '' }
-                    : null
-                }
+                pcCompactoNota={compactoNotaDoItem(it)}
                 justificativaNaNota={itemNaJustNota(it)}
                 pcSemTrocaNoItem={recebiveis.length === 1 && pcsDaNf.length === 1}
               />
@@ -1773,7 +1783,7 @@ function ItemCard({
   escolhaPcForm: PcRef | null | undefined;
   /** feature 017: texto de justificativa que vale para o item (o da nota, quando ele segue o pedido escolhido na nota) */
   justificativaPc: string;
-  /** PC por NF: o item segue o pedido escolhido na nota (so o link "Usar outro pedido de compra neste item") */
+  /** PC por NF: o item segue o pedido escolhido na nota, ou espera a escolha dela (so o link "Usar outro pedido de compra neste item") */
   pcCompactoNota?: PcCompactoNota | null;
   /** PC por NF: a justificativa deste item e a unica da nota (o campo por item nao aparece) */
   justificativaNaNota?: boolean;
@@ -1866,8 +1876,9 @@ function ItemCard({
         </div>
       )}
 
-      {/* Item coberto pelo pedido da nota: o bloco "Pedido de compra da nota" ja mostra o PC e a ligacao item -> item do PC; no
-          item fica so o link "Usar outro pedido de compra neste item", e nem ele na nota de um item e um PC (usuario, 22/10/2026). */}
+      {/* Item coberto pelo pedido da nota (escolhido ou ainda por escolher): o bloco "Pedido de compra da nota" ja mostra o PC e a
+          ligacao item -> item do PC; no item fica so o link "Usar outro pedido de compra neste item", e nem ele na nota de um item
+          e um PC (usuario, 22/10/2026). */}
       {editavel && pcAtivo && pcDoItem && !(pcCompactoNota && pcSemTrocaNoItem) && (
         <PedidoCompraBloco
           pc={pcDoItem}
