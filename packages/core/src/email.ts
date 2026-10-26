@@ -1,4 +1,5 @@
 import { getAmbiente, getConfig, type Ambiente, type Env } from './config.js';
+import { montarAssuntoQ2P, montarEmailQ2P } from './email-q2p.js';
 import { createLogger } from './logger.js';
 
 const logger = createLogger('email');
@@ -9,6 +10,11 @@ export const SENDGRID_TIMEOUT_MS = 20_000;
 export interface EmailOptions {
   to: string;
   cc?: string | string[];
+  /**
+   * Cópia oculta (ACXEGDP-440): quem acompanha sem ser o assunto dele, como o Gestor do Sistema
+   * Integrador onde antes ia em cópia fixa.
+   */
+  bcc?: string | string[];
   subject: string;
   html: string;
   text?: string;
@@ -32,14 +38,39 @@ function chaveSendgrid(config: Env): string | undefined {
     : config.SENDGRID_API_KEY;
 }
 
+/** Endereços sem espaços sobrando, sem vazios e sem repetição (sem diferenciar maiúsculas). */
+function listaEnderecos(valor: string | string[] | undefined): string[] {
+  const unicos = new Map<string, string>();
+  for (const item of Array.isArray(valor) ? valor : valor ? [valor] : []) {
+    const endereco = typeof item === 'string' ? item.trim() : '';
+    if (endereco && !unicos.has(endereco.toLowerCase())) unicos.set(endereco.toLowerCase(), endereco);
+  }
+  return Array.from(unicos.values());
+}
+
+/**
+ * Para, Cc e Cco como o SendGrid aceita: ele retorna 400 se o mesmo endereço
+ * aparece duas vezes entre `to`, `cc` e `bcc` da mesma personalização. Acontece
+ * quando STOCKBRIDGE_ADMIN_CC_EMAIL é o mesmo do operador alvo (caso comum no
+ * início do roll-out, onde o admin atua como operador também). Vale o campo mais
+ * visível: quem está em Para sai do Cc e do Cco; quem está em Cc sai do Cco.
+ */
+function destinatarios(options: EmailOptions): { to: string; cc: string[]; bcc: string[] } {
+  const to = options.to.trim();
+  const cc = listaEnderecos(options.cc).filter((c) => c.toLowerCase() !== to.toLowerCase());
+  const visiveis = new Set([to, ...cc].map((e) => e.toLowerCase()));
+  const bcc = listaEnderecos(options.bcc).filter((b) => !visiveis.has(b.toLowerCase()));
+  return { to, cc, bcc };
+}
+
 /**
  * Reescreve o e-mail para a caixa de desvio: assunto com o ambiente e uma faixa
- * no topo dizendo para quem ele iria. O CC original não é enviado.
+ * no topo dizendo para quem ele iria. O CC e o CCO originais não são enviados.
  */
 export function desviarEmail(options: EmailOptions, para: string, ambiente: Ambiente): EmailOptions {
-  const cc = options.cc ? (Array.isArray(options.cc) ? options.cc : [options.cc]) : [];
+  const { to, cc, bcc } = destinatarios(options);
   const rotulo = ambiente.toUpperCase();
-  const aviso = `E-mail de teste (${rotulo}). Iria para ${options.to}${cc.length > 0 ? `, com cópia para ${cc.join(', ')}` : ''}.`;
+  const aviso = `E-mail de teste (${rotulo}). Iria para ${to}${cc.length > 0 ? `, com cópia para ${cc.join(', ')}` : ''}${bcc.length > 0 ? `, com cópia oculta para ${bcc.join(', ')}` : ''}.`;
   const avisoHtml = `<div style="background:#fef3c7;border-bottom:1px solid #f59e0b;color:#78350f;font:13px Arial,Helvetica,sans-serif;padding:10px 16px;">${escapeHtml(aviso)}</div>`;
   const html = /<body[^>]*>/i.test(options.html)
     ? options.html.replace(/<body[^>]*>/i, (tag) => tag + avisoHtml)
@@ -59,7 +90,7 @@ export async function sendEmail(original: EmailOptions): Promise<void> {
   // ACXEGDP-405: fora de produção nenhum e-mail chega a usuário real.
   if (modo === 'suprimido') {
     logger.info(
-      { to: original.to, cc: original.cc, subject: original.subject },
+      { to: original.to, cc: original.cc, bcc: original.bcc, subject: original.subject },
       '[UAT] E-mail não enviado — defina EMAIL_DESVIO_PARA para recebê-lo numa caixa de testes',
     );
     return;
@@ -68,21 +99,16 @@ export async function sendEmail(original: EmailOptions): Promise<void> {
     ? desviarEmail(original, config.EMAIL_DESVIO_PARA, getAmbiente(config))
     : original;
 
-  // SendGrid retorna 400 se o mesmo endereco aparece em `to` e `cc` da mesma
-  // personalizacao. Acontece quando STOCKBRIDGE_ADMIN_CC_EMAIL e o mesmo do
-  // operador alvo (caso comum no inicio do roll-out, onde o admin atua como
-  // operador tambem). Filtra antes de enviar.
-  const toLower = options.to.toLowerCase();
-  const ccList = options.cc ? (Array.isArray(options.cc) ? options.cc : [options.cc]) : [];
-  const ccFiltered = ccList.filter((c) => c.toLowerCase() !== toLower);
-  const cc = ccFiltered.length > 0 ? ccFiltered : undefined;
+  const { to, cc: ccLista, bcc: bccLista } = destinatarios(options);
+  const cc = ccLista.length > 0 ? ccLista : undefined;
+  const bcc = bccLista.length > 0 ? bccLista : undefined;
 
   const apiKey = chaveSendgrid(config);
   if (!apiKey || !config.SENDGRID_FROM_EMAIL) {
     // Dev fallback: log instead of sending
     logger.info(
-      { to: options.to, cc, subject: options.subject },
-      `[DEV EMAIL] Would send email to ${options.to}`,
+      { to, cc, bcc, subject: options.subject },
+      `[DEV EMAIL] Would send email to ${to}`,
     );
     logger.info({ html: options.html }, '[DEV EMAIL] Content');
     return;
@@ -95,33 +121,19 @@ export async function sendEmail(original: EmailOptions): Promise<void> {
   sgMail.default.setTimeout(SENDGRID_TIMEOUT_MS);
 
   await sgMail.default.send({
-    to: options.to,
+    to,
     cc,
-    // EML-21: remetente com nome amigável (alinha ao padrão dos workflows n8n).
+    bcc,
+    // ACXEGDP-440: o mesmo remetente dos fluxos do n8n (EML-21 usava "Plataforma Atlas").
     // O guard acima já estreitou SENDGRID_FROM_EMAIL para string.
-    from: { email: config.SENDGRID_FROM_EMAIL, name: 'Plataforma Atlas' },
+    from: { email: config.SENDGRID_FROM_EMAIL, name: 'Sistema Integrador Q2P' },
     subject: options.subject,
     html: options.html,
     text: options.text,
   });
 
-  logger.info({ to: options.to, cc, subject: options.subject }, 'Email sent');
+  logger.info({ to, cc, bcc, subject: options.subject }, 'Email sent');
 }
-
-const ATLAS_ASSINATURA = 'E-mail automático gerado pela Plataforma Atlas · ACXE + Q2P';
-
-/**
- * Cor do header por semântica — mesma paleta dos e-mails dos workflows n8n
- * (ACXEGDP-294), para que toda a comunicação da empresa tenha a mesma cara.
- */
-export type EmailVariante = 'info' | 'sucesso' | 'erro' | 'alerta';
-
-const VARIANTE_COR: Record<EmailVariante, string> = {
-  info: '#1f2937',
-  sucesso: '#065f46',
-  erro: '#991b1b',
-  alerta: '#9a3412',
-};
 
 /**
  * Escapa texto dinâmico (nome de produto, motivo do operador, mensagem de erro
@@ -138,119 +150,28 @@ export function escapeHtml(value: string | number | null | undefined): string {
     .replace(/'/g, '&#39;');
 }
 
-export interface EmailLayoutOptions {
-  /** Título exibido no topo do corpo (texto puro — será escapado). */
-  titulo: string;
-  /**
-   * HTML já montado do corpo (parágrafos, listas, tabelas de dados). Todo valor
-   * dinâmico embutido aqui deve passar por escapeHtml() antes.
-   */
-  corpoHtml: string;
-  /**
-   * Semântica do e-mail — define a cor do header (ACXEGDP-294). Default 'info'.
-   * 'sucesso' verde · 'erro' vermelho · 'alerta' âmbar · 'info' neutro.
-   */
-  variante?: EmailVariante;
-  /** Rótulo do botão de ação (CTA). Requer ctaUrl. */
-  ctaLabel?: string;
-  /** URL do botão de ação. */
-  ctaUrl?: string;
-  /** Versão texto puro; se ausente, é derivada do título + corpo. */
-  textoAlternativo?: string;
-}
-
 /**
- * Card de dados chave→valor no padrão estético (#f9fafb, ACXEGDP-294). Substitui
- * `<ul><li>` cru. Rótulos e valores são escapados; itens com valor vazio/nulo
- * são omitidos (evita "Fornecedor: —" e cards vazios — EML-04/05).
+ * Recuperação de senha (E22 da ACXEGDP-440). O link vale 1 hora (RESET_TOKEN_TTL_MS em auth.routes) e
+ * só pode ser usado uma vez (o token é apagado na troca).
  */
-export function emailDataList(
-  items: Array<{ label: string; valor: string | number | null | undefined }>,
-): string {
-  const rows = items
-    .filter((i) => i.valor !== '' && i.valor !== null && i.valor !== undefined)
-    .map(
-      (i) =>
-        `<tr><td style="padding:6px 0;color:#6b7280;font-size:13px;vertical-align:top;white-space:nowrap;">${escapeHtml(i.label)}</td><td style="padding:6px 0 6px 20px;color:#111827;font-size:14px;font-weight:600;">${escapeHtml(i.valor)}</td></tr>`,
-    )
-    .join('');
-  if (!rows) return '';
-  return `<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 16px;margin:16px 0;"><table role="presentation" width="100%" style="border-collapse:collapse;"><tbody>${rows}</tbody></table></div>`;
-}
-
-/**
- * Caixa âmbar "Ação necessária" (ACXEGDP-294). `html` é conteúdo já montado
- * (pode conter <ol>/<li> ou texto) — o chamador escapa os valores dinâmicos.
- */
-export function emailActionBox(html: string, titulo = 'Ação necessária'): string {
-  return `<div style="background:#fffbeb;border:1px solid #fcd34d;border-left:4px solid #d97706;border-radius:8px;padding:14px 16px;margin:16px 0;"><div style="font-weight:700;color:#92400e;font-size:13px;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:8px;">${escapeHtml(titulo)}</div><div style="color:#78350f;font-size:14px;line-height:1.6;">${html}</div></div>`;
-}
-
-/**
- * Container HTML padrão dos e-mails do Atlas (EML-06, ACXEGDP-250) alinhado ao
- * padrão estético dos workflows n8n (ACXEGDP-294): container 700px, header
- * colorido por semântica, corpo, CTA azul (#1d4ed8) e rodapé único. Retorna
- * { html, text } — a versão text/plain melhora entregabilidade (EML-15).
- */
-export function buildEmailLayout(opts: EmailLayoutOptions): { html: string; text: string } {
-  const headerCor = VARIANTE_COR[opts.variante ?? 'info'];
-  const cta =
-    opts.ctaLabel && opts.ctaUrl
-      ? `<a href="${escapeHtml(opts.ctaUrl)}" style="display:inline-block;margin:8px 0 4px;padding:12px 24px;background:#1d4ed8;color:#ffffff;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600;">${escapeHtml(opts.ctaLabel)}</a>`
-      : '';
-
-  const html = `<!DOCTYPE html>
-<html lang="pt-BR">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;background:#f4f5f7;padding:24px;font-family:'DM Sans',Arial,Helvetica,sans-serif;">
-  <div style="max-width:700px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
-    <div style="background:${headerCor};padding:18px 28px;">
-      <span style="color:#ffffff;font-size:16px;font-weight:700;letter-spacing:0.5px;">Atlas</span>
-      <span style="color:rgba(255,255,255,0.7);font-size:13px;font-weight:500;"> · StockBridge</span>
-    </div>
-    <div style="padding:28px;color:#111827;">
-      <h1 style="font-size:20px;margin:0 0 16px;color:#111827;">${escapeHtml(opts.titulo)}</h1>
-      <div style="font-size:14px;line-height:1.6;color:#374151;">${opts.corpoHtml}</div>
-      ${cta}
-    </div>
-    <div style="padding:16px 28px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:12px;">${ATLAS_ASSINATURA}</div>
-  </div>
-</body>
-</html>`;
-
-  const text = opts.textoAlternativo ?? derivarTexto(opts);
-  return { html, text };
-}
-
-/** Deriva uma versão text/plain legível a partir do corpo HTML. */
-function derivarTexto(opts: EmailLayoutOptions): string {
-  const corpo = opts.corpoHtml
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\s+/g, ' ')
-    .trim();
-  const cta = opts.ctaLabel && opts.ctaUrl ? `\n\n${opts.ctaLabel}: ${opts.ctaUrl}` : '';
-  return `${opts.titulo}\n\n${corpo}${cta}\n\n${ATLAS_ASSINATURA}`;
-}
-
 export function buildPasswordResetEmail(resetUrl: string): {
   subject: string;
   html: string;
   text: string;
 } {
-  const { html, text } = buildEmailLayout({
-    titulo: 'Recuperação de senha',
-    corpoHtml: `
-      <p>Você solicitou a recuperação de senha da Plataforma Atlas. Clique no botão abaixo para definir uma nova senha:</p>
-      <p style="color:#6b7280;font-size:12px;margin-top:24px;">Este link expira em 1 hora. Se você não solicitou a recuperação, ignore este e-mail.</p>
-    `,
-    ctaLabel: 'Redefinir senha',
-    ctaUrl: resetUrl,
+  const subject = montarAssuntoQ2P('AÇÃO REQUERIDA', 'Acesso', 'Redefinir a senha', 'Atlas');
+  const { html, text } = montarEmailQ2P({
+    etiqueta: 'AÇÃO REQUERIDA',
+    assunto: subject,
+    titulo: 'Redefinição de senha do Atlas',
+    // Quem pede a troca pode não ser o dono do e-mail: o texto não afirma que foi ele.
+    resumo: 'Foi pedida a redefinição da senha do seu usuário no Atlas.',
+    acao: {
+      quem: 'Você',
+      passos: ['Clique em **Redefinir senha** e escolha a nova senha.'],
+      nota: 'Se você não pediu a troca, ignore este e-mail: a senha atual continua valendo.',
+    },
+    botao: { texto: 'Redefinir senha', url: resetUrl, nota: 'O link vale por 1 hora e só pode ser usado uma vez.' },
   });
-  return { subject: 'Atlas — Recuperação de senha', html, text };
+  return { subject, html, text };
 }

@@ -22,6 +22,7 @@ import {
   enviarNotificacaoRecebimentoConcluidoLote,
   enviarAlertaNfIndeterminada,
   fmtKg,
+  rotuloDivergencia,
 } from './notificacao.service.js';
 import { incluirAjusteIdempotente } from './omie-idempotente.js';
 import { dispararBaixaPedidoQ2p } from './baixa-pedido.service.js';
@@ -876,12 +877,13 @@ export async function processarRecebimento(
       aprovacaoId,
       tipoAprovacao: 'recebimento_divergencia',
       nivel: 'gestor',
-      loteCodigo,
+      loteCodigo: `Lote ${loteCodigo}`,
       produto: prep.correlacao.descricao,
       quantidadeKg: prep.qtdFisicaKg,
       // ACXEGDP-176: delta formatado em pt-BR via fmtKg — o toFixed(3) antigo
       // gerava "25.000 kg" no e-mail, lido como vinte e cinco mil quilos.
-      detalhes: `Divergência ${prep.input.tipoDivergencia} de ${fmtKg(Math.abs(prep.deltaKg))}${observacoes ? ` — ${observacoes}` : ''}`,
+      // ACXEGDP-440: mesmo texto da tabela do digest ("Faltando: 25 kg a menos").
+      detalhes: `${rotuloDivergencia(prep.input.tipoDivergencia)}: ${fmtKg(Math.abs(prep.deltaKg))} a menos${observacoes ? ` — ${observacoes}` : ''}`,
     });
   } else if (divergentesOk.length > 1) {
     // Feature 013 (FR-015): digest — um e-mail por gestor com todos os itens da NF.

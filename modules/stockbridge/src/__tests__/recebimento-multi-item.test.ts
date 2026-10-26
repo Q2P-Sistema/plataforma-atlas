@@ -20,7 +20,8 @@ const listarSpy = vi.fn();
 const consultarNFSpy = vi.fn();
 const correlacaoQuerySpy = vi.fn();
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('./helpers/email-q2p.js')),
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getDb: vi.fn(),
   getPool: () => ({
@@ -35,10 +36,6 @@ vi.mock('@atlas/core', () => ({
     APP_URL: 'https://atlas.test',
   }),
   sendEmail: vi.fn().mockResolvedValue(undefined),
-  buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
-  escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
-  emailDataList: () => '',
-  emailActionBox: (html: string) => html,
 }));
 
 vi.mock('@atlas/db', () => ({
@@ -357,10 +354,11 @@ describe('US2 — divergência por produto (T021/T022/T023)', () => {
     await vi.waitFor(() => expect(core.sendEmail).toHaveBeenCalled());
     const emailsAprovacao = vi.mocked(core.sendEmail).mock.calls
       .map((c) => c[0] as { to: string; subject: string })
-      .filter((e) => e.subject.includes('divergência'));
-    // 1 gestor mockado → 1 e-mail digest, listando os 2 itens no assunto
+      .filter((e) => e.subject.includes('Divergência no recebimento'));
+    // 1 gestor mockado → 1 e-mail digest, listando os 2 itens (no subtítulo e no resumo; ACXEGDP-440)
     expect(emailsAprovacao).toHaveLength(1);
-    expect(emailsAprovacao[0]!.subject).toMatch(/2 itens com divergência/);
+    expect(emailsAprovacao[0]!.subject).toMatch(/^\[AÇÃO REQUERIDA\] - Aprovação - Divergência no recebimento - NF /);
+    expect((emailsAprovacao[0] as unknown as { html: string }).html).toContain('2 itens');
   });
 });
 

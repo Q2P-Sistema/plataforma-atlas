@@ -17,7 +17,8 @@ const config: Record<string, unknown> = {
   STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED: true,
 };
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('./helpers/email-q2p.js')),
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getPool: () => ({ query: (sql: string, params?: unknown[]) => poolQuerySpy(sql, params) }),
   getConfig: () => config,
@@ -40,10 +41,6 @@ vi.mock('@atlas/core', () => ({
     },
   }),
   sendEmail: vi.fn().mockResolvedValue(undefined),
-  buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: '' }),
-  escapeHtml: (v: unknown) => String(v ?? ''),
-  emailDataList: () => '',
-  emailActionBox: (h: string) => h,
 }));
 
 vi.mock('@atlas/db', () => ({

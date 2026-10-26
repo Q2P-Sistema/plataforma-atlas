@@ -1,0 +1,79 @@
+<h1>ACXEGDP-440: e-mails do Atlas, antes e depois</h1>
+<p class="sub">Os 22 e-mails da Plataforma Atlas no padrão da ACXEGDP-436. Caderno de aprovação de 26/10/2026. Nada foi publicado: as mudanças estão na branch feat/440-emails-atlas, sem commit.</p>
+<h2>Como ler</h2>
+<ul>
+<li><b>Assunto:</b> <i>[ETIQUETA] - Tema - Situação - Identificador</i>.
+  <ul>
+  <li>[AÇÃO REQUERIDA] quando alguém precisa agir; [INFORMATIVO] quando é só ciência.</li>
+  <li>O prefixo "StockBridge —" sai.</li>
+  <li>Só os e-mails ao fiscal e a compras levam o fornecedor e podem passar de 76 caracteres (decisão 5).</li>
+  </ul></li>
+<li><b>Para:</b> quem age. <b>Cc:</b> quem acompanha. <b>Cco:</b> cópia oculta.
+  <ul>
+  <li>O administrador (você) passa de Cc para Cco nos e-mails a quem lançou.</li>
+  <li>Nos alertas, a caixa de alertas já é você, então nada muda.</li>
+  <li>A NF sem vínculo na FUP passa a ir para a Comex, com você em Cco (decisão 7).</li>
+  </ul></li>
+<li><b>Remetente e rodapé:</b> "Sistema Integrador Q2P" (era "Plataforma Atlas"), como nos e-mails do n8n. O endereço continua sistema@q2p.com.br.</li>
+<li><b>Corpo:</b>
+  <ul>
+  <li>Faixa colorida pela etiqueta, o que aconteceu em 1 ou 2 frases e "O que fazer" com "Quem age", sem saudação.</li>
+  <li>Detalhes técnicos só nos e-mails da caixa de alertas. Rodapé único.</li>
+  <li>O HTML é o mesmo da emailQ2P do n8n, conferido caractere por caractere.</li>
+  </ul></li>
+<li><b>Dados dos exemplos:</b>
+  <ul>
+  <li>NF 90601, FORNECEDOR EXEMPLO LTDA e lote L900 são fictícios.</li>
+  <li>Os destinatários fixos são os de PROD. "Quem lançou" e "gestor do StockBridge" são usuários do Atlas; em PROD, o gestor é o Gustavo.</li>
+  <li>No fiscal e em compras sai um e-mail para cada endereço da lista, e ninguém vê os outros.</li>
+  </ul></li>
+</ul>
+<h2>Para você confirmar</h2>
+<div class="box"><ul>
+<li><b>Assuntos fora do quadro da proposta.</b>
+  <ul>
+  <li><b>E04:</b> o identificador é "Lote L216" no recebimento, "Galpão 11.1" na saída e o cliente no retorno de comodato. Antes era "Retorno comodato" e um pedaço do id interno.</li>
+  <li><b>E07:</b> a trava de unidade ganhou a situação "Pedido em unidade diferente".</li>
+  <li><b>E09 e E10:</b> a situação diz o estado: parado, vazio ou sem leitura.</li>
+  <li><b>E17:</b> no recebimento manual a situação fica só "Rejeitado", para caber em 76 caracteres.</li>
+  </ul></li>
+<li><b>NF da ACXE nos e-mails a compras (E07, E08).</b>
+  <ul>
+  <li>"NF ACXE 90601" no assunto e no subtítulo, e os passos dizem "no OMIE da ACXE".</li>
+  <li>A proposta previa isso só onde o assunto já citava a ACXE.</li>
+  <li>Hoje esses e-mails só saem para a Q2P: a compra nacional da ACXE está desligada.</li>
+  </ul></li>
+<li><b>Botões.</b> Também sem botão:
+  <ul>
+  <li>E16, porque a Comex não tem usuário no Atlas;</li>
+  <li>E07 de NF já recebida sem pedido, porque a nota saiu da fila.</li>
+  </ul></li>
+<li><b>"Fila".</b> O lint da 436 marca "fila" como termo técnico (no n8n é a fila de mensagens). No Atlas é a tela Fila de Recebimento, que os usuários conhecem; mantive.</li>
+<li><b>Correções vindas da revisão independente.</b>
+  <ul>
+  <li><b>E12:</b> a ordem dos passos mandava concluir no portal antes de conferir os itens, o que lançaria o estoque em dobro. Agora concluir é o último passo.</li>
+  <li><b>E13:</b> "os outros itens já entraram" podia ser falso. Agora diz "os itens que conferiram".</li>
+  <li><b>E18:</b> com lançamento pendente no OMIE, a divergência aprovada dizia que o ajuste entrou nas duas empresas (já era assim). Agora diz que ficou pendente.</li>
+  <li><b>E06:</b> "pode estar alguns minutos atrasada" virou "pode ter mudado".</li>
+  </ul></li>
+<li><b>Textos montados fora do e-mail.</b> Os "Detalhes" da aprovação deixaram de mostrar código cru:
+  <ul>
+  <li>a saída manual mostra só a observação (antes: "Saída manual transf_intra_cnpj — …");</li>
+  <li>"[DIVERGENTE]" virou "(produto ou quantidade diferente da saída)";</li>
+  <li>"Re-submetida pelo operador após rejeição" virou "Reenviado depois da rejeição";</li>
+  <li>a divergência usa o mesmo texto da tabela: "Faltando: 25 kg a menos".</li>
+  </ul></li>
+<li><b>Fica como está (pode virar proposta à parte).</b>
+  <ul>
+  <li>Os e-mails de aprovado e de rejeitado de saídas e de divergência de importação não dizem qual lançamento é, só o tipo, como hoje. Dá para incluir lote, produto e quantidade com uma consulta a mais no envio.</li>
+  <li>O Gustavo continua recebendo "aguardando aprovação" e "aprovado" dos lançamentos que ele mesmo faz (decisão 8).</li>
+  </ul></li>
+</ul></div>
+<h2>Como foi testado</h2>
+<ul>
+<li><b>Antigo × novo nas mesmas entradas (52 cenários):</b> mesmo número de envios, mesmo retorno e mesmos destinatários, salvo o aprovado. Lint da 436: 0 ERRO.</li>
+<li><b>Entradas difíceis</b> (aspas, HTML, 400 caracteres, número só de zeros, data inválida): nada vaza nem quebra.</li>
+<li><b>Testes automáticos:</b> core 48, API 75 e StockBridge 2.293, todos verdes.</li>
+<li><b>Teste com banco da varredura do fiscal desfeito:</b> atualizado, mas não rodado, porque precisa de banco de teste.</li>
+<li><b>Revisão independente por dois agentes (código e texto):</b> nenhum defeito de produção no código. Os achados de texto viraram as correções acima.</li>
+</ul>

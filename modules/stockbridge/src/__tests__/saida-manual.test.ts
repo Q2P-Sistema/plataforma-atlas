@@ -8,15 +8,12 @@ import {
 } from '../services/saida-manual.service.js';
 import { NIVEL_APROVACAO_POR_SUBTIPO } from '../types.js';
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('./helpers/email-q2p.js')),
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getConfig: () => ({ SEED_ADMIN_EMAIL: 'admin@atlas.local' }),
   getDb: vi.fn(),
   sendEmail: vi.fn().mockResolvedValue(undefined),
-  buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
-  emailDataList: () => '',
-  emailActionBox: (html: string) => html,
-  escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
 }));
 
 vi.mock('@atlas/db', () => ({
@@ -166,6 +163,8 @@ describe('saida-manual#registrarSaidaManual — validacoes', () => {
     const arg = vi.mocked(enviarAlertaAprovacaoPendente).mock.calls[0]![0];
     expect(arg.produto).toBe('PP HOMOPOLIMERO H301');
     expect(arg.loteCodigo).not.toContain(String(inputBase.produtoCodigoAcxe));
+    // ACXEGDP-440: o tipo vai no assunto do e-mail; os detalhes levam só a observação (o subtipo cru vazava)
+    expect(arg.detalhes).toBe(inputBase.observacoes);
   });
 
   it('transf_intra_cnpj exige galpao destino diferente da origem', async () => {

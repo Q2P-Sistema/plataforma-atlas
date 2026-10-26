@@ -18,23 +18,14 @@ const { sendEmailMock, loggerMock, config } = vi.hoisted(() => ({
 // getDb().select().from().innerJoin().where() → lista de aprovadores (gestores)
 const gestoresMock = vi.fn().mockResolvedValue([{ email: 'gestor1@acxe.local' }]);
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('./helpers/email-q2p.js')),
   createLogger: () => loggerMock,
   getConfig: () => config,
   getDb: () => ({
     select: () => ({ from: () => ({ innerJoin: () => ({ where: () => gestoresMock() }) }) }),
   }),
   sendEmail: sendEmailMock,
-  // Devolve o corpo cru pra podermos inspecionar o conteúdo montado.
-  buildEmailLayout: (o: { corpoHtml?: string; ctaLabel?: string }) => ({
-    html: `${o?.corpoHtml ?? ''}||CTA:${o?.ctaLabel ?? ''}`,
-    text: '',
-  }),
-  escapeHtml: (v: unknown) => String(v ?? ''),
-  emailActionBox: (html: string, titulo?: string) => `[ACTIONBOX:${titulo ?? ''}]${html}`,
-  // Renderiza os pares label/valor pra podermos asseverar a quantidade formatada.
-  emailDataList: (items: Array<{ label: string; valor: unknown }>) =>
-    items.map((i) => `${i.label}: ${i.valor}`).join(' | '),
 }));
 vi.mock('@atlas/db', () => ({ users: {}, userModules: {} }));
 
@@ -98,7 +89,7 @@ describe('enviarAlertaAprovacaoPendente — template do e-mail de divergência',
 
     expect(sendEmailMock).toHaveBeenCalledTimes(1);
     const { html, subject } = sendEmailMock.mock.calls[0]![0] as { html: string; subject: string };
-    expect(html).toContain('Quantidade: 25 kg');
+    expect(html).toContain('LOTE-001 · PP H301 · 25 kg');
     expect(html).toContain('Divergência faltando de 25 kg');
     // Regressão ACXEGDP-176: nada no corpo pode se ler como "25 mil".
     expect(html).not.toContain('25.000');
@@ -116,7 +107,7 @@ describe('enviarAlertaAprovacaoPendente — template do e-mail de divergência',
     });
 
     const { html } = sendEmailMock.mock.calls[0]![0] as { html: string };
-    expect(html).toContain('Quantidade: 25,5 kg');
+    expect(html).toContain('LOTE-002 · PEAD F200 · 25,5 kg');
   });
 });
 

@@ -8,7 +8,8 @@ import type { ConsultarNFResponse } from '@atlas/integration-omie';
 // queries do fluxo (ex.: middleware requireArmazemVinculado) recebem o default count:1.
 const state = vi.hoisted(() => ({ headerRows: [] as Array<{ cancelada: boolean; emitente_acxe: boolean }>, headerReject: null as Error | null }));
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('../helpers/email-q2p.js')),
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getDb: () => ({
     select: () => ({ from: () => ({ where: () => ({ limit: () => Promise.resolve([]) }) }) }),
@@ -25,10 +26,6 @@ vi.mock('@atlas/core', () => ({
   }),
   getConfig: () => ({ SEED_ADMIN_EMAIL: 'admin@atlas.local', MODULE_STOCKBRIDGE_ENABLED: true }),
   sendEmail: vi.fn().mockResolvedValue(undefined),
-  buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
-  emailDataList: () => '',
-  emailActionBox: (html: string) => html,
-  escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
 }));
 
 vi.mock('@atlas/auth', () => ({

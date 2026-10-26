@@ -753,6 +753,8 @@ export async function aprovar(input: AprovarInput): Promise<AprovarResult> {
     tipoAprovacao: resultado.tipoAprovacao,
     loteId: resultado.loteId,
     incluirComex: resultado.tipoAprovacao === 'recebimento_divergencia' && !pendencia,
+    // ACXEGDP-440: com lançamento pendente, o e-mail não diz que o ajuste entrou nas duas empresas.
+    pendenciaOmie: !!pendencia,
   });
 
   return {
@@ -983,10 +985,10 @@ export async function resubmeter(input: ResubmeterInput): Promise<{ id: string; 
     aprovacaoId: resultado.novaAprovacao.id,
     tipoAprovacao: resultado.novaAprovacao.tipoAprovacao,
     nivel: resultado.novaAprovacao.precisaNivel,
-    loteCodigo: resultado.lote.codigo,
+    loteCodigo: `Lote ${resultado.lote.codigo}`,
     produto: descricaoProduto,
     quantidadeKg: input.quantidadeRecebidaKg,
-    detalhes: `Re-submetida pelo operador após rejeição. Motivo: ${input.observacoes}`,
+    detalhes: `Reenviado depois da rejeição: ${input.observacoes}`,
   });
 
   return { id: resultado.id, novaAprovacaoId: resultado.novaAprovacao.id };

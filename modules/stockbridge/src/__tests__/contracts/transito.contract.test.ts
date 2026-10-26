@@ -35,7 +35,8 @@ const loteMock = {
   etapa_fup: '10 - Aguardando Chegada do Navio',
 };
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('../helpers/email-q2p.js')),
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getDb: () => ({
     execute: vi.fn().mockResolvedValue({ rows: [{ atualizados: 0 }] }),
@@ -45,10 +46,6 @@ vi.mock('@atlas/core', () => ({
   }),
   getConfig: () => ({ SEED_ADMIN_EMAIL: 'a@a' }),
   sendEmail: vi.fn(),
-  buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
-  emailDataList: () => '',
-  emailActionBox: (html: string) => html,
-  escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
 }));
 
 let currentUser: { id: string; role: 'operador' | 'gestor' | 'diretor' } = { id: 'u1', role: 'gestor' };

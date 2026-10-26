@@ -16,7 +16,8 @@ const { sendEmailMock, loggerMock, executeMock, configMock } = vi.hoisted(() => 
   },
 }));
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('./helpers/email-q2p.js')),
   createLogger: () => loggerMock,
   getConfig: () => configMock,
   getDb: () => ({
@@ -24,11 +25,6 @@ vi.mock('@atlas/core', () => ({
     execute: executeMock,
   }),
   sendEmail: sendEmailMock,
-  buildEmailLayout: (o: { corpoHtml?: string; ctaUrl?: string }) => ({ html: `${o?.corpoHtml ?? ''}||URL:${o?.ctaUrl ?? ''}`, text: '' }),
-  escapeHtml: (v: unknown) => String(v ?? ''),
-  emailActionBox: (html: string) => html,
-  emailDataList: (linhas: Array<{ label: string; valor: string | number | null | undefined }>) =>
-    linhas.filter((l) => l.valor !== '' && l.valor != null).map((l) => `[${l.label}: ${l.valor}]`).join(''),
 }));
 vi.mock('@atlas/db', () => ({ users: {}, userModules: {} }));
 
@@ -51,7 +47,7 @@ const linhaAcxe = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-const ultimoEmail = () => sendEmailMock.mock.calls.at(-1)![0] as { subject: string; html: string };
+const ultimoEmail = () => sendEmailMock.mock.calls.at(-1)![0] as { subject: string; html: string; text: string };
 const textoSql = (): string => {
   const q = executeMock.mock.calls[0]![0] as { queryChunks?: unknown[] };
   return JSON.stringify(q.queryChunks ?? q);
@@ -107,12 +103,13 @@ describe('e-mail de aprovacao ao operador — ACXE', () => {
   it('traz fornecedor, produto, local (nome) e onde a entrada foi lancada', async () => {
     executeMock.mockResolvedValue({ rows: [linhaAcxe({ local: 'PRODUÇÃO', tem_produto_q2p: false })] });
     await enviarNotificacaoAprovacaoOperador({ operadorUserId: 'u1', aprovacaoId: 'ap-1', tipoAprovacao: 'entrada_manual' });
-    const { subject, html } = ultimoEmail();
-    expect(subject).toBe('StockBridge — Recebimento aprovado — NF 937 (SOLUTEC PLASTICOS LTDA)');
-    expect(html).toContain('[Fornecedor: SOLUTEC PLASTICOS LTDA]');
-    expect(html).toContain('[Produto: PP PRETO Q35]');
-    expect(html).toContain('[Local: PRODUÇÃO]');
-    expect(html).toContain('[Empresas da entrada: ACXE]');
+    const { subject, text } = ultimoEmail();
+    // ACXEGDP-440: o fornecedor vai no subtítulo (sai do assunto).
+    expect(subject).toBe('[INFORMATIVO] - Recebimento - Aprovado - NF 937');
+    expect(text).toContain('NF 937 · SOLUTEC PLASTICOS LTDA');
+    expect(text).toContain('Produto: PP PRETO Q35');
+    expect(text).toContain('Local: PRODUÇÃO');
+    expect(text).toContain('Empresas da entrada: ACXE');
   });
 
   it('Q2P: nenhuma linha "Empresas da entrada" (o e-mail nao muda)', async () => {
@@ -133,22 +130,25 @@ describe('aviso de dispensa ao fiscal — empresa', () => {
     dispensadoEm: '2026-10-22T13:00:00.000Z',
   };
 
-  it('NF da ACXE: o assunto e o corpo citam a ACXE e ha a linha Empresa', async () => {
+  it('NF da ACXE: o assunto, o subtitulo e o corpo citam a ACXE', async () => {
     await enviarAlertaNfDispensada({ ...base, empresa: 'acxe' });
-    const { subject, html } = ultimoEmail();
-    expect(subject).toBe('StockBridge — NF 937 (SOLUTEC PLASTICOS LTDA) dispensada da fila da ACXE');
-    expect(html).toContain('fila de recebimento nacional da ACXE do StockBridge');
-    expect(html).toContain('[Empresa: ACXE]');
+    const { subject, html, text } = ultimoEmail();
+    expect(subject).toBe('[AÇÃO REQUERIDA] - Fiscal - NF dispensada da fila - SOLUTEC PLASTICOS LTDA - NF ACXE 937');
+    expect(html).toContain('da fila de recebimento da ACXE do StockBridge');
+    // ACXEGDP-440: a empresa vai no subtítulo ("NF ACXE 937"), não numa linha "Empresa" dos dados
+    expect(html).toContain('NF ACXE 937 · SOLUTEC PLASTICOS LTDA');
+    expect(text).not.toContain('Empresa:');
   });
 
   it('NF da Q2P ou sem empresa: o texto de sempre (sem citar empresa)', async () => {
     await enviarAlertaNfDispensada({ ...base });
     await enviarAlertaNfDispensada({ ...base, empresa: 'q2p' });
     for (const c of sendEmailMock.mock.calls) {
-      const { subject, html } = c[0] as { subject: string; html: string };
-      expect(subject).toBe('StockBridge — NF 937 (SOLUTEC PLASTICOS LTDA) dispensada da fila');
-      expect(html).toContain('da fila de recebimento nacional do StockBridge');
-      expect(html).not.toContain('[Empresa:');
+      const { subject, html, text } = c[0] as { subject: string; html: string; text: string };
+      expect(subject).toBe('[AÇÃO REQUERIDA] - Fiscal - NF dispensada da fila - SOLUTEC PLASTICOS LTDA - NF 937');
+      expect(html).toContain('da fila de recebimento do StockBridge');
+      expect(text).not.toContain('Empresa:');
+      expect(text).not.toContain('ACXE');
     }
   });
 });

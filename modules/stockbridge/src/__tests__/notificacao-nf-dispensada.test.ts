@@ -15,19 +15,12 @@ const { sendEmailMock, loggerMock, configMock } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('./helpers/email-q2p.js')),
   createLogger: () => loggerMock,
   getConfig: () => configMock,
   getDb: () => ({ select: () => ({ from: () => ({ where: () => ({ limit: () => Promise.resolve([]) }) }) }), execute: vi.fn() }),
   sendEmail: sendEmailMock,
-  buildEmailLayout: (o: { titulo?: string; variante?: string; corpoHtml?: string; ctaUrl?: string }) => ({
-    html: `[${o?.variante ?? ''}:${o?.titulo ?? ''}]${o?.corpoHtml ?? ''}||URL:${o?.ctaUrl ?? ''}`,
-    text: '',
-  }),
-  escapeHtml: (v: unknown) => String(v ?? ''),
-  emailActionBox: (html: string, titulo?: string) => `[${titulo ?? 'Ação necessária'}]${html}`,
-  emailDataList: (linhas: Array<{ label: string; valor: string | number | null | undefined }>) =>
-    linhas.filter((l) => l.valor !== '' && l.valor != null).map((l) => `[${l.label}: ${l.valor}]`).join(''),
 }));
 vi.mock('@atlas/db', () => ({ users: {}, userModules: {} }));
 
@@ -49,7 +42,7 @@ const base = {
   dispensadoEm: '2026-10-02T13:00:00.000Z',
 };
 
-const emails = () => sendEmailMock.mock.calls.map((c) => c[0] as { to: string; subject: string; html: string });
+const emails = () => sendEmailMock.mock.calls.map((c) => c[0] as { to: string; subject: string; html: string; text: string });
 
 beforeEach(() => {
   sendEmailMock.mockReset();
@@ -76,44 +69,48 @@ describe('enviarAlertaNfDispensada', () => {
     expect(enviados).toHaveLength(3);
     expect(new Set(enviados.map((e) => e.to))).toEqual(new Set(configMock.STOCKBRIDGE_FISCAL_EMAILS));
     for (const e of enviados) {
-      expect(e.subject).toBe('StockBridge — NF 6842 (REPLAS COMERCIAL LTDA) dispensada da fila');
+      expect(e.subject).toBe('[AÇÃO REQUERIDA] - Fiscal - NF dispensada da fila - REPLAS COMERCIAL LTDA - NF 6842');
       expect(e.to).not.toContain(',');
     }
   });
 
   it('fiscal PENDENTE: corpo diz que a nota segue na caixa de Recebimento de NF-e aguardando manifestacao/cancelamento e que nao ha conta a pagar', async () => {
     await enviarAlertaNfDispensada(base);
-    const { html } = emails()[0]!;
-    expect(html).toContain('[alerta:NF dispensada da fila de recebimento]');
-    expect(html).toContain('[Pendência no OMIE]');
-    expect(html).toContain('aguardando manifestação ou cancelamento');
+    const { html, text } = emails()[0]!;
+    expect(html).toContain('Fiscal: NF dispensada da fila de recebimento');
+    expect(html).toContain('NF 6842 · REPLAS COMERCIAL LTDA · R$ 203.400,00');
+    expect(html).toContain('Quem age: <strong>Fiscal</strong>');
+    expect(html).toContain('ainda <strong>não tinha sido concluído</strong>');
+    expect(html).toContain('etapa &quot;Faturado pelo fornecedor&quot;');
     expect(html).toContain('sem conta a pagar gerada pelo recebimento');
+    expect(html).toContain('manifestação, recusa ou cancelamento');
     // a situacao vem do espelho no momento da dispensa: o texto pede conferencia no OMIE (ROT-9)
-    expect(html).toContain('Pelo espelho do OMIE no momento da dispensa');
-    expect(html).toContain('Confira no OMIE antes de agir');
-    expect(html).toContain('[Recebimento fiscal no OMIE: Pendente (não concluído)]');
-    expect(html).toContain('[Motivo da dispensa: Carga nunca chegou; fornecedor vai cancelar a nota]');
-    expect(html).toContain('[Dispensada por: Flavio Endo]');
-    expect(html).toContain('[Valor da nota: R$');
-    expect(html).toContain('URL:https://atlas.local/stockbridge/aprovacoes');
+    expect(html).toContain('Confira a nota no OMIE.');
+    expect(html).toContain('A situação acima é a que o Atlas tinha na hora da dispensa e pode ter mudado.');
+    expect(text).toContain('Motivo da dispensa: Carga nunca chegou; fornecedor vai cancelar a nota');
+    expect(text).toContain('Dispensada por: Flavio Endo');
+    expect(text).toContain('Quando: 02/10/2026 às 10:00');
+    // ACXEGDP-440: sem botão — o fiscal age no OMIE
+    expect(html).not.toContain('<a href');
     // a dispensa nao mexe no OMIE — o texto deixa isso explicito ao fiscal
-    expect(html).toContain('não alterou nada no OMIE');
+    expect(html).toContain('nada mudou no OMIE');
   });
 
   it('fiscal CONCLUIDO: corpo fala da conta a pagar de R$ N a estornar ou manter', async () => {
     await enviarAlertaNfDispensada({ ...base, situacaoFiscalNaDispensa: 'concluido' });
     const { html } = emails()[0]!;
-    expect(html).toContain('JÁ foi concluído no OMIE');
-    expect(html).toMatch(/conta a pagar de R\$\s?203\.400,00 a estornar ou manter/);
-    expect(html).toContain('[Recebimento fiscal no OMIE: Concluído]');
-    expect(html).not.toContain('aguardando manifestação');
+    expect(html).toContain('já tinha sido <strong>concluído</strong> no OMIE: existe conta a pagar de R$ 203.400,00.');
+    expect(html).toContain('Estorne ou mantenha a conta a pagar no OMIE, conforme o acerto com o fornecedor.');
+    expect(html).not.toContain('manifestação');
   });
 
   it('fornecedor nulo vira "Fornecedor não identificado no OMIE"; nome do gestor ausente e omitido do card', async () => {
     await enviarAlertaNfDispensada({ ...base, fornecedorNome: null, dispensadoPorNome: null });
-    const { subject, html } = emails()[0]!;
-    expect(subject).toBe('StockBridge — NF 6842 (Fornecedor não identificado no OMIE) dispensada da fila');
-    expect(html).not.toContain('[Dispensada por:');
+    const { subject, html, text } = emails()[0]!;
+    // ACXEGDP-440: sem nome, o fornecedor sai do assunto; o corpo avisa que o OMIE não o identificou
+    expect(subject).toBe('[AÇÃO REQUERIDA] - Fiscal - NF dispensada da fila - NF 6842');
+    expect(html).toContain('NF 6842 · Fornecedor não identificado no OMIE');
+    expect(text).not.toContain('Dispensada por:');
   });
 
   // Feature 017 (T044, caso de borda "Dispensa de NF"): o fiscal fica sabendo qual PC
@@ -127,8 +124,8 @@ describe('enviarAlertaNfDispensada', () => {
         { descricao: 'SUCATA PP', pcNumero: '' },
       ],
     });
-    const html = emails()[0]!.html;
-    expect(html).toContain('[Pedido de compra vinculado: SUCATA PLASTICO: PC 304; SUCATA PP: PC vinculado no OMIE]');
+    const { html, text } = emails()[0]!;
+    expect(text).toContain('Pedido de compra vinculado: SUCATA PLASTICO: PC 304; SUCATA PP: PC vinculado no OMIE');
     expect(html).not.toMatch(/\d{10}/);
   });
 
@@ -166,18 +163,19 @@ describe('enviarAlertaDispensaRevertida (revisao pre-UAT, ROT-4)', () => {
     await enviarAlertaDispensaRevertida(rev);
     const enviados = emails();
     expect(enviados).toHaveLength(3);
-    for (const e of enviados) expect(e.subject).toBe('StockBridge — Dispensa desfeita: NF 6842 (REPLAS COMERCIAL LTDA) voltou à fila');
-    const { html } = enviados[0]!;
-    expect(html).toContain('[info:Dispensa de NF desfeita]');
-    expect(html).toContain('[Motivo da reversão: A carga chegou afinal]');
-    expect(html).toContain('[Desfeita por: Flavio Endo]');
-    expect(html).toContain('também concluirá o recebimento fiscal no OMIE');
+    for (const e of enviados) expect(e.subject).toBe('[INFORMATIVO] - Fiscal - Dispensa desfeita - REPLAS COMERCIAL LTDA - NF 6842');
+    const { html, text } = enviados[0]!;
+    expect(html).toContain('Fiscal: dispensa de NF desfeita');
+    expect(text).toContain('Motivo da reversão: A carga chegou afinal');
+    expect(text).toContain('Desfeita por: Flavio Endo');
+    expect(html).toContain('também vai concluir o recebimento fiscal no OMIE');
     expect(html).toContain('avise o gestor');
+    expect(html).not.toContain('<a href');
   });
 
   it('dispensa de NF com fiscal ja feito: nao promete concluir o fiscal; lista vazia nao envia', async () => {
     await enviarAlertaDispensaRevertida({ ...rev, situacaoFiscalNaDispensa: 'concluido' });
-    expect(emails()[0]!.html).not.toContain('também concluirá o recebimento fiscal');
+    expect(emails()[0]!.html).not.toContain('também vai concluir o recebimento fiscal');
     sendEmailMock.mockClear();
     configMock.STOCKBRIDGE_FISCAL_EMAILS = [];
     await enviarAlertaDispensaRevertida(rev);
@@ -192,9 +190,9 @@ describe('enviarAlertaEspelhoRecebimentosDefasado (revisao pre-UAT, ROT-6)', () 
     const enviados = emails();
     expect(enviados).toHaveLength(1);
     expect(enviados[0]!.to).toBe('ops@q2p.local');
-    expect(enviados[0]!.subject).toBe('StockBridge — Espelho de recebimentos de NF-e sem atualização');
+    expect(enviados[0]!.subject).toBe('[AÇÃO REQUERIDA] - Infra - Espelho de recebimentos parado - Q2P');
     const { html } = enviados[0]!;
-    expect(html).toContain('[alerta:Espelho de recebimentos de NF-e sem atualização]');
+    expect(html).toContain('Infra: espelho de recebimentos de NF-e parado');
     expect(html).toContain('não é atualizado há 185 minutos (limite: 120 minutos)');
     expect(html).toContain('podem não aparecer na fila de recebimento');
     expect(html).toContain('Q2P - Exporta Recebimentos NF-e');
@@ -219,9 +217,9 @@ describe('enviarAlertaCopiaPcsDefasada (feature 017, D13)', () => {
     const enviados = emails();
     expect(enviados).toHaveLength(1);
     expect(enviados[0]!.to).toBe('ops@q2p.local');
-    expect(enviados[0]!.subject).toBe('StockBridge — Cópia de pedidos de compra sem atualização');
+    expect(enviados[0]!.subject).toBe('[AÇÃO REQUERIDA] - Infra - Cópia de pedidos de compra parada - Q2P');
     const { html } = enviados[0]!;
-    expect(html).toContain('[alerta:Cópia de pedidos de compra sem atualização]');
+    expect(html).toContain('Infra: cópia de pedidos de compra parada');
     expect(html).toContain('não é atualizada há 240 minutos (limite: 120 minutos)');
     expect(html).toContain('fica bloqueado no StockBridge');
   });

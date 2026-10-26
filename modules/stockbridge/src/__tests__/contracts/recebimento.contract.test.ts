@@ -3,7 +3,8 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import request from 'supertest';
 
 // Mocks — @atlas/core, @atlas/auth, @atlas/db, @atlas/integration-omie
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('../helpers/email-q2p.js')),
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getDb: () => ({
     select: () => ({
@@ -17,10 +18,6 @@ vi.mock('@atlas/core', () => ({
   getPool: () => ({ query: vi.fn().mockResolvedValue({ rows: [{ count: '1' }] }) }),
   getConfig: () => ({ SEED_ADMIN_EMAIL: 'admin@atlas.local' }),
   sendEmail: vi.fn().mockResolvedValue(undefined),
-  buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
-  emailDataList: () => '',
-  emailActionBox: (html: string) => html,
-  escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
 }));
 
 vi.mock('@atlas/auth', () => ({
@@ -129,7 +126,8 @@ describe('POST /api/v1/stockbridge/recebimento — erro estruturado OMIE (defesa
     // (As outras suites usam o stub simples acima — este describe roda com mock dedicado.)
     vi.resetModules();
 
-    vi.doMock('@atlas/core', () => ({
+    vi.doMock('@atlas/core', async () => ({
+      ...(await import('../helpers/email-q2p.js')),
       createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
       getDb: () => ({
         select: () => ({ from: () => ({ where: () => ({ limit: () => Promise.resolve([]) }) }) }),
@@ -139,8 +137,6 @@ describe('POST /api/v1/stockbridge/recebimento — erro estruturado OMIE (defesa
       getPool: () => ({ query: vi.fn().mockResolvedValue({ rows: [{ count: '1' }] }) }),
       getConfig: () => ({ SEED_ADMIN_EMAIL: 'admin@atlas.local' }),
       sendEmail: vi.fn().mockResolvedValue(undefined),
-      buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
-      escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
     }));
 
     vi.doMock('@atlas/auth', () => ({

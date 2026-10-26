@@ -3,7 +3,8 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import request from 'supertest';
 
 // getPool responde a (1) resolução de data e (2) folhas do snapshot.
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('../helpers/email-q2p.js')),
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getPool: () => ({
     query: vi.fn((sql: string) => {
@@ -41,10 +42,6 @@ vi.mock('@atlas/core', () => ({
   getConfig: () => ({ SEED_ADMIN_EMAIL: 'admin@atlas.local' }),
   getDb: () => ({}),
   sendEmail: vi.fn(),
-  buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
-  emailDataList: () => '',
-  emailActionBox: (html: string) => html,
-  escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
 }));
 
 // requireAuth lê o papel do header x-test-role (default gestor); requireRole ENFORÇA.

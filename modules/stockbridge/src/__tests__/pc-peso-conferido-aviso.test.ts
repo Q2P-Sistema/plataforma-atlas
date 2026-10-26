@@ -18,20 +18,13 @@ const { sendEmailMock, loggerMock, configMock, clientQuerySpy, releaseSpy, conne
   connectSpy: vi.fn(),
 }));
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('./helpers/email-q2p.js')),
   createLogger: () => loggerMock,
   getConfig: () => configMock,
   getDb: () => ({ execute: vi.fn() }),
   getPool: () => ({ connect: () => connectSpy() }),
   sendEmail: sendEmailMock,
-  buildEmailLayout: (o: { titulo?: string; variante?: string; corpoHtml?: string; ctaUrl?: string }) => ({
-    html: `[${o?.variante ?? ''}:${o?.titulo ?? ''}]${o?.corpoHtml ?? ''}||URL:${o?.ctaUrl ?? ''}`,
-    text: '',
-  }),
-  escapeHtml: (v: unknown) => String(v ?? ''),
-  emailActionBox: (html: string, titulo?: string) => `[${titulo ?? 'Ação necessária'}]${html}`,
-  emailDataList: (linhas: Array<{ label: string; valor: string | number | null | undefined }>) =>
-    linhas.filter((l) => l.valor !== '' && l.valor != null).map((l) => `[${l.label}: ${l.valor}]`).join(''),
 }));
 vi.mock('@atlas/db', () => ({ users: {}, userModules: {} }));
 
@@ -51,7 +44,7 @@ const base: ArgsAvisoComprasExcedenteRejeitado = {
 };
 
 let avisosPrevios: string[] = [];
-const emails = () => sendEmailMock.mock.calls.map((c) => c[0] as { to: string; subject: string; html: string });
+const emails = () => sendEmailMock.mock.calls.map((c) => c[0] as { to: string; subject: string; html: string; text: string });
 const insercoes = () => clientQuerySpy.mock.calls.filter((c) => String(c[0]).includes('INSERT INTO stockbridge.nf_aviso_compras'));
 
 beforeEach(() => {
@@ -79,13 +72,15 @@ describe('enviarAvisoComprasExcedenteRejeitado', () => {
     expect(await enviarAvisoComprasExcedenteRejeitado(base)).toBe('enviado');
     const e = emails()[0]!;
     expect(e.to).toBe('compras@q2p.local');
-    expect(e.subject).toBe('StockBridge — NF 67988 de ISOFORMA PLASTICOS INDUSTRIAIS LTDA: entrada rejeitada com o pedido baixado acima da nota');
-    expect(e.html).toContain('[alerta:Entrada rejeitada com o pedido já baixado]');
+    // ACXEGDP-440: fornecedor no assunto em até 25 caracteres, cortado em fim de palavra.
+    expect(e.subject).toBe('[AÇÃO REQUERIDA] - Compras - Pedido baixado acima da nota - ISOFORMA PLASTICOS - NF 67988');
+    expect(e.html).toContain('Compras: pedido baixado acima da nota');
+    expect(e.html).toContain('NF 67988 · ISOFORMA PLASTICOS INDUSTRIAIS LTDA');
     expect(e.html).toContain('quantidade acima da nota');
     expect(e.html).toContain('rejeitou');
-    expect(e.html).toContain('[Item da NF: PS AI A]');
-    expect(e.html).toContain('[Produto: PS CRISTAL B]');
-    expect(e.html).toContain('[Pedido de compra: PC 305]');
+    expect(e.text).toContain('Item da NF: PS AI A');
+    expect(e.text).toContain('Produto: PS CRISTAL B');
+    expect(e.text).toContain('PC 305 | 13.382 kg | 13.500 kg | 118 kg');
     expect(e.html).toContain('Balança da portaria descalibrada');
     // tabela: na nota, baixado no pedido e a diferenca
     expect(e.html).toContain('13.382');
@@ -94,7 +89,7 @@ describe('enviarAvisoComprasExcedenteRejeitado', () => {
     // o que fazer: a rejeicao nao desfaz a baixa; conferir com o fiscal
     expect(e.html).toContain('não desfaz a baixa do pedido no OMIE');
     expect(e.html).toContain('fiscal');
-    expect(e.html).toContain('URL:https://atlas.local/stockbridge/fila');
+    expect(e.html).toContain('href="https://atlas.local/stockbridge/fila"');
   });
 
   it('nenhum codigo do OMIE: numero de PC com cara de codigo interno (10+ digitos) vira "—"', async () => {
@@ -102,7 +97,7 @@ describe('enviarAvisoComprasExcedenteRejeitado', () => {
     const e = emails()[0]!;
     expect(e.html).not.toMatch(/\d{10}/);
     expect(e.subject).not.toMatch(/\d{10}/);
-    expect(e.html).not.toContain('[Pedido de compra:');
+    expect(e.text).toContain('— | 13.382 kg | 13.500 kg | 118 kg');
   });
 
   it('registra no ledger de avisos com o motivo excedente_rejeitado, a trava por NF + motivo e as linhas', async () => {

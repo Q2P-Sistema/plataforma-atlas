@@ -62,7 +62,8 @@ describe('produtoPendenteSql — combinação das 3 fontes (T004)', () => {
 
 const sqlsExecutados: string[] = [];
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('./helpers/email-q2p.js')),
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getDb: vi.fn(),
   getPool: () => ({
@@ -81,10 +82,6 @@ vi.mock('@atlas/core', () => ({
     APP_URL: 'https://atlas.test',
   }),
   sendEmail: vi.fn().mockResolvedValue(undefined),
-  buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
-  escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
-  emailDataList: () => '',
-  emailActionBox: (html: string) => html,
   cached: (_key: string, _ttl: number, fn: () => unknown) => fn(),
   invalidate: vi.fn(),
 }));

@@ -8,7 +8,8 @@ const INTEGRATION_KEY = 'test-integration-key-1234567890';
 let idempotencyHit = false;
 const localidadeResolvida = { localidadeId: 'loc-1', cnpj: 'Acxe Matriz' };
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('../helpers/email-q2p.js')),
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getConfig: () => ({ ATLAS_INTEGRATION_KEY: INTEGRATION_KEY, SEED_ADMIN_EMAIL: 'a@a' }),
   getDb: () => ({
@@ -28,10 +29,6 @@ vi.mock('@atlas/core', () => ({
   }),
   getPool: () => ({ query: vi.fn() }),
   sendEmail: vi.fn(),
-  buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
-  emailDataList: () => '',
-  emailActionBox: (html: string) => html,
-  escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
 }));
 
 vi.mock('@atlas/auth', () => ({

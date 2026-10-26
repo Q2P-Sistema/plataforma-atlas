@@ -1,6 +1,6 @@
 import { eq, and, sql } from 'drizzle-orm';
 import Decimal from 'decimal.js';
-import { getDb, createLogger } from '@atlas/core';
+import { getDb, createLogger, dataBrasilia } from '@atlas/core';
 import { movimentacao, aprovacao, divergencia, reservaSaldo } from '@atlas/db';
 import { converterParaKg } from './motor.service.js';
 import { filtroEmpresaOmie } from './omie-shared.js';
@@ -317,7 +317,8 @@ export async function registrarSaidaManual(
     loteCodigo: `Galpão ${input.galpao}`,
     produto: descricaoProduto,
     quantidadeKg,
-    detalhes: `Saída manual ${input.subtipo} — ${input.observacoes}`,
+    // ACXEGDP-440: o tipo já vai no assunto e no título do e-mail; aqui só a observação (o subtipo cru vazava).
+    detalhes: input.observacoes,
   }).catch((err) => logger.error({ err }, 'Falha ao notificar aprovação pendente'));
 
   logger.info(
@@ -652,10 +653,12 @@ export async function registrarRetornoComodato(
     aprovacaoId: resultado.aprovacaoId,
     tipoAprovacao: 'retorno_comodato',
     nivel: 'gestor',
-    loteCodigo: `Retorno comodato ${movOrigem.id.slice(0, 8)}`,
+    // ACXEGDP-440: o comodato é identificado pelo cliente no assunto do e-mail (o tipo já diz "Retorno de comodato");
+    // sem cliente nas observações (registro antigo), pela data da saída.
+    loteCodigo: extrairClienteDaObservacao(movOrigem.observacoes) ?? `Comodato de ${dataBrasilia(movOrigem.createdAt)}`,
     produto: descricaoRecebido,
     quantidadeKg: qtdRecebidaKg,
-    detalhes: `Retorno de comodato — ${input.observacoes}${skuMudou || qtdMudou ? ' [DIVERGENTE]' : ''}`,
+    detalhes: `${input.observacoes}${skuMudou || qtdMudou ? ' (produto ou quantidade diferente da saída)' : ''}`,
   }).catch((err) => logger.error({ err }, 'Falha ao notificar retorno comodato'));
 
   logger.info(

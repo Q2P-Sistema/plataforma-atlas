@@ -11,7 +11,8 @@ const { sendEmailMock, loggerMock, executeMock } = vi.hoisted(() => ({
   executeMock: vi.fn(),
 }));
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('./helpers/email-q2p.js')),
   createLogger: () => loggerMock,
   getConfig: () => ({ APP_URL: 'https://atlas.local' }),
   getDb: () => ({
@@ -20,15 +21,6 @@ vi.mock('@atlas/core', () => ({
     execute: executeMock,
   }),
   sendEmail: sendEmailMock,
-  buildEmailLayout: (o: { corpoHtml?: string; ctaUrl?: string }) => ({
-    html: `${o?.corpoHtml ?? ''}||URL:${o?.ctaUrl ?? ''}`,
-    text: '',
-  }),
-  escapeHtml: (v: unknown) => String(v ?? ''),
-  emailActionBox: (html: string) => html,
-  // Como o real: omite as linhas sem valor.
-  emailDataList: (linhas: Array<{ label: string; valor: string }>) =>
-    linhas.filter((l) => l.valor !== '').map((l) => `[${l.label}: ${l.valor}]`).join(''),
 }));
 vi.mock('@atlas/db', () => ({ users: {}, userModules: {} }));
 
@@ -48,7 +40,7 @@ const linhaNf6842 = {
 };
 
 function ultimoEmail() {
-  return sendEmailMock.mock.calls.at(-1)![0] as { subject: string; html: string };
+  return sendEmailMock.mock.calls.at(-1)![0] as { subject: string; html: string; text: string };
 }
 
 beforeEach(() => {
@@ -67,14 +59,16 @@ describe('ACXEGDP-396 — e-mail de aprovação ao operador', () => {
       tipoAprovacao: 'entrada_manual',
     });
 
-    const { subject, html } = ultimoEmail();
-    expect(subject).toBe('StockBridge — Recebimento aprovado — NF 6842 (REPLAS COMERCIAL LTDA)');
+    const { subject, html, text } = ultimoEmail();
+    // ACXEGDP-440: o fornecedor sai do assunto (quem lançou já sabe) e vai no subtítulo.
+    expect(subject).toBe('[INFORMATIVO] - Recebimento - Aprovado - NF 6842');
     expect(html).toContain('Recebimento nacional (NF)');
     expect(html).not.toContain('Entrada manual');
-    expect(html).toContain('[Item da NF: SUCATA PLASTICO]');
-    expect(html).toContain('[Produto: PS CRISTAL A]');
-    expect(html).toContain('[Quantidade: 18.000 kg]');
-    expect(html).toContain('[Local: SANTO ANDRÉ (NACIONAL)]');
+    expect(text).toContain('NF 6842 · REPLAS COMERCIAL LTDA');
+    expect(text).toContain('Item da NF: SUCATA PLASTICO');
+    expect(text).toContain('Produto: PS CRISTAL A');
+    expect(text).toContain('Quantidade: 18.000 kg');
+    expect(text).toContain('Local: SANTO ANDRÉ (NACIONAL)');
   });
 
   it('formulário manual: mesmo padrão da fila, com "manual" no começo do assunto', async () => {
@@ -84,15 +78,15 @@ describe('ACXEGDP-396 — e-mail de aprovação ao operador', () => {
 
     await enviarNotificacaoAprovacaoOperador({ operadorUserId: 'u1', aprovacaoId: 'a1', tipoAprovacao: 'entrada_manual' });
 
-    const { subject, html } = ultimoEmail();
-    expect(subject).toBe('StockBridge — Recebimento manual aprovado — NF 12345');
+    const { subject, html, text } = ultimoEmail();
+    expect(subject).toBe('[INFORMATIVO] - Recebimento manual - Aprovado - NF 12345');
     expect(html).toContain('Recebimento nacional (manual)');
     expect(html).not.toContain('Entrada manual');
-    expect(html).not.toContain('[Item da NF:');
-    expect(html).toContain('[NF: 12345]');
-    expect(html).toContain('[Produto: PP H301]');
-    expect(html).toContain('[Quantidade: 1.250,5 kg]');
-    expect(html).toContain('[Local: SANTO ANDRÉ (NACIONAL)]');
+    expect(text).not.toContain('Item da NF:');
+    expect(text).toContain('\nNF 12345\n');
+    expect(text).toContain('Produto: PP H301');
+    expect(text).toContain('Quantidade: 1.250,5 kg');
+    expect(text).toContain('Local: SANTO ANDRÉ (NACIONAL)');
   });
 
   it('outro tipo de aprovação (sem contexto): assunto e corpo genéricos', async () => {
@@ -100,9 +94,19 @@ describe('ACXEGDP-396 — e-mail de aprovação ao operador', () => {
 
     await enviarNotificacaoAprovacaoOperador({ operadorUserId: 'u1', aprovacaoId: 'a1', tipoAprovacao: 'saida_amostra' });
 
-    const { subject, html } = ultimoEmail();
-    expect(subject).toBe('StockBridge — Lançamento aprovado (Amostra/Brinde)');
-    expect(html).not.toContain('[NF:');
+    const { subject, text } = ultimoEmail();
+    expect(subject).toBe('[INFORMATIVO] - Lançamento - Aprovado - Amostra/Brinde');
+    expect(text).not.toMatch(/\bNF\b/);
+  });
+
+  it('divergência aprovada: com pendência no OMIE o e-mail não diz que o ajuste entrou nas duas empresas (ACXEGDP-440)', async () => {
+    executeMock.mockResolvedValue({ rows: [] });
+    await enviarNotificacaoAprovacaoOperador({ operadorUserId: 'u1', aprovacaoId: 'a1', tipoAprovacao: 'recebimento_divergencia', incluirComex: true });
+    expect(ultimoEmail().text).toContain('O ajuste foi lançado no OMIE (ACXE e Q2P) com a quantidade aprovada.');
+    await enviarNotificacaoAprovacaoOperador({ operadorUserId: 'u1', aprovacaoId: 'a1', tipoAprovacao: 'recebimento_divergencia', pendenciaOmie: true });
+    const { text } = ultimoEmail();
+    expect(text).toContain('Parte do lançamento no OMIE ficou pendente: o Gestor do Sistema Integrador vai concluir.');
+    expect(text).not.toContain('O ajuste foi lançado no OMIE (ACXE e Q2P)');
   });
 
   it('falha ao ler o contexto não impede o e-mail: cai no texto genérico', async () => {
@@ -111,7 +115,7 @@ describe('ACXEGDP-396 — e-mail de aprovação ao operador', () => {
     await enviarNotificacaoAprovacaoOperador({ operadorUserId: 'u1', aprovacaoId: 'a1', tipoAprovacao: 'entrada_manual' });
 
     expect(sendEmailMock).toHaveBeenCalledTimes(1);
-    expect(ultimoEmail().subject).toBe('StockBridge — Lançamento aprovado (Entrada manual)');
+    expect(ultimoEmail().subject).toBe('[INFORMATIVO] - Lançamento - Aprovado - Entrada manual');
     expect(loggerMock.warn).toHaveBeenCalled();
   });
 });
@@ -126,7 +130,8 @@ describe('ACXEGDP-396 — e-mail de rejeição ao operador', () => {
       operadorUserId: 'u1', aprovacaoId: 'ap2', loteId: 'mov2', motivo: 'NF errada', fluxo: 'recebimento', tipoAprovacao: 'entrada_manual',
     });
 
-    expect(ultimoEmail().subject).toBe('StockBridge — Recebimento manual rejeitado — NF 777');
+    // ACXEGDP-440: no manual a situação fica só "Rejeitado", para caber nos 76 caracteres.
+    expect(ultimoEmail().subject).toBe('[AÇÃO REQUERIDA] - Recebimento manual - Rejeitado - NF 777');
   });
 
   it('recebimento nacional por NF: assunto com NF, dados do item e link para a Fila de Recebimento', async () => {
@@ -141,10 +146,10 @@ describe('ACXEGDP-396 — e-mail de rejeição ao operador', () => {
       tipoAprovacao: 'entrada_manual',
     });
 
-    const { subject, html } = ultimoEmail();
-    expect(subject).toBe('StockBridge — Recebimento rejeitado — NF 6842 (REPLAS COMERCIAL LTDA)');
-    expect(html).toContain('[Produto: PS CRISTAL A]');
+    const { subject, html, text } = ultimoEmail();
+    expect(subject).toBe('[AÇÃO REQUERIDA] - Recebimento - Rejeitado, corrigir e reenviar - NF 6842');
+    expect(text).toContain('Produto: PS CRISTAL A');
     expect(html).toContain('peso não confere');
-    expect(html).toContain('URL:https://atlas.local/stockbridge/fila#rejeicao=ap1');
+    expect(html).toContain('href="https://atlas.local/stockbridge/fila#rejeicao=ap1"');
   });
 });

@@ -9,15 +9,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // PHP continua checado por NF antes do OMIE. Com todos os produtos ja recebidos,
 // o resultado segue NotaFiscalJaProcessadaError.
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('./helpers/email-q2p.js')),
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getDb: vi.fn(),
   getConfig: () => ({ SEED_ADMIN_EMAIL: 'admin@atlas.local' }),
   sendEmail: vi.fn().mockResolvedValue(undefined),
-  buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
-  emailDataList: () => '',
-  emailActionBox: (html: string) => html,
-  escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
   getPool: () => ({
     query: (sql: string) =>
       typeof sql === 'string' && sql.includes('tbl_nf_header')
