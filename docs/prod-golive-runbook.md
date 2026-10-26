@@ -457,14 +457,16 @@ passo separado, depois do n8n da ACXE e de um teste controlado no OMIE da ACXE. 
    `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED: ${…:-false}` e
    `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_DATA_CORTE: ${…:-}`. Conferir a fila e o detalhe da Q2P
    (Ctrl+Shift+R antes de reprovar qualquer item de tela).
-3. **n8n "ACXE - Exporta Recebimentos NF-e"** (`xqgvUZ1X9P52EDbH`, inativo): ativar, deixar rodar e
+3. **n8n "ACXE - Exporta Recebimentos NF-e"** (`xqgvUZ1X9P52EDbH`; **ativo desde 23/10/2026**, T052 feito): ativar, deixar rodar e
    conferir que `public."tbl_recebimentoNFe_ACXE"` traz os recebimentos **pendentes e os já recebidos**
    (o histórico é o que permite detectar NF recebida no portal com estoque). T052.
 4. **Teste controlado em PROD** (T076), no modelo do T033, com a próxima NF da Solutec contra o PC 580:
    fiscal com o vínculo no OMIE da ACXE e, na aprovação, `ENT/INI` só na ACXE no 20.0.7; depois uma
    entrada num local que também é da Q2P (21.1), conferindo o mesmo valor nas duas empresas e a
    Conferência de Estoque. É a primeira escrita do Atlas no OMIE da ACXE por esse caminho.
-5. **Ligar**: `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_DATA_CORTE` com a data da ativação (NF da ACXE
+   **Em 26/10/2026 a chave foi ligada antes deste passo**, por decisão do usuário: não havia NF da Solutec pendente, e o
+   primeiro recebimento da ACXE passa a ser o teste, acompanhado.
+5. **Ligar** (feito em 26/10/2026, com o corte em 26/10): `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_DATA_CORTE` com a data da ativação (NF da ACXE
    emitida antes dela nunca entra na fila; 13 NFs desde 11/09/2026 já foram recebidas no portal com
    estoque) e `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED=true`, com "Update the stack". A chave
    só vale com `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED=true`. Conferir `GET /api/v1/stockbridge/health`:
