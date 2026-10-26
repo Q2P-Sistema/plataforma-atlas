@@ -21,20 +21,13 @@ const { sendEmailMock, loggerMock, configMock, clientQuerySpy, releaseSpy, conne
   connectSpy: vi.fn(),
 }));
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('./helpers/email-q2p.js')),
   createLogger: () => loggerMock,
   getConfig: () => configMock,
   getDb: () => ({ select: () => ({ from: () => ({ where: () => ({ limit: () => Promise.resolve([]) }) }) }), execute: vi.fn() }),
   getPool: () => ({ connect: () => connectSpy() }),
   sendEmail: sendEmailMock,
-  buildEmailLayout: (o: { titulo?: string; variante?: string; corpoHtml?: string; ctaUrl?: string }) => ({
-    html: `[${o?.variante ?? ''}:${o?.titulo ?? ''}]${o?.corpoHtml ?? ''}||URL:${o?.ctaUrl ?? ''}`,
-    text: '',
-  }),
-  escapeHtml: (v: unknown) => String(v ?? ''),
-  emailActionBox: (html: string, titulo?: string) => `[${titulo ?? 'Ação necessária'}]${html}`,
-  emailDataList: (linhas: Array<{ label: string; valor: string | number | null | undefined }>) =>
-    linhas.filter((l) => l.valor !== '' && l.valor != null).map((l) => `[${l.label}: ${l.valor}]`).join(''),
 }));
 vi.mock('@atlas/db', () => ({ users: {}, userModules: {} }));
 
@@ -54,7 +47,7 @@ const base = {
 
 // enviado_para de cada linha de aviso (NF + motivo) gravada nas ultimas 24 h.
 let avisosPrevios: string[] = [];
-const emails = () => sendEmailMock.mock.calls.map((c) => c[0] as { to: string; subject: string; html: string });
+const emails = () => sendEmailMock.mock.calls.map((c) => c[0] as { to: string; subject: string; html: string; text: string });
 const comandos = () => clientQuerySpy.mock.calls.map((c) => String(c[0]));
 const posicao = (trecho: string) => clientQuerySpy.mock.calls.findIndex((c) => String(c[0]).includes(trecho));
 const ordemChamada = (trecho: string) => clientQuerySpy.mock.invocationCallOrder[posicao(trecho)]!;
@@ -84,7 +77,7 @@ describe('enviarAvisoComprasNfSemPc', () => {
   it('envia um e-mail por destinatario de compras e registra o aviso DEPOIS de enviar, na transacao com trava', async () => {
     expect(await enviarAvisoComprasNfSemPc(base)).toBe('enviado');
     expect(emails().map((e) => e.to)).toEqual(['compras@q2p.local', 'comprador@q2p.local']);
-    expect(emails()[0]!.subject).toBe('StockBridge — NF 7813 de REPLAS COMERCIAL LTDA sem pedido de compra no OMIE');
+    expect(emails()[0]!.subject).toBe('[AÇÃO REQUERIDA] - Compras - NF sem pedido de compra - REPLAS COMERCIAL LTDA - NF 7813');
     const ins = insercoes();
     expect(ins).toHaveLength(1);
     expect(ins[0]![1]).toEqual(['q2p', CHAVE, '7813', 'REPLAS COMERCIAL LTDA', 'sem_pc', JSON.stringify(base.itens), 'compras@q2p.local, comprador@q2p.local', base.disparadoPor]);
@@ -189,11 +182,22 @@ describe('enviarAvisoComprasNfSemPc', () => {
     expect(clientQuerySpy.mock.calls[posicao('pg_advisory_xact_lock')]![1]).toEqual([`sb:aviso-compras:${CHAVE}:pc_aguardando_aprovacao`]);
   });
 
-  it('recebida sem vinculo: assunto proprio e orientacao para ajustar o PC com o fiscal', async () => {
+  it('recebida sem vinculo: assunto proprio e orientacao para ajustar o PC com o fiscal; sem botao (a NF ja saiu da fila)', async () => {
     await enviarAvisoComprasNfSemPc({ ...base, motivo: 'recebida_sem_vinculo' });
     const e = emails()[0]!;
-    expect(e.subject).toBe('StockBridge — NF 7813 de REPLAS COMERCIAL LTDA recebida sem pedido de compra no OMIE');
+    expect(e.subject).toBe('[AÇÃO REQUERIDA] - Compras - Recebida sem pedido de compra - REPLAS COMERCIAL LTDA - NF 7813');
     expect(e.html).toContain('fiscal');
+    expect(e.html).not.toContain('<a href');
+  });
+
+  it('NF da ACXE: "NF ACXE" no assunto e no subtitulo, passos no OMIE da ACXE e sem a linha Empresa (ACXEGDP-440)', async () => {
+    await enviarAvisoComprasNfSemPc({ ...base, empresa: 'acxe' });
+    const e = emails()[0]!;
+    expect(e.subject).toBe('[AÇÃO REQUERIDA] - Compras - NF sem pedido de compra - REPLAS COMERCIAL LTDA - NF ACXE 7813');
+    expect(e.html).toContain('NF ACXE 7813 · REPLAS COMERCIAL LTDA');
+    expect(e.text).toContain('1. Lance e aprove no OMIE da ACXE o pedido de compra deste item para este fornecedor.');
+    expect(e.text).not.toContain('Empresa:');
+    expect(e.html).toContain('href="https://atlas.local/stockbridge/fila"');
   });
 });
 
@@ -307,19 +311,18 @@ describe('enviarAvisoComprasNfSemPc — PC em unidade diferente da nota (trava d
 
   it('sem_pc: o quadro cita a unidade da nota, o PC e o item, e o "O que fazer" manda ajustar a unidade (não lançar PC qualquer)', async () => {
     expect(await enviarAvisoComprasNfSemPc({ ...base, unidadeIncompativel })).toBe('enviado');
-    const html = emails()[0]!.html;
-    expect(html).toContain('[Pedido em unidade diferente da nota]');
-    expect(html).toContain(
-      'A nota está em toneladas e o PC 306 está em outra unidade para o item "SUCATA PLASTICO". ' +
+    const { subject, html, text } = emails()[0]!;
+    expect(subject).toBe('[AÇÃO REQUERIDA] - Compras - Pedido em unidade diferente - REPLAS COMERCIAL LTDA - NF 7813');
+    expect(text).toContain(
+      'Pedido em unidade diferente da nota\n' +
+        'A nota está em toneladas e o PC 306 está em outra unidade para o item "SUCATA PLASTICO". ' +
         'Na conclusão do recebimento o OMIE grava no pedido a quantidade recebida na unidade da nota, sem converter ' +
-        '(uma NF de 8,25 toneladas baixaria um pedido em kg com 8,25, não 8.250). ' +
-        'Lance (ou ajuste) o pedido de compra na mesma unidade da nota.',
+        '(uma NF de 8,25 toneladas baixaria um pedido em kg com 8,25, não 8.250).',
     );
-    expect(html).toContain('Siga a orientação acima: o pedido precisa estar na unidade da nota. A NF fica na fila do StockBridge até o pedido estar na unidade certa.');
+    // ACXEGDP-440: o que fazer vai na caixa de ação, que no padrão vem antes das seções
+    expect(text).toContain('O que fazer\nQuem age: Compras\n1. Lance (ou ajuste) o pedido de compra no OMIE na mesma unidade da nota.\nA NF fica na fila do StockBridge até o pedido estar na unidade certa.');
     expect(html).not.toContain('Lance e aprove no OMIE o pedido de compra deste item');
     expect(html).not.toMatch(/\d{10}/);
-    // o quadro vem antes do "O que fazer"
-    expect(html.indexOf('[Pedido em unidade diferente da nota]')).toBeLessThan(html.indexOf('[O que fazer]'));
   });
 
   it('o quadro de outro cadastro NÃO existe mais (o PC da matriz agora é oferecido)', async () => {
@@ -350,19 +353,18 @@ describe('enviarAvisoComprasNfSemPc — PC em unidade diferente da nota (trava d
       ...base,
       unidadeIncompativel: { unidadeNf: 'TON', pcs: ['306', '307', '310'], itens: ['MC PEBD LD', 'MC PEAD ES', 'PEBDL-16'] },
     });
-    const html = emails()[0]!.html;
-    expect(html).toContain('A nota está em toneladas e os PCs 306, 307 e 310 está em outra unidade para os itens "MC PEBD LD", "MC PEAD ES" e "PEBDL-16".');
+    expect(emails()[0]!.text).toContain('A nota está em toneladas e os PCs 306, 307 e 310 está em outra unidade para os itens "MC PEBD LD", "MC PEAD ES" e "PEBDL-16".');
   });
 
   it('dois PCs vão com "e" e um item vai no singular', async () => {
     await enviarAvisoComprasNfSemPc({ ...base, unidadeIncompativel: { unidadeNf: 'TON', pcs: ['306', '307'], itens: ['MC PEBD LD'] } });
-    expect(emails()[0]!.html).toContain('os PCs 306 e 307 está em outra unidade para o item "MC PEBD LD".');
+    expect(emails()[0]!.text).toContain('os PCs 306 e 307 está em outra unidade para o item "MC PEBD LD".');
   });
 
   it('número de PC vazio ou com cara de código interno do OMIE nunca aparece: vira "o pedido de compra deste fornecedor"', async () => {
     await enviarAvisoComprasNfSemPc({ ...base, unidadeIncompativel: { ...unidadeIncompativel, pcs: ['8517884280', '  ', ''] } });
-    const html = emails()[0]!.html;
-    expect(html).toContain('A nota está em toneladas e o pedido de compra deste fornecedor está em outra unidade para o item "SUCATA PLASTICO".');
+    const { html, text } = emails()[0]!;
+    expect(text).toContain('A nota está em toneladas e o pedido de compra deste fornecedor está em outra unidade para o item "SUCATA PLASTICO".');
     expect(html).not.toMatch(/\d{10}/);
     expect(html).not.toContain('PC 8517884280');
   });
@@ -376,9 +378,9 @@ describe('enviarAvisoComprasNfSemPc — PC em unidade diferente da nota (trava d
     for (const args of [{ ...base }, { ...base, unidadeIncompativel: null }]) {
       sendEmailMock.mockClear();
       await enviarAvisoComprasNfSemPc(args);
-      const html = emails()[0]!.html;
+      const { html, text } = emails()[0]!;
       expect(html).not.toContain('Pedido em unidade diferente da nota');
-      expect(html).toContain('Lance e aprove no OMIE o pedido de compra deste item para este fornecedor. A NF fica na fila do StockBridge até o PC existir.');
+      expect(text).toContain('1. Lance e aprove no OMIE o pedido de compra deste item para este fornecedor.\nA NF fica na fila do StockBridge até o pedido existir.');
     }
   });
 
@@ -389,17 +391,17 @@ describe('enviarAvisoComprasNfSemPc — PC em unidade diferente da nota (trava d
       pcsAguardandoAprovacao: ['305'],
       unidadeIncompativel,
     });
-    const html = emails()[0]!.html;
-    expect(html).toContain('[Pedido em unidade diferente da nota]');
+    const { html, text } = emails()[0]!;
+    expect(text).toContain('Pedido em unidade diferente da nota\nA nota está em toneladas');
     expect(html).toContain('Aprove o pedido de compra no OMIE.');
     expect(html).toContain('PC 305');
-    expect(html).not.toContain('Siga a orientação acima: o pedido precisa estar na unidade da nota');
+    expect(html).not.toContain('Lance (ou ajuste) o pedido de compra');
   });
 
   it('recebida sem vínculo com a lista de unidade: o "O que fazer" é o do motivo (fiscal), com o quadro', async () => {
     await enviarAvisoComprasNfSemPc({ ...base, motivo: 'recebida_sem_vinculo', unidadeIncompativel });
-    const html = emails()[0]!.html;
-    expect(html).toContain('[Pedido em unidade diferente da nota]');
+    const { html, text } = emails()[0]!;
+    expect(text).toContain('Pedido em unidade diferente da nota\nA nota está em toneladas');
     expect(html).toContain('fiscal');
   });
 

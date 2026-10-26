@@ -19,21 +19,14 @@ const gestoresMock = vi.fn().mockResolvedValue([
   { email: 'gestor2@acxe.local' },
 ]);
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('./helpers/email-q2p.js')),
   createLogger: () => loggerMock,
   getConfig: () => config,
   getDb: () => ({
     select: () => ({ from: () => ({ innerJoin: () => ({ where: () => gestoresMock() }) }) }),
   }),
   sendEmail: sendEmailMock,
-  // Devolve o corpo cru pra podermos inspecionar o conteúdo montado.
-  buildEmailLayout: (o: { corpoHtml?: string; ctaLabel?: string }) => ({
-    html: `${o?.corpoHtml ?? ''}||CTA:${o?.ctaLabel ?? ''}`,
-    text: '',
-  }),
-  escapeHtml: (v: unknown) => String(v ?? ''),
-  emailActionBox: (html: string, titulo?: string) => `[ACTIONBOX:${titulo ?? ''}]${html}`,
-  emailDataList: () => '',
 }));
 vi.mock('@atlas/db', () => ({ users: {}, userModules: {} }));
 
@@ -68,14 +61,14 @@ describe('EML-09 — recebimento nacional: 1 e-mail por gestor (não N itens × 
     const tos = sendEmailMock.mock.calls.map((c) => (c[0] as { to: string }).to);
     expect(new Set(tos)).toEqual(new Set(['gestor1@acxe.local', 'gestor2@acxe.local']));
 
-    // Cada e-mail lista os 3 produtos e a NF.
+    // Cada e-mail lista os 3 produtos e a NF (a contagem vai no subtítulo; ACXEGDP-440).
     for (const call of sendEmailMock.mock.calls) {
       const { html, subject } = call[0] as { html: string; subject: string };
       expect(html).toContain('PP H301');
       expect(html).toContain('PEAD F200');
       expect(html).toContain('PVC K57');
-      expect(subject).toContain('12345');
-      expect(subject).toContain('3 itens');
+      expect(html).toContain('NF 12345 · 3 itens');
+      expect(subject).toBe('[AÇÃO REQUERIDA] - Aprovação - Recebimento nacional - NF 12345');
     }
   });
 
@@ -132,13 +125,13 @@ describe('EML-13 — comodato: 1 digest por destinatário com todos os comodatos
     expect(html).toContain('Cliente A');
     expect(html).toContain('Cliente B');
     expect(html).toContain('Cliente C');
-    expect(subject).toContain('3 comodatos vencidos');
-    // Nenhum escalado → sem action box e sem tag [Escalado].
-    expect(html).not.toContain('[ACTIONBOX');
-    expect(subject).not.toContain('[Escalado]');
+    expect(subject).toBe('[AÇÃO REQUERIDA] - Comodato - Retorno vencido - 3 comodatos');
+    // Nenhum escalado → sem o aviso de escalada no corpo nem no assunto.
+    expect(html).not.toContain('escalado para a diretoria');
+    expect(subject).not.toContain('15 dias');
   });
 
-  it('inclui a action box de escalada quando algum comodato está escalado', async () => {
+  it('avisa a escalada no assunto e no corpo quando algum comodato está escalado', async () => {
     await enviarDigestComodatosVencidos({
       to: 'diretor@acxe.local',
       comodatos: [
@@ -148,8 +141,10 @@ describe('EML-13 — comodato: 1 digest por destinatário com todos os comodatos
     });
 
     const { html, subject } = sendEmailMock.mock.calls[0]![0] as { html: string; subject: string };
-    expect(html).toContain('[ACTIONBOX');
-    expect(subject).toContain('[Escalado]');
+    expect(html).toContain('o aviso foi escalado para a diretoria');
+    expect(html).toContain('O aviso se repete a cada 15 dias');
+    expect(html).toContain('30 dias (escalado)');
+    expect(subject).toBe('[AÇÃO REQUERIDA] - Comodato - Vencido há mais de 15 dias - 2 comodatos');
   });
 
   it('lista vazia → nenhum e-mail', async () => {

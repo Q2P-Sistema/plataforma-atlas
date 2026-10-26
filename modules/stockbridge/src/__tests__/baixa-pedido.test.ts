@@ -15,7 +15,8 @@ const alertaSpy = vi.fn();
 // Mutável pelos testes da flag; hoisted porque vi.mock sobe para o topo do arquivo.
 const configBaixa = vi.hoisted(() => ({ habilitada: true }));
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('./helpers/email-q2p.js')),
   createLogger: () => ({
     info: vi.fn(),
     warn: vi.fn(),
@@ -37,13 +38,6 @@ vi.mock('@atlas/core', () => ({
     STOCKBRIDGE_BAIXA_PEDIDO_Q2P_ENABLED: configBaixa.habilitada,
   }),
   sendEmail: vi.fn().mockResolvedValue(undefined),
-  buildEmailLayout: (o: { titulo?: string }) => ({
-    html: String(o?.titulo ?? ''),
-    text: String(o?.titulo ?? ''),
-  }),
-  escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
-  emailDataList: () => '',
-  emailActionBox: (html: string) => html,
 }));
 
 vi.mock('@atlas/db', () => ({

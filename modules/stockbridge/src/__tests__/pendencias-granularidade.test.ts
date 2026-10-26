@@ -8,7 +8,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const poolQuerySpy = vi.fn();
 const clientQuerySpy = vi.fn();
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('./helpers/email-q2p.js')),
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getDb: vi.fn(),
   getPool: () => ({
@@ -21,10 +22,6 @@ vi.mock('@atlas/core', () => ({
   }),
   getConfig: () => ({ STOCKBRIDGE_FISCAL_CUTOFF_DATE: '2026-01-01' }),
   sendEmail: vi.fn().mockResolvedValue(undefined),
-  buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
-  escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
-  emailDataList: () => '',
-  emailActionBox: (html: string) => html,
 }));
 
 vi.mock('@atlas/db', () => ({

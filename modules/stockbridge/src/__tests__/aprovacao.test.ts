@@ -11,15 +11,12 @@ import {
   inferirNivelAprovacao,
 } from '../services/aprovacao.service.js';
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('./helpers/email-q2p.js')),
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getDb: vi.fn(),
   getConfig: () => ({ SEED_ADMIN_EMAIL: 'admin@atlas.local' }),
   sendEmail: vi.fn().mockResolvedValue(undefined),
-  buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
-  emailDataList: () => '',
-  emailActionBox: (html: string) => html,
-  escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
   getPool: () => ({ query: vi.fn() }),
 }));
 
@@ -254,7 +251,7 @@ describe('aprovacao.service#aprovar', () => {
     // Recebimento divergente concluido COM SUCESSO → Comex em copia no email "aprovado"
     const { sendEmail } = await import('@atlas/core');
     const aprovadoCall = vi.mocked(sendEmail).mock.calls.find((c) =>
-      (c[0] as { subject: string }).subject.includes('aprovado'),
+      (c[0] as { subject: string }).subject.includes(' - Aprovado'),
     );
     expect(aprovadoCall).toBeDefined();
     const cc = (aprovadoCall![0] as { cc?: string | string[] }).cc;
@@ -351,7 +348,7 @@ describe('aprovacao.service#aprovar', () => {
     // 4) Insucesso (pendencia OMIE) → Comex NAO entra em copia no email "aprovado"
     const { sendEmail } = await import('@atlas/core');
     const aprovadoCall = vi.mocked(sendEmail).mock.calls.find((c) =>
-      (c[0] as { subject: string }).subject.includes('aprovado'),
+      (c[0] as { subject: string }).subject.includes(' - Aprovado'),
     );
     expect(aprovadoCall).toBeDefined();
     const cc = (aprovadoCall![0] as { cc?: string | string[] }).cc;
@@ -485,7 +482,7 @@ describe('aprovacao.service#rejeitar', () => {
       expect(sendEmail).toHaveBeenCalledWith(
         expect.objectContaining({
           to: 'operador@test.local',
-          subject: expect.stringContaining('rejeitado'),
+          subject: expect.stringContaining(' - Rejeitado'),
         }),
       ),
     );

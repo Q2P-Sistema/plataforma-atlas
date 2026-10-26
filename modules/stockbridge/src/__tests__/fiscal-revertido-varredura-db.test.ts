@@ -124,7 +124,8 @@ describe.skipIf(!temBanco)('migration 0060 — varredura do recebimento fiscal r
   const estado = async (nf: string) =>
     (await pool.query(`SELECT status, revertido_origem, (revertido_omie_em IS NOT NULL) AS omie_em, (aviso_fiscal_em IS NOT NULL) AS avisado FROM stockbridge.recebimento_fiscal WHERE nf_chave_acesso = $1 ORDER BY created_at, id`, [nf]))
       .rows;
-  const emailsDe = (nota: string) => enviados.filter((e) => e.subject.includes(`NF ${nota} `));
+  // ACXEGDP-440: o assunto termina na NF ("... - NF 19252" ou "... - NF ACXE 12012")
+  const emailsDe = (nota: string) => enviados.filter((e) => new RegExp(` - NF (ACXE )?${nota}$`).test(e.subject));
 
   beforeAll(async () => {
     const core = await import('@atlas/core');
@@ -279,8 +280,8 @@ describe.skipIf(!temBanco)('migration 0060 — varredura do recebimento fiscal r
     if (!pronto) return ctx.skip();
     const nf = emailsDe('19252');
     expect(nf.map((e) => e.to).sort()).toEqual(FISCAL);
-    expect(nf[0]!.subject).toBe('Recebimento fiscal desfeito no OMIE — NF 19252 (ZARAPLAST S/A)');
-    expect(nf[0]!.html).toContain('aguardando aprovação do gestor');
+    expect(nf[0]!.subject).toBe('[AÇÃO REQUERIDA] - Fiscal - Recebimento desfeito no OMIE - ZARAPLAST S/A - NF 19252');
+    expect(nf[0]!.text).toContain('Entrada de estoque no Atlas: Aguardando aprovação do gestor');
     expect(nf[0]!.html).toContain('PC 308');
     expect(primeira.avisados).toBe(temAcxe ? 4 : 3);
     expect(primeira.falhas).toBe(0);
@@ -290,7 +291,7 @@ describe.skipIf(!temBanco)('migration 0060 — varredura do recebimento fiscal r
     if (!pronto) return ctx.skip();
     const nf = emailsDe('13013');
     expect(nf.map((e) => e.to).sort()).toEqual(FISCAL);
-    expect(nf[0]!.html).toContain('aprovada em');
+    expect(nf[0]!.text).toContain('Entrada de estoque no Atlas: Aprovada em');
     expect(nf[0]!.html).toContain('os itens lançados não voltam à fila de recebimento do StockBridge');
     expect(nf[0]!.html).not.toContain('a nota não volta à fila');
     expect((await estado(NF.parcial))[0]!.avisado).toBe(true);
@@ -309,7 +310,7 @@ describe.skipIf(!temBanco)('migration 0060 — varredura do recebimento fiscal r
   it('duas reversoes da mesma NF viram UM aviso (a mais recente) e as duas linhas ficam marcadas como avisadas', async (ctx) => {
     if (!pronto) return ctx.skip();
     expect(emailsDe('10010').map((e) => e.to).sort()).toEqual(FISCAL);
-    expect(emailsDe('10010')[0]!.html).toContain('aprovada em');
+    expect(emailsDe('10010')[0]!.text).toContain('Entrada de estoque no Atlas: Aprovada em');
     expect((await estado(NF.revertidaAprovada)).map((l) => l.avisado)).toEqual([true, true]);
   });
 
@@ -334,7 +335,7 @@ describe.skipIf(!temBanco)('migration 0060 — varredura do recebimento fiscal r
   it('o espelho da ACXE e varrido com a empresa da ACXE (so quando existe)', async (ctx) => {
     if (!pronto || !temAcxe) return ctx.skip();
     expect(await estado(NF.acxe)).toEqual([expect.objectContaining({ status: 'revertido', avisado: true })]);
-    expect(emailsDe('12012')[0]!.subject).toBe('Recebimento fiscal desfeito no OMIE da ACXE — NF 12012 (ZARAPLAST S/A)');
+    expect(emailsDe('12012')[0]!.subject).toBe('[AÇÃO REQUERIDA] - Fiscal - Recebimento desfeito no OMIE - ZARAPLAST S/A - NF ACXE 12012');
   });
 
   it('segunda rodada: nada a marcar, nada a avisar (o aviso gravado e a marcacao sao definitivos)', async (ctx) => {

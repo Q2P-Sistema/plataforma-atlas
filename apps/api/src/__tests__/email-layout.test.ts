@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 
-// buildEmailLayout/escapeHtml/buildPasswordResetEmail sao puros, mas o barrel
+// escapeHtml/buildPasswordResetEmail sao puros, mas o barrel
 // @atlas/core carrega config no import. Setamos env e usamos import dinamico
 // dentro dos testes (roda depois do beforeAll) para o loadConfig nao falhar.
 beforeAll(() => {
@@ -20,33 +20,16 @@ describe('email-layout (@atlas/core)', () => {
     expect(escapeHtml(42)).toBe('42');
   });
 
-  it('buildEmailLayout escapa titulo/CTA e gera versao text/plain (EML-06/15)', async () => {
-    const { buildEmailLayout } = await import('@atlas/core');
-    const { html, text } = buildEmailLayout({
-      titulo: 'Divergência & Ação',
-      corpoHtml: '<p>Olá, operador</p>',
-      ctaLabel: 'Abrir aprovações',
-      ctaUrl: 'https://atlas.local/x?a=1&b=2',
-    });
-    expect(html).toContain('Divergência &amp; Ação'); // titulo escapado
-    expect(html).toContain('a=1&amp;b=2'); // url do CTA escapada
-    expect(html).toContain('>Abrir aprovações<'); // rotulo do CTA
-    expect(html).toContain('lang="pt-BR"');
-    expect(html).toContain('Plataforma Atlas');
-    // versao texto decodifica entidades e traz o link do CTA
-    expect(text).toContain('Divergência & Ação');
-    expect(text).toContain('Abrir aprovações: https://atlas.local/x?a=1&b=2');
-  });
-
-  it('buildPasswordResetEmail usa acentuacao pt-BR correta e inclui o link (EML-01)', async () => {
+  it('buildPasswordResetEmail no padrão da ACXEGDP-440: assunto, link, prazo e acentuação (EML-01)', async () => {
     const { buildPasswordResetEmail } = await import('@atlas/core');
     const url = 'https://atlas.local/reset-password/tok123';
     const { subject, html, text } = buildPasswordResetEmail(url);
-    expect(subject).toBe('Atlas — Recuperação de senha');
+    expect(subject).toBe('[AÇÃO REQUERIDA] - Acesso - Redefinir a senha - Atlas');
     // as formas sem acento nao devem mais aparecer
-    expect(html).not.toMatch(/Voce|recuperacao|nao solicitou/);
-    expect(html).toContain('Você solicitou a recuperação');
-    expect(html).toContain(url);
-    expect(text).toContain(url);
+    expect(html).not.toMatch(/Voce|recuperacao|redefinicao|nao pediu/);
+    expect(html).toContain(`<title>${subject}</title>`);
+    expect(html).toContain(`href="${url}"`);
+    expect(html).toContain('O link vale por 1 hora e só pode ser usado uma vez.');
+    expect(text).toContain(`Redefinir senha: ${url}`);
   });
 });

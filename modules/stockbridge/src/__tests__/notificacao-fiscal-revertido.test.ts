@@ -17,23 +17,12 @@ const { sendEmailMock, loggerMock, configMock } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('./helpers/email-q2p.js')),
   createLogger: () => loggerMock,
   getConfig: () => configMock,
   getDb: () => ({ select: () => ({ from: () => ({ where: () => ({ limit: () => Promise.resolve([]) }) }) }), execute: vi.fn() }),
   sendEmail: sendEmailMock,
-  buildEmailLayout: (o: { titulo?: string; variante?: string; corpoHtml?: string; ctaUrl?: string }) => ({
-    html: `[${o?.variante ?? ''}:${o?.titulo ?? ''}]${o?.corpoHtml ?? ''}||URL:${o?.ctaUrl ?? ''}`,
-    text: 'texto-alternativo',
-  }),
-  // escapa como o helper real do core (& < >); o card de dados do core tambem escapa rotulo e valor
-  escapeHtml: (v: unknown) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
-  emailActionBox: (html: string, titulo?: string) => `[${titulo ?? 'Ação necessária'}]${html}`,
-  emailDataList: (linhas: Array<{ label: string; valor: string | number | null | undefined }>) =>
-    linhas
-      .filter((l) => l.valor !== '' && l.valor != null)
-      .map((l) => `[${l.label}: ${String(l.valor).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}]`)
-      .join(''),
 }));
 vi.mock('@atlas/db', () => ({ users: {}, userModules: {} }));
 
@@ -68,78 +57,86 @@ describe('enviarAvisoFiscalRevertido — destinatarios e assunto', () => {
     expect(new Set(enviados.map((e) => e.to))).toEqual(new Set(FISCAL));
     for (const e of enviados) {
       expect(e.to).not.toContain(',');
-      expect(e.subject).toBe('Recebimento fiscal desfeito no OMIE — NF 19252 (ZARAPLAST S/A)');
+      expect(e.subject).toBe('[AÇÃO REQUERIDA] - Fiscal - Recebimento desfeito no OMIE - ZARAPLAST S/A - NF 19252');
     }
     expect(enviados.map((e) => e.to)).not.toContain('compras@q2p.local');
     expect(enviados.map((e) => e.to)).not.toContain('ops@q2p.local');
   });
 
-  it('NF sem zeros a esquerda no assunto, no corpo e no card; so zeros vira "0"', async () => {
+  it('NF sem zeros a esquerda no assunto, no corpo e no card; so zeros e numero ausente (sem "NF 0")', async () => {
     await enviarAvisoFiscalRevertido({ ...base, notaFiscal: '000019252' });
     const { subject, html } = emails()[0]!;
-    expect(subject).toBe('Recebimento fiscal desfeito no OMIE — NF 19252 (ZARAPLAST S/A)');
-    expect(html).toContain('<strong>NF 19252</strong>');
-    expect(html).toContain('[Nota fiscal: 19252]');
+    expect(subject).toBe('[AÇÃO REQUERIDA] - Fiscal - Recebimento desfeito no OMIE - ZARAPLAST S/A - NF 19252');
+    expect(html).toContain('NF 19252 · ZARAPLAST S/A');
+    expect(html).toContain('concluiu o recebimento fiscal da NF 19252');
     expect(html).not.toContain('000019252');
     sendEmailMock.mockClear();
     await enviarAvisoFiscalRevertido({ ...base, notaFiscal: '000' });
-    expect(emails()[0]!.subject).toContain('NF 0 (');
+    expect(emails()[0]!.subject).toBe('[AÇÃO REQUERIDA] - Fiscal - Recebimento desfeito no OMIE - ZARAPLAST S/A');
+    expect(emails()[0]!.html).toContain('O Atlas concluiu o recebimento fiscal da NF, mas');
   });
 
-  it('fornecedor nulo ou vazio vira "Fornecedor não identificado no OMIE"', async () => {
+  it('fornecedor nulo ou vazio sai do assunto e vira "Fornecedor não identificado no OMIE" no corpo', async () => {
     await enviarAvisoFiscalRevertido({ ...base, fornecedorNome: null });
     await enviarAvisoFiscalRevertido({ ...base, fornecedorNome: '   ' });
-    for (const e of emails()) expect(e.subject).toBe('Recebimento fiscal desfeito no OMIE — NF 19252 (Fornecedor não identificado no OMIE)');
+    for (const e of emails()) {
+      expect(e.subject).toBe('[AÇÃO REQUERIDA] - Fiscal - Recebimento desfeito no OMIE - NF 19252');
+      expect(e.html).toContain('NF 19252 · Fornecedor não identificado no OMIE');
+    }
   });
 
   it('empresa ACXE cita a ACXE no assunto, no corpo e no card; a Q2P nao fala de ACXE', async () => {
     await enviarAvisoFiscalRevertido({ ...base, empresa: 'acxe' });
     const a = emails()[0]!;
-    expect(a.subject).toBe('Recebimento fiscal desfeito no OMIE da ACXE — NF 19252 (ZARAPLAST S/A)');
+    expect(a.subject).toBe('[AÇÃO REQUERIDA] - Fiscal - Recebimento desfeito no OMIE - ZARAPLAST S/A - NF ACXE 19252');
     expect(a.html).toContain('desfeito no OMIE da ACXE</strong>');
-    expect(a.html).toContain('[Empresa: ACXE]');
+    expect(a.html).toContain('NF ACXE 19252 · ZARAPLAST S/A');
     expect(a.html).toContain('no portal do OMIE da ACXE');
     sendEmailMock.mockClear();
     await enviarAvisoFiscalRevertido(base);
     const q = emails()[0]!;
     expect(q.subject).not.toContain('ACXE');
     expect(q.html).not.toContain('ACXE');
-    expect(q.html).not.toContain('[Empresa:');
+    expect(q.text).not.toContain('Empresa:');
   });
 });
 
 describe('enviarAvisoFiscalRevertido — corpo', () => {
   it('diz o que houve: o Atlas concluiu em X, aparece desfeito desde Y, a entrada ja foi lancada e os itens lancados nao voltam a fila', async () => {
     await enviarAvisoFiscalRevertido(base);
-    const { html } = emails()[0]!;
-    expect(html).toContain('[alerta:Recebimento fiscal desfeito no OMIE]');
-    expect(html).toContain('O Atlas concluiu o recebimento fiscal da <strong>NF 19252</strong> de <strong>ZARAPLAST S/A</strong> em 25/10/2026 às 17:02');
-    expect(html).toContain('aparece <strong>desfeito no OMIE</strong> desde 25/10/2026 às 17:13');
-    expect(html).toContain('A entrada de estoque desta nota já foi lançada pelo Atlas (aguardando aprovação do gestor)');
-    // vale tambem para NF parcial (um item lancado, outro pendente): so os itens lancados ficam fora da fila
-    expect(html).toContain('os itens lançados não voltam à fila de recebimento do StockBridge, e o recebimento fiscal precisa ser refeito no OMIE');
-    expect(html).toContain('[Concluído pelo Atlas em: 25/10/2026 às 17:02]');
-    expect(html).toContain('[Desfeito no OMIE desde: 25/10/2026 às 17:13]');
-    expect(html).toContain('[Entrada de estoque no Atlas: Aguardando aprovação do gestor]');
-    expect(html).toContain('[Fornecedor: ZARAPLAST S/A]');
+    const { html, text } = emails()[0]!;
+    expect(html).toContain('Fiscal: recebimento desfeito no OMIE');
+    expect(html).toContain('NF 19252 · ZARAPLAST S/A');
+    expect(html).toContain('O Atlas concluiu o recebimento fiscal da NF 19252, mas ele aparece <strong>desfeito no OMIE</strong>.');
+    // numa NF parcial o item rejeitado volta à fila: o texto fala dos itens lançados (2ª revisão da D21)
+    expect(html).toContain('A entrada de estoque desta nota já foi lançada pelo Atlas: os itens lançados não voltam à fila de recebimento do StockBridge, e o recebimento fiscal precisa ser refeito no OMIE.');
+    expect(html).not.toContain('a nota não volta à fila');
+    // ACXEGDP-440: as datas e a situação da entrada vão na tabela de dados
+    expect(text).toContain('Concluído pelo Atlas em: 25/10/2026 às 17:02');
+    expect(text).toContain('Desfeito no OMIE desde: 25/10/2026 às 17:13');
+    expect(text).toContain('Entrada de estoque no Atlas: Aguardando aprovação do gestor');
   });
 
   it('o que fazer: concluir de novo no portal conferindo "Não gerar movimento de estoque" (senao entra em dobro) e o vinculo com o PC', async () => {
     await enviarAvisoFiscalRevertido(base);
-    const { html } = emails()[0]!;
-    expect(html).toContain('[O que fazer]');
-    expect(html).toContain('Conclua o recebimento desta nota de novo no portal do OMIE.');
-    expect(html).toContain('<strong>Não gerar movimento de estoque</strong> marcada');
-    expect(html).toContain('o estoque desta nota entra pela aprovação no Atlas, e sem essa opção ele entraria em dobro;</li>');
-    expect(html).toContain('<li>o vínculo do item com o pedido de compra PC 308.</li>');
-    expect(html).toContain('[Pedido de compra: PC 308]');
+    const { html, text } = emails()[0]!;
+    expect(html).toContain('>O que fazer</p>');
+    expect(html).toContain('Quem age: <strong>Fiscal</strong>');
+    expect(html).toContain('<strong>Não gerar movimento de estoque</strong>');
+    // a ordem importa: concluir antes de conferir os itens lançaria o estoque em dobro (revisão da ACXEGDP-440)
+    expect(text).toContain(
+      '1. Abra o recebimento desta nota no portal do OMIE.\n' +
+        '2. Em cada item, confira se Não gerar movimento de estoque está marcada: o estoque desta nota entra pela aprovação no Atlas, e sem essa opção ele entraria em dobro.\n' +
+        '3. Em cada item, confira o vínculo com o pedido de compra PC 308.\n' +
+        '4. Depois, conclua o recebimento.',
+    );
+    expect(text).toContain('Pedido de compra: PC 308');
   });
 
   it('sem botao de acao: o fiscal pode nao ter acesso ao Atlas, o corpo e autossuficiente (nenhum link)', async () => {
     await enviarAvisoFiscalRevertido(base);
     const { html } = emails()[0]!;
-    expect(html).toContain('||URL:');
-    expect(html.split('||URL:')[1]).toBe('');
+    expect(html).not.toContain('<a href');
     expect(html).not.toContain('http');
   });
 
@@ -148,20 +145,20 @@ describe('enviarAvisoFiscalRevertido — corpo', () => {
     const { html } = emails()[0]!;
     expect(html).not.toContain('Pedido de compra');
     expect(html).not.toContain('vínculo');
-    expect(html).toContain('entraria em dobro.</li>');
+    expect(emails()[0]!.text).toContain('entraria em dobro.\n3. Depois, conclua o recebimento.');
   });
 
   it('varios PCs: lista legivel; repetidos saem uma vez', async () => {
     await enviarAvisoFiscalRevertido({ ...base, pcs: ['308', '309', '308'] });
-    const { html } = emails()[0]!;
-    expect(html).toContain('o vínculo do item com os pedidos de compra PC 308 e PC 309.');
-    expect(html).toContain('[Pedido de compra: PC 308, PC 309]');
+    const { text } = emails()[0]!;
+    expect(text).toContain('3. Em cada item, confira o vínculo com os pedidos de compra PC 308 e PC 309.\n4. Depois, conclua o recebimento.');
+    expect(text).toContain('Pedido de compra: PC 308, PC 309');
   });
 
   it('valores dinamicos no corpo sao escapados (fornecedor com & e <)', async () => {
     await enviarAvisoFiscalRevertido({ ...base, fornecedorNome: 'A&B <LTDA>' });
     const { html } = emails()[0]!;
-    expect(html).toContain('<strong>A&amp;B &lt;LTDA&gt;</strong>');
+    expect(html).toContain('NF 19252 · A&amp;B &lt;LTDA&gt;');
     expect(html).not.toContain('<LTDA>');
   });
 });
@@ -179,40 +176,39 @@ describe('enviarAvisoFiscalRevertido — situacao da entrada fisica', () => {
     ],
   ])('%s', async (_nome, entrada, texto) => {
     await enviarAvisoFiscalRevertido({ ...base, entrada });
-    const { html } = emails()[0]!;
-    expect(html).toContain(`já foi lançada pelo Atlas (${texto})`);
-    expect(html).toContain(`[Entrada de estoque no Atlas: ${texto.charAt(0).toUpperCase()}${texto.slice(1)}]`);
+    const { text } = emails()[0]!;
+    expect(text).toContain(`Entrada de estoque no Atlas: ${texto.charAt(0).toUpperCase()}${texto.slice(1)}`);
   });
 
   it('sem nenhum item contado: nao inventa situacao', async () => {
     await enviarAvisoFiscalRevertido({ ...base, entrada: { pendentes: 0, aprovadas: 0, aprovadaEm: null } });
-    const { html } = emails()[0]!;
+    const { html, text } = emails()[0]!;
     expect(html).toContain('A entrada de estoque desta nota já foi lançada pelo Atlas: os itens lançados');
-    expect(html).toContain('[Entrada de estoque no Atlas: Lançada]');
+    expect(text).toContain('Entrada de estoque no Atlas: Lançada');
   });
 });
 
 describe('enviarAvisoFiscalRevertido — horario de Brasilia', () => {
   it('converte de UTC (UTC-3): 20:02Z = 17:02; antes das 3h UTC ainda e o dia anterior; meia-noite e 00:00 (nunca 24)', async () => {
     await enviarAvisoFiscalRevertido({ ...base, concluidoEm: '2026-10-26T02:30:00.000Z', desfeitoEm: '2026-10-26T03:00:00.000Z' });
-    const { html } = emails()[0]!;
-    expect(html).toContain('[Concluído pelo Atlas em: 25/10/2026 às 23:30]');
-    expect(html).toContain('[Desfeito no OMIE desde: 26/10/2026 às 00:00]');
+    const { html, text } = emails()[0]!;
+    expect(text).toContain('Concluído pelo Atlas em: 25/10/2026 às 23:30');
+    expect(text).toContain('Desfeito no OMIE desde: 26/10/2026 às 00:00');
     expect(html).not.toMatch(/às 24:/);
   });
 
   it('a data da aprovacao tambem e de Brasilia (02:00Z de 27/10 ainda e 26/10)', async () => {
     await enviarAvisoFiscalRevertido({ ...base, entrada: { pendentes: 0, aprovadas: 1, aprovadaEm: '2026-10-27T02:00:00.000Z' } });
-    expect(emails()[0]!.html).toContain('aprovada em 26/10/2026');
+    expect(emails()[0]!.text).toContain('Entrada de estoque no Atlas: Aprovada em 26/10/2026');
   });
 
   it('hora ausente ou invalida: a frase sai sem a data, sem "Invalid Date"', async () => {
     await enviarAvisoFiscalRevertido({ ...base, concluidoEm: null, desfeitoEm: 'lixo' });
-    const { html } = emails()[0]!;
-    expect(html).toContain('O Atlas concluiu o recebimento fiscal da <strong>NF 19252</strong> de <strong>ZARAPLAST S/A</strong>, mas ele aparece <strong>desfeito no OMIE</strong>.');
+    const { html, text } = emails()[0]!;
+    expect(html).toContain('O Atlas concluiu o recebimento fiscal da NF 19252, mas ele aparece <strong>desfeito no OMIE</strong>.');
     expect(html).not.toContain('Invalid');
-    expect(html).not.toContain('[Concluído pelo Atlas em');
-    expect(html).not.toContain('[Desfeito no OMIE desde');
+    expect(text).not.toContain('Concluído pelo Atlas em');
+    expect(text).not.toContain('Desfeito no OMIE desde');
   });
 });
 
@@ -225,8 +221,8 @@ describe('enviarAvisoFiscalRevertido — sem codigo OMIE (ACXEGDP-313)', () => {
       expect(e.text).not.toMatch(/\d{10}/);
     }
     // so o PC legivel sobrou
-    expect(emails()[0]!.html).toContain('[Pedido de compra: PC 308]');
-    expect(emails()[0]!.html).toContain('o pedido de compra PC 308');
+    expect(emails()[0]!.text).toContain('Pedido de compra: PC 308');
+    expect(emails()[0]!.text).toContain('o pedido de compra PC 308');
   });
 
   it('nem com a chave de acesso, o nIdReceb e o nCodPed enfiados nos argumentos o e-mail os mostra: so le os campos que usa', async () => {
@@ -249,11 +245,11 @@ describe('enviarAvisoFiscalRevertido — sem codigo OMIE (ACXEGDP-313)', () => {
 
   it('fiscal concluido no portal e so visto pelo Atlas (ja_concluido): o e-mail nao diz que o Atlas concluiu', async () => {
     await enviarAvisoFiscalRevertido({ ...base, concluidoForaDoAtlas: true });
-    const { html } = emails()[0]!;
+    const { html, text } = emails()[0]!;
     expect(html).not.toContain('O Atlas concluiu');
-    expect(html).toContain('estava concluído no OMIE quando o Atlas o conferiu, em 25/10/2026 às 17:02');
-    expect(html).toContain('[Visto concluído pelo Atlas em: 25/10/2026 às 17:02]');
-    expect(html).not.toContain('[Concluído pelo Atlas em:');
+    expect(html).toContain('O recebimento fiscal da NF 19252 estava concluído no OMIE quando o Atlas o conferiu, mas agora ele aparece <strong>desfeito</strong>.');
+    expect(text).toContain('Visto concluído pelo Atlas em: 25/10/2026 às 17:02');
+    expect(text).not.toContain('Concluído pelo Atlas em:');
     // o padrao (concluido pelo Atlas) segue igual
     sendEmailMock.mockClear();
     await enviarAvisoFiscalRevertido(base);

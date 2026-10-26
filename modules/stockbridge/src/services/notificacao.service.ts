@@ -1,4 +1,17 @@
-import { sendEmail, createLogger, getConfig, getDb, getPool, buildEmailLayout, escapeHtml, emailDataList, emailActionBox } from '@atlas/core';
+import {
+  sendEmail,
+  createLogger,
+  getConfig,
+  getDb,
+  getPool,
+  montarEmailQ2P,
+  montarAssuntoQ2P,
+  nomeAssunto,
+  numeroSemZeros,
+  dinheiroBrl,
+  dataBrasilia,
+  dataHoraBrasilia,
+} from '@atlas/core';
 import { fmtCnpj } from './cnpj.js';
 
 export { fmtCnpj };
@@ -86,14 +99,15 @@ function getAdminEmail(): string {
 
 /**
  * Caixa operacional dos alertas de exceção do StockBridge (EML-08). Destino
- * canônico (To) dos 4 alertas ops; o admin entra em CC via alertaOpsCc().
+ * canônico (To) dos alertas ops; o admin entra em cópia oculta via alertaOpsCco().
+ * Quem lê é o Gestor do Sistema Integrador (ACXEGDP-440).
  */
 function getOpsEmail(): string {
   return getConfig().STOCKBRIDGE_OPS_EMAIL ?? ADMIN_FALLBACK_EMAIL;
 }
 
-/** Admin em CC dos alertas ops, se configurado e diferente do To. */
-function alertaOpsCc(to: string): string | undefined {
+/** Admin em cópia oculta dos alertas ops (Cc visível até a ACXEGDP-440), se configurado e diferente do To. */
+function alertaOpsCco(to: string): string | undefined {
   const admin = getConfig().SEED_ADMIN_EMAIL;
   return admin && admin.toLowerCase() !== to.toLowerCase() ? admin : undefined;
 }
@@ -101,6 +115,50 @@ function alertaOpsCc(to: string): string | undefined {
 /** Caixa de Comex da ACXE — copiada em todo recebimento concluido com sucesso. */
 function getComexEmail(): string {
   return getConfig().STOCKBRIDGE_COMEX_EMAIL ?? COMEX_FALLBACK_EMAIL;
+}
+
+/** "Quem age" dos e-mails da caixa ops (ACXEGDP-440). */
+const GESTOR_SI = 'Gestor do Sistema Integrador';
+
+/**
+ * A NF no assunto e no subtítulo (ACXEGDP-440): "NF 6842", ou "NF ACXE 6842" quando
+ * a nota é da ACXE; sem zeros à esquerda. '' sem número.
+ */
+function rotuloNf(nf: string | null | undefined, empresa?: string | null): string {
+  const n = numeroSemZeros(nf);
+  // Número só de zeros é número ausente: "NF 0" não existe.
+  if (!n || n === '0') return '';
+  return empresa === 'acxe' ? `NF ACXE ${n}` : `NF ${n}`;
+}
+
+/** A NF dentro de uma frase: "NF 6842", ou só "NF" quando o número falta. */
+function nfFrase(nf: string | null | undefined): string {
+  return rotuloNf(nf) || 'NF';
+}
+
+/** Fornecedor no corpo do e-mail; sem nome, avisa que o OMIE não o identificou. */
+function nomeFornecedor(nome: string | null | undefined): string {
+  return nome && nome.trim() ? nome.trim() : 'Fornecedor não identificado no OMIE';
+}
+
+/** Partes não vazias do subtítulo, separadas por " · ". */
+function subtitulo(...partes: Array<string | null | undefined>): string {
+  return partes.map((p) => (p ?? '').trim()).filter(Boolean).join(' · ');
+}
+
+/** "1 item" / "3 itens". */
+function contagem(n: number, singular: string, plural: string): string {
+  return `${n} ${n === 1 ? singular : plural}`;
+}
+
+/**
+ * Divergência de recebimento com o nome da tela de conferência ("Varredura — material para inspeção").
+ * Exportado para o detalhe que o recebimento monta no e-mail de aprovação.
+ */
+export function rotuloDivergencia(tipo: string | null | undefined): string {
+  if (tipo === 'faltando') return 'Faltando';
+  if (tipo === 'varredura') return 'Varredura (material para inspeção)';
+  return 'Divergência';
 }
 
 /**
@@ -177,32 +235,29 @@ export async function enviarAlertaProdutoSemCorrelato(args: {
   descricaoProduto: string;
 }): Promise<void> {
   const to = getOpsEmail();
-  const linkFila = `${getConfig().APP_URL}/stockbridge/fila`;
-  const subject = `StockBridge — Produto sem correlato Q2P (NF ${args.notaFiscal})`;
-  const corpoHtml = `
-    <p>Durante o recebimento da <strong>NF ${escapeHtml(args.notaFiscal)}</strong>, o produto abaixo não possui correlato cadastrado na Q2P (correspondência por descrição textual).</p>
-    ${emailDataList([
-      { label: 'Produto (descrição ACXE)', valor: args.descricaoProduto },
-      { label: 'NF', valor: args.notaFiscal },
-    ])}
-    ${emailActionBox(`
-      <ol style="margin:0;padding-left:18px;">
-        <li>Cadastrar o produto correspondente na Q2P com a <strong>descrição exata</strong> do ACXE.</li>
-        <li>Aguardar a sincronização (próximo ciclo do n8n).</li>
-        <li>Tentar novamente o recebimento no StockBridge.</li>
-      </ol>`)}
-    <p style="color:#9ca3af;font-size:12px;margin-top:16px;">Ref. técnica — código OMIE ACXE: ${escapeHtml(String(args.codigoProdutoAcxe))}</p>
-  `;
-  const { html, text } = buildEmailLayout({
-    titulo: 'Produto não encontrado na Q2P',
-    variante: 'alerta',
-    corpoHtml,
+  const nf = rotuloNf(args.notaFiscal);
+  const subject = montarAssuntoQ2P('AÇÃO REQUERIDA', 'Recebimento', 'Produto não cadastrado na Q2P', nf);
+  const { html, text } = montarEmailQ2P({
+    etiqueta: 'AÇÃO REQUERIDA',
+    assunto: subject,
+    titulo: 'Recebimento: produto não cadastrado na Q2P',
+    subtitulo: subtitulo(nf, args.descricaoProduto),
+    resumo: `O recebimento da ${nfFrase(args.notaFiscal)} está bloqueado: não há na Q2P um produto com a mesma descrição deste produto da ACXE.`,
+    acao: {
+      quem: GESTOR_SI,
+      passos: [
+        'Cadastre o produto na Q2P com a descrição exatamente igual à da ACXE.',
+        'Espere a próxima sincronização do n8n trazer o cadastro para o Atlas.',
+        'Tente o recebimento de novo na fila do StockBridge.',
+      ],
+    },
     // EML-11: link para a tela onde o recebimento é re-tentado após o cadastro.
-    ctaLabel: 'Abrir fila de recebimento',
-    ctaUrl: linkFila,
+    botao: { texto: 'Abrir a fila de recebimento', url: `${getConfig().APP_URL}/stockbridge/fila` },
+    tecnico: [['Código do produto na ACXE (OMIE)', String(args.codigoProdutoAcxe)]],
+    duvidas: false,
   });
   try {
-    await sendEmail({ to, cc: alertaOpsCc(to), subject, html, text });
+    await sendEmail({ to, bcc: alertaOpsCco(to), subject, html, text });
   } catch (err) {
     logger.error({ err, args }, 'Falha ao enviar email de alerta produto sem correlato');
   }
@@ -220,26 +275,28 @@ export async function enviarAlertaNfIndeterminada(args: {
   motivo: string;
 }): Promise<void> {
   const to = getOpsEmail();
-  const subject = `StockBridge — NF ${args.nf} recebida com dado indeterminado (${args.cnpj.toUpperCase()})`;
-  const corpoHtml = `
-    <p>O recebimento da <strong>NF ${escapeHtml(args.nf)}</strong> (${args.cnpj.toUpperCase()}) foi <strong>liberado</strong>, mas o sistema não conseguiu determinar com segurança um dos sinais da NF no OMIE.</p>
-    ${emailDataList([{ label: 'Motivo', valor: args.motivo }])}
-    ${emailActionBox(`
-      <ol style="margin:0;padding-left:18px;">
-        <li>Conferir no OMIE se a NF ${escapeHtml(args.nf)} está válida e foi emitida pela empresa correta.</li>
-        <li>Se houver irregularidade (cancelada ou emitente errado), estornar o recebimento no StockBridge.</li>
-      </ol>`)}
-  `;
-  const { html, text } = buildEmailLayout({
-    titulo: 'NF recebida sem validação completa',
-    variante: 'alerta',
-    corpoHtml,
+  const empresa = args.cnpj.toUpperCase();
+  const subject = montarAssuntoQ2P('AÇÃO REQUERIDA', 'Recebimento', 'Conferir a nota no OMIE', rotuloNf(args.nf, args.cnpj));
+  const { html, text } = montarEmailQ2P({
+    etiqueta: 'AÇÃO REQUERIDA',
+    assunto: subject,
+    titulo: 'Recebimento: conferir a nota no OMIE',
+    subtitulo: subtitulo(rotuloNf(args.nf), empresa),
+    resumo: `O recebimento da ${nfFrase(args.nf)} foi **liberado**, mas o Atlas não conseguiu confirmar no OMIE se a nota está cancelada ou se foi emitida pela empresa certa.`,
+    acao: {
+      quem: GESTOR_SI,
+      passos: [
+        `Confira no OMIE da ${empresa} se a ${nfFrase(args.nf)} está válida e foi emitida pela empresa certa.`,
+        'Se ela estiver cancelada ou com o emitente errado, estorne o recebimento em Movimentações, no StockBridge.',
+      ],
+    },
+    dados: [['Motivo', args.motivo]],
     // EML-11: movimentações é onde o gestor confere/estorna o recebimento.
-    ctaLabel: 'Abrir movimentações',
-    ctaUrl: `${getConfig().APP_URL}/stockbridge/movimentacoes`,
+    botao: { texto: 'Abrir Movimentações', url: `${getConfig().APP_URL}/stockbridge/movimentacoes` },
+    duvidas: false,
   });
   try {
-    await sendEmail({ to, cc: alertaOpsCc(to), subject, html, text });
+    await sendEmail({ to, bcc: alertaOpsCco(to), subject, html, text });
   } catch (err) {
     logger.error({ err, args }, 'Falha ao enviar email de alerta de NF indeterminada');
   }
@@ -258,29 +315,27 @@ export async function enviarAlertaDebitoCruzado(args: {
   movimentacaoId: string;
 }): Promise<void> {
   const to = getOpsEmail();
-  const subject = `StockBridge — Débito cruzado (NF ${args.notaFiscal})`;
-  const corpoHtml = `
-    <p>Uma NF de saída gerou <strong>divergência cruzada</strong> entre o CNPJ emissor e o CNPJ onde está o estoque físico.</p>
-    ${emailDataList([
-      { label: 'NF', valor: args.notaFiscal },
-      { label: 'Emissor (faturou)', valor: args.cnpjEmissor.toUpperCase() },
-      { label: 'Físico (estoque real)', valor: args.cnpjFisico.toUpperCase() },
-      { label: 'Quantidade', valor: fmtKg(args.quantidadeKg) },
-    ])}
-    ${emailActionBox(
-      `O setor contábil deve emitir a NF de transferência <strong>${args.cnpjFisico.toUpperCase()} → ${args.cnpjEmissor.toUpperCase()}</strong> para regularizar a posição fiscal. A divergência será fechada automaticamente quando a NF de regularização for processada.`,
-    )}
-  `;
-  const { html, text } = buildEmailLayout({
-    titulo: 'Débito cruzado detectado',
-    variante: 'alerta',
-    corpoHtml,
+  const nf = rotuloNf(args.notaFiscal);
+  const emissor = args.cnpjEmissor.toUpperCase();
+  const fisico = args.cnpjFisico.toUpperCase();
+  const subject = montarAssuntoQ2P('AÇÃO REQUERIDA', 'Estoque', 'Débito cruzado', nf);
+  const { html, text } = montarEmailQ2P({
+    etiqueta: 'AÇÃO REQUERIDA',
+    assunto: subject,
+    titulo: 'Estoque: débito cruzado na saída',
+    subtitulo: subtitulo(nf, fmtKg(args.quantidadeKg)),
+    resumo: `A ${nfFrase(args.notaFiscal)} de saída foi faturada pela **${emissor}**, mas o estoque físico estava na **${fisico}**.`,
+    acao: {
+      quem: GESTOR_SI,
+      passos: [`Peça ao setor contábil a NF de transferência da ${fisico} para a ${emissor}, para regularizar a posição fiscal.`],
+      nota: 'A divergência fecha sozinha quando a NF de transferência for processada.',
+    },
     // EML-11: a divergência fiscal aberta pelo débito cruzado vive nesta tela.
-    ctaLabel: 'Abrir pendências fiscais',
-    ctaUrl: `${getConfig().APP_URL}/stockbridge/pendencias-fiscais`,
+    botao: { texto: 'Abrir pendências fiscais', url: `${getConfig().APP_URL}/stockbridge/pendencias-fiscais` },
+    duvidas: false,
   });
   try {
-    await sendEmail({ to, cc: alertaOpsCc(to), subject, html, text });
+    await sendEmail({ to, bcc: alertaOpsCco(to), subject, html, text });
   } catch (err) {
     logger.error({ err, args }, 'Falha ao enviar email de debito cruzado');
   }
@@ -303,24 +358,21 @@ export async function enviarAlertaAprovacaoPendente(args: {
   const config = getConfig();
   const linkPainel = `${config.APP_URL}/stockbridge/aprovacoes`;
   const tipoLabel = labelTipoAprovacao(args.tipoAprovacao);
-  // EML-03: nível humanizado — antes o enum cru ("gestor") vazava no assunto.
-  const nivelLabel = args.nivel === 'diretor' ? 'Diretor' : 'Gestor';
-  const subject = `StockBridge — Aprovação pendente (${nivelLabel}) — ${tipoLabel}`;
-  const corpoHtml = `
-    <p>Uma nova pendência aguarda sua aprovação no StockBridge.</p>
-    ${emailDataList([
-      { label: 'Tipo', valor: tipoLabel },
-      { label: 'Item', valor: `${args.loteCodigo} — ${args.produto}` },
-      { label: 'Quantidade', valor: fmtKg(args.quantidadeKg) },
-      { label: 'Detalhes', valor: args.detalhes ?? '' },
-    ])}
-  `;
-  const { html, text } = buildEmailLayout({
-    titulo: 'Nova pendência de aprovação',
-    variante: 'info',
-    corpoHtml,
-    ctaLabel: 'Abrir aprovações pendentes',
-    ctaUrl: linkPainel,
+  // Identificador: "Lote L216", o galpão da saída ou o cliente do comodato — até 25 caracteres, como o nome no assunto.
+  const subject = montarAssuntoQ2P('AÇÃO REQUERIDA', 'Aprovação', tipoLabel, nomeAssunto(args.loteCodigo));
+  const { html, text } = montarEmailQ2P({
+    etiqueta: 'AÇÃO REQUERIDA',
+    assunto: subject,
+    titulo: `Aprovação: ${tipoLabel}`,
+    subtitulo: subtitulo(args.loteCodigo, args.produto, fmtKg(args.quantidadeKg)),
+    resumo: `Um lançamento de **${tipoLabel}** aguarda a sua aprovação no StockBridge${args.nivel === 'diretor' ? ' (nível diretor)' : ''}.`,
+    acao: {
+      // EML-03: nível humanizado — antes o enum cru ("gestor") vazava no assunto.
+      quem: args.nivel === 'diretor' ? 'Diretor' : 'Gestor',
+      passos: ['Abra Aprovações no StockBridge.', 'Confira o lançamento e aprove ou rejeite. Ao rejeitar, informe o motivo.'],
+    },
+    dados: [['Detalhes', args.detalhes ?? '']],
+    botao: { texto: 'Abrir aprovações pendentes', url: linkPainel },
   });
   try {
     // Envia 1 email por destinatario pra evitar vazar lista (To: ficaria visivel)
@@ -352,37 +404,30 @@ export async function enviarAlertaRecebimentoNacionalLote(args: {
   const config = getConfig();
   const linkPainel = `${config.APP_URL}/stockbridge/aprovacoes`;
   const n = args.itens.length;
-  const plural = n === 1 ? 'item' : 'itens';
-  const subject = `StockBridge — Recebimento nacional NF ${args.notaFiscal}: ${n} ${plural} aguardando aprovação`;
-  const linhas = args.itens
-    .map(
-      (it) => `<tr>
-        <td style="padding:6px 12px 6px 0;font-size:13px;color:#111827;">${escapeHtml(it.produto)}</td>
-        <td style="padding:6px 12px;font-size:13px;color:#6b7280;white-space:nowrap;">${escapeHtml(it.empresa.toUpperCase())} · ${escapeHtml(it.galpao)}</td>
-        <td style="padding:6px 0 6px 12px;font-size:13px;color:#111827;font-weight:600;text-align:right;white-space:nowrap;">${fmtKg(it.quantidadeKg)}</td>
-      </tr>`,
-    )
-    .join('');
-  const corpoHtml = `
-    <p>O recebimento nacional da <strong>NF ${escapeHtml(args.notaFiscal)}</strong> tem <strong>${n} ${plural}</strong> aguardando aprovação.</p>
-    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 16px;margin:16px 0;">
-      <table role="presentation" width="100%" style="border-collapse:collapse;">
-        <thead><tr>
-          <th style="text-align:left;padding:4px 12px 8px 0;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Produto</th>
-          <th style="text-align:left;padding:4px 12px 8px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Empresa · Galpão</th>
-          <th style="text-align:right;padding:4px 0 8px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Quantidade</th>
-        </tr></thead>
-        <tbody>${linhas}</tbody>
-      </table>
-    </div>
-    ${args.detalhes ? `<p style="color:#6b7280;font-size:13px;">${escapeHtml(args.detalhes)}</p>` : ''}
-  `;
-  const { html, text } = buildEmailLayout({
-    titulo: 'Recebimento nacional aguardando aprovação',
-    variante: 'info',
-    corpoHtml,
-    ctaLabel: 'Abrir aprovações pendentes',
-    ctaUrl: linkPainel,
+  const nf = rotuloNf(args.notaFiscal);
+  const subject = montarAssuntoQ2P('AÇÃO REQUERIDA', 'Aprovação', 'Recebimento nacional', nf);
+  const { html, text } = montarEmailQ2P({
+    etiqueta: 'AÇÃO REQUERIDA',
+    assunto: subject,
+    titulo: 'Aprovação: recebimento nacional',
+    subtitulo: subtitulo(nf, contagem(n, 'item', 'itens')),
+    resumo: `O recebimento nacional da ${nfFrase(args.notaFiscal)} tem **${contagem(n, 'item', 'itens')}** aguardando a sua aprovação.`,
+    acao: {
+      quem: args.nivel === 'diretor' ? 'Diretor' : 'Gestor',
+      passos: ['Abra Aprovações no StockBridge.', `Confira ${n === 1 ? 'o item' : 'cada item'} e aprove ou rejeite. Ao rejeitar, informe o motivo.`],
+    },
+    dados: [['Detalhes', args.detalhes ?? '']],
+    secoes: [
+      {
+        titulo: n === 1 ? 'Item' : 'Itens',
+        tabela: {
+          cab: ['Produto', 'Empresa', 'Local', 'Quantidade'],
+          linhas: args.itens.map((it) => [it.produto, it.empresa.toUpperCase(), it.galpao, fmtKg(it.quantidadeKg)]),
+          alinhar: ['e', 'e', 'e', 'd'],
+        },
+      },
+    ],
+    botao: { texto: 'Abrir aprovações pendentes', url: linkPainel },
   });
   try {
     const results = await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html, text })));
@@ -428,45 +473,46 @@ export async function enviarAlertaNfDispensada(args: {
     logger.warn({ notaFiscal: args.notaFiscal }, 'STOCKBRIDGE_FISCAL_EMAILS vazio — fiscal não avisado da dispensa');
     return;
   }
-  const config = getConfig();
-  const fornecedor = args.fornecedorNome && args.fornecedorNome.trim() ? args.fornecedorNome.trim() : 'Fornecedor não identificado no OMIE';
+  const fornecedor = nomeFornecedor(args.fornecedorNome);
+  const nf = rotuloNf(args.notaFiscal, args.empresa);
   const daAcxe = args.empresa === 'acxe' ? ' da ACXE' : '';
-  const subject = `StockBridge — NF ${args.notaFiscal} (${fornecedor}) dispensada da fila${daAcxe}`;
-  const valor = args.valorNfBrl.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-  const quando = args.dispensadoEm ? new Date(args.dispensadoEm) : new Date();
-  const quandoFmt = Number.isNaN(quando.getTime()) ? '' : quando.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  const subject = montarAssuntoQ2P('AÇÃO REQUERIDA', 'Fiscal', 'NF dispensada da fila', nomeAssunto(args.fornecedorNome), nf);
+  const valor = dinheiroBrl(args.valorNfBrl);
   // O Atlas conhece a situação pelo espelho no momento da dispensa (pode estar
   // defasado em minutos) — o texto diz isso e pede a conferência no OMIE (ROT-9).
-  const pendenciaOmie =
-    args.situacaoFiscalNaDispensa === 'pendente'
-      ? 'Pelo espelho do OMIE no momento da dispensa, o recebimento fiscal desta nota ainda NÃO tinha sido concluído: ela fica na caixa de Recebimento de NF-e (etapa "Faturado pelo fornecedor") aguardando manifestação ou cancelamento, sem conta a pagar gerada pelo recebimento. Confira no OMIE antes de agir.'
-      : `O recebimento fiscal desta nota JÁ foi concluído no OMIE: há conta a pagar de ${valor} a estornar ou manter, conforme o acerto com o fornecedor.`;
-  const corpoHtml = `
-    <p>O gestor dispensou a <strong>NF ${escapeHtml(args.notaFiscal)}</strong> de <strong>${escapeHtml(fornecedor)}</strong> da fila de recebimento nacional${daAcxe} do StockBridge: ela não será recebida no estoque pelo Atlas.</p>
-    ${emailDataList([
-      { label: 'Nota fiscal', valor: args.notaFiscal },
-      { label: 'Empresa', valor: args.empresa === 'acxe' ? 'ACXE' : '' },
-      { label: 'Fornecedor', valor: fornecedor },
-      { label: 'Valor da nota', valor: valor },
-      { label: 'Recebimento fiscal no OMIE', valor: args.situacaoFiscalNaDispensa === 'pendente' ? 'Pendente (não concluído)' : 'Concluído' },
-      { label: 'Motivo da dispensa', valor: args.motivo },
-      {
-        label: 'Pedido de compra vinculado',
-        valor: (args.pcsPorItem ?? [])
+  const pendente = args.situacaoFiscalNaDispensa === 'pendente';
+  // ACXEGDP-440: sem botão — o fiscal age no OMIE e nem todos têm usuário no Atlas.
+  const { html, text } = montarEmailQ2P({
+    etiqueta: 'AÇÃO REQUERIDA',
+    assunto: subject,
+    titulo: 'Fiscal: NF dispensada da fila de recebimento',
+    subtitulo: subtitulo(nf, fornecedor, valor),
+    resumo: [
+      `O gestor dispensou a ${nfFrase(args.notaFiscal)} da fila de recebimento${daAcxe} do StockBridge: o estoque dela não vai entrar pelo Atlas, e nada mudou no OMIE.`,
+      pendente
+        ? 'Na hora da dispensa, o recebimento fiscal ainda **não tinha sido concluído**: a nota segue em Recebimento de NF-e (etapa "Faturado pelo fornecedor"), sem conta a pagar gerada pelo recebimento.'
+        : `O recebimento fiscal já tinha sido **concluído** no OMIE: existe conta a pagar de ${valor}.`,
+    ],
+    acao: {
+      quem: 'Fiscal',
+      passos: pendente
+        ? [`Confira a nota no OMIE${daAcxe}.`, 'Dê o destino dela (manifestação, recusa ou cancelamento), conforme o acerto com o fornecedor.']
+        : [`Estorne ou mantenha a conta a pagar no OMIE${daAcxe}, conforme o acerto com o fornecedor.`],
+      // A cópia do OMIE pode estar horas atrás do portal: o texto não promete atraso de minutos.
+      nota: pendente ? 'A situação acima é a que o Atlas tinha na hora da dispensa e pode ter mudado.' : '',
+    },
+    // A empresa vai no subtítulo ("NF ACXE 6842"), não nos dados.
+    dados: [
+      ['Motivo da dispensa', args.motivo],
+      [
+        'Pedido de compra vinculado',
+        (args.pcsPorItem ?? [])
           .map((p) => `${p.descricao.trim()}: ${p.pcNumero ? `PC ${p.pcNumero}` : 'PC vinculado no OMIE'}`)
           .join('; '),
-      },
-      { label: 'Dispensada por', valor: args.dispensadoPorNome ?? '' },
-      { label: 'Quando', valor: quandoFmt },
-    ])}
-    ${emailActionBox(`<p style="margin:0;">${escapeHtml(pendenciaOmie)}</p><p style="margin:8px 0 0;">A dispensa não alterou nada no OMIE — cancelar, recusar, devolver ou estornar a nota continua com o fiscal.</p>`, 'Pendência no OMIE')}
-  `;
-  const { html, text } = buildEmailLayout({
-    titulo: 'NF dispensada da fila de recebimento',
-    variante: 'alerta',
-    corpoHtml,
-    ctaLabel: 'Abrir aprovações do StockBridge',
-    ctaUrl: `${config.APP_URL}/stockbridge/aprovacoes`,
+      ],
+      ['Dispensada por', args.dispensadoPorNome ?? ''],
+      ['Quando', dataHoraBrasilia(args.dispensadoEm || new Date())],
+    ],
   });
   try {
     const results = await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html, text })));
@@ -548,7 +594,8 @@ function rotuloUnidadeAviso(unidade: string | null | undefined): string {
 /**
  * Texto do quadro "Pedido em unidade diferente da nota" (trava de unidade). So o
  * numero legivel do PC aparece — numero vazio ou com cara de codigo interno do OMIE
- * (10+ digitos) vira "um pedido de compra" (ACXEGDP-313).
+ * (10+ digitos) vira "um pedido de compra" (ACXEGDP-313). O que fazer vai na caixa
+ * de ação do e-mail.
  */
 function textoUnidadeIncompativel(u: UnidadeIncompativelAviso): string {
   const pcs = u.pcs.map((p) => String(p ?? '').trim()).filter((p) => p && !/^\d{10,}$/.test(p));
@@ -558,17 +605,8 @@ function textoUnidadeIncompativel(u: UnidadeIncompativelAviso): string {
   return (
     `A nota está em ${rotuloUnidadeAviso(u.unidadeNf)} e ${quais} está em outra unidade${paraItens}. ` +
     'Na conclusão do recebimento o OMIE grava no pedido a quantidade recebida na unidade da nota, sem converter ' +
-    '(uma NF de 8,25 toneladas baixaria um pedido em kg com 8,25, não 8.250). ' +
-    'Lance (ou ajuste) o pedido de compra na mesma unidade da nota.'
+    '(uma NF de 8,25 toneladas baixaria um pedido em kg com 8,25, não 8.250).'
   );
-}
-
-/** "O que fazer" do motivo sem_pc. */
-function oQueFazerSemPc(unidade: UnidadeIncompativelAviso | null | undefined): string {
-  if (unidade) {
-    return 'Siga a orientação acima: o pedido precisa estar na unidade da nota. A NF fica na fila do StockBridge até o pedido estar na unidade certa.';
-  }
-  return 'Lance e aprove no OMIE o pedido de compra deste item para este fornecedor. A NF fica na fila do StockBridge até o PC existir.';
 }
 
 /**
@@ -591,71 +629,76 @@ export function destinatariosAvisoCompras(): { destinatarios: string[]; viaOps: 
 function montarEmailAvisoCompras(args: ArgsAvisoComprasNfSemPc): { subject: string; html: string; text: string } {
   const config = getConfig();
   const unidade = args.unidadeIncompativel ?? null;
-  const fornecedor = args.fornecedorNome && args.fornecedorNome.trim() ? args.fornecedorNome.trim() : 'Fornecedor não identificado no OMIE';
-  const empresaRotulo = args.empresa === 'acxe' ? 'ACXE' : 'Q2P';
-  const subject =
-    args.motivo === 'recebida_sem_vinculo'
-      ? `StockBridge — NF ${args.notaFiscal} de ${fornecedor} recebida sem pedido de compra no OMIE`
-      : args.motivo === 'pc_aguardando_aprovacao'
-        ? `StockBridge — NF ${args.notaFiscal} de ${fornecedor} com pedido de compra aguardando aprovação no OMIE`
-        : `StockBridge — NF ${args.notaFiscal} de ${fornecedor} sem pedido de compra no OMIE`;
-  const abertura =
-    args.motivo === 'recebida_sem_vinculo'
-      ? `A <strong>NF ${escapeHtml(args.notaFiscal)}</strong> de <strong>${escapeHtml(fornecedor)}</strong> (${empresaRotulo}) foi recebida pelo StockBridge com item <strong>sem pedido de compra</strong> no OMIE: o recebimento fiscal foi concluído sem vínculo com PC nesse item.`
-      : args.motivo === 'pc_aguardando_aprovacao'
-        ? `O recebimento da <strong>NF ${escapeHtml(args.notaFiscal)}</strong> de <strong>${escapeHtml(fornecedor)}</strong> (${empresaRotulo}) está bloqueado: o pedido de compra do item ainda está <strong>aguardando aprovação</strong> no OMIE.`
-        : `O recebimento da <strong>NF ${escapeHtml(args.notaFiscal)}</strong> de <strong>${escapeHtml(fornecedor)}</strong> (${empresaRotulo}) está bloqueado: há item <strong>sem pedido de compra</strong> aprovado e com saldo no OMIE.`;
+  const fornecedor = nomeFornecedor(args.fornecedorNome);
+  // Compras precisa saber em qual OMIE agir: a NF da ACXE vem como "NF ACXE 6842" e os passos dizem "no OMIE da ACXE".
+  const nf = rotuloNf(args.notaFiscal, args.empresa);
+  const daAcxe = args.empresa === 'acxe' ? ' da ACXE' : '';
+  const semVinculo = args.motivo === 'recebida_sem_vinculo';
+  const aguardando = args.motivo === 'pc_aguardando_aprovacao';
+  const situacao = semVinculo
+    ? 'Recebida sem pedido de compra'
+    : aguardando
+      ? 'Pedido aguardando aprovação'
+      : unidade
+        ? 'Pedido em unidade diferente'
+        : 'NF sem pedido de compra';
+  const subject = montarAssuntoQ2P('AÇÃO REQUERIDA', 'Compras', situacao, nomeAssunto(args.fornecedorNome), nf);
+  const resumo = semVinculo
+    ? `A ${nfFrase(args.notaFiscal)} foi recebida pelo StockBridge com item **sem pedido de compra** no OMIE${daAcxe}: o recebimento fiscal foi concluído sem vínculo com pedido nesse item.`
+    : aguardando
+      ? `O recebimento da ${nfFrase(args.notaFiscal)} está **bloqueado**: o pedido de compra do item ainda está **aguardando aprovação** no OMIE${daAcxe}.`
+      : unidade
+        ? `O recebimento da ${nfFrase(args.notaFiscal)} está **bloqueado**: o pedido de compra deste fornecedor está numa unidade diferente da nota.`
+        : `O recebimento da ${nfFrase(args.notaFiscal)} está **bloqueado**: há item **sem pedido de compra** aprovado e com saldo no OMIE${daAcxe}.`;
+  const acao = semVinculo
+    ? { passos: [`Se havia pedido de compra para este item, combine com o fiscal o ajuste do pedido no OMIE${daAcxe}: o recebimento não foi contado nele.`] }
+    : aguardando
+      ? {
+          passos: [`Aprove o pedido de compra no OMIE${daAcxe}.`],
+          nota: 'A NF fica na fila do StockBridge e pode ser recebida assim que o pedido estiver aprovado e a lista de pedidos do Atlas for atualizada.',
+        }
+      : unidade
+        ? { passos: [`Lance (ou ajuste) o pedido de compra no OMIE${daAcxe} na mesma unidade da nota.`], nota: 'A NF fica na fila do StockBridge até o pedido estar na unidade certa.' }
+        : { passos: [`Lance e aprove no OMIE${daAcxe} o pedido de compra deste item para este fornecedor.`], nota: 'A NF fica na fila do StockBridge até o pedido existir.' };
   const fmtPreco = (v: number | null) =>
     v == null ? '—' : `${v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2, maximumFractionDigits: 4 })}/kg`;
-  const linhas = args.itens
-    .map(
-      (it) => `<tr>
-        <td style="padding:6px 12px 6px 0;font-size:13px;color:#111827;">${escapeHtml(it.descricao.trim())}</td>
-        <td style="padding:6px 12px;font-size:13px;color:#111827;text-align:right;white-space:nowrap;">${it.qtdKg != null ? fmtKg(it.qtdKg) : escapeHtml((it.quantidadeTexto ?? '').trim() || '—')}</td>
-        <td style="padding:6px 0 6px 12px;font-size:13px;color:#6b7280;text-align:right;white-space:nowrap;">${escapeHtml(fmtPreco(it.precoUnit))}</td>
-      </tr>`,
-    )
-    .join('');
-  const aguardando =
-    args.pcsAguardandoAprovacao.length > 0
-      ? `<p style="margin:12px 0 0;">PC do fornecedor aguardando aprovação no OMIE: <strong>${escapeHtml(args.pcsAguardandoAprovacao.map((n) => `PC ${n}`).join(', '))}</strong>.</p>`
-      : '';
-  const oQueFazer =
-    args.motivo === 'recebida_sem_vinculo'
-      ? 'Se havia pedido de compra para este item, confira com o fiscal o ajuste do PC no OMIE: o recebimento não foi contado nele.'
-      : args.motivo === 'pc_aguardando_aprovacao'
-        ? 'Aprove o pedido de compra no OMIE. A NF fica na fila do StockBridge e pode ser recebida assim que o PC estiver aprovado e a lista de pedidos for atualizada.'
-        : oQueFazerSemPc(unidade);
-  // Trava de unidade: sem este quadro compras lancaria um PC novo em kg e o problema se repetiria.
-  const blocoUnidade = unidade
-    ? emailActionBox(`<p style="margin:0;">${escapeHtml(textoUnidadeIncompativel(unidade))}</p>`, 'Pedido em unidade diferente da nota')
-    : '';
-  const corpoHtml = `
-    <p>${abertura}</p>
-    ${emailDataList([
-      { label: 'Nota fiscal', valor: args.notaFiscal },
-      { label: 'Fornecedor', valor: fornecedor },
-      { label: 'Empresa', valor: empresaRotulo },
-    ])}
-    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 16px;margin:16px 0;">
-      <table role="presentation" width="100%" style="border-collapse:collapse;">
-        <thead><tr>
-          <th style="text-align:left;padding:4px 12px 8px 0;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Item da NF</th>
-          <th style="text-align:right;padding:4px 12px 8px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Quantidade</th>
-          <th style="text-align:right;padding:4px 0 8px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Preço unitário</th>
-        </tr></thead>
-        <tbody>${linhas}</tbody>
-      </table>
-    </div>
-    ${blocoUnidade}
-    ${emailActionBox(`<p style="margin:0;">${escapeHtml(oQueFazer)}</p>${aguardando}`, 'O que fazer')}
-  `;
-  const { html, text } = buildEmailLayout({
-    titulo: args.motivo === 'recebida_sem_vinculo' ? 'NF recebida sem pedido de compra' : 'NF sem pedido de compra no OMIE',
-    variante: 'alerta',
-    corpoHtml,
-    ctaLabel: 'Abrir o StockBridge',
-    ctaUrl: `${config.APP_URL}/stockbridge/fila`,
+  const { html, text } = montarEmailQ2P({
+    etiqueta: 'AÇÃO REQUERIDA',
+    assunto: subject,
+    titulo: semVinculo
+      ? 'Compras: NF recebida sem pedido de compra'
+      : aguardando
+        ? 'Compras: pedido de compra aguardando aprovação'
+        : unidade
+          ? 'Compras: pedido em unidade diferente da nota'
+          : 'Compras: NF sem pedido de compra',
+    subtitulo: subtitulo(nf, fornecedor),
+    resumo,
+    acao: { quem: 'Compras', ...acao },
+    dados: [
+      // A NF da ACXE já diz a empresa no subtítulo.
+      ['Empresa', args.empresa === 'acxe' ? '' : 'Q2P'],
+      ['Pedido aguardando aprovação no OMIE', args.pcsAguardandoAprovacao.map((n) => `PC ${n}`).join(', ')],
+    ],
+    secoes: [
+      // Trava de unidade: sem este quadro compras lancaria um PC novo em kg e o problema se repetiria.
+      ...(unidade ? [{ titulo: 'Pedido em unidade diferente da nota', texto: textoUnidadeIncompativel(unidade), destaque: 'alerta' as const }] : []),
+      {
+        titulo: args.itens.length === 1 ? 'Item da nota' : 'Itens da nota',
+        tabela: {
+          cab: ['Item da NF', 'Quantidade', 'Preço unitário'],
+          linhas: args.itens.map((it) => [
+            it.descricao.trim(),
+            it.qtdKg != null ? fmtKg(it.qtdKg) : (it.quantidadeTexto ?? '').trim() || '—',
+            fmtPreco(it.precoUnit),
+          ]),
+          alinhar: ['e', 'd', 'd'],
+        },
+      },
+    ],
+    // Compras usa o Atlas (decisão 6 da ACXEGDP-440): o botão leva à fila, onde a NF espera o pedido. A NF
+    // recebida sem vínculo já saiu da fila: sem botão.
+    botao: semVinculo ? undefined : { texto: 'Abrir a fila do StockBridge', url: `${config.APP_URL}/stockbridge/fila` },
   });
   return { subject, html, text };
 }
@@ -870,59 +913,51 @@ export interface ArgsAvisoComprasExcedenteRejeitado {
 
 function montarEmailExcedenteRejeitado(args: ArgsAvisoComprasExcedenteRejeitado): { subject: string; html: string; text: string } {
   const config = getConfig();
-  const fornecedor = args.fornecedorNome && args.fornecedorNome.trim() ? args.fornecedorNome.trim() : 'Fornecedor não identificado no OMIE';
-  const empresaRotulo = args.empresa === 'acxe' ? 'ACXE' : 'Q2P';
+  const fornecedor = nomeFornecedor(args.fornecedorNome);
+  const nf = rotuloNf(args.notaFiscal, args.empresa);
+  const daAcxe = args.empresa === 'acxe' ? ' da ACXE' : '';
   // So o numero legivel do PC; vazio ou com cara de codigo interno do OMIE (10+ digitos) vira "—" (ACXEGDP-313).
   const numeroPc = (n: string) => {
     const v = String(n ?? '').trim();
     return v && !/^\d{10,}$/.test(v) ? `PC ${v}` : '—';
   };
-  const pcs = Array.from(new Set(args.linhas.map((l) => numeroPc(l.pcNumero)).filter((v) => v !== '—')));
-  const subject = `StockBridge — NF ${args.notaFiscal} de ${fornecedor}: entrada rejeitada com o pedido baixado acima da nota`;
-  const linhas = args.linhas
-    .map(
-      (l) => `<tr>
-        <td style="padding:6px 12px 6px 0;font-size:13px;color:#111827;white-space:nowrap;">${escapeHtml(numeroPc(l.pcNumero))}</td>
-        <td style="padding:6px 12px;font-size:13px;color:#111827;text-align:right;white-space:nowrap;">${fmtKg(l.qtdNfKg)}</td>
-        <td style="padding:6px 12px;font-size:13px;color:#111827;text-align:right;white-space:nowrap;">${fmtKg(l.kgRecebidoPc)}</td>
-        <td style="padding:6px 0 6px 12px;font-size:13px;color:#b45309;text-align:right;white-space:nowrap;">${fmtKg(l.kgRecebidoPc - l.qtdNfKg)}</td>
-      </tr>`,
-    )
-    .join('');
-  const corpoHtml = `
-    <p>No recebimento da <strong>NF ${escapeHtml(args.notaFiscal)}</strong> de <strong>${escapeHtml(fornecedor)}</strong> (${empresaRotulo}), o pedido de compra foi baixado com <strong>quantidade acima da nota</strong>. Depois, o gestor <strong>rejeitou</strong> a entrada desse item no estoque.</p>
-    ${emailDataList([
-      { label: 'Nota fiscal', valor: args.notaFiscal },
-      { label: 'Fornecedor', valor: fornecedor },
-      { label: 'Empresa', valor: empresaRotulo },
-      { label: 'Item da NF', valor: (args.itemDescricao ?? '').trim() },
-      { label: 'Produto', valor: (args.produto ?? '').trim() },
-      { label: 'Pedido de compra', valor: pcs.join(', ') },
-    ])}
-    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 16px;margin:16px 0;">
-      <table role="presentation" width="100%" style="border-collapse:collapse;">
-        <thead><tr>
-          <th style="text-align:left;padding:4px 12px 8px 0;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Pedido</th>
-          <th style="text-align:right;padding:4px 12px 8px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Na nota</th>
-          <th style="text-align:right;padding:4px 12px 8px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Baixado no pedido</th>
-          <th style="text-align:right;padding:4px 0 8px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Acima da nota</th>
-        </tr></thead>
-        <tbody>${linhas}</tbody>
-      </table>
-    </div>
-    <p><strong>Motivo da rejeição:</strong></p>
-    <blockquote style="border-left:3px solid #dc2626;padding-left:12px;color:#555;margin:8px 0;">${escapeHtml(args.motivoRejeicao)}</blockquote>
-    ${emailActionBox(
-      '<p style="margin:0;">A rejeição no StockBridge não desfaz a baixa do pedido no OMIE. Confira com o fiscal a quantidade recebida deste pedido. Se a quantidade acima da nota não se confirmar, ajuste o recebimento no OMIE para a quantidade certa. A nota volta à fila do StockBridge para o recebimento físico ser refeito.</p>',
-      'O que fazer',
-    )}
-  `;
-  const { html, text } = buildEmailLayout({
-    titulo: 'Entrada rejeitada com o pedido já baixado',
-    variante: 'alerta',
-    corpoHtml,
-    ctaLabel: 'Abrir o StockBridge',
-    ctaUrl: `${config.APP_URL}/stockbridge/fila`,
+  const subject = montarAssuntoQ2P('AÇÃO REQUERIDA', 'Compras', 'Pedido baixado acima da nota', nomeAssunto(args.fornecedorNome), nf);
+  const { html, text } = montarEmailQ2P({
+    etiqueta: 'AÇÃO REQUERIDA',
+    assunto: subject,
+    titulo: 'Compras: pedido baixado acima da nota',
+    subtitulo: subtitulo(nf, fornecedor),
+    resumo: [
+      `No recebimento da ${nfFrase(args.notaFiscal)}, o pedido de compra foi baixado com **quantidade acima da nota**, e depois o gestor **rejeitou** a entrada desse item no estoque.`,
+      `A rejeição no StockBridge não desfaz a baixa do pedido no OMIE${daAcxe}.`,
+    ],
+    acao: {
+      quem: 'Compras',
+      passos: [
+        'Confira com o fiscal a quantidade recebida deste pedido.',
+        `Se a quantidade acima da nota não se confirmar, ajuste o recebimento no OMIE${daAcxe} para a quantidade certa.`,
+      ],
+      nota: 'A nota volta à fila do StockBridge para o recebimento físico ser refeito.',
+    },
+    dados: [
+      // A NF da ACXE já diz a empresa no subtítulo.
+      ['Empresa', args.empresa === 'acxe' ? '' : 'Q2P'],
+      ['Item da NF', (args.itemDescricao ?? '').trim()],
+      ['Produto', (args.produto ?? '').trim()],
+      ['Motivo da rejeição', args.motivoRejeicao],
+    ],
+    secoes: [
+      {
+        titulo: 'Quantidades',
+        tabela: {
+          cab: ['Pedido', 'Na nota', 'Baixado no pedido', 'Acima da nota'],
+          linhas: args.linhas.map((l) => [numeroPc(l.pcNumero), fmtKg(l.qtdNfKg), fmtKg(l.kgRecebidoPc), fmtKg(l.kgRecebidoPc - l.qtdNfKg)]),
+          alinhar: ['e', 'd', 'd', 'd'],
+        },
+      },
+    ],
+    // Compras usa o Atlas (decisão 6 da ACXEGDP-440).
+    botao: { texto: 'Abrir a fila do StockBridge', url: `${config.APP_URL}/stockbridge/fila` },
   });
   return { subject, html, text };
 }
@@ -995,24 +1030,33 @@ export async function enviarAlertaEspelhoRecebimentosDefasado(
   const config = getConfig();
   const da = empresa === 'acxe' ? ' da ACXE' : '';
   const workflow = empresa === 'acxe' ? 'ACXE - Exporta Recebimentos NF-e' : 'Q2P - Exporta Recebimentos NF-e';
+  const estado = args.status === 'sem_dados' ? 'vazio' : args.status === 'indisponivel' ? 'sem leitura' : 'parado';
+  const minutos = Math.round(args.idadeMin ?? 0);
   const situacao =
     args.status === 'sem_dados'
       ? `O espelho de recebimentos de NF-e${da} está vazio.`
       : args.status === 'indisponivel'
         ? `O espelho de recebimentos de NF-e${da} não pôde ser lido (tabela ausente ou erro de banco).`
-        : `O espelho de recebimentos de NF-e${da} não é atualizado há ${Math.round(args.idadeMin ?? 0)} minutos (limite: ${args.limiteMin} minutos).`;
-  const subject = `StockBridge — Espelho de recebimentos de NF-e${da} sem atualização`;
-  const corpoHtml = `
-    <p>${escapeHtml(situacao)}</p>
-    <p>Enquanto isso, notas de compra nacional${da} que chegaram da SEFAZ com o recebimento fiscal pendente podem não aparecer na fila de recebimento do StockBridge.</p>
-    ${emailActionBox(`<ol style="margin:0;padding-left:18px;"><li>Confira no n8n o workflow "${workflow}": se está ativo e se as últimas execuções terminaram sem erro.</li><li>No UAT, confira também a cópia do espelho de produção para o UAT.</li></ol>`, 'O que verificar')}
-  `;
-  const { html, text } = buildEmailLayout({
-    titulo: `Espelho de recebimentos de NF-e${da} sem atualização`,
-    variante: 'alerta',
-    corpoHtml,
-    ctaLabel: 'Abrir o StockBridge',
-    ctaUrl: `${config.APP_URL}/stockbridge/fila`,
+        : `O espelho de recebimentos de NF-e${da} não é atualizado há ${minutos} minutos (limite: ${args.limiteMin} minutos).`;
+  const subject = montarAssuntoQ2P('AÇÃO REQUERIDA', 'Infra', `Espelho de recebimentos ${estado}`, empresa === 'acxe' ? 'ACXE' : 'Q2P');
+  const { html, text } = montarEmailQ2P({
+    etiqueta: 'AÇÃO REQUERIDA',
+    assunto: subject,
+    titulo: `Infra: espelho de recebimentos de NF-e ${estado}`,
+    subtitulo: subtitulo(empresa === 'acxe' ? 'ACXE' : 'Q2P', args.status === 'degraded' ? `sem atualização há ${minutos} min` : ''),
+    resumo: [
+      situacao,
+      `Enquanto isso, notas de compra nacional${da} que chegaram da SEFAZ com o recebimento fiscal pendente podem não aparecer na fila de recebimento do StockBridge.`,
+    ],
+    acao: {
+      quem: GESTOR_SI,
+      passos: [
+        `Confira no n8n o fluxo "${workflow}": se está ativo e se as últimas execuções terminaram sem erro.`,
+        'No UAT, confira também a cópia do espelho de produção para o UAT.',
+      ],
+    },
+    botao: { texto: 'Abrir a fila de recebimento', url: `${config.APP_URL}/stockbridge/fila` },
+    duvidas: false,
   });
   try {
     await sendEmail({ to, subject, html, text });
@@ -1045,24 +1089,34 @@ export async function enviarAlertaCopiaPcsDefasada(
   const to = getOpsEmail();
   const config = getConfig();
   const da = empresa === 'acxe' ? ' da ACXE' : '';
+  const estado = args.status === 'sem_dados' ? 'vazia' : args.status === 'indisponivel' ? 'sem leitura' : 'parada';
+  const minutos = Math.round(args.idadeMin ?? 0);
   const situacao =
     args.status === 'sem_dados'
       ? `A cópia local de pedidos de compra${da} está vazia.`
       : args.status === 'indisponivel'
         ? `A cópia local de pedidos de compra${da} não pôde ser lida (tabela ausente ou erro de banco).`
-        : `A cópia local de pedidos de compra${da} não é atualizada há ${Math.round(args.idadeMin ?? 0)} minutos (limite: ${args.limiteMin} minutos).`;
-  const subject = `StockBridge — Cópia de pedidos de compra${da} sem atualização`;
-  const corpoHtml = `
-    <p>${escapeHtml(situacao)}</p>
-    <p>Enquanto isso, o recebimento de notas de compra nacional${da} com o recebimento fiscal pendente fica bloqueado no StockBridge, porque a sugestão do pedido de compra de cada item depende dessa cópia. Notas com o recebimento fiscal já feito seguem normalmente.</p>
-    ${emailActionBox('<ol style="margin:0;padding-left:18px;"><li>Confira no n8n o workflow "ACXE e Q2P - Espelho de Pedidos de Compra (Materiais a chegar)": se está ativo e se as últimas execuções terminaram sem erro.</li><li>No UAT, confira também a cópia de produção para o UAT.</li></ol>', 'O que verificar')}
-  `;
-  const { html, text } = buildEmailLayout({
-    titulo: `Cópia de pedidos de compra${da} sem atualização`,
-    variante: 'alerta',
-    corpoHtml,
-    ctaLabel: 'Abrir o StockBridge',
-    ctaUrl: `${config.APP_URL}/stockbridge/fila`,
+        : `A cópia local de pedidos de compra${da} não é atualizada há ${minutos} minutos (limite: ${args.limiteMin} minutos).`;
+  const subject = montarAssuntoQ2P('AÇÃO REQUERIDA', 'Infra', `Cópia de pedidos de compra ${estado}`, empresa === 'acxe' ? 'ACXE' : 'Q2P');
+  const { html, text } = montarEmailQ2P({
+    etiqueta: 'AÇÃO REQUERIDA',
+    assunto: subject,
+    titulo: `Infra: cópia de pedidos de compra ${estado}`,
+    subtitulo: subtitulo(empresa === 'acxe' ? 'ACXE' : 'Q2P', args.status === 'degraded' ? `sem atualização há ${minutos} min` : ''),
+    resumo: [
+      situacao,
+      `Enquanto isso, o recebimento de notas de compra nacional${da} com o recebimento fiscal pendente fica bloqueado no StockBridge, porque a sugestão do pedido de compra de cada item depende dessa cópia.`,
+    ],
+    acao: {
+      quem: GESTOR_SI,
+      passos: [
+        'Confira no n8n o fluxo "ACXE e Q2P - Espelho de Pedidos de Compra (Materiais a chegar)": se está ativo e se as últimas execuções terminaram sem erro.',
+        'No UAT, confira também a cópia de produção para o UAT.',
+      ],
+      nota: 'Notas com o recebimento fiscal já feito seguem normalmente.',
+    },
+    botao: { texto: 'Abrir a fila de recebimento', url: `${config.APP_URL}/stockbridge/fila` },
+    duvidas: false,
   });
   try {
     await sendEmail({ to, subject, html, text });
@@ -1092,28 +1146,22 @@ export async function enviarAlertaDispensaRevertida(args: {
     logger.warn({ notaFiscal: args.notaFiscal }, 'STOCKBRIDGE_FISCAL_EMAILS vazio — fiscal não avisado da reversão da dispensa');
     return;
   }
-  const config = getConfig();
-  const fornecedor = args.fornecedorNome && args.fornecedorNome.trim() ? args.fornecedorNome.trim() : 'Fornecedor não identificado no OMIE';
-  const subject = `StockBridge — Dispensa desfeita: NF ${args.notaFiscal} (${fornecedor}) voltou à fila`;
-  const quando = args.revertidoEm ? new Date(args.revertidoEm) : new Date();
-  const quandoFmt = Number.isNaN(quando.getTime()) ? '' : quando.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
-  const corpoHtml = `
-    <p>O gestor desfez a dispensa da <strong>NF ${escapeHtml(args.notaFiscal)}</strong> de <strong>${escapeHtml(fornecedor)}</strong>: a nota voltou à fila de recebimento nacional do StockBridge e será recebida pelo Atlas${args.situacaoFiscalNaDispensa === 'pendente' ? ', que também concluirá o recebimento fiscal no OMIE' : ''}.</p>
-    ${emailDataList([
-      { label: 'Nota fiscal', valor: args.notaFiscal },
-      { label: 'Fornecedor', valor: fornecedor },
-      { label: 'Motivo da reversão', valor: args.motivoReversao },
-      { label: 'Desfeita por', valor: args.revertidoPorNome ?? '' },
-      { label: 'Quando', valor: quandoFmt },
-    ])}
-    ${emailActionBox('<p style="margin:0;">Se você já tomou alguma providência no OMIE por causa do aviso de dispensa (recusa, cancelamento ou estorno), avise o gestor antes que a nota seja recebida.</p>', 'Atenção')}
-  `;
-  const { html, text } = buildEmailLayout({
-    titulo: 'Dispensa de NF desfeita',
-    variante: 'info',
-    corpoHtml,
-    ctaLabel: 'Abrir aprovações do StockBridge',
-    ctaUrl: `${config.APP_URL}/stockbridge/aprovacoes`,
+  const nf = rotuloNf(args.notaFiscal);
+  const subject = montarAssuntoQ2P('INFORMATIVO', 'Fiscal', 'Dispensa desfeita', nomeAssunto(args.fornecedorNome), nf);
+  // ACXEGDP-440: sem botão — o fiscal age no OMIE e nem todos têm usuário no Atlas.
+  const { html, text } = montarEmailQ2P({
+    etiqueta: 'INFORMATIVO',
+    assunto: subject,
+    titulo: 'Fiscal: dispensa de NF desfeita',
+    subtitulo: subtitulo(nf, nomeFornecedor(args.fornecedorNome)),
+    resumo: `O gestor desfez a dispensa da ${nfFrase(args.notaFiscal)}: a nota voltou à fila de recebimento do StockBridge e será recebida pelo Atlas${args.situacaoFiscalNaDispensa === 'pendente' ? ', que também vai concluir o recebimento fiscal no OMIE' : ''}.`,
+    semAcao:
+      'Nenhuma ação necessária, a não ser que você já tenha agido no OMIE por causa do aviso de dispensa (recusa, cancelamento ou estorno). Nesse caso, avise o gestor antes de a nota ser recebida.',
+    dados: [
+      ['Motivo da reversão', args.motivoReversao],
+      ['Desfeita por', args.revertidoPorNome ?? ''],
+      ['Quando', dataHoraBrasilia(args.revertidoEm || new Date())],
+    ],
   });
   try {
     const results = await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html, text })));
@@ -1156,29 +1204,9 @@ export interface ArgsAvisoFiscalRevertido {
   pcs: string[];
 }
 
-const FORMATO_BRASILIA = new Intl.DateTimeFormat('pt-BR', {
-  timeZone: 'America/Sao_Paulo',
-  day: '2-digit',
-  month: '2-digit',
-  year: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
-  hourCycle: 'h23',
-});
-
-/** "25/10/2026" ou "25/10/2026 às 17:13" em horario de Brasilia; '' para data ausente ou invalida. Independe da variante de ICU do Node. */
-function fmtBrasilia(valor: Date | string | null | undefined, comHora: boolean): string {
-  if (valor == null) return '';
-  const d = valor instanceof Date ? valor : new Date(valor);
-  if (Number.isNaN(d.getTime())) return '';
-  const p = new Map(FORMATO_BRASILIA.formatToParts(d).map((x): [string, string] => [x.type, x.value]));
-  const dia = `${p.get('day')}/${p.get('month')}/${p.get('year')}`;
-  return comHora ? `${dia} às ${p.get('hour')}:${p.get('minute')}` : dia;
-}
-
 /** "aguardando aprovação do gestor" | "aprovada em 26/10/2026" | os dois (parte dos itens aprovada); '' sem nenhum item contado. */
 function textoEntradaFisica(e: EntradaFisicaAvisoFiscal): string {
-  const dataAprovada = fmtBrasilia(e.aprovadaEm, false);
+  const dataAprovada = dataBrasilia(e.aprovadaEm);
   const aprovada = e.aprovadas > 0 ? `aprovada${dataAprovada ? ` em ${dataAprovada}` : ''}` : '';
   if (e.pendentes > 0 && e.aprovadas > 0) return `${aprovada} para parte dos itens; os demais aguardam aprovação do gestor`;
   if (e.pendentes > 0) return 'aguardando aprovação do gestor';
@@ -1187,58 +1215,64 @@ function textoEntradaFisica(e: EntradaFisicaAvisoFiscal): string {
 
 /**
  * Feature 017, research D21 (ACXEGDP-437): o recebimento fiscal que o Atlas concluiu no OMIE aparece DESFEITO no
- * portal e a entrada fisica da NF ja foi lancada no Atlas — por isso a nota nao volta a fila e so o fiscal pode
- * refazer o fiscal, la. O e-mail diz o que fazer: concluir de novo no portal SEM movimentar estoque (o estoque entra
- * pela aprovacao do gestor; sem isso entraria em dobro) e conferindo o vinculo com o pedido de compra. Corpo
- * autossuficiente (o fiscal pode nao ter acesso ao Atlas, por isso sem botao de acao) e sem codigo OMIE: a funcao
- * nem recebe chave de acesso, nIdReceb ou nCodPed, e o PC sai so pelo numero legivel (ACXEGDP-313). Um e-mail por
- * destinatario (nao vaza a lista no To). Devolve 'enviado' se AO MENOS UM destinatario recebeu — o job grava
- * aviso_fiscal_em e nao repete: um endereco que o SendGrid recusa sempre nao pode reenviar aos outros a cada
- * rodada — e 'falha' se nenhum recebeu ou a lista esta vazia (o job tenta de novo na proxima rodada). Nunca lanca.
+ * portal e a entrada fisica da NF ja foi lancada no Atlas — os itens lancados nao voltam a fila (numa NF parcial o
+ * item rejeitado volta) e o fiscal precisa ser refeito no portal. O e-mail diz o que fazer: concluir de novo no
+ * portal SEM movimentar estoque (o estoque entra pela aprovacao do gestor; sem isso entraria em dobro) e
+ * conferindo o vinculo com o pedido de compra. Corpo autossuficiente (o fiscal pode nao ter acesso ao Atlas, por
+ * isso sem botao de acao) e sem codigo OMIE: a funcao nem recebe chave de acesso, nIdReceb ou nCodPed, e o PC sai
+ * so pelo numero legivel (ACXEGDP-313). Um e-mail por destinatario (nao vaza a lista no To). Devolve 'enviado' se
+ * AO MENOS UM destinatario recebeu — o job grava aviso_fiscal_em e nao repete: um endereco que o SendGrid recusa
+ * sempre nao pode reenviar aos outros a cada rodada — e 'falha' se nenhum recebeu ou a lista esta vazia (o job
+ * tenta de novo na proxima rodada). Nunca lanca.
  */
 export async function enviarAvisoFiscalRevertido(args: ArgsAvisoFiscalRevertido): Promise<'enviado' | 'falha'> {
   let nf = '';
   try {
-    nf = String(args.notaFiscal ?? '').trim().replace(/^0+(?=\d)/, '');
+    nf = numeroSemZeros(args.notaFiscal);
     const destinatarios = getFiscalEmails();
     if (destinatarios.length === 0) {
       logger.warn({ notaFiscal: nf }, 'STOCKBRIDGE_FISCAL_EMAILS vazio — fiscal não avisado do recebimento fiscal desfeito no OMIE');
       return 'falha';
     }
-    const fornecedor = args.fornecedorNome && args.fornecedorNome.trim() ? args.fornecedorNome.trim() : 'Fornecedor não identificado no OMIE';
     const daAcxe = args.empresa === 'acxe' ? ' da ACXE' : '';
-    const subject = `Recebimento fiscal desfeito no OMIE${daAcxe} — NF ${nf} (${fornecedor})`;
-    const concluidoFmt = fmtBrasilia(args.concluidoEm, true);
-    const desfeitoFmt = fmtBrasilia(args.desfeitoEm, true);
+    const rotulo = rotuloNf(nf, args.empresa);
+    const subject = montarAssuntoQ2P('AÇÃO REQUERIDA', 'Fiscal', 'Recebimento desfeito no OMIE', nomeAssunto(args.fornecedorNome), rotulo);
     const situacao = textoEntradaFisica(args.entrada);
     // So o numero legivel do PC; vazio ou com cara de codigo interno do OMIE (10+ digitos) fica de fora (ACXEGDP-313).
     const pcs = Array.from(new Set((args.pcs ?? []).map((p) => String(p ?? '').trim()).filter((p) => p && !/^\d{10,}$/.test(p))));
     const textoPc = pcs.length === 1 ? `o pedido de compra PC ${pcs[0]}` : `os pedidos de compra ${listaPtBr(pcs.map((p) => `PC ${p}`))}`;
-    const conferencias = [
-      'a opção <strong>Não gerar movimento de estoque</strong> marcada: o estoque desta nota entra pela aprovação no Atlas, e sem essa opção ele entraria em dobro',
-      ...(pcs.length > 0 ? [`o vínculo do item com ${escapeHtml(textoPc)}`] : []),
-    ]
-      .map((t, i, todas) => `<li>${t}${i === todas.length - 1 ? '.' : ';'}</li>`)
-      .join('');
     const foraDoAtlas = args.concluidoForaDoAtlas === true;
-    const inicio = foraDoAtlas
-      ? `O recebimento fiscal da <strong>NF ${escapeHtml(nf)}</strong> de <strong>${escapeHtml(fornecedor)}</strong> estava concluído no OMIE${daAcxe}${concluidoFmt ? ` quando o Atlas o conferiu, em ${escapeHtml(concluidoFmt)}` : ''}`
-      : `O Atlas concluiu o recebimento fiscal da <strong>NF ${escapeHtml(nf)}</strong> de <strong>${escapeHtml(fornecedor)}</strong>${concluidoFmt ? ` em ${escapeHtml(concluidoFmt)}` : ''}`;
-    const corpoHtml = `
-    <p>${inicio}, mas ele aparece <strong>desfeito no OMIE${daAcxe}</strong>${desfeitoFmt ? ` desde ${escapeHtml(desfeitoFmt)}` : ''}.</p>
-    <p>A entrada de estoque desta nota já foi lançada pelo Atlas${situacao ? ` (${escapeHtml(situacao)})` : ''}: os itens lançados não voltam à fila de recebimento do StockBridge, e o recebimento fiscal precisa ser refeito no OMIE.</p>
-    ${emailDataList([
-      { label: 'Nota fiscal', valor: nf },
-      { label: 'Empresa', valor: args.empresa === 'acxe' ? 'ACXE' : '' },
-      { label: 'Fornecedor', valor: fornecedor },
-      { label: foraDoAtlas ? 'Visto concluído pelo Atlas em' : 'Concluído pelo Atlas em', valor: concluidoFmt },
-      { label: 'Desfeito no OMIE desde', valor: desfeitoFmt },
-      { label: 'Entrada de estoque no Atlas', valor: situacao ? situacao.charAt(0).toUpperCase() + situacao.slice(1) : 'Lançada' },
-      { label: 'Pedido de compra', valor: pcs.map((p) => `PC ${p}`).join(', ') },
-    ])}
-    ${emailActionBox(`<p style="margin:0 0 8px;">Conclua o recebimento desta nota de novo no portal do OMIE${daAcxe}. Em cada item, confira:</p><ol style="margin:0;padding-left:18px;">${conferencias}</ol>`, 'O que fazer')}
-  `;
-    const { html, text } = buildEmailLayout({ titulo: 'Recebimento fiscal desfeito no OMIE', variante: 'alerta', corpoHtml });
+    const { html, text } = montarEmailQ2P({
+      etiqueta: 'AÇÃO REQUERIDA',
+      assunto: subject,
+      titulo: 'Fiscal: recebimento desfeito no OMIE',
+      subtitulo: subtitulo(rotulo, nomeFornecedor(args.fornecedorNome)),
+      resumo: [
+        foraDoAtlas
+          ? `O recebimento fiscal da ${nfFrase(nf)} estava concluído no OMIE${daAcxe} quando o Atlas o conferiu, mas agora ele aparece **desfeito**.`
+          : `O Atlas concluiu o recebimento fiscal da ${nfFrase(nf)}, mas ele aparece **desfeito no OMIE${daAcxe}**.`,
+        // Numa NF parcial o item rejeitado volta à fila: o texto fala dos itens lançados (2ª revisão da D21, commit c525107).
+        'A entrada de estoque desta nota já foi lançada pelo Atlas: os itens lançados não voltam à fila de recebimento do StockBridge, e o recebimento fiscal precisa ser refeito no OMIE.',
+      ],
+      acao: {
+        quem: 'Fiscal',
+        // A ordem importa: concluir antes de conferir os itens lançaria o estoque em dobro. A reversão no portal
+        // mantém os ajustes do item, por isso "confira" e não "marque".
+        passos: [
+          `Abra o recebimento desta nota no portal do OMIE${daAcxe}.`,
+          'Em cada item, confira se **Não gerar movimento de estoque** está marcada: o estoque desta nota entra pela aprovação no Atlas, e sem essa opção ele entraria em dobro.',
+          ...(pcs.length > 0 ? [`Em cada item, confira o vínculo com ${textoPc}.`] : []),
+          'Depois, conclua o recebimento.',
+        ],
+      },
+      // A empresa vai no subtítulo ("NF ACXE 6842"), não nos dados.
+      dados: [
+        [foraDoAtlas ? 'Visto concluído pelo Atlas em' : 'Concluído pelo Atlas em', dataHoraBrasilia(args.concluidoEm)],
+        ['Desfeito no OMIE desde', dataHoraBrasilia(args.desfeitoEm)],
+        ['Entrada de estoque no Atlas', situacao ? situacao.charAt(0).toUpperCase() + situacao.slice(1) : 'Lançada'],
+        ['Pedido de compra', pcs.map((p) => `PC ${p}`).join(', ')],
+      ],
+    });
     const results = await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html, text })));
     const falhas = logFalhasEnvio(results, destinatarios, { notaFiscal: nf, tipo: 'fiscal_revertido' });
     if (falhas >= destinatarios.length) return 'falha';
@@ -1273,35 +1307,37 @@ export async function enviarAlertaAprovacaoPendenteImportacaoLote(args: {
   const config = getConfig();
   const linkPainel = `${config.APP_URL}/stockbridge/aprovacoes`;
   const n = args.itens.length;
-  const subject = `StockBridge — Recebimento NF ${args.notaFiscal}: ${n} itens com divergência aguardando aprovação`;
-  const linhas = args.itens
-    .map(
-      (it) => `<tr>
-        <td style="padding:6px 12px 6px 0;font-size:13px;color:#111827;">${escapeHtml(it.produto)}</td>
-        <td style="padding:6px 12px;font-size:13px;color:#6b7280;white-space:nowrap;">${it.tipoDivergencia === 'faltando' ? 'Faltando' : 'Varredura'} · ${fmtKg(Math.abs(it.deltaKg))} a menos</td>
-        <td style="padding:6px 0 6px 12px;font-size:13px;color:#111827;font-weight:600;text-align:right;white-space:nowrap;">${fmtKg(it.quantidadeKg)}</td>
-      </tr>`,
-    )
-    .join('');
-  const corpoHtml = `
-    <p>O recebimento de importação da <strong>NF ${escapeHtml(args.notaFiscal)}</strong> tem <strong>${n} itens</strong> com divergência física × fiscal aguardando sua aprovação. Os demais itens da NF que conferiram já entraram no estoque.</p>
-    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 16px;margin:16px 0;">
-      <table role="presentation" width="100%" style="border-collapse:collapse;">
-        <thead><tr>
-          <th style="text-align:left;padding:4px 12px 8px 0;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Produto</th>
-          <th style="text-align:left;padding:4px 12px 8px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Divergência</th>
-          <th style="text-align:right;padding:4px 0 8px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Qtd. recebida</th>
-        </tr></thead>
-        <tbody>${linhas}</tbody>
-      </table>
-    </div>
-  `;
-  const { html, text } = buildEmailLayout({
-    titulo: 'Divergências de recebimento aguardando aprovação',
-    variante: 'info',
-    corpoHtml,
-    ctaLabel: 'Abrir aprovações pendentes',
-    ctaUrl: linkPainel,
+  const nf = rotuloNf(args.notaFiscal);
+  const subject = montarAssuntoQ2P('AÇÃO REQUERIDA', 'Aprovação', 'Divergência no recebimento', nf);
+  const { html, text } = montarEmailQ2P({
+    etiqueta: 'AÇÃO REQUERIDA',
+    assunto: subject,
+    titulo: 'Aprovação: divergência no recebimento',
+    subtitulo: subtitulo(nf, contagem(n, 'item', 'itens')),
+    resumo: [
+      `O recebimento de importação da ${nfFrase(args.notaFiscal)} tem **${contagem(n, 'item', 'itens')}** com peso diferente da nota aguardando a sua aprovação.`,
+      // Restritiva: a nota pode só ter itens divergentes, ou ter item que falhou no OMIE.
+      'Os itens desta nota que conferiram já entraram no estoque.',
+    ],
+    acao: {
+      quem: args.nivel === 'diretor' ? 'Diretor' : 'Gestor',
+      passos: ['Abra Aprovações no StockBridge.', 'Confira cada item e aprove ou rejeite. Ao rejeitar, informe o motivo.'],
+    },
+    secoes: [
+      {
+        titulo: 'Itens com divergência',
+        tabela: {
+          cab: ['Produto', 'Divergência', 'Recebido'],
+          linhas: args.itens.map((it) => [
+            it.produto,
+            `${rotuloDivergencia(it.tipoDivergencia)}: ${fmtKg(Math.abs(it.deltaKg))} a menos`,
+            fmtKg(it.quantidadeKg),
+          ]),
+          alinhar: ['e', 'e', 'd'],
+        },
+      },
+    ],
+    botao: { texto: 'Abrir aprovações pendentes', url: linkPainel },
   });
   try {
     const results = await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html, text })));
@@ -1332,27 +1368,36 @@ export async function enviarAlertaPendenciaOmie(args: {
   // EML-11: as pendências OMIE aparecem em Movimentações — a rota
   // /stockbridge/operacoes-pendentes não existe no SPA (link caía no redirect /).
   const linkPainel = `${config.APP_URL}/stockbridge/movimentacoes`;
-  const ladoLabel = args.ladoPendente === 'q2p' ? 'OMIE Q2P' : 'OMIE ACXE (transferência da diferença)';
-  const subject = `StockBridge — Pendência OMIE (NF ${args.notaFiscal})`;
-  const corpoHtml = `
-    <p>O recebimento abaixo ficou em estado parcial — a chamada inicial teve sucesso, mas a continuação falhou. Nada foi perdido; basta retentar.</p>
-    ${emailDataList([
-      { label: 'NF', valor: args.notaFiscal },
-      { label: 'Lado pendente', valor: ladoLabel },
-      { label: 'Tentativas já feitas', valor: args.tentativas },
-      { label: 'Erro reportado', valor: args.mensagemErro },
-    ])}
-    <p style="color:#9ca3af;font-size:12px;margin-top:16px;">Detalhes técnicos — Movimentação: ${escapeHtml(args.movimentacaoId)} · op_id: ${escapeHtml(args.opId)}</p>
-  `;
-  const { html, text } = buildEmailLayout({
-    titulo: 'Operação OMIE pendente',
-    variante: 'erro',
-    corpoHtml,
-    ctaLabel: 'Abrir movimentações pendentes',
-    ctaUrl: linkPainel,
+  const ladoLabel = args.ladoPendente === 'q2p' ? 'o lançamento na Q2P' : 'a transferência da diferença na ACXE';
+  const nf = rotuloNf(args.notaFiscal);
+  const subject = montarAssuntoQ2P('AÇÃO REQUERIDA', 'Recebimento', 'Lançamento no OMIE pendente', nf);
+  const { html, text } = montarEmailQ2P({
+    etiqueta: 'AÇÃO REQUERIDA',
+    assunto: subject,
+    titulo: 'Recebimento: lançamento no OMIE pendente',
+    subtitulo: subtitulo(nf, `falta ${ladoLabel}`),
+    resumo: [
+      `O recebimento da ${nfFrase(args.notaFiscal)} ficou pela metade: o primeiro lançamento no OMIE deu certo, mas o seguinte falhou.`,
+      'Nada se perdeu: basta tentar de novo.',
+    ],
+    acao: {
+      quem: GESTOR_SI,
+      passos: ['Abra Movimentações no StockBridge.', `Tente de novo o lançamento pendente da ${nfFrase(args.notaFiscal)}.`],
+    },
+    dados: [
+      ['Tentativas já feitas', args.tentativas],
+      // "Erro", não "Erro do OMIE": a mensagem já costuma começar por "OMIE".
+      ['Erro', args.mensagemErro],
+    ],
+    botao: { texto: 'Abrir Movimentações', url: linkPainel },
+    tecnico: [
+      ['Movimentação', args.movimentacaoId],
+      ['op_id', args.opId],
+    ],
+    duvidas: false,
   });
   try {
-    await sendEmail({ to, cc: alertaOpsCc(to), subject, html, text });
+    await sendEmail({ to, bcc: alertaOpsCco(to), subject, html, text });
   } catch (err) {
     logger.error({ err, args }, 'Falha ao enviar email de pendencia OMIE');
   }
@@ -1380,41 +1425,48 @@ export async function enviarAlertaBaixaPedidoQ2p(args: {
   const config = getConfig();
   const linkPainel = `${config.APP_URL}/stockbridge/movimentacoes`;
   const ehFalha = args.motivo === 'falha';
-  const subject = ehFalha
-    ? `StockBridge — Baixa de pedido Q2P falhou (NF ${args.notaFiscal})`
-    : `StockBridge — Recebimento sem pedido Q2P suficiente (NF ${args.notaFiscal})`;
-  const intro = ehFalha
-    ? '<p>A quantidade recebida entrou no estoque, mas a baixa no pedido de compra da Q2P (OMIE) não foi concluída. Os pedidos já descontados não serão descontados de novo — basta retentar.</p>'
-    : '<p>A quantidade recebida entrou no estoque, mas não havia pedido de compra Q2P em aberto suficiente para descontar tudo. Verifique o pedido no OMIE (ou o cadastro do produto) e retente pelo painel.</p>';
-  const pedidosHtml =
-    args.pedidos.length > 0
-      ? `<p style="margin-top:12px;"><strong>Pedidos descontados nesta baixa:</strong></p><ul>${args.pedidos
-          .map((p) => `<li>Pedido ${escapeHtml(p.numero)}: ${fmtKg(p.saldoAnteriorKg)} → ${fmtKg(p.saldoNovoKg)}</li>`)
-          .join('')}</ul>`
-      : '';
-  const corpoHtml = `
-    ${intro}
-    ${emailDataList([
-      { label: 'NF', valor: args.notaFiscal },
-      { label: 'Produto', valor: args.produtoDescricao },
-      { label: 'Quantidade recebida', valor: fmtKg(args.quantidadeKg) },
-      ...(args.restanteKg != null && args.restanteKg > 0
-        ? [{ label: ehFalha ? 'Ainda por descontar' : 'Sem pedido para descontar', valor: fmtKg(args.restanteKg) }]
-        : []),
-      ...(args.mensagemErro ? [{ label: 'Erro reportado', valor: args.mensagemErro }] : []),
-    ])}
-    ${pedidosHtml}
-    <p style="color:#9ca3af;font-size:12px;margin-top:16px;">Detalhes técnicos — Movimentação: ${escapeHtml(args.movimentacaoId)}</p>
-  `;
-  const { html, text } = buildEmailLayout({
-    titulo: ehFalha ? 'Baixa de pedido Q2P pendente' : 'Recebimento sem pedido Q2P suficiente',
-    variante: ehFalha ? 'erro' : 'alerta',
-    corpoHtml,
-    ctaLabel: 'Abrir movimentações',
-    ctaUrl: linkPainel,
+  const nf = rotuloNf(args.notaFiscal);
+  const subject = montarAssuntoQ2P('AÇÃO REQUERIDA', 'Pedido de compra Q2P', ehFalha ? 'Baixa não feita' : 'Saldo insuficiente', nf);
+  const { html, text } = montarEmailQ2P({
+    etiqueta: 'AÇÃO REQUERIDA',
+    assunto: subject,
+    titulo: ehFalha ? 'Pedido de compra Q2P: baixa não feita' : 'Pedido de compra Q2P: saldo insuficiente',
+    subtitulo: subtitulo(nf, args.produtoDescricao, fmtKg(args.quantidadeKg)),
+    resumo: ehFalha
+      ? [
+          'A quantidade recebida entrou no estoque, mas a baixa no pedido de compra da Q2P no OMIE não foi concluída.',
+          'Basta tentar outra vez: os pedidos já descontados não são descontados duas vezes.',
+        ]
+      : 'A quantidade recebida entrou no estoque, mas não havia pedido de compra da Q2P em aberto com saldo para descontar tudo.',
+    acao: {
+      quem: GESTOR_SI,
+      passos: ehFalha
+        ? ['Abra Movimentações no StockBridge.', 'Tente de novo a baixa do pedido na linha desta NF.']
+        : ['Confira o pedido de compra no OMIE (ou o cadastro do produto).', 'Depois, tente de novo a baixa em Movimentações, no StockBridge.'],
+    },
+    dados: [
+      [ehFalha ? 'Ainda por descontar' : 'Sem pedido para descontar', args.restanteKg != null && args.restanteKg > 0 ? fmtKg(args.restanteKg) : ''],
+      ['Erro', args.mensagemErro ?? ''],
+    ],
+    secoes:
+      args.pedidos.length > 0
+        ? [
+            {
+              titulo: 'Pedidos descontados nesta baixa',
+              tabela: {
+                cab: ['Pedido', 'Saldo antes', 'Saldo depois'],
+                linhas: args.pedidos.map((p) => [`Pedido ${p.numero}`, fmtKg(p.saldoAnteriorKg), fmtKg(p.saldoNovoKg)]),
+                alinhar: ['e', 'd', 'd'],
+              },
+            },
+          ]
+        : [],
+    botao: { texto: 'Abrir Movimentações', url: linkPainel },
+    tecnico: [['Movimentação', args.movimentacaoId]],
+    duvidas: false,
   });
   try {
-    await sendEmail({ to, cc: alertaOpsCc(to), subject, html, text });
+    await sendEmail({ to, bcc: alertaOpsCco(to), subject, html, text });
   } catch (err) {
     logger.error({ err, args }, 'Falha ao enviar email de baixa de pedido Q2P');
   }
@@ -1424,33 +1476,56 @@ export async function enviarAlertaBaixaPedidoQ2p(args: {
  * ACXEGDP-344 (política sem FIFO): NFs de importação recebidas há mais de N
  * dias e ainda sem vínculo NF→pedido na planilha FUP — a baixa do pedido Q2P
  * fica parada até a Comex preencher as filhotes no FUP. Um e-mail por dia.
+ * ACXEGDP-440 (decisão 7): vai para a Comex, que age, com o Gestor do Sistema
+ * Integrador em cópia oculta (antes ia só para a caixa ops). Sem botão: a Comex
+ * age na FUP e não tem usuário no Atlas.
  */
 export async function enviarDigestBaixasAguardandoVinculo(args: {
   itens: Array<{ notaFiscal: string; dias: number }>;
   diasLimite: number;
 }): Promise<void> {
   if (args.itens.length === 0) return;
-  const to = getOpsEmail();
-  const config = getConfig();
-  const linkPainel = `${config.APP_URL}/stockbridge/movimentacoes`;
-  const subject = `StockBridge — ${args.itens.length} NF(s) recebida(s) sem vínculo com pedido na FUP`;
-  const lista = args.itens
-    .map((i) => `<li>NF ${escapeHtml(i.notaFiscal)} — recebida há ${i.dias} dia(s)</li>`)
-    .join('');
-  const corpoHtml = `
-    <p>As NFs abaixo foram recebidas há mais de ${args.diasLimite} dias, mas a planilha FUP ainda não informa a qual pedido elas pertencem. Sem esse vínculo a baixa no pedido de compra da Q2P não é feita (o Atlas não escolhe pedido por ordem de data).</p>
-    <p>Basta preencher as NFs filhotes no pedido correspondente da FUP — a baixa acontece automaticamente na hora seguinte.</p>
-    <ul>${lista}</ul>
-  `;
-  const { html, text } = buildEmailLayout({
-    titulo: 'NFs aguardando vínculo com pedido',
-    variante: 'alerta',
-    corpoHtml,
-    ctaLabel: 'Abrir movimentações',
-    ctaUrl: linkPainel,
+  const to = getComexEmail();
+  const ops = getOpsEmail();
+  const bcc = [ops, alertaOpsCco(ops)].filter((e): e is string => !!e);
+  const n = args.itens.length;
+  const umaSo = n === 1 ? args.itens[0] : undefined;
+  const subject = montarAssuntoQ2P(
+    'AÇÃO REQUERIDA',
+    'Pedido de compra Q2P',
+    umaSo ? 'NF sem vínculo na FUP' : 'NFs sem vínculo na FUP',
+    umaSo ? rotuloNf(umaSo.notaFiscal) : `${n} NFs`,
+  );
+  const { html, text } = montarEmailQ2P({
+    etiqueta: 'AÇÃO REQUERIDA',
+    assunto: subject,
+    titulo: umaSo ? 'Pedido de compra Q2P: NF sem vínculo na FUP' : 'Pedido de compra Q2P: NFs sem vínculo na FUP',
+    subtitulo: umaSo ? subtitulo(rotuloNf(umaSo.notaFiscal), `recebida há ${contagem(umaSo.dias, 'dia', 'dias')}`) : `${n} NFs`,
+    resumo: [
+      `${umaSo ? `A ${nfFrase(umaSo.notaFiscal)} foi recebida` : 'As NFs abaixo foram recebidas'} há mais de ${args.diasLimite} dias, mas a FUP ainda não diz a qual pedido ${umaSo ? 'ela pertence' : 'elas pertencem'}.`,
+      'Sem esse vínculo, o Atlas não faz a baixa no pedido de compra da Q2P: ele não escolhe pedido por ordem de data.',
+    ],
+    acao: {
+      quem: 'Comex',
+      passos: [`Preencha na FUP ${umaSo ? 'a NF filhote' : 'as NFs filhotes'} no pedido correspondente.`],
+      nota: 'A baixa acontece sozinha na hora seguinte.',
+    },
+    // Uma NF só: o subtítulo já diz qual é e há quanto tempo.
+    secoes: umaSo
+      ? []
+      : [
+          {
+            titulo: 'NFs sem vínculo',
+            tabela: {
+              cab: ['NF', 'Recebida há'],
+              linhas: args.itens.map((i) => [rotuloNf(i.notaFiscal), contagem(i.dias, 'dia', 'dias')]),
+              alinhar: ['e', 'd'],
+            },
+          },
+        ],
   });
   try {
-    await sendEmail({ to, cc: alertaOpsCc(to), subject, html, text });
+    await sendEmail({ to, bcc, subject, html, text });
   } catch (err) {
     logger.error({ err, args }, 'Falha ao enviar digest de baixas aguardando vínculo');
   }
@@ -1574,27 +1649,24 @@ function tipoEntradaLabel(ctx: ContextoEntradaNacional): string {
 }
 
 /**
- * Mesmo padrão para as duas origens; o manual leva "manual" no começo (o fim de
- * assuntos longos é cortado na caixa de entrada). `null` quando o manual não tem
- * número — o caller usa o genérico.
+ * Tema do assunto do e-mail ao operador (ACXEGDP-440): o manual leva "manual" logo no
+ * tema (o fim de assuntos longos é cortado na caixa de entrada). '' quando não há
+ * número de NF — o caller usa o genérico, com o tipo do lançamento.
  */
-function assuntoEntrada(acao: 'aprovado' | 'rejeitado', ctx: ContextoEntradaNacional): string | null {
-  if (!ctx.notaFiscal) return null;
-  const origem = ctx.porNf ? 'Recebimento' : 'Recebimento manual';
-  return `StockBridge — ${origem} ${acao} — NF ${ctx.notaFiscal}${ctx.fornecedor ? ` (${ctx.fornecedor})` : ''}`;
+function temaEntrada(ctx: ContextoEntradaNacional | null): string {
+  if (!ctx || !numeroSemZeros(ctx.notaFiscal)) return '';
+  return ctx.porNf ? 'Recebimento' : 'Recebimento manual';
 }
 
-function dadosEntradaHtml(ctx: ContextoEntradaNacional): string {
-  // emailDataList omite as linhas vazias (fornecedor e item não existem no manual).
-  return emailDataList([
-    { label: 'NF', valor: ctx.notaFiscal ?? '' },
-    { label: 'Fornecedor', valor: ctx.fornecedor ?? '' },
-    { label: 'Item da NF', valor: ctx.itemNf ?? '' },
-    { label: 'Produto', valor: ctx.produto ?? '' },
-    { label: 'Quantidade', valor: ctx.quantidadeKg != null ? fmtKg(ctx.quantidadeKg) : '' },
-    { label: 'Local', valor: ctx.local ?? '' },
-    { label: 'Empresas da entrada', valor: ctx.entradaEm ?? '' },
-  ]);
+/** Dados da entrada nacional; a NF e o fornecedor vão no subtítulo. Linha vazia some (o manual não tem item). */
+function dadosEntrada(ctx: ContextoEntradaNacional): Array<[string, string]> {
+  return [
+    ['Item da NF', ctx.itemNf ?? ''],
+    ['Produto', ctx.produto ?? ''],
+    ['Quantidade', ctx.quantidadeKg != null ? fmtKg(ctx.quantidadeKg) : ''],
+    ['Local', ctx.local ?? ''],
+    ['Empresas da entrada', ctx.entradaEm ?? ''],
+  ];
 }
 
 /**
@@ -1628,20 +1700,35 @@ export async function enviarNotificacaoRejeicaoOperador(args: {
   const link = `${config.APP_URL}${paginaPath}#rejeicao=${args.aprovacaoId}`;
   const ctx = await carregarContextoEntradaNacional(args.aprovacaoId);
   const tipoLabel = ctx ? tipoEntradaLabel(ctx) : labelTipoAprovacao(args.tipoAprovacao);
-  // EML-12: tipo humanizado no assunto — o operador identifica de qual
-  // lançamento se trata sem abrir o e-mail.
-  const subject = (ctx && assuntoEntrada('rejeitado', ctx)) ?? `StockBridge — Lançamento rejeitado (${tipoLabel})`;
-  const corpoHtml = `
-    <p>O gestor/diretor rejeitou um lançamento (${escapeHtml(tipoLabel)}) que você fez no StockBridge.</p>
-    ${ctx ? dadosEntradaHtml(ctx) : ''}
-    <p><strong>Motivo informado:</strong></p>
-    <blockquote style="border-left:3px solid #dc2626;padding-left:12px;color:#555;margin:8px 0;">${escapeHtml(args.motivo)}</blockquote>
-    <p>Corrija os dados e ${args.fluxo === 'recebimento' ? 'reenvie para nova aprovação' : 'lance novamente'}:</p>
-    <p style="color:#6b7280;font-size:12px;margin-top:16px;">Você também pode abrir a tela de ${escapeHtml(paginaLabel)} no StockBridge e procurar pela seção "Lançamentos rejeitados". · Aprovação: ${escapeHtml(args.aprovacaoId)}</p>
-  `;
-  const { html, text } = buildEmailLayout({ titulo: 'Lançamento rejeitado', variante: 'erro', corpoHtml, ctaLabel: acaoLabel, ctaUrl: link });
+  const nf = ctx ? rotuloNf(ctx.notaFiscal) : '';
+  const tema = temaEntrada(ctx);
+  // EML-12: o operador identifica de qual lançamento se trata sem abrir o e-mail. O manual
+  // fica só com "Rejeitado" para caber nos 76 caracteres do padrão (ACXEGDP-436).
+  const subject = tema
+    ? montarAssuntoQ2P('AÇÃO REQUERIDA', tema, ctx?.porNf ? 'Rejeitado, corrigir e reenviar' : 'Rejeitado', nf)
+    : montarAssuntoQ2P('AÇÃO REQUERIDA', 'Lançamento', 'Rejeitado', tipoLabel);
+  const { html, text } = montarEmailQ2P({
+    etiqueta: 'AÇÃO REQUERIDA',
+    assunto: subject,
+    titulo: `Lançamento rejeitado: ${tipoLabel}`,
+    subtitulo: ctx ? subtitulo(nf, ctx.fornecedor) : '',
+    resumo: `O lançamento de **${tipoLabel}** que você fez no StockBridge foi **rejeitado** na aprovação.`,
+    acao: {
+      quem: 'Quem fez o lançamento',
+      passos: [
+        'Leia o motivo da rejeição, abaixo.',
+        args.fluxo === 'recebimento' ? 'Corrija os dados e reenvie para nova aprovação.' : 'Corrija os dados e lance de novo.',
+      ],
+      nota: `O lançamento também aparece na seção **Lançamentos rejeitados** da tela ${paginaLabel}.`,
+    },
+    dados: ctx ? dadosEntrada(ctx) : [],
+    secoes: [{ titulo: 'Motivo da rejeição', texto: args.motivo, destaque: 'erro' }],
+    botao: { texto: acaoLabel, url: link },
+    ref: `Referência: aprovação ${args.aprovacaoId.slice(0, 8)}`,
+  });
   try {
-    await sendEmail({ to, cc: config.STOCKBRIDGE_ADMIN_CC_EMAIL || undefined, subject, html, text });
+    // ACXEGDP-440: o admin acompanha em cópia oculta (era Cc visível).
+    await sendEmail({ to, bcc: config.STOCKBRIDGE_ADMIN_CC_EMAIL || undefined, subject, html, text });
   } catch (err) {
     logger.error({ err, args }, 'Falha ao enviar email de rejeicao ao operador');
   }
@@ -1664,6 +1751,11 @@ export async function enviarNotificacaoAprovacaoOperador(args: {
    * o estoque efetivamente entrou. Nao usar em saidas nem quando ha pendencia OMIE.
    */
   incluirComex?: boolean;
+  /**
+   * ACXEGDP-440: parte do lançamento no OMIE ficou pendente (pendente_q2p ou pendente_acxe_faltando) — o e-mail diz
+   * isso em vez de afirmar que o ajuste entrou nas duas empresas. O Gestor do Sistema Integrador recebe o alerta.
+   */
+  pendenciaOmie?: boolean;
 }): Promise<void> {
   const to = await resolverEmailOperador(args.operadorUserId);
   if (!to) {
@@ -1672,29 +1764,35 @@ export async function enviarNotificacaoAprovacaoOperador(args: {
   }
   const ctx = await carregarContextoEntradaNacional(args.aprovacaoId);
   const tipoLabel = ctx ? tipoEntradaLabel(ctx) : labelTipoAprovacao(args.tipoAprovacao);
+  const nf = ctx ? rotuloNf(ctx.notaFiscal) : '';
+  const tema = temaEntrada(ctx);
   // EML-12: tipo humanizado no assunto.
-  const subject = (ctx && assuntoEntrada('aprovado', ctx)) ?? `StockBridge — Lançamento aprovado (${tipoLabel})`;
-  const extraDivergencia =
-    args.tipoAprovacao === 'recebimento_divergencia'
-      ? '<p>O ajuste foi registrado automaticamente no OMIE (ACXE + Q2P) com a quantidade aprovada.</p>'
-      : '';
-  const corpoHtml = `
-    <p>Um lançamento que você fez no StockBridge foi aprovado pelo gestor/diretor.</p>
-    <p><strong>Tipo:</strong> ${escapeHtml(tipoLabel)}</p>
-    ${ctx ? dadosEntradaHtml(ctx) : ''}
-    ${extraDivergencia}
-    <p style="color:#6b7280;font-size:12px;margin-top:16px;">Ref. técnica — aprovação: ${escapeHtml(args.aprovacaoId)}</p>
-  `;
-  const { html, text } = buildEmailLayout({ titulo: 'Lançamento aprovado', variante: 'sucesso', corpoHtml });
+  const subject = tema
+    ? montarAssuntoQ2P('INFORMATIVO', tema, 'Aprovado', nf)
+    : montarAssuntoQ2P('INFORMATIVO', 'Lançamento', 'Aprovado', tipoLabel);
+  const comex = args.incluirComex ? getComexEmail() : null;
+  const { html, text } = montarEmailQ2P({
+    etiqueta: 'INFORMATIVO',
+    assunto: subject,
+    titulo: `Lançamento aprovado: ${tipoLabel}`,
+    subtitulo: ctx ? subtitulo(nf, ctx.fornecedor) : '',
+    resumo: [
+      `O lançamento de **${tipoLabel}** que você fez no StockBridge foi **aprovado**.`,
+      ...(args.tipoAprovacao === 'recebimento_divergencia'
+        ? [
+            args.pendenciaOmie
+              ? 'Parte do lançamento no OMIE ficou pendente: o Gestor do Sistema Integrador vai concluir.'
+              : 'O ajuste foi lançado no OMIE (ACXE e Q2P) com a quantidade aprovada.',
+          ]
+        : []),
+    ],
+    copia: comex ? '**Em cópia (Comex):** nenhuma ação. O estoque deste recebimento já entrou.' : '',
+    dados: ctx ? dadosEntrada(ctx) : [],
+    ref: `Referência: aprovação ${args.aprovacaoId.slice(0, 8)}`,
+  });
   try {
-    const ccList = [
-      ...new Set(
-        [getConfig().STOCKBRIDGE_ADMIN_CC_EMAIL, args.incluirComex ? getComexEmail() : null].filter(
-          (e): e is string => !!e,
-        ),
-      ),
-    ];
-    await sendEmail({ to, cc: ccList.length > 0 ? ccList : undefined, subject, html, text });
+    // ACXEGDP-440: a Comex acompanha em cópia visível (o estoque entrou); o admin, em cópia oculta (era Cc visível).
+    await sendEmail({ to, cc: comex ?? undefined, bcc: getConfig().STOCKBRIDGE_ADMIN_CC_EMAIL || undefined, subject, html, text });
   } catch (err) {
     logger.error({ err, args }, 'Falha ao enviar email de aprovacao ao operador');
   }
@@ -1727,18 +1825,21 @@ export async function enviarNotificacaoRecebimentoConcluido(args: {
     logger.warn({ notaFiscal: args.notaFiscal }, 'Nenhum destinatario para confirmacao de recebimento');
     return;
   }
-  const subject = `StockBridge — Recebimento concluído (NF ${args.notaFiscal})`;
-  const corpoHtml = `
-    <p>O recebimento da <strong>NF ${escapeHtml(args.notaFiscal)}</strong> foi registrado no StockBridge sem divergências. O ajuste de estoque já foi aplicado no OMIE (ACXE + Q2P).</p>
-    ${emailDataList([
-      { label: 'Lote', valor: args.loteCodigo },
-      { label: 'Produto', valor: args.produto },
-      { label: 'Quantidade recebida', valor: fmtKg(args.quantidadeKg) },
-      { label: 'Fornecedor', valor: args.fornecedor ?? '' },
-      { label: 'Local de destino', valor: args.localidade },
-    ])}
-  `;
-  const { html, text } = buildEmailLayout({ titulo: 'Recebimento concluído', variante: 'sucesso', corpoHtml });
+  const nf = rotuloNf(args.notaFiscal);
+  const subject = montarAssuntoQ2P('INFORMATIVO', 'Recebimento', 'Concluído', nf);
+  const { html, text } = montarEmailQ2P({
+    etiqueta: 'INFORMATIVO',
+    assunto: subject,
+    titulo: 'Recebimento concluído',
+    subtitulo: subtitulo(nf, args.fornecedor),
+    resumo: `O recebimento da ${nfFrase(args.notaFiscal)} foi registrado no StockBridge sem divergência. O estoque já entrou no OMIE (ACXE e Q2P).`,
+    dados: [
+      ['Produto', args.produto],
+      ['Quantidade recebida', fmtKg(args.quantidadeKg)],
+      ['Local de destino', args.localidade],
+      ['Lote', args.loteCodigo],
+    ],
+  });
   try {
     const results = await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html, text })));
     const falhas = logFalhasEnvio(results, destinatarios, { notaFiscal: args.notaFiscal });
@@ -1774,32 +1875,25 @@ export async function enviarNotificacaoRecebimentoConcluidoLote(args: {
     return;
   }
   const n = args.itens.length;
-  const plural = n === 1 ? 'produto' : 'produtos';
-  const subject = `StockBridge — Recebimento concluído (NF ${args.notaFiscal}, ${n} ${plural})`;
-  const linhas = args.itens
-    .map(
-      (it) => `<tr>
-        <td style="padding:6px 12px 6px 0;font-size:13px;color:#111827;">${escapeHtml(it.produto)}</td>
-        <td style="padding:6px 12px;font-size:13px;color:#6b7280;white-space:nowrap;">${escapeHtml(it.loteCodigo)} · ${escapeHtml(it.localidade)}</td>
-        <td style="padding:6px 0 6px 12px;font-size:13px;color:#111827;font-weight:600;text-align:right;white-space:nowrap;">${fmtKg(it.quantidadeKg)}</td>
-      </tr>`,
-    )
-    .join('');
-  const corpoHtml = `
-    <p>O recebimento da <strong>NF ${escapeHtml(args.notaFiscal)}</strong> foi registrado no StockBridge. Os ajustes de estoque já foram aplicados no OMIE (ACXE + Q2P) para os ${plural} abaixo.</p>
-    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 16px;margin:16px 0;">
-      <table role="presentation" width="100%" style="border-collapse:collapse;">
-        <thead><tr>
-          <th style="text-align:left;padding:4px 12px 8px 0;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Produto</th>
-          <th style="text-align:left;padding:4px 12px 8px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Lote · Local</th>
-          <th style="text-align:right;padding:4px 0 8px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;">Quantidade</th>
-        </tr></thead>
-        <tbody>${linhas}</tbody>
-      </table>
-    </div>
-    ${args.fornecedor ? `<p style="color:#6b7280;font-size:13px;">Fornecedor: ${escapeHtml(args.fornecedor)}</p>` : ''}
-  `;
-  const { html, text } = buildEmailLayout({ titulo: 'Recebimento concluído', variante: 'sucesso', corpoHtml });
+  const nf = rotuloNf(args.notaFiscal);
+  const subject = montarAssuntoQ2P('INFORMATIVO', 'Recebimento', 'Concluído', nf);
+  const { html, text } = montarEmailQ2P({
+    etiqueta: 'INFORMATIVO',
+    assunto: subject,
+    titulo: 'Recebimento concluído',
+    subtitulo: subtitulo(nf, args.fornecedor, contagem(n, 'produto', 'produtos')),
+    resumo: `O recebimento da ${nfFrase(args.notaFiscal)} foi registrado no StockBridge. O estoque ${n === 1 ? 'do produto abaixo' : `dos ${n} produtos abaixo`} já entrou no OMIE (ACXE e Q2P).`,
+    secoes: [
+      {
+        titulo: n === 1 ? 'Produto' : 'Produtos',
+        tabela: {
+          cab: ['Produto', 'Lote', 'Local', 'Quantidade'],
+          linhas: args.itens.map((it) => [it.produto, it.loteCodigo, it.localidade, fmtKg(it.quantidadeKg)]),
+          alinhar: ['e', 'e', 'e', 'd'],
+        },
+      },
+    ],
+  });
   try {
     const results = await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html, text })));
     const falhas = logFalhasEnvio(results, destinatarios, { notaFiscal: args.notaFiscal });
@@ -1842,42 +1936,49 @@ export async function enviarDigestComodatosVencidos(args: {
   if (args.comodatos.length === 0) return;
   const config = getConfig();
   const linkPainel = `${config.APP_URL}/stockbridge/comodato-retorno`;
-  const fmtDataBr = (d: string) => {
-    const m = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    return m ? `${m[3]}/${m[2]}/${m[1]}` : d;
-  };
   const n = args.comodatos.length;
   const temEscalada = args.comodatos.some((c) => c.fase === 'escalada');
-  const plural = n === 1 ? 'comodato vencido' : 'comodatos vencidos';
-  const subject = `StockBridge — ${temEscalada ? '[Escalado] ' : ''}${n} ${plural} aguardando retorno`;
-  const cards = [...args.comodatos]
-    .sort((a, b) => b.diasVencido - a.diasVencido)
-    .map(
-      (c) => `<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;margin:10px 0;">
-        <div style="font-size:14px;font-weight:600;color:#111827;">${escapeHtml(c.cliente ?? 'sem cliente informado')} · vencido há ${c.diasVencido} dia${c.diasVencido === 1 ? '' : 's'}${c.fase === 'escalada' ? ' <span style="color:#9a3412;font-weight:600;">(escalado)</span>' : ''}</div>
-        <div style="font-size:13px;color:#374151;margin-top:4px;">${escapeHtml(c.produtoDescricao)} — ${fmtKg(c.quantidadeKg)}</div>
-        <div style="font-size:12px;color:#6b7280;margin-top:4px;">Galpão ${escapeHtml(c.galpaoOrigem)} · saída ${fmtDataBr(c.dtSaida)} · retorno previsto ${fmtDataBr(c.dtPrevistaRetorno)}</div>
-      </div>`,
-    )
-    .join('');
-  const corpoHtml = `
-    <p>Você tem <strong>${n} ${plural}</strong> em aberto além da data prevista de retorno.</p>
-    ${cards}
-    ${
-      temEscalada
-        ? emailActionBox(
-            'Um ou mais comodatos estão vencidos há mais de 15 dias e foram escalados para a diretoria. As notificações se repetem a cada 15 dias enquanto seguirem em aberto.',
-            'Escalado — atraso acima de 15 dias',
-          )
-        : ''
-    }
-  `;
-  const { html, text } = buildEmailLayout({
-    titulo: n === 1 ? 'Comodato vencido — ação necessária' : 'Comodatos vencidos — ação necessária',
-    variante: 'alerta',
-    corpoHtml,
-    ctaLabel: 'Abrir Retorno de Comodato',
-    ctaUrl: linkPainel,
+  const quantos = contagem(n, 'comodato', 'comodatos');
+  const subject = montarAssuntoQ2P('AÇÃO REQUERIDA', 'Comodato', temEscalada ? 'Vencido há mais de 15 dias' : 'Retorno vencido', quantos);
+  const { html, text } = montarEmailQ2P({
+    etiqueta: 'AÇÃO REQUERIDA',
+    assunto: subject,
+    titulo: n === 1 ? 'Comodato: retorno vencido' : 'Comodatos: retorno vencido',
+    subtitulo: `${quantos} em aberto`,
+    resumo: [
+      `Você tem ${quantos} com a data prevista de retorno vencida.`,
+      ...(temEscalada
+        ? [`${n === 1 ? 'Ele está vencido' : 'Pelo menos um deles está vencido'} há mais de 15 dias: o aviso foi escalado para a diretoria.`]
+        : []),
+    ],
+    acao: {
+      quem: 'Quem fez a saída e o gestor',
+      passos: [
+        'Confira com o cliente a devolução do material.',
+        'Quando o material voltar, registre o retorno em **Retorno de Comodato**, no StockBridge.',
+      ],
+      nota: temEscalada ? 'O aviso se repete a cada 15 dias enquanto o comodato seguir em aberto.' : '',
+    },
+    secoes: [
+      {
+        titulo: n === 1 ? 'Comodato vencido' : 'Comodatos vencidos',
+        tabela: {
+          cab: ['Cliente', 'Produto', 'Quantidade', 'Saída', 'Retorno previsto', 'Vencido há'],
+          linhas: [...args.comodatos]
+            .sort((a, b) => b.diasVencido - a.diasVencido)
+            .map((c) => [
+              c.cliente ?? 'Sem cliente informado',
+              `${c.produtoDescricao} (galpão ${c.galpaoOrigem})`,
+              fmtKg(c.quantidadeKg),
+              dataBrasilia(c.dtSaida),
+              dataBrasilia(c.dtPrevistaRetorno),
+              `${contagem(c.diasVencido, 'dia', 'dias')}${c.fase === 'escalada' ? ' (escalado)' : ''}`,
+            ]),
+          alinhar: ['e', 'e', 'd', 'c', 'c', 'd'],
+        },
+      },
+    ],
+    botao: { texto: 'Abrir Retorno de Comodato', url: linkPainel },
   });
   try {
     await sendEmail({ to: args.to, subject, html, text });

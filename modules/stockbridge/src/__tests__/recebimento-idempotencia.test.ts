@@ -3,15 +3,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const incluirSpy = vi.fn();
 const listarSpy = vi.fn();
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('./helpers/email-q2p.js')),
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getDb: vi.fn(),
   getConfig: () => ({ SEED_ADMIN_EMAIL: 'admin@atlas.local' }),
   sendEmail: vi.fn().mockResolvedValue(undefined),
-  buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
-  emailDataList: () => '',
-  emailActionBox: (html: string) => html,
-  escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
   getPool: () => ({ query: vi.fn() }),
 }));
 

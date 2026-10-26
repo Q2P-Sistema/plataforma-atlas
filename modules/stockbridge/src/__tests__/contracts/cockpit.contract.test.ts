@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeAll } from 'vitest';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import request from 'supertest';
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('../helpers/email-q2p.js')),
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getPool: () => ({
     query: vi.fn().mockResolvedValue({
@@ -31,10 +32,6 @@ vi.mock('@atlas/core', () => ({
   getConfig: () => ({ SEED_ADMIN_EMAIL: 'admin@atlas.local' }),
   getDb: () => ({}),
   sendEmail: vi.fn(),
-  buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: String(o?.titulo ?? '') }),
-  emailDataList: () => '',
-  emailActionBox: (html: string) => html,
-  escapeHtml: (v: unknown) => (v == null ? '' : String(v)),
 }));
 
 vi.mock('@atlas/auth', () => ({

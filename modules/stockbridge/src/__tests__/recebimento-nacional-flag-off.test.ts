@@ -15,7 +15,8 @@ const omie = {
   concluirRecebimentoNfe: vi.fn(),
 };
 
-vi.mock('@atlas/core', () => ({
+vi.mock('@atlas/core', async () => ({
+  ...(await import('./helpers/email-q2p.js')),
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getPool: () => ({ query: (sql: string, params?: unknown[]) => poolQuerySpy(sql, params) }),
   // flag AUSENTE (default do schema = false) — o cenario de PROD no go-live (research D12)
@@ -34,10 +35,6 @@ vi.mock('@atlas/core', () => ({
       }),
   }),
   sendEmail: vi.fn().mockResolvedValue(undefined),
-  buildEmailLayout: (o: { titulo?: string }) => ({ html: String(o?.titulo ?? ''), text: '' }),
-  escapeHtml: (v: unknown) => String(v ?? ''),
-  emailDataList: () => '',
-  emailActionBox: (h: string) => h,
 }));
 
 vi.mock('@atlas/db', () => ({
