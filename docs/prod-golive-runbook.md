@@ -457,7 +457,7 @@ passo separado, depois do n8n da ACXE e de um teste controlado no OMIE da ACXE. 
    `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED: ${…:-false}` e
    `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_DATA_CORTE: ${…:-}`. Conferir a fila e o detalhe da Q2P
    (Ctrl+Shift+R antes de reprovar qualquer item de tela).
-3. **n8n "ACXE - Exporta Recebimentos NF-e"** (`xqgvUZ1X9P52EDbH`, inativo): ativar, deixar rodar e
+3. **n8n "ACXE - Exporta Recebimentos NF-e"** (`xqgvUZ1X9P52EDbH`; **ativo desde 23/10/2026**, T052 feito): ativar, deixar rodar e
    conferir que `public."tbl_recebimentoNFe_ACXE"` traz os recebimentos **pendentes e os já recebidos**
    (o histórico é o que permite detectar NF recebida no portal com estoque). T052.
 4. **Teste controlado em PROD** (T076), no modelo do T033, com a próxima NF da Solutec contra o PC 580:
