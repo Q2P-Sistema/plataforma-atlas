@@ -8,5 +8,7 @@ SELECT CASE WHEN (SELECT MAX(CASE WHEN rrp.d_alt IS NOT NULL AND rrp.h_alt::text
                 WHERE rrc.c_chave_nfe = $1::text AND rrc.c_recebido = 'S'))
                 THEN (SELECT MAX(CASE WHEN rrp.d_alt IS NOT NULL AND rrp.h_alt::text ~ '^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$' THEN (rrp.d_alt::date + rrp.h_alt::text::time) AT TIME ZONE 'America/Sao_Paulo' END) FROM public."tbl_recebimentoNFe_Q2P" rrp
                 WHERE rrp.c_chave_nfe = $1::text AND rrp.c_recebido = 'N' AND COALESCE(rrp.c_cancelada, 'N') <> 'S')
-                ELSE (SELECT MAX(rfo.revertido_omie_em) FROM stockbridge.recebimento_fiscal rfo
-                WHERE rfo.nf_chave_acesso = $1::text AND rfo.status = 'revertido') END AS em
+                ELSE (SELECT rfo.revertido_omie_em FROM stockbridge.recebimento_fiscal rfo
+                WHERE rfo.nf_chave_acesso = $1::text AND rfo.status = 'revertido'
+                ORDER BY COALESCE(rfo.revertido_omie_em, rfo.revertido_em) DESC, rfo.revertido_em DESC
+                LIMIT 1) END AS em

@@ -62,7 +62,7 @@ Desde 19/10/2026, compras lança pedido de compra (PC) no OMIE para a compra nac
 - `recebimento-fiscal.service`: receitas D1/D2, `IGNORAR` só sem PC, releitura, "PC recém-usado", `VINCULO_OMIE_MUDOU`, idempotência por item.
 - Portão 1: `NF_SEM_PC` nos dois modos, estoque já lançado, aviso deduplicado.
 - Regressão da contenção (chave desligada) e da baixa da 344.
-- Fiscal revertido (D21 da 017): o sinal (`fiscal-revertido`), a fila e o detalhe com e sem a D21 da 017 (golden `*-desligado` intactos), `adquirirLedger`, o clique e o 409, a varredura e o e-mail ao fiscal, a tela; opt-in com Postgres real e a 0060.
+- Fiscal revertido (D21 da 017): o sinal (`fiscal-revertido`), a fila e o detalhe com e sem a D21 da 017 (golden `*-desligado` intactos), `adquirirLedger`, o clique e o 409, a varredura e o e-mail ao fiscal; opt-in com Postgres real e a 0060. A tela não tem teste automatizado no repositório (como em T097).
 - Supertest no schema `.strict()` do POST.
 - Integração `ATLAS_DB_INTEGRATION=1` para as triggers novas.
 
@@ -100,7 +100,7 @@ Todas no schema Zod de `packages/core/src/config.ts` e listadas nas stacks (`atl
 - (j) No UAT, `OMIE_MODE=leitura`: o `ASSOCIAR-PEDIDO` é simulado na sombra.
 - (k) Cópia de PCs defasada não decide nada: sem `NF_SEM_PC` e sem aviso a compras; o POST com fiscal pendente responde 503 (D13).
 - (l) Reserva de saldo por item de PC (linhas `confirmado`/`associado` de outras NFs) para duas NFs simultâneas não consumirem o mesmo saldo; a trava consultiva só cobre a checagem e a gravação da reserva (D4).
-- (m) PC em unidade diferente da NF não é vinculado no modo `bloquear`: o OMIE baixaria o PC na unidade da NF, sem converter. `converter` só depois de teste com NF real (D15).
+- (m) PC em unidade diferente da NF não é vinculado no modo `bloquear`: o OMIE baixaria o PC na unidade da NF, sem converter. `converter` validado em PROD em 25/10/2026 (T073, D15).
 - (n) O ledger `concluido` só vale se nenhuma leitura posterior do OMIE mostrar a NF não recebida: o sinal compara horas de evento do OMIE (Brasília, margem de 2 min), nunca `synced_at`; o clique de NF cujo fiscal o Atlas concluiu confere o recebimento ao vivo antes de pular o fiscal; o Atlas nunca reverte no OMIE (D21 da 017).
 
 **Scale/Scope**:
@@ -228,7 +228,7 @@ deploy/portainer/atlas.stack.yml, YAML UAT, .env.example   # ESTENDER: variávei
 
 Cinco notas de desenho, nenhuma delas violação:
 
-**1. Teste com NF real antes de ativar.** O vínculo novo (`ASSOCIAR-PEDIDO`) foi exercitado contra o OMIE de produção, que é o único disponível, na NF 60199 (T033, 22/10/2026), e a chave foi religada depois (quickstart, pré-requisito 5). Não foi testada a troca de um vínculo existente (plano B em D2); a NF menor que o saldo do PC foi confirmada em 23/10/2026 (NF 67988, D20). O modo `converter` da trava de unidade (D15) exige o próprio teste antes de ser ligado.
+**1. Teste com NF real antes de ativar.** O vínculo novo (`ASSOCIAR-PEDIDO`) foi exercitado contra o OMIE de produção, que é o único disponível, na NF 60199 (T033, 22/10/2026), e a chave foi religada depois (quickstart, pré-requisito 5). Não foi testada a troca de um vínculo existente (plano B em D2); a NF menor que o saldo do PC foi confirmada em 23/10/2026 (NF 67988, D20). O modo `converter` da trava de unidade (D15) teve o próprio teste em PROD em 25/10/2026 (T073, NF 19252 × PC 308) e foi ligado no mesmo dia (T074).
 
 **2. Religar a chave com imagem antiga reabre o problema.** A chave é a mesma da 016 por decisão do usuário. O risco operacional (ligar antes do deploy da 017) fica no quickstart e no runbook de deploy, e não em código.
 

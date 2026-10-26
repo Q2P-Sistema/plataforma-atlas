@@ -1226,7 +1226,7 @@ export async function enviarAvisoFiscalRevertido(args: ArgsAvisoFiscalRevertido)
       : `O Atlas concluiu o recebimento fiscal da <strong>NF ${escapeHtml(nf)}</strong> de <strong>${escapeHtml(fornecedor)}</strong>${concluidoFmt ? ` em ${escapeHtml(concluidoFmt)}` : ''}`;
     const corpoHtml = `
     <p>${inicio}, mas ele aparece <strong>desfeito no OMIE${daAcxe}</strong>${desfeitoFmt ? ` desde ${escapeHtml(desfeitoFmt)}` : ''}.</p>
-    <p>A entrada de estoque desta nota já foi lançada pelo Atlas${situacao ? ` (${escapeHtml(situacao)})` : ''}, por isso a nota não volta à fila de recebimento do StockBridge: só o fiscal pode refazer o recebimento fiscal no OMIE.</p>
+    <p>A entrada de estoque desta nota já foi lançada pelo Atlas${situacao ? ` (${escapeHtml(situacao)})` : ''}: os itens lançados não voltam à fila de recebimento do StockBridge, e o recebimento fiscal precisa ser refeito no OMIE.</p>
     ${emailDataList([
       { label: 'Nota fiscal', valor: nf },
       { label: 'Empresa', valor: args.empresa === 'acxe' ? 'ACXE' : '' },

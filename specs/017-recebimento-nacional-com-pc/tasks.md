@@ -387,7 +387,7 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
 - [X] T074 [US2] Decisão de ligar `STOCKBRIDGE_PC_UNIDADE_DIFERENTE=converter` em PROD, só depois do T073 aprovado. Até lá o padrão é `bloquear`. **Feito em 25/10/2026**: o usuário ligou `converter` em PROD e o T073 foi aprovado no mesmo dia, na NF 19252 × PC 308 (research D15)
 - [ ] T075 [US2] T033 (c) quando houver NF: troca de um vínculo existente por `ASSOCIAR-PEDIDO` (inclusive entre cadastros). A (d), NF menor que o saldo do PC, já foi respondida pela NF 67988 em 23/10/2026 (o OMIE aceita e o saldo fica aberto, research D20). Registrar em research D2. Se o OMIE recusar a troca, vale o plano B da D2
 
-**Checkpoint**: PC por NF, PC de outro cadastro, trava de unidade e cache de PCs vistos no ar; `converter` só depois do T073 e do T074.
+**Checkpoint**: PC por NF, PC de outro cadastro, trava de unidade e cache de PCs vistos no ar; `converter` validado em PROD em 25/10/2026 (T073) e ligado em PROD no mesmo dia (T074).
 
 ---
 
@@ -469,7 +469,7 @@ T003 (n8n) ───────────────────────
 2. **MVP = Phase 1 + 2 + US1 + US2**: sugestão, confirmação e fiscal com vínculo. Demonstrável em dev (mock) e em UAT (sombra do modo leitura).
 3. **US3 e US4** completam a Fase 1: regra de NF sem PC, avisos e robustez.
 4. **Ativação da Fase 1**: o deploy segue a ordem do T054 e o T033 aprovado é pré-requisito. Religar a chave primeiro no UAT, observar algumas NFs reais em PROD com a chave ligada e encerrar a contenção (SC-007).
-5. **Ajustes pós-estreia (Phase 9)**: a Fase 1 entrou em PROD em 22/10/2026 e a NF 60199 pediu os quatro ajustes. A 0057 vai antes da imagem; `converter` só depois do teste com NF real.
+5. **Ajustes pós-estreia (Phase 9)**: a Fase 1 entrou em PROD em 22/10/2026 e a NF 60199 pediu os quatro ajustes. A 0057 vai antes da imagem; `converter` validado em PROD em 25/10/2026 (T073) e ligado no mesmo dia (T074).
 6. **Fase 2 (US5)**: só depois da Fase 1 estável em PROD e de existirem PCs nacionais na ACXE.
 7. **Fiscal revertido (Phase 11)**: a NF 19252 mostrou que o ledger `concluido` da 016 não podia ser final. A 0060 vai antes da imagem, a chave nova vem ligada (e só vale com a da 016), e o primeiro uso é acompanhado na própria 19252 (T100).
 

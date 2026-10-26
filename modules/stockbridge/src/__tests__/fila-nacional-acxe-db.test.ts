@@ -10,8 +10,8 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 // numerico do cache, o gemeo Q2P por descricao exata, o local do PC resolvido para a localidade do Atlas.
 //
 // Opt-in, como auditoria-pedido-compra-visto.test.ts: ATLAS_DB_INTEGRATION=1 + DATABASE_URL. Sem isso o describe e PULADO
-// (nunca falha por falta de banco, nunca "passa" fingindo). Rodar ESTE arquivo sozinho (os testes de auditoria tambem
-// criam tabelas do espelho no schema public):
+// (nunca falha por falta de banco, nunca "passa" fingindo). Os testes de banco e os de auditoria criam as mesmas tabelas do
+// espelho no schema public: com o opt-in o vitest.config.ts do modulo roda os arquivos um por vez.
 //
 //   ATLAS_DB_INTEGRATION=1 DATABASE_URL=postgres://... REDIS_URL=redis://localhost:6379 SESSION_SECRET=<32+ chars> \
 //     pnpm --filter @atlas/stockbridge exec vitest run src/__tests__/fila-nacional-acxe-db.test.ts
@@ -1124,9 +1124,9 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
   // migration 0060 (stockbridge.recebimento_fiscal.revertido_em) — sem ela o bloco e pulado, e o codigo segue sem a D21.
   describe('fiscal REVERTIDO no OMIE (D21 da 017, NF 19252) — o sinal executado de verdade', () => {
     const K = (n: number): string => chave(700 + n);
-    const R = { r1: K(1), r2: K(2), r3: K(3), r4a: K(4), r4b: K(5), r5a: K(6), r5b: K(7), r5c: K(8), r6: K(9), r7: K(10), r11: K(11), r12: K(12), r13: K(13), r14: K(14), r15: K(15) };
+    const R = { r1: K(1), r2: K(2), r3: K(3), r4a: K(4), r4b: K(5), r5a: K(6), r5b: K(7), r5c: K(8), r6: K(9), r7: K(10), r11: K(11), r12: K(12), r13: K(13), r14: K(14), r15: K(15), r16: K(16) };
     /** As NFs que o bloco espera ver na fila (a r11 tem a entrada fisica lancada: fica de fora; a r15 so volta com a nota de entrada). */
-    const NA_FILA = [R.r1, R.r2, R.r3, R.r4a, R.r4b, R.r5a, R.r5b, R.r5c, R.r6, R.r7, R.r12, R.r13, R.r14];
+    const NA_FILA = [R.r1, R.r2, R.r3, R.r4a, R.r4b, R.r5a, R.r5b, R.r5c, R.r6, R.r7, R.r12, R.r13, R.r14, R.r16];
     // as 4 linhas do recebimento da 19252, em kg (a 19252 vem em toneladas; a conversao tem testes proprios): 13.750 kg, R$ 145.750,05
     const LINHAS = [
       { seq: 1, qtde: 4125, total: 43725.01 },
@@ -1257,6 +1257,19 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
         receb: { recebido: 'S', etapa: '60', dAlt: '2026-10-24', hAlt: '12:13:36', dRec: '2026-10-24', hRec: '12:28:10' },
         ledger: { status: 'revertido', finalizadoEm: CONCLUIDO_24, revertidoEm: '2026-10-24T15:35:00Z', origem: 'espelho', omieEm: '2026-10-24T15:13:36Z' },
       });
+      // R16 — duas reversoes: a 1a (12:03) marcada pelo espelho com a hora do OMIE; o Atlas concluiu de novo (13:00) e a 2a reversao so
+      // foi percebida pela leitura ao vivo do clique (13:20), antes do sync — o espelho ainda traz o 'S' da 2a conclusao (d_rec 13:00:05)
+      await cenario({
+        k: R.r16, n: 16, numero: '19267', header: ['2026-10-24', '13:00:05'],
+        receb: { recebido: 'S', etapa: '60', dAlt: '2026-10-24', hAlt: '12:03:00', dRec: '2026-10-24', hRec: '13:00:05' },
+        ledger: { status: 'revertido', finalizadoEm: CONCLUIDO_24, revertidoEm: '2026-10-24T15:05:00Z', origem: 'espelho', omieEm: '2026-10-24T15:03:00Z' },
+      });
+      const b = await q(
+        `INSERT INTO stockbridge.recebimento_fiscal (nf_chave_acesso, nota_fiscal, status, confirmado_por, empresa, finalizado_em, itens_total, revertido_em, revertido_origem)
+         VALUES ($1, '19267', 'revertido', $2, 'q2p', '2026-10-24T16:00:00Z', 1, '2026-10-24T16:20:00Z', 'omie_ao_vivo') RETURNING id`,
+        [R.r16, usuario],
+      );
+      ledgers.push(String(b.rows[0]!.id));
       semeado = true;
     }, 60_000);
 
@@ -1282,6 +1295,17 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
 
     const daFila = async (opts: Parameters<typeof svc.getFilaNacional>[0] = {}) =>
       Object.fromEntries(doTeste(await svc.getFilaNacional(opts)).map((f) => [f.nfChaveAcesso, f]));
+    /** Os ledgers da NF: status[:origem][@revertido_omie_em], na ordem em que foram finalizados. */
+    const estadoLedger = async (k: string): Promise<string[]> =>
+      (await q(`SELECT status, revertido_origem, revertido_omie_em FROM stockbridge.recebimento_fiscal WHERE nf_chave_acesso = $1 ORDER BY finalizado_em`, [k])).rows.map(
+        (x) => `${x.status}${x.revertido_origem ? `:${x.revertido_origem}` : ''}${x.revertido_omie_em ? `@${new Date(x.revertido_omie_em as string).toISOString()}` : ''}`,
+      );
+    const voltarLedgerParaConcluido = (k: string) =>
+      q(
+        `UPDATE stockbridge.recebimento_fiscal SET status = 'concluido', revertido_em = NULL, revertido_origem = NULL, revertido_omie_em = NULL, revertido_por = NULL
+          WHERE nf_chave_acesso = $1`,
+        [k],
+      );
 
     it('R1 — a 19252: ledger concluido, nota de entrada valida com 1 linha, recebimento N/40 11 min depois -> a fila a mostra como fiscal PENDENTE + revertida, com as 4 linhas (R$ 145.750,05)', async (ctx) => {
       if (!semeado) return ctx.skip();
@@ -1291,10 +1315,18 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
         itensTotal: 1, itensPendentes: 1, estoqueLancadoPeloOmie: false, pcSituacao: 'vinculado_omie',
       });
       expect(f.valorTotalBrl).toBeCloseTo(145750.05, 2); // as 4 linhas do recebimento — a nota de entrada so tem 1 (R$ 14.575,01)
+      // a listagem ja marca a tentativa antiga (ainda 'concluido') de cada NF revertida da pagina, antes do selo do PC, no espelho da
+      // empresa da NF e com a hora do OMIE; as nao revertidas seguem 'concluido'
+      expect(await estadoLedger(R.r1)).toEqual(['revertido:espelho@2026-10-25T20:13:36.000Z']);
+      expect(await estadoLedger(R.r4b)).toEqual(['revertido:espelho@2026-10-24T15:02:01.000Z']);
+      expect(await estadoLedger(R.r7)).toEqual(['revertido:espelho@2026-10-24T15:11:00.000Z']);
+      for (const k of [R.r3, R.r4a, R.r5a, R.r12]) expect(await estadoLedger(k), k).toEqual(['concluido']);
     });
 
     it('R1 — o detalhe: 4 linhas (13.750 kg), vinculo do OMIE com o PC 308 preservado, fornecedor, e a hora da reversao no OMIE (17:13:36 de Brasilia)', async (ctx) => {
       if (!semeado) return ctx.skip();
+      // a listagem acima ja marcou a tentativa antiga: volta ao estado da fixture para o detalhe marcar por conta propria
+      await voltarLedgerParaConcluido(R.r1);
       const d = await svc.getDetalheNfNacional(R.r1);
       expect(d).toMatchObject({ empresa: 'q2p', notaFiscal: '19252', fiscal: 'pendente', fiscalRevertido: true, fiscalRevertidoEm: '2026-10-25T20:13:36.000Z', dispensavel: true, estoqueLancadoPeloOmie: false });
       expect(d.itens).toHaveLength(1);
@@ -1313,11 +1345,7 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
     it('R1 — CONTROLE: com a D21 desligada (kill switch) o defeito da 19252 reaparece: fiscal ja feito, 1 linha, com a data do ledger', async (ctx) => {
       if (!semeado) return ctx.skip();
       // o detalhe aberto antes marcou a tentativa como revertida: volta ao estado da fixture (ledger 'concluido')
-      await q(
-        `UPDATE stockbridge.recebimento_fiscal SET status = 'concluido', revertido_em = NULL, revertido_origem = NULL, revertido_omie_em = NULL, revertido_por = NULL
-          WHERE nf_chave_acesso = $1`,
-        [R.r1],
-      );
+      await voltarLedgerParaConcluido(R.r1);
       configurar({ revertido: false });
       try {
         const f = (await daFila())[R.r1]!;
@@ -1411,11 +1439,19 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
       expect((await svc.getDetalheNfNacional(R.r13)).fiscalRevertidoEm).toBeNull();
     });
 
+    it('R16 — duas reversoes, a ultima percebida so pela leitura ao vivo: revertida, e a hora fica nula — nunca a da 1a reversao (12:03), anterior a conclusao desfeita depois', async (ctx) => {
+      if (!semeado) return ctx.skip();
+      expect((await daFila())[R.r16]).toMatchObject({ fiscal: 'pendente', fiscalRevertido: true });
+      expect(await svc.getDetalheNfNacional(R.r16)).toMatchObject({ fiscal: 'pendente', fiscalRevertido: true, fiscalRevertidoEm: null });
+      // nada a marcar: as duas tentativas ja estao 'revertido'
+      expect(await estadoLedger(R.r16)).toEqual(['revertido:espelho@2026-10-24T15:03:00.000Z', 'revertido:omie_ao_vivo']);
+    });
+
     it('o conjunto do bloco na fila: exatamente as NFs esperadas (a r11 fica de fora), e SO as revertidas viram pendente + fiscalRevertido', async (ctx) => {
       if (!semeado) return ctx.skip();
       const meus = (await svc.getFilaNacional()).filter((f) => Object.values(R).includes(f.nfChaveAcesso));
       expect(meus.map((f) => f.nfChaveAcesso).sort()).toEqual([...NA_FILA].sort());
-      expect(meus.filter((f) => f.fiscalRevertido).map((f) => f.nfChaveAcesso).sort()).toEqual([R.r1, R.r2, R.r4b, R.r7, R.r13].sort());
+      expect(meus.filter((f) => f.fiscalRevertido).map((f) => f.nfChaveAcesso).sort()).toEqual([R.r1, R.r2, R.r4b, R.r7, R.r13, R.r16].sort());
       // toda NF revertida e fiscal pendente (a tela compara fiscal === 'pendente'); nenhuma outra e
       for (const f of meus) expect(f.fiscal === 'pendente' && f.fiscalRevertido === true || !f.fiscalRevertido, f.nfChaveAcesso).toBe(true);
     });

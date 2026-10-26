@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 //
 // Rodar (banco descartavel migrado ate a 0060; escreve e apaga linhas de teste; shared.audit_log e append-only e fica com rastro —
 // NUNCA contra UAT/PROD). As tabelas do espelho OMIE (`public.tbl_*`) sao do n8n: as que faltarem sao criadas e removidas no fim —
-// rode UM arquivo de banco por vez, ou varios com --no-file-parallelism.
+// com o opt-in o vitest.config.ts do modulo roda os arquivos um por vez (fora dele, use --no-file-parallelism).
 //   ATLAS_DB_INTEGRATION=1 DATABASE_URL=postgres://... REDIS_URL=redis://localhost:6379 SESSION_SECRET=<32+ chars> \
 //     pnpm --filter @atlas/stockbridge exec vitest run src/__tests__/recebimento-nacional-revertido-db.test.ts
 
@@ -47,6 +47,17 @@ vi.mock('../services/correlacao-produto.service.js', () => ({
   registrarUsoCorrelacao: vi.fn().mockResolvedValue({ criada: true }),
   sugerirProdutosEmLote: vi.fn().mockResolvedValue(new Map()),
 }));
+// A abertura do detalhe (e da fila) ja marca a tentativa revertida. O e2e da reabertura no adquirirLedger precisa do ledger ainda
+// 'concluido' no clique: ali o teste esconde o ledger vigente (ledgerFiscalVigente), como se a marcacao da abertura nao tivesse rodado.
+const janela = vi.hoisted(() => ({ semMarcacaoNaAbertura: false }));
+vi.mock('../services/fiscal-revertido.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../services/fiscal-revertido.js')>();
+  return {
+    ...real,
+    ledgerFiscalVigente: (...a: Parameters<typeof real.ledgerFiscalVigente>) =>
+      janela.semMarcacaoNaAbertura ? Promise.resolve(null) : real.ledgerFiscalVigente(...a),
+  };
+});
 
 import type { EscolhaPc } from '../services/pc-sugestao.service.js';
 
@@ -121,13 +132,18 @@ describe.skipIf(!temBanco)('D21 — o clique da NF revertida no portal, de ponta
     }
     uid = String(us.rows[0]!.id);
     locId = String(lo.rows[0]!.id);
-    // Espelho OMIE: cria o que faltar; o que ja existir precisa ter as colunas que este teste usa (senao e de outro teste: pula).
+    // Espelho OMIE: confere tudo antes de criar. O que ja existir precisa estar VAZIO (espelho real: o teste nao escreve nele) e ter
+    // as colunas que este teste usa (senao e de outro teste: pula); o que faltar e criado e removido no fim.
+    const faltam: Array<[string, string]> = [];
     for (const [nome, ddl, colunas] of DDL) {
       const ex = await q(`SELECT to_regclass($1) IS NOT NULL AS existe`, [`public."${nome}"`]);
       if (ex.rows[0]!.existe !== true) {
-        await q(ddl);
-        tabelasCriadas.push(nome);
+        faltam.push([nome, ddl]);
         continue;
+      }
+      if (Number((await q(`SELECT count(*)::int AS n FROM public."${nome}"`)).rows[0]!.n) > 0) {
+        console.warn(`[recebimento-nacional-revertido-db] public."${nome}" ja tem dados (espelho real) — testes pulados`);
+        return;
       }
       const cs = await q(`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`, [nome]);
       const tem = new Set(cs.rows.map((r) => String(r.column_name)));
@@ -135,6 +151,10 @@ describe.skipIf(!temBanco)('D21 — o clique da NF revertida no portal, de ponta
         console.warn(`[recebimento-nacional-revertido-db] public."${nome}" existe sem as colunas do teste — testes pulados`);
         return;
       }
+    }
+    for (const [nome, ddl] of faltam) {
+      await q(ddl);
+      tabelasCriadas.push(nome);
     }
     // Fornecedor, produto e uma linha QUALQUER na copia de PCs (a copia precisa estar em dia: senao o POST da 503 COPIA_PCS_DEFASADA).
     // O PC da NF fica de fora da copia, como o da 19252 (o OMIE o tira da lista de pendentes ao associa-lo a um recebimento aberto).
@@ -166,9 +186,10 @@ describe.skipIf(!temBanco)('D21 — o clique da NF revertida no portal, de ponta
     }
     await q(`DELETE FROM stockbridge.pedido_compra_visto WHERE empresa = 'q2p' AND n_cod_for = ANY($1::bigint[])`, [[FORN, FORN + 100]]);
     for (const n of nfs) await q(`DELETE FROM stockbridge.pedido_compra_visto WHERE empresa = 'q2p' AND n_cod_item = $1`, [n.pcItem]);
-    if (tabelasCriadas.length === 0) {
-      await q(`DELETE FROM public."tbl_nf_header_Q2P" WHERE n_id_nf = ANY($1::bigint[])`, [nfs.map((n) => n.nIdNf)]).catch(() => undefined);
-    }
+    // Sempre, mesmo com tabela criada aqui (o DROP vem depois): a tabela que ja existia fica vazia como estava
+    const idsNf = nfs.map((n) => n.nIdNf);
+    await q(`DELETE FROM public."tbl_nf_itens_Q2P" WHERE n_id_nf = ANY($1::bigint[])`, [idsNf]).catch(() => undefined);
+    await q(`DELETE FROM public."tbl_nf_header_Q2P" WHERE n_id_nf = ANY($1::bigint[])`, [idsNf]).catch(() => undefined);
     await q(`DELETE FROM public."tbl_pedidosCompras_Q2P" WHERE ncoditem = $1`, [PC_OUTRO.ncoditem]).catch(() => undefined);
     await q(`DELETE FROM public."tbl_produtos_Q2P" WHERE codigo_produto = $1`, [PROD_Q2P]).catch(() => undefined);
     await q(`DELETE FROM public."tbl_cadastroFornecedoresClientes_Q2P" WHERE codigo_cliente_omie = $1`, [FORN]).catch(() => undefined);
@@ -298,11 +319,11 @@ describe.skipIf(!temBanco)('D21 — o clique da NF revertida no portal, de ponta
   });
 
   // A janela: o espelho de recebimentos ja mostra o recebimento desfeito (c_recebido N, depois da conclusao) mas o ledger do Atlas
-  // ainda esta 'concluido' — o cron :05/:35 e a proxima tentativa do fiscal ainda nao o marcaram. A fila e o detalhe ja mostram "fiscal
-  // pendente + revertido", e o PC 308 (so no cache de PCs vistos, de ANTES da conclusao) ainda tem o consumo da propria NF descontado:
-  // o detalhe pede justificativa ("PC sem saldo") ate o ledger ser marcado. O POST passa do mesmo jeito (a releitura ao vivo do PC e a
-  // autoridade): o ledger e reaberto no proprio clique e o fiscal conclui de novo.
-  it('NF 19252, espelho em N depois da conclusao e ledger ainda concluido: o detalhe ja mostra fiscal pendente + revertido e o clique conclui o fiscal de novo e grava o fisico', async (ctx) => {
+  // ainda esta 'concluido' — o cron :05/:35 ainda nao o marcou. Abrir o detalhe ja marca a tentativa antiga (melhor esforco): o PC 308
+  // (so no cache de PCs vistos, de ANTES da conclusao) deixa de ter o consumo da propria NF descontado e volta dentro da tolerancia,
+  // pre-selecionado, sem justificativa. O clique conclui o fiscal de novo. (Sem essa marcacao, quem libera a trava e o adquirirLedger:
+  // teste seguinte.)
+  it('NF 19252, espelho em N depois da conclusao e ledger ainda concluido: abrir o detalhe marca a tentativa antiga (PC 308 com saldo de novo) e o clique conclui o fiscal de novo e grava o fisico', async (ctx) => {
     if (!pronto) ctx.skip();
     const n = await semear({ concluidoHa: 3 * HORA, receb: { recebido: 'N', alteradoHa: 3 * HORA - 11 * MIN }, header: { alteradoHa: 3 * HORA } });
     omieComoNaReversao(n);
@@ -312,11 +333,13 @@ describe.skipIf(!temBanco)('D21 — o clique da NF revertida no portal, de ponta
     expect(d.fiscalRevertidoEm).not.toBeNull();
     expect(d.itens).toHaveLength(1);
     expect(d.itens[0]!.quantidadeNfKg).toBe(KG_TOTAL);
-    expect(d.itens[0]!.pc?.vinculoOmie).toMatchObject({ pcNumero: '308', nCodPed: n.pcPed, nCodItem: n.pcItem });
+    expect(d.itens[0]!.pc?.vinculoOmie).toMatchObject({ pcNumero: '308', nCodPed: n.pcPed, nCodItem: n.pcItem, dentroTolerancia: true });
+    expect(d.itens[0]!.pc?.preSelecionado).not.toBeNull();
     expect(JSON.stringify(d)).not.toMatch(/erro_omie/);
+    expect((await ledgers(n.chave)).map((x) => `${x.status}:${x.revertido_origem}`)).toEqual(['revertido:espelho']);
 
-    // o operador confirma o PC 308 (o vinculo do OMIE); na janela o detalhe pede justificativa — o POST aceita
-    const r = await nac.processarRecebimentoNacionalPorNf(corpo(n, { n_cod_ped: n.pcPed, n_cod_item: n.pcItem, n_cod_item_omie_visto: n.pcItem, justificativa: 'Reversão no portal: o PC 308 é o do pedido' }));
+    // o operador confirma o PC 308 (o vinculo do OMIE), sem justificativa
+    const r = await nac.processarRecebimentoNacionalPorNf(corpo(n));
 
     expect(r.fiscal.status).toBe('concluido');
     expect(r.resumo).toMatchObject({ enviadosParaAprovacao: 1, falhas: 0 });
@@ -338,6 +361,38 @@ describe.skipIf(!temBanco)('D21 — o clique da NF revertida no portal, de ponta
 
     // depois do clique a nota nao tem mais nada a receber (fisico gravado) — e o sinal desligou: a conclusao nova e a mais recente
     expect(await rev.nfComFiscalRevertido(n.chave, 'q2p')).toBe(false);
+  });
+
+  // A mesma janela sem a marcacao da abertura (melhor esforco: falhou ou nao rodou): o ledger chega 'concluido' ao clique e o detalhe
+  // ainda desconta o consumo da propria NF (PC 308 sem saldo: pede justificativa). Quem libera a trava e o adquirirLedger — marca a
+  // tentativa antiga 'revertido' com os 4 vinculos de PC, na mesma transacao — e a reserva nova grava os vinculos de novo: o indice
+  // de item de PC vivo aceita porque os antigos sairam dos status vivos.
+  it('sem a marcacao na abertura do detalhe: o adquirirLedger reabre a trava no clique e a reserva nova grava os vinculos de PC de novo', async (ctx) => {
+    if (!pronto) ctx.skip();
+    const n = await semear({ concluidoHa: 3 * HORA, receb: { recebido: 'N', alteradoHa: 3 * HORA - 11 * MIN }, header: { alteradoHa: 3 * HORA } });
+    omieComoNaReversao(n);
+    janela.semMarcacaoNaAbertura = true;
+    try {
+      const d = await svc.getDetalheNfNacional(n.chave);
+      expect(d).toMatchObject({ fiscal: 'pendente', fiscalRevertido: true });
+      expect(d.itens[0]!.pc?.vinculoOmie).toMatchObject({ pcNumero: '308', dentroTolerancia: false });
+      expect((await ledgers(n.chave)).map((x) => x.status)).toEqual(['concluido']);
+
+      const r = await nac.processarRecebimentoNacionalPorNf(corpo(n, { n_cod_ped: n.pcPed, n_cod_item: n.pcItem, n_cod_item_omie_visto: n.pcItem, justificativa: 'Reversão no portal: o PC 308 é o do pedido' }));
+
+      expect(r.fiscal.status).toBe('concluido');
+      expect(omie.concluir).toHaveBeenCalledTimes(1);
+      const ls = await ledgers(n.chave);
+      expect(ls.map((x) => `${x.status}${x.revertido_origem ? `:${x.revertido_origem}` : ''}`)).toEqual(['revertido:espelho', 'concluido']);
+      expect(String(ls[0]!.id)).toBe(n.ledgerId);
+      expect((await pcs(n.chave)).map((p) => `${p.lid === n.ledgerId ? 'antigo' : 'novo'}:${p.n_sequencia}:${p.status}`)).toEqual([
+        'antigo:1:revertido', 'antigo:2:revertido', 'antigo:3:revertido', 'antigo:4:revertido',
+        'novo:1:concluido', 'novo:2:concluido', 'novo:3:concluido', 'novo:4:concluido',
+      ]);
+      expect(await gravacoes(n.chave)).toEqual({ mov: 1, apr: 1 });
+    } finally {
+      janela.semMarcacaoNaAbertura = false;
+    }
   });
 
   it('NF revertida cujo ledger o cron JA marcou: o detalhe volta ao normal (PC 308 dentro da tolerancia e pre-selecionado, sem justificativa) e o clique conclui o fiscal de novo', async (ctx) => {
