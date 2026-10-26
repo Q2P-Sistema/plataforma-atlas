@@ -122,6 +122,13 @@ const DESC = {
 const FORNECEDOR_NF = `TESTE H5 FORNECEDOR ${SUFIXO}`;
 const CNPJ_TESTE = `99.${SUFIXO.slice(0, 3)}.${SUFIXO.slice(3, 6)}/0001-${SUFIXO.slice(6, 8)}`;
 
+/**
+ * JSON para conferir que nenhum codigo do OMIE (9+ digitos seguidos) vaza, com os UUIDs do Atlas mascarados: a ultima parte
+ * de um UUID gerado pelo banco pode ter 9+ digitos seguidos (o id do 31.1 num banco de teste terminava em e882710379be).
+ */
+const jsonSemUuid = (v: unknown): string =>
+  JSON.stringify(v).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<uuid>');
+
 describe.skipIf(!temBanco)('migration 0058 — compra nacional da ACXE: POST, aprovacao nas duas empresas, retry e destinos (integracao)', () => {
   let pool: Pool;
   let userId = '';
@@ -328,7 +335,7 @@ describe.skipIf(!temBanco)('migration 0058 — compra nacional da ACXE: POST, ap
     // nada de codigo do OMIE (ACXEGDP-313) nem dos 10 digitos em qualquer campo
     for (const d of acxe) {
       expect(Object.keys(d).sort()).toEqual(['codigo', 'entradaEm', 'id', 'nome', 'tipo']);
-      expect(JSON.stringify(d)).not.toMatch(/\d{9,}/);
+      expect(jsonSemUuid(d)).not.toMatch(/\d{9,}/);
     }
     // o tipo novo 'operacional' e destino valido
     expect(acxe.find((d) => d.codigo === '20.0.7')!.tipo).toBe('operacional');
@@ -971,7 +978,7 @@ describe.skipIf(!temBanco)('migration 0058 — compra nacional da ACXE: POST, ap
       expect(porCodigo['21.1']).toEqual(['acxe', 'q2p']);
       expect(porCodigo['20.0.7']).toEqual(['acxe']);
       expect(porCodigo['90.0.2']).toBeUndefined();
-      expect(JSON.stringify(acxe.body)).not.toMatch(/\d{9,}/);
+      expect(jsonSemUuid(acxe.body)).not.toMatch(/\d{9,}/);
 
       const q2p = await api('get', `${BASE_URL}/recebimento/nacional/localidades?empresa=q2p&destino=nf`);
       expect(q2p.status).toBe(200);
