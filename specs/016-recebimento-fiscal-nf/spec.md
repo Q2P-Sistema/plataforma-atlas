@@ -106,7 +106,7 @@ O mesmo clique passa a fazer duas gravações no OMIE (fiscal e estoque), e qual
 - **FR-003**: Cada NF na fila MUST indicar se o fiscal está "pendente" ou "já feito".
 - **FR-004**: A lista de NFs com fiscal pendente MUST vir de uma cópia local mantida atualizada periodicamente, sem consultar o OMIE a cada abertura da fila (mesmo princípio da fila atual).
 - **FR-005**: Uma NF MUST aparecer uma única vez na fila, mesmo que esteja momentaneamente nas duas fontes (por exemplo, concluída no OMIE e ainda não refletida na cópia local).
-- **FR-006**: Uma NF já recebida no Atlas MUST NOT voltar para a fila quando passar a constar como "fiscal concluído".
+- **FR-006**: Uma NF já recebida no Atlas MUST NOT voltar para a fila quando passar a constar como "fiscal concluído". (Recebida = com entrada física; a NF cujo fiscal foi revertido no portal, sem entrada física, volta como fiscal pendente: D21 da 017.)
 - **FR-007**: O detalhe de uma NF com fiscal pendente MUST mostrar os itens com os dados originais da NF (descrição, quantidade, unidade, valor), como o detalhe atual.
 
 **Recebimento fiscal**
@@ -167,7 +167,7 @@ O mesmo clique passa a fazer duas gravações no OMIE (fiscal e estoque), e qual
 - A cópia local das NFs aguardando fiscal será mantida por um fluxo do n8n, no mesmo padrão das demais cópias do OMIE (ver Dependências); a cadência de atualização será de no máximo 30 minutos, como o sync de NFs atual.
 - A conta a pagar e os demais efeitos fiscais seguem os padrões que o OMIE aplica no recebimento pela tela (categoria, conta corrente, parcelas); o Atlas não altera esses dados.
 - O operador que hoje faz o recebimento físico é quem passa a disparar o fiscal; não há novo papel de usuário.
-- As NFs que já estão com fiscal concluído não serão revertidas no OMIE.
+- As NFs que já estão com fiscal concluído não serão revertidas no OMIE pelo Atlas. A reversão feita no portal é tratada pela D21 da 017.
 - O processo operacional muda: a equipe deixa de fazer o recebimento de compra nacional no OMIE. A comunicação dessa mudança à equipe está fora do escopo do sistema, mas é pré-requisito da ativação.
 
 ## Dependencies
@@ -181,5 +181,5 @@ O mesmo clique passa a fazer duas gravações no OMIE (fiscal e estoque), e qual
 
 - Alterar o recebimento físico do Atlas.
 - Recebimento de importação e ACXE.
-- Reverter no OMIE NFs que já tiveram o fiscal concluído.
+- Reverter no OMIE NFs que já tiveram o fiscal concluído. (O Atlas continua sem reverter; detectar a reversão feita no portal é a D21 da 017.)
 - Corrigir NFs cuja descrição foi alterada por recebimento feito no OMIE (caso isolado, correção pontual; ACXEGDP-394 encerrada).

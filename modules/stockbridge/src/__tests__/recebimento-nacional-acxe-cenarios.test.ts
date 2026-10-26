@@ -92,6 +92,14 @@ vi.mock('../services/recebimento-fiscal.service.js', async () => {
   return { ...real, concluirRecebimentoFiscal: (i: unknown) => spies.fiscal(i) };
 });
 
+// D21 da 017 (fiscal revertido no portal): o ledger/sinal/marcacao tem testes proprios (recebimento-nacional-revertido,
+// recebimento-fiscal, fiscal-revertido). Aqui a D21 fica DESLIGADA: o clique de "fiscal ja feito" segue so a D7 (leitura
+// ao vivo apenas sem a conclusao confirmada localmente) e nao depende do que o pool simulado devolve ao information_schema.
+vi.mock('../services/fiscal-revertido.js', async () => {
+  const real = await vi.importActual<typeof import('../services/fiscal-revertido.js')>('../services/fiscal-revertido.js');
+  return { ...real, fiscalRevertidoHabilitado: async () => false };
+});
+
 import {
   processarRecebimentoNacionalPorNf,
   ValidacaoRecebimentoNacionalError,

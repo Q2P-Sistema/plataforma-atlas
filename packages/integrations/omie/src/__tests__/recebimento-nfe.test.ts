@@ -755,3 +755,51 @@ describe('OMIE recebimento de NF-e — corpo enviado no modo real: nQtdeRecebida
     expect(rec.itens[0]).toMatchObject({ nQtdeNFe: 8.25, cUnidadeNfe: 'TON', nQtdeRecebida: 8250 });
   });
 });
+
+// Feature 017 (ACXEGDP-437), research D21: a leitura do clique que so confere se o fiscal foi revertido no OMIE passa
+// { retries: 0 } — com retry, a trava de consumo redundante do OMIE seguraria o clique por ate ~2 min. Sem opts, os 2
+// retries de sempre (a leitura da D7, fail-closed).
+describe('consultarRecebimentoNfe — retries no modo real (D21 da 017)', () => {
+  const mockFetch = vi.fn();
+  const ENV_ORIGINAL = { ...process.env };
+  const falhaTransiente = { ok: false, status: 503, text: () => Promise.resolve('Service Unavailable') };
+  const redundante = {
+    ok: false,
+    status: 500,
+    text: () =>
+      Promise.resolve(JSON.stringify({ faultcode: 'SOAP-ENV:Client-6', faultstring: 'ERROR: Consumo redundante detectado. Aguarde 60 segundos para tentar novamente.' })),
+  };
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', mockFetch);
+    mockFetch.mockReset();
+    delete process.env.ATLAS_ENV;
+    process.env.OMIE_MODE = 'real';
+    process.env.OMIE_Q2P_KEY = 'q2p-key';
+    process.env.OMIE_Q2P_SECRET = 'q2p-secret';
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    process.env = { ...ENV_ORIGINAL };
+  });
+
+  it('{ retries: 0 }: uma chamada so — a trava de consumo redundante propaga na hora, sem esperar os 60 s', async () => {
+    mockFetch.mockResolvedValue(redundante);
+    const inicio = Date.now();
+    await expect(consultarRecebimentoNfe('q2p', { nIdReceb: 8518467850 }, { retries: 0 })).rejects.toBeInstanceOf(OmieApiError);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(Date.now() - inicio).toBeLessThan(5_000);
+  });
+
+  it('{ retries: 0 } tambem nao re-tenta falha transiente (503)', async () => {
+    mockFetch.mockResolvedValue(falhaTransiente);
+    await expect(consultarRecebimentoNfe('q2p', { cChaveNfe: '31261061827663002031550010000192521253216947' }, { retries: 0 })).rejects.toBeInstanceOf(OmieApiError);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('sem opts: os 2 retries de sempre em falha transiente (3 chamadas)', async () => {
+    mockFetch.mockResolvedValue(falhaTransiente);
+    await expect(consultarRecebimentoNfe('q2p', { nIdReceb: 8518467850 })).rejects.toBeInstanceOf(OmieApiError);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+});

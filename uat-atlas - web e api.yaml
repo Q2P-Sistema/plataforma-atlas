@@ -69,6 +69,10 @@ services:
       # para que os testes percorram o fluxo inteiro, como em produção.
       STOCKBRIDGE_BAIXA_PEDIDO_Q2P_ENABLED: ${STOCKBRIDGE_BAIXA_PEDIDO_Q2P_ENABLED:-true}
       STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED: ${STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED:-true}
+      # Recebimento fiscal revertido no OMIE (research D21 da 017; exige a 0060). No UAT a
+      # conclusao e simulada e o OMIE real segue "nao recebido": NF concluida aqui pode
+      # voltar a fila como revertida — false se isso atrapalhar um teste.
+      STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED: ${STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED:-true}
       STOCKBRIDGE_FISCAL_EMAILS: ${STOCKBRIDGE_FISCAL_EMAILS:-}
       # O espelho de recebimentos de NF-e chega pela cópia PROD→UAT, não pelo n8n.
       STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN: ${STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN:-1440}

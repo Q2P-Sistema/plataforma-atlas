@@ -3,7 +3,7 @@ import Decimal from 'decimal.js';
 import { getDb, getPool, createLogger } from '@atlas/core';
 import { movimentacao, aprovacao } from '@atlas/db';
 import { converterParaKg } from './motor.service.js';
-import { consultarRecebimentoNfe } from '@atlas/integration-omie';
+import { consultarRecebimentoNfe, type RecebimentoNfeConsultado } from '@atlas/integration-omie';
 import { enviarAlertaRecebimentoNacionalLote, enviarAvisoComprasNfSemPc, type MotivoAvisoCompras } from './notificacao.service.js';
 import {
   montarDetalheNfNacional,
@@ -21,6 +21,15 @@ import {
   RecebimentoFiscalSemFornecedorError,
   type VinculoFiscalConcluido,
 } from './recebimento-fiscal.service.js';
+import {
+  fiscalRevertidoHabilitado,
+  ledgerFiscalVigente,
+  leituraAoVivoPodeDeclararReversao,
+  marcarLedgerRevertido,
+  nfComFiscalRevertido,
+  RecebimentoFiscalRevertidoError,
+  type LedgerFiscalVigente,
+} from './fiscal-revertido.js';
 import {
   validarEscolhaPc,
   exigePcHabilitado,
@@ -1250,8 +1259,9 @@ export async function processarRecebimentoNacionalPorNf(
   // ── Feature 017: estoque ja lancado pelo OMIE (D7, FR-021a) — chave em qualquer posicao ──
   if (detalhe.estoqueLancadoPeloOmie) throw new EstoqueJaLancadoPeloOmieError(detalhe.notaFiscal, detalhe.fornecedorNome);
   // FR-021a: sem a conclusao CONFIRMADA localmente (espelho ausente, defasado ou nao casado),
-  // le o recebimento ao vivo antes de gravar.
-  if (detalhe.fiscal === 'concluido' && !interno.espelhoConfirmaConclusao) await verificarEstoqueLancadoAoVivo(detalhe);
+  // le o recebimento ao vivo antes de gravar. D21: a mesma leitura confere, na NF cujo fiscal o Atlas
+  // concluiu (ledger), se o recebimento foi DESFEITO no portal depois — 409 RECEBIMENTO_FISCAL_REVERTIDO.
+  if (detalhe.fiscal === 'concluido') await conferirRecebimentoAoVivo(detalhe, interno, input.userId);
 
   // ── Feature 017: regras de PC do portao 1 (so com o fiscal pelo Atlas) ──
   let sequenciasSemVinculo: number[] = [];
@@ -1509,23 +1519,85 @@ function fiscalSemAcao(mensagemNaoAplicavel: string): FiscalPorNfResult {
  * ACXEGDP-437): sem essa leitura o Atlas nao sabe se o OMIE ja lancou o estoque
  * no recebimento fiscal, e receber aqui lancaria em dobro (SC-009). Recebimento
  * inexistente no OMIE = nada foi lancado por ele.
+ *
+ * Feature 017, research D21 (fiscal REVERTIDO no portal): a MESMA leitura serve a NF cujo fiscal o Atlas
+ * concluiu (ledger concluido/ja_concluido, ha 75 s ou mais — antes disso a ConsultarRecebimento ainda pode
+ * devolver o cache de antes do Concluir). Recebimento que o OMIE mostra nao concluido (nem cancelado) = o
+ * fiscal foi desfeito no portal depois do Atlas: o ledger e marcado 'revertido' (com os vinculos de PC) e o
+ * POST responde 409 RECEBIMENTO_FISCAL_REVERTIDO, sem gravar nada — a NF recarregada volta como fiscal
+ * pendente e o proximo clique conclui o fiscal de novo. Corpo { nIdReceb }: o fiscal consulta por
+ * { cChaveNfe }, e o OMIE devolve cache a corpo identico em < ~1 min. Falha da leitura: fail-closed so
+ * quando a D7 a exigia (sem a conclusao confirmada localmente); senao segue, com aviso no log — a varredura
+ * do cron cobre depois.
  */
 const RE_RECEBIMENTO_INEXISTENTE = /n[ãa]o (foi |foram )?(encontrad|localizad|cadastrad)|n[ãa]o exist|inexistent/i;
 
-async function verificarEstoqueLancadoAoVivo(detalhe: DetalheNfNacional): Promise<void> {
-  let rec;
+/**
+ * D21: o ledger vigente da NF (fiscal concluido pelo Atlas), se a conclusao dele ja e velha o bastante para a
+ * leitura ao vivo poder declarar a reversao; senao null (D21 desligada, nada concluido pelo Atlas, conclusao
+ * recente ou ledger ilegivel — este so vai ao log: a conferencia extra nunca derruba o clique).
+ */
+async function ledgerParaConferirReversao(detalhe: DetalheNfNacional): Promise<LedgerFiscalVigente | null> {
+  if (!(await fiscalRevertidoHabilitado())) return null;
   try {
-    // Historia 5: o recebimento esta no OMIE da empresa da NF. Com 'q2p' fixo, a NF da ACXE voltaria "nao
-    // encontrada" (= nada lancado) e a trava contra estoque em dobro viraria no-op justo no caso comum da ACXE.
-    rec = await consultarRecebimentoNfe(detalhe.empresa === 'acxe' ? 'acxe' : 'q2p', { cChaveNfe: detalhe.nfChaveAcesso });
+    const vigente = await ledgerFiscalVigente(detalhe.nfChaveAcesso);
+    if (!vigente) return null;
+    if (!leituraAoVivoPodeDeclararReversao(vigente.finalizadoEm)) {
+      logger.info({ nf: detalhe.notaFiscal, ledgerId: vigente.id }, 'Fiscal concluído há menos de 75 s — a leitura ao vivo não declara reversão (cache do OMIE)');
+      return null;
+    }
+    return vigente;
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, nf: detalhe.notaFiscal }, 'Ledger do fiscal ilegível — a reversão no OMIE não foi conferida neste clique');
+    return null;
+  }
+}
+
+async function conferirRecebimentoAoVivo(detalhe: DetalheNfNacional, interno: DetalheNfNacionalInterno, userId: string): Promise<void> {
+  const exigeD7 = !interno.espelhoConfirmaConclusao;
+  const vigente = await ledgerParaConferirReversao(detalhe);
+  // Historia 5: o recebimento esta no OMIE da empresa da NF. Com 'q2p' fixo, a NF da ACXE voltaria "nao
+  // encontrada" (= nada lancado) e a trava contra estoque em dobro viraria no-op justo no caso comum da ACXE.
+  const empresa: EmpresaNacional = detalhe.empresa === 'acxe' ? 'acxe' : 'q2p';
+  // D21 (revisao): sem ledger vigente, outra requisicao pode ter marcado a reversao entre o retrato do detalhe e este ponto
+  // (duplo clique, outro operador, a abertura do detalhe ou a varredura): o marcador ja liga o sinal, e seguir faria so o
+  // fisico. Responde o mesmo 409, sem marcar de novo; a nota recarregada vem como fiscal pendente.
+  if (!vigente && (await fiscalRevertidoHabilitado()) && (await nfComFiscalRevertido(detalhe.nfChaveAcesso, empresa))) {
+    logger.warn({ nf: detalhe.notaFiscal }, 'Fiscal da NF desfeito no OMIE desde o retrato do detalhe (marcado por outra requisição) — nada gravado');
+    throw new RecebimentoFiscalRevertidoError(detalhe.notaFiscal, detalhe.fornecedorNome);
+  }
+  if (!exigeD7 && !vigente) return;
+
+  const nIdReceb = vigente ? (vigente.nIdReceb ?? detalhe.nIdReceb) : null;
+  const ref = nIdReceb != null ? { nIdReceb } : { cChaveNfe: detalhe.nfChaveAcesso };
+  let rec: RecebimentoNfeConsultado;
+  try {
+    // So a conferencia da reversao (D7 nao exige a leitura): sem retry — falhou, o clique segue, e com retry a
+    // trava de consumo redundante do OMIE seguraria o request por ate ~2 min. A D7 mantem os retries de sempre.
+    rec = exigeD7 ? await consultarRecebimentoNfe(empresa, ref) : await consultarRecebimentoNfe(empresa, ref, { retries: 0 });
   } catch (err) {
     const msg = (err as Error)?.message ?? '';
     if (RE_RECEBIMENTO_INEXISTENTE.test(msg)) {
       logger.info({ nf: detalhe.notaFiscal }, 'NF sem recebimento de NF-e no OMIE — nenhum estoque lançado por ele');
       return;
     }
-    logger.error({ err, nf: detalhe.notaFiscal, chave: detalhe.nfChaveAcesso }, 'Leitura ao vivo do recebimento (estoque já lançado?) falhou');
-    throw new VerificacaoEstoqueOmieError(detalhe.notaFiscal, { cause: err });
+    if (exigeD7) {
+      logger.error({ err, nf: detalhe.notaFiscal, chave: detalhe.nfChaveAcesso }, 'Leitura ao vivo do recebimento (estoque já lançado?) falhou');
+      throw new VerificacaoEstoqueOmieError(detalhe.notaFiscal, { cause: err });
+    }
+    logger.warn({ err: (err as Error).message, nf: detalhe.notaFiscal }, 'Leitura ao vivo do recebimento falhou — a reversão do fiscal no OMIE não foi conferida neste clique');
+    return;
+  }
+
+  if (vigente && rec.cRecebido !== 'S' && rec.cCancelada !== 'S') {
+    // Marca ANTES do 409: sem o marcador a nota recarregada seguiria "fiscal ja feito" e o operador ficaria em
+    // loop. Erro de banco aqui sobe (500): seguir sem marcar faria so o fisico, o bug original.
+    const marcadas = await marcarLedgerRevertido({ nfChaveAcesso: detalhe.nfChaveAcesso, empresa, origem: 'omie_ao_vivo', ledgerId: vigente.id, userId });
+    logger.warn(
+      { nf: detalhe.notaFiscal, ledgerId: vigente.id, marcadas: marcadas.length, userId },
+      'Fiscal concluído pelo Atlas aparece desfeito no OMIE (leitura ao vivo) — nada gravado',
+    );
+    throw new RecebimentoFiscalRevertidoError(detalhe.notaFiscal, detalhe.fornecedorNome);
   }
   if (estoqueLancadoNoRecebimento(rec)) {
     logger.warn({ nf: detalhe.notaFiscal }, 'Recebimento concluído fora do Atlas com movimento de estoque — físico bloqueado');

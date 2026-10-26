@@ -37,6 +37,16 @@ import {
   type EmpresaNacional,
 } from './empresa-nacional.js';
 import { resolverGemeosQ2p } from './produto-gemeo-q2p.js';
+import {
+  fiscalRevertidoHabilitado,
+  fiscalRevertidoSql,
+  conclusaoFiscalEmSql,
+  pendenciaEspelhoEmSql,
+  reversaoOmieDoLedgerEmSql,
+  MARGEM_REVERSAO_ESPELHO_MIN,
+  ledgerFiscalVigente,
+  marcarLedgerRevertido,
+} from './fiscal-revertido.js';
 
 const logger = createLogger('stockbridge:fila-nacional');
 
@@ -113,6 +123,20 @@ const logger = createLogger('stockbridge:fila-nacional');
  *  - o produto e o local da NF da ACXE nao vem da memoria fornecedor x descricao (so Q2P):
  *    o detalhe sugere o produto que o OMIE ja associou ao item (n_cod_prod / n_id_produto) e o
  *    do item do PC; o local de entrada vem do item do PC (resolvido no servidor).
+ *
+ * Feature 017, D21 (ACXEGDP-437) — recebimento fiscal REVERTIDO no portal do OMIE (NF 19252, 25/10/2026):
+ *  - o Atlas concluiu o fiscal e o usuario o desfez no portal (etapa 40, cRecebido N). O espelho de NF
+ *    NUNCA marca a nota de entrada como excluida e o ledger seguia 'concluido': a fila mostrava "fiscal
+ *    ja feito" e o clique faria so o fisico. O sinal (fiscalRevertidoSql, fiscal-revertido.ts) compara
+ *    horas de EVENTO do OMIE e e avaliado DENTRO das duas fontes de cada empresa:
+ *      (a) a NF revertida SAI inteira (a nota de entrada tem 1 linha das 4 do recebimento e nao traz o
+ *          fornecedor); (b) a assume — ignora a precedencia de (a), entra mesmo sem espelho de recebimentos
+ *          'N'/etapa 40 (o marcador da leitura ao vivo pode chegar com a linha ainda 'S'/60) e sai com
+ *          fiscal_pendente = true; a coluna `fiscal_revertido`, ULTIMA das duas fontes, vai a fila e ao detalhe.
+ *  - `SituacaoFiscal` continua binaria: NF revertida = fiscal 'pendente' + `fiscalRevertido`. Nenhum
+ *    consumidor novo de valor (CHECK de nf_dispensa, a tela compara === 'pendente').
+ *  - So vale com `comRevertido` (chave da 016 + kill switch + migration 0060). Sem isso o SQL e o de antes,
+ *    byte a byte (goldens `*-desligado` e `*-ligado`): todo trecho novo e um sufixo que vale '' quando desligado.
  */
 
 export const CFOPS_RECEBIMENTO_NACIONAL: readonly string[] = Object.freeze(['1.101', '1.102', '2.101', '2.102']);
@@ -378,7 +402,7 @@ export interface FilaNacionalItem {
   valorTotalBrl: number;
   /** feature 016: 'pendente' = so na fonte (b) e sem ledger concluido */
   fiscal: SituacaoFiscal;
-  /** quando o Atlas concluiu o fiscal (ledger) — null se foi no OMIE/portal ou flag desligada */
+  /** quando o Atlas concluiu o fiscal (ledger) — null se foi no OMIE/portal, flag desligada ou fiscal revertido no OMIE (D21) */
   fiscalConcluidoPeloAtlasEm: string | null;
   /** feature 017: empresa da NF — a ACXE so aparece com a Historia 5 habilitada */
   empresa: EmpresaNacional;
@@ -386,6 +410,12 @@ export interface FilaNacionalItem {
   pcSituacao: PcSituacaoNf;
   /** feature 017 (D7, FR-021a): o fiscal foi concluido fora do Atlas com movimento de estoque — recebimento bloqueado */
   estoqueLancadoPeloOmie: boolean;
+  /**
+   * feature 017 (D21): o recebimento fiscal foi concluido e depois DESFEITO no portal do OMIE. Implica
+   * fiscal === 'pendente' (o clique conclui o fiscal de novo); sempre false com a D21 desligada
+   * (chave da 016, kill switch STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED ou migration 0060 ausente).
+   */
+  fiscalRevertido: boolean;
 }
 
 /**
@@ -425,6 +455,15 @@ export class EstoqueJaLancadoPeloOmieError extends Error {
 const LEDGER_FISCAL_CONCLUIDO_SQL = (chaveExpr: string): string =>
   `EXISTS (SELECT 1 FROM stockbridge.recebimento_fiscal rf
             WHERE rf.nf_chave_acesso = ${chaveExpr} AND rf.status IN ('concluido', 'ja_concluido'))`;
+
+/**
+ * D21: o ledger tem o fiscal concluido E ele ainda vale (o sinal de reversao `revertidoSql` e falso). Fragmento
+ * IRMAO de LEDGER_FISCAL_CONCLUIDO_SQL, usado so com a D21 ligada — o texto da constante esta nos goldens `*-desligado`
+ * e nao pode mudar. Antes de o ledger ser marcado 'revertido' (leitura ao vivo do clique, varredura do cron) a linha
+ * ainda diz 'concluido': e o sinal que a desconsidera.
+ */
+const ledgerFiscalVigenteSql = (chaveExpr: string, revertidoSql: string): string =>
+  `(${LEDGER_FISCAL_CONCLUIDO_SQL(chaveExpr)} AND NOT ${revertidoSql})`;
 
 /**
  * Sequencia, no recebimento de NF-e, do item `i` da NF `h` (fonte a) — ACXEGDP-412.
@@ -491,8 +530,11 @@ const VINCULO_PC_COLUNAS = (ri: string): string => `
  * MESMA posicao nas duas fontes, para o UNION ALL. O local do item e o padrao do cadastro do
  * produto no OMIE, nao a intencao da compra: a pre-selecao do local vem do item do PC, e esta
  * coluna so fica exposta na CTE (o detalhe nao a usa).
+ * D21: com `comRevertido` a NF cujo fiscal foi desfeito no OMIE SAI desta fonte (a nota de entrada nunca e
+ * apagada do espelho, tem so parte das linhas do recebimento e nao traz o fornecedor): a fonte (b) a assume. A
+ * coluna `fiscal_revertido` e a ULTIMA, sempre false aqui. Sem `comRevertido` o texto e o de antes, byte a byte.
  */
-function fonteNfSql(f: FonteEmpresa, nfValida: string, comEmpresa = false): string {
+function fonteNfSql(f: FonteEmpresa, nfValida: string, comEmpresa = false, comRevertido = false): string {
   const t = tabelasNacional(f.empresa);
   const extras = comEmpresa
     ? `,
@@ -500,11 +542,17 @@ function fonteNfSql(f: FonteEmpresa, nfValida: string, comEmpresa = false): stri
                  NULLIF(i.n_cod_prod, 0)::bigint                      AS produto_omie,
                  NULLIF(i.codigo_local_estoque, 0)::bigint            AS local_omie`
     : '';
+  // sufixos que valem '' sem a D21: colados em ${nfValida} / u_com_xml, nunca em linha propria (uma linha em branco quebra o golden)
+  const revertidaFora = comRevertido ? `${nfValida ? ' ' : ''}AND NOT ${fiscalRevertidoSql('h.c_chave_nfe', f.empresa)}` : '';
+  const colunaRevertido = comRevertido
+    ? `,
+               false                                                AS fiscal_revertido`
+    : '';
   return `
         SELECT a.*,${VINCULO_PC_COLUNAS('rv')},
                rv.c_recebido                                        AS receb_recebido,
                rv.n_qtde_nfe                                        AS q_com_xml,  -- a nota de entrada traz a quantidade RECEBIDA
-               rv.c_unidade_nfe                                     AS u_com_xml
+               rv.c_unidade_nfe                                     AS u_com_xml${colunaRevertido}
         FROM (
           SELECT h.c_chave_nfe, h.n_nf, h.dest_razao, h.dest_cnpj_cpf, h.d_emi::date AS d_emi,
                  h.n_id_receb::bigint                                 AS n_id_receb,
@@ -521,7 +569,7 @@ function fonteNfSql(f: FonteEmpresa, nfValida: string, comEmpresa = false): stri
           JOIN public.${t.nfItens} i ON i.n_id_nf = h.n_id_nf
           WHERE h.tp_nf = 0
             AND h.d_emi >= ${f.corteParam}::date
-            ${nfValida}
+            ${nfValida}${revertidaFora}
         ) a
         LEFT JOIN LATERAL (
           SELECT ri.*, r.c_recebido
@@ -545,8 +593,13 @@ function fonteNfSql(f: FonteEmpresa, nfValida: string, comEmpresa = false): stri
  *    revisao pre-UAT (FILA-1). Saem como "fiscal ja feito" pelo ledger.
  * Historia 5: os espelhos sao os da empresa; `comEmpresa` acrescenta `empresa`, `produto_omie`
  * (o produto do item no recebimento, `n_id_produto`) e `local_omie` depois de `fornecedor_codigo`.
+ * D21: com `comRevertido` a NF cujo fiscal foi desfeito no OMIE (sinal `rev`) (1) passa por cima da precedencia da
+ * fonte (a), (2) e elegivel mesmo que a linha do espelho ainda diga 'S'/etapa 60 (o marcador da leitura ao vivo pode chegar
+ * antes do sync de recebimentos), (3) sai com fiscal_pendente = true mesmo com o ledger 'concluido' (a linha so vira
+ * 'revertido' na leitura ao vivo do clique ou na varredura do cron) e (4) leva `fiscal_revertido` como ULTIMA coluna.
+ * Sem `comRevertido` o texto e o de antes, byte a byte.
  */
-function fonteRecebSql(f: FonteEmpresa, comEmpresa = false): string {
+function fonteRecebSql(f: FonteEmpresa, comEmpresa = false, comRevertido = false): string {
   const t = tabelasNacional(f.empresa);
   const extras = comEmpresa
     ? `,
@@ -554,11 +607,20 @@ function fonteRecebSql(f: FonteEmpresa, comEmpresa = false): string {
                NULLIF(ri.n_id_produto, 0)::bigint                   AS produto_omie,
                NULLIF(ri.codigo_local_estoque, 0)::bigint           AS local_omie`
     : '';
+  const rev = comRevertido ? fiscalRevertidoSql('r.c_chave_nfe', f.empresa) : null;
+  const fiscalPendente = rev ? `NOT ${ledgerFiscalVigenteSql('r.c_chave_nfe', rev)}` : `NOT ${LEDGER_FISCAL_CONCLUIDO_SQL('r.c_chave_nfe')}`;
+  const semHeader = `NOT EXISTS (SELECT 1 FROM public.${t.nfHeader} h2 WHERE h2.c_chave_nfe = r.c_chave_nfe)`;
+  const precedencia = rev ? `(${semHeader} OR ${rev})` : semHeader;
+  const elegivelPorRevertido = rev ? `\n             OR (${rev})` : '';
+  const colunaRevertido = rev
+    ? `,
+               ${rev}  AS fiscal_revertido`
+    : '';
   return `
         SELECT r.c_chave_nfe, r.c_numero_nfe AS n_nf, r.c_razao_social AS dest_razao, r.c_cnpj_cpf AS dest_cnpj_cpf,
                r.d_emissao                                          AS d_emi,
                r.n_id_receb::bigint                                 AS n_id_receb,
-               NOT ${LEDGER_FISCAL_CONCLUIDO_SQL('r.c_chave_nfe')}  AS fiscal_pendente,
+               ${fiscalPendente}  AS fiscal_pendente,
                COALESCE(r.c_cancelada = 'S', false)                 AS cancelada,  -- nulo no ramo do ledger nao pode sumir com a NF
                false                                                AS deletada,
                ri.n_sequencia::bigint                               AS n_cod_item,
@@ -572,15 +634,15 @@ function fonteRecebSql(f: FonteEmpresa, comEmpresa = false): string {
                NULLIF(r.n_id_fornecedor, 0)                         AS fornecedor_codigo${extras},${VINCULO_PC_COLUNAS('ri')},
                r.c_recebido                                         AS receb_recebido,
                ri.n_qtde_nfe                                        AS q_com_xml,
-               ri.c_unidade_nfe                                     AS u_com_xml
+               ri.c_unidade_nfe                                     AS u_com_xml${colunaRevertido}
         FROM public.${t.recebimento} r
         JOIN public.${t.recebimentoItens} ri ON ri.n_id_receb = r.n_id_receb
         WHERE r.d_emissao >= ${f.corteParam}::date
-          AND NOT EXISTS (SELECT 1 FROM public.${t.nfHeader} h2 WHERE h2.c_chave_nfe = r.c_chave_nfe)
+          AND ${precedencia}
           AND (
                 (r.c_recebido = 'N' AND r.c_cancelada = 'N' AND r.c_etapa = '40'
                  AND COALESCE(r.c_bloqueado, 'N') <> 'S' AND COALESCE(r.c_devolvido, 'N') <> 'S')
-             OR ${LEDGER_FISCAL_CONCLUIDO_SQL('r.c_chave_nfe')}
+             OR ${LEDGER_FISCAL_CONCLUIDO_SQL('r.c_chave_nfe')}${elegivelPorRevertido}
           )`;
 }
 
@@ -592,12 +654,15 @@ function fonteRecebSql(f: FonteEmpresa, comEmpresa = false): string {
  * sumir; paridade conferida no UAT na revisao pre-UAT.
  * Historia 5: o bloco (a) [+ (b)] se repete por empresa, num UNION ALL. `aplicarNfValida`
  * liga o filtro cancelada/deletada (a fila; o detalhe le as flags).
+ * D21: `comRevertido` (so existe com `flag`) acrescenta o sinal de fiscal revertido nos dois blocos de cada empresa
+ * e a coluna `fiscal_revertido`; o sinal le o espelho da PROPRIA empresa do bloco e nao contem UNION ALL.
  */
-function nfUnificadaSql(fontes: FonteEmpresa[], flag: boolean, aplicarNfValida: boolean): string {
+function nfUnificadaSql(fontes: FonteEmpresa[], flag: boolean, aplicarNfValida: boolean, comRevertido = false): string {
   const comEmpresa = comEmpresaNasLinhas(fontes);
+  const rev = flag && comRevertido;
   const blocos = fontes.flatMap((f) => {
-    const a = fonteNfSql(f, aplicarNfValida ? nfValidaSql(f.canceladaExiste, 'h') : '', comEmpresa);
-    return flag ? [a, fonteRecebSql(f, comEmpresa)] : [a];
+    const a = fonteNfSql(f, aplicarNfValida ? nfValidaSql(f.canceladaExiste, 'h') : '', comEmpresa, rev);
+    return flag ? [a, fonteRecebSql(f, comEmpresa, rev)] : [a];
   });
   return blocos.join(`
         UNION ALL
@@ -728,6 +793,17 @@ function avisarAcxeForaDaFila(err: unknown, onde: string): void {
 }
 
 /**
+ * Quando o Atlas concluiu o fiscal da NF (ledger), para a coluna `fiscal_concluido_em` da fila. So 'concluido':
+ * 'ja_concluido' e fiscal feito no portal. D21: NF com o fiscal revertido no OMIE nao tem "conclusao do Atlas" a
+ * mostrar, mesmo com a linha do ledger ainda 'concluido' (ela so vira 'revertido' no clique ou na varredura do cron).
+ */
+const ultimaConclusaoDoAtlasSql = (comRevertido: boolean): string => {
+  const ultima = `(SELECT MAX(rf.finalizado_em) FROM stockbridge.recebimento_fiscal rf
+            WHERE rf.nf_chave_acesso = c_chave_nfe AND rf.status = 'concluido')::text`;
+  return comRevertido ? `CASE WHEN bool_or(fiscal_revertido) THEN NULL::text ELSE ${ultima} END` : ultima;
+};
+
+/**
  * Fila de NFs nacionais pendentes. Degrada para lista vazia em falha de BANCO
  * (a fila e informativa, o manual continua) — mas NAO em falta de configuracao,
  * que e erro de ambiente e precisa ser visivel.
@@ -748,12 +824,15 @@ export async function getFilaNacional(
   const alvo = params.empresa ? ativas.filter((e) => e === params.empresa) : ativas;
   if (alvo.length === 0) return [];
 
+  // D21: fiscal revertido no OMIE (chave da 016 + kill switch + migration 0060). Depois da data de corte e do
+  // atalho da empresa desligada: nada disto consulta o banco quando a fila nem sobe.
+  const comRevertido = flag && (await fiscalRevertidoHabilitado());
+
   // Com a flag ligada, a NF concluida pelo Atlas sai como "fiscal ja feito" com a
   // data do ledger; desligada, a coluna e constante (comportamento da 015).
   const fiscalConcluidoEmSql = flag
     ? // so 'concluido': 'ja_concluido' significa fiscal feito no portal, nao pelo Atlas (SPEC016-8)
-      `(SELECT MAX(rf.finalizado_em) FROM stockbridge.recebimento_fiscal rf
-            WHERE rf.nf_chave_acesso = c_chave_nfe AND rf.status = 'concluido')::text`
+      ultimaConclusaoDoAtlasSql(comRevertido)
     : 'NULL::text';
 
   interface Row {
@@ -769,6 +848,8 @@ export async function getFilaNacional(
     fiscal: SituacaoFiscal;
     fiscal_concluido_em: string | null;
     estoque_lancado: boolean | null;
+    /** so com a D21 ligada: o fiscal desta NF foi desfeito no OMIE depois de concluido */
+    fiscal_revertido?: boolean | null;
     /** so quando a consulta inclui a ACXE; ausente = Q2P */
     empresa?: EmpresaNacional;
   }
@@ -808,11 +889,11 @@ export async function getFilaNacional(
 
     const res = await pool.query<Row>(
       `
-      WITH nf_unificada AS (${nfUnificadaSql(fontes, flag, true)}
+      WITH nf_unificada AS (${nfUnificadaSql(fontes, flag, true, comRevertido)}
       ),
       linhas AS (
         SELECT
-          u.c_chave_nfe, u.n_nf, u.dest_razao, u.dest_cnpj_cpf, u.d_emi, u.fiscal_pendente${emp ? ', u.empresa' : ''},
+          u.c_chave_nfe, u.n_nf, u.dest_razao, u.dest_cnpj_cpf, u.d_emi, u.fiscal_pendente${comRevertido ? ', u.fiscal_revertido' : ''}${emp ? ', u.empresa' : ''},
           ${descNorm}                    AS desc_norm,
           u.valor_item                   AS valor_item,
           ${recebidoSql('u', emp)}            AS recebido,
@@ -824,8 +905,9 @@ export async function getFilaNacional(
           (u.q_com * ${fatorKgSql('u')}) AS nf_kg,
           ${nfKgXmlSql('u')} AS nf_kg_xml,
           ${nfJaAtribuidaSql('u')}       AS nf_atribuida,
-          -- 017 (D7): recebimento concluido fora do Atlas COM movimento de estoque no OMIE
-          (u.receb_recebido = 'S' AND u.c_ignorar_item = 'N' AND u.c_nao_gerar_mov_estoque = 'N') AS estoque_lancado
+          -- 017 (D7): recebimento concluido fora do Atlas COM movimento de estoque no OMIE${comRevertido ? `
+          -- D21: fiscal revertido no OMIE nao tem estoque lancado (a linha do espelho pode estar defasada com 'S')` : ''}
+          (${comRevertido ? 'NOT u.fiscal_revertido AND ' : ''}u.receb_recebido = 'S' AND u.c_ignorar_item = 'N' AND u.c_nao_gerar_mov_estoque = 'N') AS estoque_lancado
         FROM nf_unificada u
         WHERE u.cfop = ANY($1::text[])
           AND NOT u.cancelada AND NOT u.deletada
@@ -840,7 +922,8 @@ export async function getFilaNacional(
                SUM(nf_kg)                                               AS nf_kg,
                SUM(nf_kg_xml)                                           AS nf_kg_xml,
                MAX(nf_atribuida)                                        AS nf_atribuida,
-               bool_or(estoque_lancado)                                 AS estoque_lancado
+               bool_or(estoque_lancado)                                 AS estoque_lancado${comRevertido ? `,
+               bool_or(fiscal_revertido)                                AS fiscal_revertido` : ''}
         FROM linhas
         GROUP BY c_chave_nfe, n_nf, dest_razao, dest_cnpj_cpf, d_emi, desc_norm${emp ? ', empresa' : ''}
       ),
@@ -862,7 +945,7 @@ export async function getFilaNacional(
         SUM(valor_item)::float8                                       AS valor_total_brl,
         CASE WHEN bool_or(fiscal_pendente) THEN 'pendente' ELSE 'concluido' END AS fiscal,
         ${fiscalConcluidoEmSql}                                       AS fiscal_concluido_em,
-        COALESCE(bool_or(estoque_lancado) FILTER (WHERE pendente), false) AS estoque_lancado${emp ? ',\n        empresa' : ''}
+        COALESCE(bool_or(estoque_lancado) FILTER (WHERE pendente), false) AS estoque_lancado${comRevertido ? ',\n        COALESCE(bool_or(fiscal_revertido), false)                    AS fiscal_revertido' : ''}${emp ? ',\n        empresa' : ''}
       FROM itens_flag
       GROUP BY c_chave_nfe, n_nf, dest_razao, dest_cnpj_cpf, d_emi${emp ? ', empresa' : ''}
       HAVING COUNT(*) FILTER (WHERE pendente) > 0
@@ -899,7 +982,10 @@ export async function getFilaNacional(
         if (statusHealthModulo(idade) === 'degraded') {
           logger.warn(
             { empresa: e, idadeMin: idade.idadeMin, status: idade.status, limiteMin: idade.limiteMin },
-            'Espelho de recebimentos de NF-e defasado — NFs com fiscal pendente podem estar faltando na fila',
+            // D21: o sinal de reversao tambem vem desse espelho — sem ele fresco, so a leitura ao vivo do clique protege
+            comRevertido
+              ? 'Espelho de recebimentos de NF-e defasado — NFs com fiscal pendente podem estar faltando na fila e reversões do fiscal no OMIE podem não ser percebidas'
+              : 'Espelho de recebimentos de NF-e defasado — NFs com fiscal pendente podem estar faltando na fila',
           );
         }
       }
@@ -908,23 +994,33 @@ export async function getFilaNacional(
     const pendentes = flag
       ? res.rows.filter((r) => r.fiscal === 'pendente').map((r) => ({ chave: r.nf_chave_acesso, empresa: r.empresa ?? ('q2p' as const) }))
       : [];
-    const pcSituacoes = pendentes.length > 0 ? await pcSituacaoPorNf(pendentes, dataCorte, canceladaExiste) : new Map<string, PcSituacaoNf>();
-    return res.rows.map((r) => ({
-      nfChaveAcesso: r.nf_chave_acesso,
-      notaFiscal: r.nota_fiscal,
-      fornecedorNome: r.fornecedor_nome ?? FORNECEDOR_NAO_IDENTIFICADO,
-      fornecedorCnpj: r.fornecedor_cnpj ?? '',
-      dtEmissao: r.dt_emissao,
-      diasDesdeEmissao: Number(r.dias_desde_emissao),
-      itensTotal: Number(r.itens_total),
-      itensPendentes: Number(r.itens_pendentes),
-      valorTotalBrl: r.valor_total_brl != null ? Number(r.valor_total_brl) : 0,
-      fiscal: r.fiscal === 'pendente' ? 'pendente' : 'concluido',
-      fiscalConcluidoPeloAtlasEm: r.fiscal_concluido_em ? new Date(r.fiscal_concluido_em).toISOString() : null,
-      empresa: r.empresa ?? ('q2p' as const),
-      pcSituacao: pcSituacoes.get(r.nf_chave_acesso) ?? 'nao_aplicavel',
-      estoqueLancadoPeloOmie: r.estoque_lancado === true,
-    }));
+    // D21: a NF revertida com a tentativa antiga ainda 'concluido' e marcada ANTES do selo do PC, como no detalhe — senao o
+    // selo sairia "Escolher PC" (o saldo do PC descontaria os vinculos dessa tentativa). Raro e melhor esforco.
+    for (const r of res.rows) {
+      if (comRevertido && r.fiscal_revertido === true) await marcarTentativaRevertidaSeVigente(r.nf_chave_acesso, r.empresa ?? 'q2p');
+    }
+    const pcSituacoes = pendentes.length > 0 ? await pcSituacaoPorNf(pendentes, dataCorte, canceladaExiste, comRevertido) : new Map<string, PcSituacaoNf>();
+    return res.rows.map((r) => {
+      const fiscalRevertido = r.fiscal_revertido === true;
+      return {
+        nfChaveAcesso: r.nf_chave_acesso,
+        notaFiscal: r.nota_fiscal,
+        fornecedorNome: r.fornecedor_nome ?? FORNECEDOR_NAO_IDENTIFICADO,
+        fornecedorCnpj: r.fornecedor_cnpj ?? '',
+        dtEmissao: r.dt_emissao,
+        diasDesdeEmissao: Number(r.dias_desde_emissao),
+        itensTotal: Number(r.itens_total),
+        itensPendentes: Number(r.itens_pendentes),
+        valorTotalBrl: r.valor_total_brl != null ? Number(r.valor_total_brl) : 0,
+        fiscal: r.fiscal === 'pendente' ? ('pendente' as const) : ('concluido' as const),
+        // D21: conclusao revertida no OMIE nao e mais "fiscal ja feito pelo Atlas" (o SQL ja anula; aqui e a garantia)
+        fiscalConcluidoPeloAtlasEm: !fiscalRevertido && r.fiscal_concluido_em ? new Date(r.fiscal_concluido_em).toISOString() : null,
+        empresa: r.empresa ?? ('q2p' as const),
+        pcSituacao: pcSituacoes.get(r.nf_chave_acesso) ?? ('nao_aplicavel' as const),
+        estoqueLancadoPeloOmie: r.estoque_lancado === true,
+        fiscalRevertido,
+      };
+    });
   } catch (err) {
     // Tabela ausente (42P01) e erro de AMBIENTE: precisa ser visivel (503), nao
     // uma fila vazia (MIG-3) — ex.: flag ligada antes da migration 0053.
@@ -1048,11 +1144,14 @@ function conversaoDoGrupo(linhas: Array<{ q_com: number | string; u_com: string 
  * o detalhe mostra o motivo e o POST decide).
  * Historia 5: as NFs se agrupam por empresa — uma leitura da copia de PCs por empresa — e a
  * falha de uma nao tira o selo da outra.
+ * D21: `comRevertido` repete na leitura dos itens o MESMO recorte da fila (a NF revertida e servida pela fonte (b),
+ * com o fornecedor e o vinculo do OMIE preservados pela reversao).
  */
 async function pcSituacaoPorNf(
   nfs: Array<{ chave: string; empresa: EmpresaNacional }>,
   dataCorte: string,
   canceladaExiste: (empresa: EmpresaNacional) => Promise<boolean>,
+  comRevertido = false,
 ): Promise<Map<string, PcSituacaoNf>> {
   const out = new Map<string, PcSituacaoNf>();
   const porEmpresa = new Map<EmpresaNacional, string[]>();
@@ -1063,7 +1162,7 @@ async function pcSituacaoPorNf(
   }
   for (const [empresa, chaves] of porEmpresa) {
     try {
-      const situacoes = await pcSituacaoPorNfDaEmpresa(empresa, chaves, dataCorte, await canceladaExiste(empresa));
+      const situacoes = await pcSituacaoPorNfDaEmpresa(empresa, chaves, dataCorte, await canceladaExiste(empresa), comRevertido);
       for (const [chave, situacao] of situacoes) out.set(chave, situacao);
     } catch (err) {
       logger.warn({ err: (err as Error).message, empresa }, 'Situação de PC da fila indisponível — selo omitido');
@@ -1077,6 +1176,7 @@ async function pcSituacaoPorNfDaEmpresa(
   chaves: string[],
   dataCorte: string,
   canceladaExiste: boolean,
+  comRevertido = false,
 ): Promise<Map<string, PcSituacaoNf>> {
   const out = new Map<string, PcSituacaoNf>();
   if (await copiaPcsDefasada(empresa)) return out;
@@ -1094,7 +1194,7 @@ async function pcSituacaoPorNfDaEmpresa(
   const fonte: FonteEmpresa = { empresa, canceladaExiste, corteParam: '$2' };
   const emp = comEmpresaNasLinhas([fonte]);
   const r = await pool.query<LinhaFilaPc>(
-    `WITH nf_unificada AS (${nfUnificadaSql([fonte], true, false)}
+    `WITH nf_unificada AS (${nfUnificadaSql([fonte], true, false, comRevertido)}
        )
        SELECT u.c_chave_nfe, u.x_prod, ${normalizarDescricaoSql('u.x_prod')} AS desc_norm, u.q_com::float8 AS q_com, u.u_com,
               u.valor_item::float8 AS valor_item, u.preco_comercial::float8 AS preco_comercial, u.n_seq,
@@ -1232,6 +1332,15 @@ export interface DetalheNfNacional {
   linhasForaDoRecorte: number;
   /** feature 016: situacao do recebimento fiscal no OMIE */
   fiscal: SituacaoFiscal;
+  /**
+   * feature 017 (D21): o recebimento fiscal foi concluido e depois DESFEITO no portal do OMIE. Implica
+   * fiscal === 'pendente' (o clique conclui o fiscal de novo, com o PC confirmado). Responde tambem para a NF
+   * revertida sem item a receber (entrada fisica ja lancada), para a tela avisar que o fiscal precisa ser refeito.
+   * Sempre false com a D21 desligada.
+   */
+  fiscalRevertido: boolean;
+  /** feature 017 (D21): quando o fiscal foi desfeito no OMIE (ISO) — a hora da alteracao la ou, sem ela, a do marcador; null se desconhecida ou nao revertido */
+  fiscalRevertidoEm: string | null;
   /** id do recebimento na caixa do OMIE (fonte b, ou n_id_receb do espelho de NF) — para a conclusao fiscal */
   nIdReceb: number | null;
   /** feature 016: gestor pode dispensar (flag ligada, sem dispensa ativa, ao menos um item pendente) */
@@ -1271,6 +1380,8 @@ export interface DetalheNfNacionalInterno {
    * (concluido/ja_concluido, ja conferido contra estoque lancado) ou pelo espelho de
    * recebimentos com c_recebido='S' em todas as linhas dos itens a receber. Senao (linha
    * ausente, defasada ou nao casada) o POST de "fiscal ja feito" le o recebimento ao vivo.
+   * D21: o ledger so confirma enquanto o sinal de reversao for falso (`ledger_concluido` do detalhe) — e a regra
+   * da D7 continua a mesma; a leitura ao vivo que descobre a reversao e decidida no POST (ledgerFiscalVigente).
    */
   espelhoConfirmaConclusao: boolean;
   /** por indice do item: entrada da sugestao e resultado (null fora do fiscal pendente ou com a copia defasada) */
@@ -1451,6 +1562,51 @@ async function produtosSugeridosAcxe(codigosPorIndice: Map<number, number[]>, ch
   return out;
 }
 
+/**
+ * D21: quando o fiscal da NF foi desfeito no OMIE, para o banner do detalhe: a hora da alteracao do recebimento no
+ * espelho quando ela e posterior a conclusao (mesma margem do sinal) e, senao, a hora do OMIE que a marcacao gravou no
+ * ledger (revertido_omie_em). Marcacao pela leitura ao vivo do clique nao tem a hora do OMIE: a hora fica nula e o banner
+ * a omite (a hora do clique nao e a da reversao — revisao da tela). Nao basta a hora do espelho (`reversaoFiscalEmSql`):
+ * na janela entre a conclusao pelo Atlas e o proximo sync de recebimentos o espelho ainda traz o 'N' de ANTES da
+ * conclusao, e o banner diria que o fiscal foi desfeito antes de ser feito.
+ */
+function fiscalRevertidoEmSql(chaveExpr: string, empresa: EmpresaNacional): string {
+  const pendencia = pendenciaEspelhoEmSql(chaveExpr, empresa);
+  return `CASE WHEN ${pendencia} - interval '${MARGEM_REVERSAO_ESPELHO_MIN} minutes' > ${conclusaoFiscalEmSql(chaveExpr, empresa)}
+                THEN ${pendencia}
+                ELSE ${reversaoOmieDoLedgerEmSql(chaveExpr)} END`;
+}
+
+/**
+ * D21: NF revertida cuja tentativa antiga do fiscal ainda esta 'concluido' no ledger (o sinal pelo espelho chegou antes
+ * da varredura do cron e do clique): marca-la ao abrir a nota tira os vinculos dela do saldo do PC — saldoDisponivelCopiaKg
+ * desconta as linhas 'concluido', inclusive as desta NF, e o PC do vinculo apareceria "sem saldo" na sugestao (achado do
+ * teste de ponta a ponta). marcarLedgerRevertido re-confere o sinal no UPDATE. Melhor esforco: falhou, o detalhe segue
+ * (o clique e a varredura marcam depois). Precedente de escrita na abertura da NF: registrarPcsVistosSeVencido.
+ */
+async function marcarTentativaRevertidaSeVigente(chave: string, empresa: EmpresaNacional): Promise<void> {
+  try {
+    if (!(await ledgerFiscalVigente(chave))) return;
+    await marcarLedgerRevertido({ nfChaveAcesso: chave, empresa, origem: 'espelho' });
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, chave }, 'Não foi possível marcar como revertida a tentativa antiga do fiscal ao abrir a NF — o detalhe segue');
+  }
+}
+
+/** Quando o fiscal da NF foi desfeito no OMIE (ISO), ou null se desconhecido. Melhor esforco: a hora e so informativa. */
+async function fiscalRevertidoEmDaNf(chave: string, empresa: EmpresaNacional): Promise<string | null> {
+  try {
+    const r = await getPool().query<{ em: Date | string | null }>(`SELECT ${fiscalRevertidoEmSql('$1::text', empresa)} AS em`, [chave]);
+    const v = r.rows[0]?.em;
+    if (v == null) return null;
+    const quando = new Date(v);
+    return Number.isNaN(quando.getTime()) ? null : quando.toISOString();
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, chave }, 'Hora da reversão do fiscal indisponível — o detalhe segue sem ela');
+    return null;
+  }
+}
+
 interface LinhaRow {
   nf_chave_acesso: string;
   n_nf: string;
@@ -1491,8 +1647,10 @@ interface LinhaRow {
   c_ignorar_item: string | null;
   c_nao_gerar_mov_estoque: string | null;
   receb_recebido: string | null;
-  /** o ledger do Atlas tem o fiscal desta NF concluido (ou ja_concluido) */
+  /** o ledger do Atlas tem o fiscal desta NF concluido (ou ja_concluido) — e, com a D21 ligada, ainda nao revertido no OMIE */
   ledger_concluido: boolean;
+  /** so com a D21 ligada: o fiscal desta NF foi desfeito no OMIE depois de concluido */
+  fiscal_revertido?: boolean | null;
   // ── Historia 5: so quando a consulta inclui a ACXE (ausente = Q2P) ──
   empresa?: EmpresaNacional;
   /** produto que o OMIE associou ao item (tbl_nf_itens.n_cod_prod / recebimento n_id_produto), codigo da empresa da NF */
@@ -1521,6 +1679,8 @@ export async function montarDetalheNfNacional(
 
   const dataCorte = getDataCorteFilaNacional();
   const flag = recebimentoFiscalHabilitado();
+  // D21: fiscal revertido no OMIE (chave da 016 + kill switch + migration 0060); depois da chave e do corte validos
+  const comRevertido = flag && (await fiscalRevertidoHabilitado());
   const pool = getPool();
   const descNorm = normalizarDescricaoSql('u.x_prod');
 
@@ -1541,7 +1701,7 @@ export async function montarDetalheNfNacional(
     const emp = comEmpresaNasLinhas(fontes);
     return pool.query<LinhaRow>(
     `
-    WITH nf_unificada AS (${nfUnificadaSql(fontes, flag, false)}
+    WITH nf_unificada AS (${nfUnificadaSql(fontes, flag, false, comRevertido)}
     )
     SELECT
       u.c_chave_nfe                                    AS nf_chave_acesso,
@@ -1586,7 +1746,7 @@ export async function montarDetalheNfNacional(
       u.c_ignorar_item                                 AS c_ignorar_item,
       u.c_nao_gerar_mov_estoque                        AS c_nao_gerar_mov_estoque,
       u.receb_recebido                                 AS receb_recebido,
-      ${LEDGER_FISCAL_CONCLUIDO_SQL('u.c_chave_nfe')}  AS ledger_concluido${emp ? ',\n      u.empresa                                        AS empresa,\n      u.produto_omie::text                             AS produto_omie' : ''}
+      ${comRevertido ? ledgerFiscalVigenteSql('u.c_chave_nfe', 'u.fiscal_revertido') : LEDGER_FISCAL_CONCLUIDO_SQL('u.c_chave_nfe')}  AS ledger_concluido${emp ? ',\n      u.empresa                                        AS empresa,\n      u.produto_omie::text                             AS produto_omie' : ''}${comRevertido ? ',\n      u.fiscal_revertido                               AS fiscal_revertido' : ''}
     FROM nf_unificada u
     WHERE u.c_chave_nfe = $1
     ORDER BY u.n_cod_item
@@ -1744,6 +1904,10 @@ export async function montarDetalheNfNacional(
   }
 
   const fiscal: SituacaoFiscal = res.rows.some((r) => r.fiscal_pendente === true) ? 'pendente' : 'concluido';
+  // D21: a NF revertida vem da fonte (b) com fiscal 'pendente'; aqui so se anota que foi o OMIE que desfez o fiscal
+  const fiscalRevertido = comRevertido && res.rows.some((r) => r.fiscal_revertido === true);
+  const fiscalRevertidoEm = fiscalRevertido ? await fiscalRevertidoEmDaNf(chave, empresa) : null;
+  if (fiscalRevertido) await marcarTentativaRevertidaSeVigente(chave, empresa);
   const nIdReceb = cab.n_id_receb != null && cab.n_id_receb !== '' ? Number(cab.n_id_receb) : null;
 
   // ── Feature 017: pedido de compra por item e estoque ja lancado pelo OMIE ──
@@ -1838,10 +2002,13 @@ export async function montarDetalheNfNacional(
     }
   }
   // D7: item a receber cujo recebimento foi concluido fora do Atlas com movimento de estoque.
+  // D21: a linha do espelho de uma NF revertida no OMIE pode estar defasada ('S'): nao e estoque lancado.
   const estoqueLancadoPeloOmie = itens.some(
     (it) =>
       itemNfPendente(it) &&
-      (linhasPorIndice.get(it.indice) ?? []).some((l) => l.receb_recebido === 'S' && l.c_ignorar_item === 'N' && l.c_nao_gerar_mov_estoque === 'N'),
+      (linhasPorIndice.get(it.indice) ?? []).some(
+        (l) => l.fiscal_revertido !== true && l.receb_recebido === 'S' && l.c_ignorar_item === 'N' && l.c_nao_gerar_mov_estoque === 'N',
+      ),
   );
   // FR-021a: o espelho so CONFIRMA a conclusao com c_recebido='S' em todas as linhas dos
   // itens a receber (linha ausente, defasada ou nao casada => leitura ao vivo no POST).
@@ -1868,6 +2035,8 @@ export async function montarDetalheNfNacional(
     itens,
     linhasForaDoRecorte: res.rows.length - elegiveis.length,
     fiscal,
+    fiscalRevertido,
+    fiscalRevertidoEm,
     nIdReceb: nIdReceb != null && Number.isFinite(nIdReceb) ? nIdReceb : null,
     dispensavel: flag && itens.some(itemNfPendente),
     empresa,

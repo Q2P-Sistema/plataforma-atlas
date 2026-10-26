@@ -81,7 +81,7 @@ Uma linha por tentativa de concluir o fiscal pelo Atlas; **uma linha viva por NF
 | `n_id_receb` | `bigint` | do espelho ou da `ConsultarRecebimento` |
 | `nota_fiscal` | `varchar(50) NOT NULL` | sem zeros à esquerda — para mensagens e listagens |
 | `fornecedor_nome` | `varchar(255)` | idem |
-| `status` | `varchar(20) NOT NULL` | `em_andamento` → `concluido` \| `ja_concluido` \| `falha` (CHECK) |
+| `status` | `varchar(20) NOT NULL` | `em_andamento` → `concluido` \| `ja_concluido` \| `falha` (CHECK); `revertido` desde a 0060 da 017 (D21 da 017) |
 | `etapa_antes` | `varchar(2)` | `cEtapa` lido antes de agir |
 | `recebido_antes` | `char(1)` | `cRecebido` lido antes de agir |
 | `passo_falha` | `varchar(20)` | `consultar` \| `editar` \| `ignorar` \| `concluir` \| `reconsultar` (nulo em sucesso) |
@@ -93,7 +93,7 @@ Uma linha por tentativa de concluir o fiscal pelo Atlas; **uma linha viva por NF
 | `finalizado_em` | `timestamptz` | — |
 | `created_at`, `updated_at` | `timestamptz NOT NULL DEFAULT now()` | — |
 
-**Índice único parcial**: `(nf_chave_acesso) WHERE status IN ('em_andamento','concluido','ja_concluido')`.
+**Índice único parcial**: `(nf_chave_acesso) WHERE status IN ('em_andamento','concluido','ja_concluido')`. A 0060 da 017 não o muda: `revertido` fica fora dos status vivos.
 
 **Máquina de estados**:
 
@@ -103,11 +103,12 @@ Uma linha por tentativa de concluir o fiscal pelo Atlas; **uma linha viva por NF
                              └──────────▶ falha          (qualquer passo falhou; nada gravado no Atlas)
 em_andamento há > 5 min  ──(novo clique)──▶ retomada: UPDATE para o novo confirmado_por/iniciado_em
 falha                    ──(novo clique)──▶ nova linha em_andamento (a antiga fica como histórico)
+concluido | ja_concluido ──(reversão no portal, D21 da 017)──▶ revertido (histórico; a NF volta a fiscal pendente)
 ```
 
 **Trigger**: `stockbridge.audit_recebimento_fiscal()` + `trg_audit_sb_recebimento_fiscal` (INSERT/UPDATE/DELETE).
 
-**Uso pela fila**: chave com linha `concluido`/`ja_concluido` → `fiscal: 'concluido'` mesmo que o espelho ainda diga `c_recebido = 'N'` (D8).
+**Uso pela fila**: chave com linha `concluido`/`ja_concluido` → `fiscal: 'concluido'` mesmo que o espelho ainda diga `c_recebido = 'N'` (D8). Desde a D21 da 017 isso vale até o espelho, lido depois da conclusão, mostrar a NF não recebida (a NF volta a `pendente`); ver `specs/017-recebimento-nacional-com-pc/data-model.md` §13.
 
 ---
 

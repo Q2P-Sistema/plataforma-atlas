@@ -818,7 +818,9 @@ export async function rejeitar(input: RejeitarInput): Promise<{ id: string }> {
     // fisico. Desfazer o fiscal e decisao do fiscal, fora do Atlas.
     // Feature 017 (FR-018, ACXEGDP-437): o mesmo vale para o vinculo com o pedido
     // de compra — `recebimento_fiscal_pc` fica como esta e a NF volta mostrando o
-    // PC vinculado no OMIE (vinculadoNoOmie).
+    // PC vinculado no OMIE (vinculadoNoOmie). Research D21 da 017: se o fiscal for
+    // desfeito no portal do OMIE (antes ou depois desta rejeicao), a NF volta como
+    // fiscal PENDENTE e o proximo recebimento conclui o fiscal de novo.
     if (ap.movimentacaoId) {
       await tx
         .update(reservaSaldo)

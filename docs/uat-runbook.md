@@ -52,10 +52,27 @@ SendGrid. Travas independentes:
   fazer (sem consultar de novo), e dali em diante as consultas dele respondem pela
   sombra (o fiscal reconsulta o recebimento; o retry da baixa reconfere o saldo).
   **Reiniciar a API apaga a sombra**: o pedido volta ao saldo real e o recebimento
-  volta à etapa 40 no OMIE (no Atlas, o ledger continua dizendo que foi concluído).
+  volta à etapa 40 no OMIE (no Atlas, o ledger continua dizendo que foi concluído; desde a
+  D21 da 017 isso é lido como uma reversão no portal, ver abaixo).
   Com a conferência da ACXEGDP-406 (até 10 min depois de uma baixa do Atlas, o saldo
   lido tem de ser o gravado), uma baixa no mesmo pedido logo após um reinício vira
   `falha` — retentável depois da janela.
+- **Fiscal revertido (D21 da 017)**: ledger `concluido` + OMIE lido como não recebido é
+  interpretado como **reversão no portal**. Depois de um reinício da API, o clique do
+  recebimento da NF que o Atlas concluiu no UAT (há pelo menos 75 s) lê o recebimento no OMIE
+  real (`ConsultarRecebimento` está na lista de leitura), vê `cRecebido = N` e responde
+  `409 RECEBIMENTO_FISCAL_REVERTIDO`: o ledger vira `revertido` e a NF volta à fila como
+  "Fiscal pendente", com o selo "Fiscal revertido no OMIE"; o clique seguinte conclui o fiscal
+  de novo (simulado). Depois do reinício só o clique marca: a varredura do cron `5,35` lê só o
+  Postgres, e o espelho de recebimentos do UAT (cópia PROD→UAT) não muda com o reinício. Por isso
+  a NF com a entrada física já lançada (fora da fila, ninguém clica) não gera e-mail nesse caso.
+  Quem valida no UAT: essa "reversão" depois de um reinício é efeito da sombra, não de uma
+  reversão real. Para testar a varredura e o e-mail "Recebimento fiscal desfeito no OMIE"
+  (desviado para `EMAIL_DESVIO_PARA`, assunto `[UAT]`), injete no espelho de recebimentos a linha
+  `c_recebido = 'N'` com `d_alt`/`h_alt` posteriores à conclusão (quickstart da 017, cenário 12).
+  Uma NF cujo recebimento real é alterado no PROD depois da conclusão simulada no UAT também pode
+  aparecer como revertida. Em dev com `OMIE_MODE=mock` vale o mesmo depois de reiniciar a API: o
+  mock esquece a conclusão e responde o recebimento como não recebido.
 - `backfill-baixa-pedido-q2p` com `--execute` recusa rodar fora do modo real; o
   dry-run e o `--consultar` funcionam no UAT.
 - Limite de ritmo: o OMIE bloqueia por ~1 min a mesma consulta repetida com a

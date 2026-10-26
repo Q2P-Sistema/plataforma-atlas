@@ -39,11 +39,17 @@ import type { ItemRecebimentoEditar } from '@atlas/integration-omie';
 // 8 nova tentativa apos associar; 9 e 11 estoque ja lancado; 10 ja_concluido com PC;
 // 12 transicoes; 13 ledger ja concluido; 14 lock orfao e duplo clique; 15 empresa;
 // 16 vinculos divergentes (fiscal-01); 17 recusas sem releitura do PC (fiscal-02);
-// 18 mensagem do erro cita o PC (fiscal-04).
+// 18 mensagem do erro cita o PC (fiscal-04); 19 fiscal revertido no portal (D21 da 017: o ledger
+// concluido e reaberto e o fiscal roda de novo com o PC escolhido).
+//
+// D21: o sinal de reversao e a marcacao (que tambem move os vinculos de PC da tentativa antiga para
+// 'revertido', na mesma transacao) tem testes proprios — aqui sao spies, com a D21 desligada por default: o
+// SQL do sinal nunca chega ao responder abaixo, e a guarda de SQL nao reconhecido segue estrita.
 
-const { loggerMock, relerSpy } = vi.hoisted(() => ({
+const { loggerMock, relerSpy, revertido } = vi.hoisted(() => ({
   loggerMock: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
   relerSpy: vi.fn(),
+  revertido: { habilitado: vi.fn(), nfRevertida: vi.fn(), marcar: vi.fn() },
 }));
 const poolQuerySpy = vi.fn();
 const consultarSpy = vi.fn();
@@ -68,6 +74,16 @@ vi.mock('@atlas/integration-omie', () => ({
 vi.mock('../services/correlacao-produto.service.js', () => ({
   sugerirProdutosEmLote: vi.fn().mockResolvedValue(new Map()),
 }));
+
+vi.mock('../services/fiscal-revertido.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../services/fiscal-revertido.js')>();
+  return {
+    ...real,
+    fiscalRevertidoHabilitado: (...a: unknown[]) => revertido.habilitado(...a),
+    nfComFiscalRevertido: (...a: unknown[]) => revertido.nfRevertida(...a),
+    marcarLedgerRevertido: (...a: unknown[]) => revertido.marcar(...a),
+  };
+});
 
 // Classes de erro REAIS (PcVinculoInvalidoError, PcRecemUsadoAguardeError): so a releitura vira spy.
 vi.mock('../services/pc-sugestao.service.js', async () => {
@@ -482,6 +498,9 @@ beforeEach(() => {
   registros = [];
   registroLanca = false;
   for (const f of Object.values(loggerMock)) f.mockClear();
+  revertido.habilitado.mockReset().mockResolvedValue(false);
+  revertido.nfRevertida.mockReset().mockResolvedValue(false);
+  revertido.marcar.mockReset().mockResolvedValue([]);
   poolQuerySpy.mockReset();
   poolQuerySpy.mockImplementation(async (sql: string, params?: unknown[]) => responder(sql, params));
   relerSpy.mockReset();
@@ -1963,6 +1982,59 @@ describe('concluirRecebimentoFiscal com PC — ledger já concluído pelo Atlas 
     expect(r.vinculos).toEqual([]);
     expect(relerSpy).not.toHaveBeenCalled();
     expect(loggerMock.warn).toHaveBeenCalledWith(expect.objectContaining({ ledgerId: 'ledger-antigo' }), expect.stringContaining('Vínculos do ledger fiscal indisponíveis'));
+  });
+});
+
+// ── Cenario 19 — fiscal revertido no portal (D21 da 017) ─────────────────────
+
+describe('concluirRecebimentoFiscal com PC — fiscal revertido no portal (cenário 19, D21)', () => {
+  const concluidoPeloAtlas = () => ({ id: 'ledger-antigo', status: 'concluido', iniciado_em: '2026-10-25 20:01:00+00', finalizado_em: '2026-10-25 20:02:05+00', empresa: 'q2p' });
+
+  it('ledger concluído e revertido no portal: marca, abre a trava nova e conclui de novo com o PC escolhido (releitura e reserva no ledger NOVO, sem ja_concluido)', async () => {
+    revertido.habilitado.mockResolvedValue(true);
+    revertido.nfRevertida.mockResolvedValue(true);
+    revertido.marcar.mockImplementation(async () => {
+      ordem.push('ledger:revertido');
+      return [{ id: 'ledger-antigo', nfChaveAcesso: CHAVE, notaFiscal: '7813' }];
+    });
+    insertFalha = violacaoLedgerViva();
+    linhaViva = concluidoPeloAtlas();
+    // o OMIE manteve o vinculo com o PC e as quantidades: o plano so precisa do Concluir
+    consultaUnica({ itens: [itemRec(1, { ...vinculadoA(PC304), ...comAjustes })] });
+
+    const r = await concluirRecebimentoFiscal(input({ vinculos: [escolhaVendo(PC304, PC304)] }));
+
+    expect(r).toMatchObject({ status: 'concluido', ledgerId: 'ledger-1', semVinculo: [] });
+    expect(r.vinculos).toEqual([{ nSequencia: 1, pcNumero: '304', origem: 'sugestao', status: 'concluido' }]);
+    expect(ordemSemEspera()).toEqual([
+      'ledger:insert', 'ledger:revertido', 'ledger:insert', 'omie:consultar', 'pc:reler', 'pc:associado', 'omie:concluir', 'ledger:concluido', 'pc:concluido',
+    ]);
+    expect(revertido.marcar).toHaveBeenCalledWith({ nfChaveAcesso: CHAVE, empresa: 'q2p', origem: 'espelho', ledgerId: 'ledger-antigo' });
+    // a reserva e as transicoes seguintes sao do ledger NOVO; nada toca o antigo (a transicao dele e do marcarLedgerRevertido)
+    expect(relerSpy.mock.calls[0]![0]).toMatchObject({ ledgerId: 'ledger-1', nfChaveAcesso: CHAVE });
+    expect(marcacoes.every((m) => m.ledgerId === 'ledger-1')).toBe(true);
+    expect(fechamentos).toHaveLength(1);
+    expect(fechamentos[0]![0]).toBe('ledger-1');
+    expect(seqsDaAcao('IGNORAR')).toEqual([]);
+    expect(seqsDaAcao('EDITAR')).toEqual([]);
+    expect(concluirSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('sem sinal (D21 ligada): o ledger concluido segue devolvendo ja_concluido com os vinculos dele, sem reler o PC nem chamar o OMIE', async () => {
+    revertido.habilitado.mockResolvedValue(true);
+    revertido.nfRevertida.mockResolvedValue(false);
+    insertFalha = violacaoLedgerViva();
+    linhaViva = concluidoPeloAtlas();
+    vinculosLedgerRows = [{ n_sequencia: 1, pc_numero: '304', origem: 'omie' }];
+
+    const r = await concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304)] }));
+
+    expect(r).toMatchObject({ status: 'ja_concluido', ledgerId: 'ledger-antigo' });
+    expect(r.vinculos).toEqual([{ nSequencia: 1, pcNumero: '304', origem: 'omie', status: 'concluido' }]);
+    expect(revertido.nfRevertida).toHaveBeenCalledWith(CHAVE, 'q2p');
+    expect(revertido.marcar).not.toHaveBeenCalled();
+    expect(relerSpy).not.toHaveBeenCalled();
+    expect(consultarSpy).not.toHaveBeenCalled();
   });
 });
 

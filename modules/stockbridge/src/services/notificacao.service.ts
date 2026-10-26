@@ -109,6 +109,9 @@ function getComexEmail(): string {
  * Ausente ou vazia = lista padrão (NFe ACXE + Mauricio Yared + Gustavo Dreer): o
  * config trata string vazia como ausente, então não há como "desligar" o aviso
  * por env — para testar sem avisar o fiscal, aponte para a sua própria caixa.
+ * Recebe os avisos de NF dispensada (e dispensa desfeita) e, desde a D21 da 017,
+ * o de recebimento fiscal desfeito no OMIE com a entrada física já lançada
+ * (enviarAvisoFiscalRevertido).
  */
 export function getFiscalEmails(): string[] {
   const cfg = getConfig() as { STOCKBRIDGE_FISCAL_EMAILS?: string[] | string };
@@ -1120,6 +1123,130 @@ export async function enviarAlertaDispensaRevertida(args: {
     }
   } catch (err) {
     logger.error({ err, notaFiscal: args.notaFiscal }, 'Falha ao enviar aviso de dispensa desfeita ao fiscal');
+  }
+}
+
+/**
+ * Feature 017, research D21 (ACXEGDP-437): a entrada fisica da NF ja lancada no Atlas, para o aviso ao fiscal.
+ * `pendentes` = itens aguardando a aprovacao do gestor; `aprovadas` = itens aprovados (`aprovadaEm` = a mais recente).
+ */
+export interface EntradaFisicaAvisoFiscal {
+  pendentes: number;
+  aprovadas: number;
+  aprovadaEm: Date | string | null;
+}
+
+export interface ArgsAvisoFiscalRevertido {
+  /** empresa da NF: 'acxe' cita a ACXE no assunto e no corpo (o fiscal da ACXE age no OMIE dela) */
+  empresa: EmpresaNacional;
+  /** numero da NF (zeros a esquerda saem aqui tambem) */
+  notaFiscal: string;
+  fornecedorNome: string | null;
+  /** quando o Atlas concluiu o fiscal (finalizado_em do ledger) — ou, com `concluidoForaDoAtlas`, quando o Atlas o viu concluido */
+  concluidoEm: Date | string | null;
+  /**
+   * O fiscal ja estava concluido no OMIE quando o Atlas olhou (ledger ja_concluido, recebido_antes 'S': quem concluiu foi o fiscal,
+   * no portal). O texto nao diz "o Atlas concluiu" nesse caso. Ausente = concluido pelo Atlas.
+   */
+  concluidoForaDoAtlas?: boolean;
+  /** desde quando aparece desfeito no OMIE: a hora da alteracao la, ou a da deteccao pelo Atlas */
+  desfeitoEm: Date | string | null;
+  entrada: EntradaFisicaAvisoFiscal;
+  /** numeros dos PCs vinculados ao recebimento — so o numero legivel (o que parece codigo do OMIE sai) */
+  pcs: string[];
+}
+
+const FORMATO_BRASILIA = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: 'America/Sao_Paulo',
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
+
+/** "25/10/2026" ou "25/10/2026 às 17:13" em horario de Brasilia; '' para data ausente ou invalida. Independe da variante de ICU do Node. */
+function fmtBrasilia(valor: Date | string | null | undefined, comHora: boolean): string {
+  if (valor == null) return '';
+  const d = valor instanceof Date ? valor : new Date(valor);
+  if (Number.isNaN(d.getTime())) return '';
+  const p = new Map(FORMATO_BRASILIA.formatToParts(d).map((x): [string, string] => [x.type, x.value]));
+  const dia = `${p.get('day')}/${p.get('month')}/${p.get('year')}`;
+  return comHora ? `${dia} às ${p.get('hour')}:${p.get('minute')}` : dia;
+}
+
+/** "aguardando aprovação do gestor" | "aprovada em 26/10/2026" | os dois (parte dos itens aprovada); '' sem nenhum item contado. */
+function textoEntradaFisica(e: EntradaFisicaAvisoFiscal): string {
+  const dataAprovada = fmtBrasilia(e.aprovadaEm, false);
+  const aprovada = e.aprovadas > 0 ? `aprovada${dataAprovada ? ` em ${dataAprovada}` : ''}` : '';
+  if (e.pendentes > 0 && e.aprovadas > 0) return `${aprovada} para parte dos itens; os demais aguardam aprovação do gestor`;
+  if (e.pendentes > 0) return 'aguardando aprovação do gestor';
+  return aprovada;
+}
+
+/**
+ * Feature 017, research D21 (ACXEGDP-437): o recebimento fiscal que o Atlas concluiu no OMIE aparece DESFEITO no
+ * portal e a entrada fisica da NF ja foi lancada no Atlas — por isso a nota nao volta a fila e so o fiscal pode
+ * refazer o fiscal, la. O e-mail diz o que fazer: concluir de novo no portal SEM movimentar estoque (o estoque entra
+ * pela aprovacao do gestor; sem isso entraria em dobro) e conferindo o vinculo com o pedido de compra. Corpo
+ * autossuficiente (o fiscal pode nao ter acesso ao Atlas, por isso sem botao de acao) e sem codigo OMIE: a funcao
+ * nem recebe chave de acesso, nIdReceb ou nCodPed, e o PC sai so pelo numero legivel (ACXEGDP-313). Um e-mail por
+ * destinatario (nao vaza a lista no To). Devolve 'enviado' se AO MENOS UM destinatario recebeu — o job grava
+ * aviso_fiscal_em e nao repete: um endereco que o SendGrid recusa sempre nao pode reenviar aos outros a cada
+ * rodada — e 'falha' se nenhum recebeu ou a lista esta vazia (o job tenta de novo na proxima rodada). Nunca lanca.
+ */
+export async function enviarAvisoFiscalRevertido(args: ArgsAvisoFiscalRevertido): Promise<'enviado' | 'falha'> {
+  let nf = '';
+  try {
+    nf = String(args.notaFiscal ?? '').trim().replace(/^0+(?=\d)/, '');
+    const destinatarios = getFiscalEmails();
+    if (destinatarios.length === 0) {
+      logger.warn({ notaFiscal: nf }, 'STOCKBRIDGE_FISCAL_EMAILS vazio — fiscal não avisado do recebimento fiscal desfeito no OMIE');
+      return 'falha';
+    }
+    const fornecedor = args.fornecedorNome && args.fornecedorNome.trim() ? args.fornecedorNome.trim() : 'Fornecedor não identificado no OMIE';
+    const daAcxe = args.empresa === 'acxe' ? ' da ACXE' : '';
+    const subject = `Recebimento fiscal desfeito no OMIE${daAcxe} — NF ${nf} (${fornecedor})`;
+    const concluidoFmt = fmtBrasilia(args.concluidoEm, true);
+    const desfeitoFmt = fmtBrasilia(args.desfeitoEm, true);
+    const situacao = textoEntradaFisica(args.entrada);
+    // So o numero legivel do PC; vazio ou com cara de codigo interno do OMIE (10+ digitos) fica de fora (ACXEGDP-313).
+    const pcs = Array.from(new Set((args.pcs ?? []).map((p) => String(p ?? '').trim()).filter((p) => p && !/^\d{10,}$/.test(p))));
+    const textoPc = pcs.length === 1 ? `o pedido de compra PC ${pcs[0]}` : `os pedidos de compra ${listaPtBr(pcs.map((p) => `PC ${p}`))}`;
+    const conferencias = [
+      'a opção <strong>Não gerar movimento de estoque</strong> marcada: o estoque desta nota entra pela aprovação no Atlas, e sem essa opção ele entraria em dobro',
+      ...(pcs.length > 0 ? [`o vínculo do item com ${escapeHtml(textoPc)}`] : []),
+    ]
+      .map((t, i, todas) => `<li>${t}${i === todas.length - 1 ? '.' : ';'}</li>`)
+      .join('');
+    const foraDoAtlas = args.concluidoForaDoAtlas === true;
+    const inicio = foraDoAtlas
+      ? `O recebimento fiscal da <strong>NF ${escapeHtml(nf)}</strong> de <strong>${escapeHtml(fornecedor)}</strong> estava concluído no OMIE${daAcxe}${concluidoFmt ? ` quando o Atlas o conferiu, em ${escapeHtml(concluidoFmt)}` : ''}`
+      : `O Atlas concluiu o recebimento fiscal da <strong>NF ${escapeHtml(nf)}</strong> de <strong>${escapeHtml(fornecedor)}</strong>${concluidoFmt ? ` em ${escapeHtml(concluidoFmt)}` : ''}`;
+    const corpoHtml = `
+    <p>${inicio}, mas ele aparece <strong>desfeito no OMIE${daAcxe}</strong>${desfeitoFmt ? ` desde ${escapeHtml(desfeitoFmt)}` : ''}.</p>
+    <p>A entrada de estoque desta nota já foi lançada pelo Atlas${situacao ? ` (${escapeHtml(situacao)})` : ''}, por isso a nota não volta à fila de recebimento do StockBridge: só o fiscal pode refazer o recebimento fiscal no OMIE.</p>
+    ${emailDataList([
+      { label: 'Nota fiscal', valor: nf },
+      { label: 'Empresa', valor: args.empresa === 'acxe' ? 'ACXE' : '' },
+      { label: 'Fornecedor', valor: fornecedor },
+      { label: foraDoAtlas ? 'Visto concluído pelo Atlas em' : 'Concluído pelo Atlas em', valor: concluidoFmt },
+      { label: 'Desfeito no OMIE desde', valor: desfeitoFmt },
+      { label: 'Entrada de estoque no Atlas', valor: situacao ? situacao.charAt(0).toUpperCase() + situacao.slice(1) : 'Lançada' },
+      { label: 'Pedido de compra', valor: pcs.map((p) => `PC ${p}`).join(', ') },
+    ])}
+    ${emailActionBox(`<p style="margin:0 0 8px;">Conclua o recebimento desta nota de novo no portal do OMIE${daAcxe}. Em cada item, confira:</p><ol style="margin:0;padding-left:18px;">${conferencias}</ol>`, 'O que fazer')}
+  `;
+    const { html, text } = buildEmailLayout({ titulo: 'Recebimento fiscal desfeito no OMIE', variante: 'alerta', corpoHtml });
+    const results = await Promise.allSettled(destinatarios.map((to) => sendEmail({ to, subject, html, text })));
+    const falhas = logFalhasEnvio(results, destinatarios, { notaFiscal: nf, tipo: 'fiscal_revertido' });
+    if (falhas >= destinatarios.length) return 'falha';
+    logger.info({ notaFiscal: nf, empresa: args.empresa, enviados: destinatarios.length - falhas, falhas }, 'Aviso de recebimento fiscal desfeito no OMIE enviado ao fiscal');
+    return 'enviado';
+  } catch (err) {
+    logger.error({ err, notaFiscal: nf }, 'Falha ao enviar aviso de recebimento fiscal desfeito no OMIE ao fiscal');
+    return 'falha';
   }
 }
 

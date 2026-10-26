@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   processarAlertasComodatoVencido: vi.fn(),
   reprocessarBaixasAguardandoVinculo: vi.fn(),
   varrerExcedentesRejeitadosSemAviso: vi.fn(),
+  varrerFiscaisRevertidos: vi.fn(),
 }));
 
 vi.mock('node-cron', () => ({
@@ -40,6 +41,10 @@ vi.mock('../services/pc-visto.service.js', () => ({ registrarPcsVistos: (...a: u
 // 017 (D20): varredura dos avisos a compras de entrada rejeitada com o PC baixado acima da nota
 vi.mock('../services/pc-peso-conferido.service.js', () => ({
   varrerExcedentesRejeitadosSemAviso: (...a: unknown[]) => mocks.varrerExcedentesRejeitadosSemAviso(...a),
+}));
+// 017 (D21): varredura do recebimento fiscal revertido no portal do OMIE (marca o ledger e avisa o fiscal)
+vi.mock('../services/fiscal-revertido-varredura.service.js', () => ({
+  varrerFiscaisRevertidos: (...a: unknown[]) => mocks.varrerFiscaisRevertidos(...a),
 }));
 
 import { iniciarCronsStockBridge } from '../cron/index.js';
@@ -73,6 +78,8 @@ beforeEach(() => {
     f.mockReset();
     f.mockResolvedValue('ok');
   }
+  mocks.varrerFiscaisRevertidos.mockReset();
+  mocks.varrerFiscaisRevertidos.mockResolvedValue({ marcados: 0, avisados: 0, falhas: 0 });
   for (const f of Object.values(mocks.logger)) f.mockClear();
 });
 
@@ -188,3 +195,55 @@ describe('cron 5,35 — varredura dos avisos a compras de entrada rejeitada com 
   });
 });
 
+describe('cron 5,35 — varredura do recebimento fiscal revertido no OMIE (research D21)', () => {
+  beforeAll(() => {
+    if (mocks.agendados.length === 0) iniciarCronsStockBridge();
+  });
+  beforeEach(() => {
+    mocks.varrerExcedentesRejeitadosSemAviso.mockReset();
+    mocks.varrerExcedentesRejeitadosSemAviso.mockResolvedValue(0);
+    mocks.verificarEspelhoRecebimentos.mockResolvedValue(undefined);
+    mocks.verificarCopiaPcs.mockResolvedValue(undefined);
+    mocks.registrarPcsVistos.mockResolvedValue(0);
+    __resetEmpresaNacional();
+  });
+
+  it('roda uma vez por rodada, sem argumento, com a ACXE ligada ou nao (a varredura decide as empresas e le as chaves sozinha)', async () => {
+    configurar({ acxe: false });
+    await rodar();
+    expect(mocks.varrerFiscaisRevertidos).toHaveBeenCalledTimes(1);
+    expect(mocks.varrerFiscaisRevertidos).toHaveBeenLastCalledWith();
+    configurar({ acxe: true });
+    await rodar();
+    expect(mocks.varrerFiscaisRevertidos).toHaveBeenCalledTimes(2);
+    expect(mocks.varrerFiscaisRevertidos).toHaveBeenLastCalledWith();
+  });
+
+  it('esta no job `5,35 * * * *` que ja existe: os outros dois jobs nao a chamam e continuam sendo so tres expressoes', async () => {
+    for (const expr of ['0 8 * * *', '20 * * * *']) {
+      mocks.agendados.find((a) => a.expr === expr)!.fn();
+    }
+    await new Promise((r) => setImmediate(r));
+    expect(mocks.varrerFiscaisRevertidos).not.toHaveBeenCalled();
+    expect(mocks.agendados.map((a) => a.expr)).toEqual(['0 8 * * *', '20 * * * *', '5,35 * * * *']);
+    await rodar();
+    expect(mocks.varrerFiscaisRevertidos).toHaveBeenCalledTimes(1);
+  });
+
+  it('a varredura que rejeita e logada e nao impede o resto da rodada (alertas, cache de PCs, aviso a compras); a rodada nao lanca', async () => {
+    mocks.varrerFiscaisRevertidos.mockRejectedValue(new Error('banco fora'));
+    expect(() => jobVigilancia().fn()).not.toThrow();
+    await new Promise((r) => setImmediate(r));
+    expect(mocks.logger.error.mock.calls.map((c) => c[1])).toContain('Falha na varredura de recebimento fiscal revertido no OMIE');
+    expect(empresasChamadas(mocks.verificarEspelhoRecebimentos)).toEqual(['q2p', 'acxe']);
+    expect(empresasChamadas(mocks.registrarPcsVistos)).toEqual(['q2p', 'acxe']);
+    expect(mocks.varrerExcedentesRejeitadosSemAviso).toHaveBeenCalledTimes(1);
+  });
+
+  it('as falhas dos outros servicos da rodada nao impedem a varredura', async () => {
+    mocks.verificarEspelhoRecebimentos.mockRejectedValue(new Error('x'));
+    mocks.verificarCopiaPcs.mockRejectedValue(new Error('y'));
+    await rodar();
+    expect(mocks.varrerFiscaisRevertidos).toHaveBeenCalledTimes(1);
+  });
+});

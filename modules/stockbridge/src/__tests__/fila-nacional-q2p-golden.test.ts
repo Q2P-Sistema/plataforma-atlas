@@ -28,6 +28,15 @@ import { fileURLToPath } from 'node:url';
 //
 // Fora do golden, de proposito: o SQL de `carregarContextoPc` e do upsert do cache de PCs vistos — eles GANHARAM
 // colunas (ncodprod / codigo_local_estoque) para as duas empresas; cobertos em pc-sugestao-acxe e pc-visto-acxe.
+//
+// D21 da 017 (25/10/2026, NF 19252 — recebimento fiscal REVERTIDO no portal do OMIE): NAO e uma terceira diferenca em relacao
+// aos goldens acima. Os `*-desligado` e `*-ligado` seguem byte a byte (e os .params.json tambem): o SQL da D21 so entra com
+// `comRevertido` (chave da 016 + kill switch STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED + migration 0060), e os cenarios de sempre rodam
+// com o kill switch DESLIGADO — esse e o contrato "D21 desligada = SQL de antes". Com a D21 ligada o SQL e outro de proposito e
+// fica travado em goldens NOVOS, gerados junto da D21 (sem commit anterior que os prove: a prova e o diff contra o `*-ligado` de
+// mesmo nome e a execucao em PROD somente leitura): fila-fiscal-ligado-revertido, detalhe-fiscal-ligado-revertido,
+// fila-pc-situacao-revertido e detalhe-fiscal-revertido-em (a consulta da hora da reversao, que so o detalhe de NF revertida faz).
+// Sem bind novo: os .params.json dos `*-revertido` sao os dos `*-ligado`.
 
 const mocks = vi.hoisted(() => ({
   poolQuery: vi.fn(),
@@ -56,6 +65,7 @@ import {
   idadeCopiaPcs,
 } from '../services/fila-nacional.service.js';
 import { itemNacionalRecebidoSql } from '../services/fiscal-recebida-sql.js';
+import { __resetColunaRevertido } from '../services/fiscal-revertido.js';
 
 const GOLDEN_DIR = process.env.GOLDEN_DIR ?? join(dirname(fileURLToPath(import.meta.url)), 'golden', 'fila-nacional-q2p');
 const ATUALIZAR = process.env.UPDATE_GOLDEN === '1';
@@ -138,6 +148,8 @@ beforeEach(() => {
   for (const k of Object.keys(mocks.config)) delete mocks.config[k];
   mocks.config.STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE = '2026-09-11';
   mocks.config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = false;
+  mocks.config.STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED = false; // D21 desligada: os cenarios de sempre (ver o cabecalho)
+  __resetColunaRevertido();
   chamadas.length = 0;
   filaRows = [];
   detalheRows = [];
@@ -252,5 +264,54 @@ describe('golden da Q2P (SQL de a62ea88, antes da Historia 5)', () => {
       'item-recebido-completo',
       itemNacionalRecebidoSql({ ...base, dataEmissaoExpr: 'u.d_emi', sequenciaExpr: 'u.n_seq' }),
     );
+  });
+});
+
+// D21 (fiscal revertido no OMIE): o SQL com o sinal ligado. Goldens NOVOS (ver o cabecalho); o conjunto de parametros e o mesmo
+// dos `*-ligado`, porque o sinal e a expressao da chave de acesso e nao tem bind.
+describe('golden da Q2P com a D21 ligada (fiscal revertido no OMIE)', () => {
+  const GOLDEN_DO_REPO = join(dirname(fileURLToPath(import.meta.url)), 'golden', 'fila-nacional-q2p');
+  const paramsDe = (nome: string): unknown => JSON.parse(readFileSync(join(GOLDEN_DO_REPO, `${nome}.params.json`), 'utf8'));
+
+  beforeEach(() => {
+    mocks.config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    mocks.config.STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED = true;
+  });
+
+  it('a D21 so liga com a coluna da migration 0060: confere no information_schema (uma vez, sem bind) antes da fila', async () => {
+    await getFilaNacional();
+    const c = achar((x) => x.sql.includes('information_schema') && x.sql.includes('revertido_em'));
+    expect(c.sql).toContain("table_schema = 'stockbridge' AND table_name = 'recebimento_fiscal' AND column_name = 'revertido_em'");
+    expect(c.params).toEqual([]);
+  });
+
+  it('fila — as duas fontes com o sinal de reversao', async () => {
+    await getFilaNacional();
+    const c = sqlFila();
+    contraGolden('fila-fiscal-ligado-revertido', c.sql, c.params);
+    expect(c.params).toEqual(paramsDe('fila-fiscal-ligado'));
+  });
+
+  it('fila — consulta do selo do PC (NF com fiscal pendente, revertida inclusive)', async () => {
+    filaRows = [linhaFila()];
+    await getFilaNacional();
+    const c = sqlPcFila();
+    contraGolden('fila-pc-situacao-revertido', c.sql, c.params);
+    expect(c.params).toEqual(paramsDe('fila-pc-situacao'));
+  });
+
+  it('detalhe — chave da 016 ligada, fiscal pendente', async () => {
+    detalheRows = [linhaDetalhe({ fiscal_pendente: true })];
+    await getDetalheNfNacional(CHAVE);
+    const c = sqlDetalhe();
+    contraGolden('detalhe-fiscal-ligado-revertido', c.sql, c.params);
+    expect(c.params).toEqual(paramsDe('detalhe-fiscal-ligado'));
+  });
+
+  it('detalhe — NF com o fiscal revertido: a consulta da hora da reversao (so o detalhe de NF revertida a faz)', async () => {
+    detalheRows = [linhaDetalhe({ fiscal_pendente: true, fiscal_revertido: true })];
+    await getDetalheNfNacional(CHAVE);
+    const c = achar((x) => /\bAS em\b/.test(x.sql));
+    contraGolden('detalhe-fiscal-revertido-em', c.sql, c.params);
   });
 });

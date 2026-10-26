@@ -108,6 +108,7 @@ Duração esperada: 2–4 chamadas OMIE, < 30 s sem o Wait do padrão antigo (n�
 4. `c_cfop_entrada` é o CFOP de entrada (recorte 1.101/1.102/2.101/2.102); `c_cfop` é o do fornecedor e **não** é usado.
 5. Latência máxima de 30 min entre a mudança no OMIE e o espelho (PROD). No UAT a latência é a do `sync-omie-public-prod-to-uat.sh`.
 6. O espelho nunca é fonte de verdade de "já recebido fisicamente" — isso é do Atlas (`stockbridge.movimentacao`).
+7. `c_recebido` e `d_alt`/`h_alt` (Brasília) são a hora do **evento** no OMIE e sustentam a detecção de fiscal revertido no portal (D21 da 017): na reversão o recebimento volta a `c_recebido = 'N'` com `d_alt`/`h_alt` novos, e o upsert não pode filtrar essas colunas por `IS DISTINCT FROM`.
 
 ## 5. Validação de aceite do workflow
 
@@ -115,5 +116,6 @@ Duração esperada: 2–4 chamadas OMIE, < 30 s sem o Wait do padrão antigo (n�
 - Após concluir um fiscal pelo Atlas: na rodada seguinte, a linha da NF passa a `c_recebido = 'S'`, `c_etapa = '60'`, `c_usuario_rec = 'WEBSERVICE'`, itens com `c_ignorar_item = 'S'` e `c_nao_gerar_mov_estoque = 'S'`.
 - Já na primeira rodada (janela de ~60 dias): a NF **6842** da Replas, concluída pelo Atlas via API em 02/10/2026 07:39, aparece com `c_recebido = 'S'`, `c_etapa = '60'`, `c_usuario_rec = 'WEBSERVICE'` e o item com `c_ignorar_item = 'S'`, `c_nao_gerar_mov_estoque = 'S'`, `c_descricao_produto = 'SUCATA PLASTICO'`, `c_cfop_entrada = '1.102'`, `v_total_item = 203400.00`; a **6580**, concluída pela tela, com `c_recebido = 'S'` e `c_usuario_rec = 'P000548700'`.
 - Duas rodadas seguidas: a segunda não duplica linha e atualiza `synced_at`.
+- Depois de reverter no portal um recebimento concluído (D21 da 017): a rodada seguinte traz `c_recebido = 'N'`, `c_etapa = '40'` e `d_alt`/`h_alt` posteriores à conclusão (NF 19252, revertida em 25/10/2026 às 17:13:36, já veio na rodada de 17:23).
 - Nenhuma linha com `c_chave_nfe` nula; nenhuma chave duplicada; nenhum item sem cabeçalho.
 - Spec do workflow no `backup-workflow-n8n` com: motivo (ACXEGDP-395), DDL, mapeamento, cron, trava, e a nota de que `dtAlt` pode não alcançar recém-criados (razão da passagem B).

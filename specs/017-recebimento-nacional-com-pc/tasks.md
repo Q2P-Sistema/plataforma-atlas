@@ -383,8 +383,8 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
 - [ ] T070 [P] Aplicar a 0057 no banco de dev (`psql -1 -f packages/db/migrations/0057_stockbridge_pedido_compra_visto.sql`) e conferir `to_regclass('stockbridge.pedido_compra_visto')` e o trigger; depois, UAT
 - [ ] T071 Implantar a rodada em PROD pela ordem do runbook ("Ativação da feature 017", passo da 0057): **0057 → imagem seguinte à v1.1.20**, com `STOCKBRIDGE_PC_UNIDADE_DIFERENTE` em `bloquear`. Conferir o detalhe de uma NF com PC (número e saldo à vista) e o health
 - [X] T072 [P] Documentação da rodada: research D14 a D17 (e D2, D3, D4, D8, D12), spec (Clarifications de 22/10, FR-002, FR-031 a FR-033), data-model §8 e §11, contrato (§2, §3, §5, §6), quickstart (cenários 9 e 10), plano, `CLAUDE.md` (parágrafo da 017), `docs/prod-golive-runbook.md` e a seção 2 de `specs/007-stockbridge-module/research.md`
-- [ ] T073 [US2] Teste do modo `converter` com NF real (quickstart, cenário 10.6), **com autorização do usuário**: NF em toneladas contra PC em kg, `EDITAR` com `nQtdeRecebida` e `Concluir`, em workflow n8n de teste nos moldes do T033. Conferir `nQtdeRec` do PC na unidade do PC, `nQtdeNFe` da NF inalterada, um só título de conta a pagar e estoque sem movimento. Registrar em research D15
-- [ ] T074 [US2] Decisão de ligar `STOCKBRIDGE_PC_UNIDADE_DIFERENTE=converter` em PROD, só depois do T073 aprovado. Até lá o padrão é `bloquear`
+- [X] T073 [US2] Teste do modo `converter` com NF real (quickstart, cenário 10.6), **com autorização do usuário**: NF em toneladas contra PC em kg, `EDITAR` com `nQtdeRecebida` e `Concluir`, em workflow n8n de teste nos moldes do T033. Conferir `nQtdeRec` do PC na unidade do PC, `nQtdeNFe` da NF inalterada, um só título de conta a pagar e estoque sem movimento. Registrar em research D15. **Aprovado em 25/10/2026** na NF 19252 (13,75 TL em 4 linhas) × PC 308 (13.750 kg): `nQtdeRecebida` 4.125/1.375/6.875/1.375 kg, `nQtdeNFe` intacta, `nQtdeRec` do PC 13.750, um título de R$ 145.750,05 e nenhum movimento de estoque (workflow de leitura `4OnbxvfALn9OoXLH`)
+- [X] T074 [US2] Decisão de ligar `STOCKBRIDGE_PC_UNIDADE_DIFERENTE=converter` em PROD, só depois do T073 aprovado. Até lá o padrão é `bloquear`. **Feito em 25/10/2026**: o usuário ligou `converter` em PROD e o T073 foi aprovado no mesmo dia, na NF 19252 × PC 308 (research D15)
 - [ ] T075 [US2] T033 (c) quando houver NF: troca de um vínculo existente por `ASSOCIAR-PEDIDO` (inclusive entre cadastros). A (d), NF menor que o saldo do PC, já foi respondida pela NF 67988 em 23/10/2026 (o OMIE aceita e o saldo fica aberto, research D20). Registrar em research D2. Se o OMIE recusar a troca, vale o plano B da D2
 
 **Checkpoint**: PC por NF, PC de outro cadastro, trava de unidade e cache de PCs vistos no ar; `converter` só depois do T073 e do T074.
@@ -407,6 +407,33 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
 
 **Checkpoint**: NF 67988 fora da fila; chave do peso conferido no ar desligada; ligada só no T085.
 
+---
+
+## Phase 11: Fiscal revertido no OMIE (25/10/2026, NF 19252 × PC 308)
+
+**Goal**: o recebimento fiscal que o Atlas concluiu e que foi revertido no portal do OMIE deixa de valer. A NF volta a "fiscal pendente", o clique conclui o fiscal de novo, e o clique de NF cujo fiscal o Atlas concluiu confere o OMIE ao vivo antes de pular o fiscal (research D21 da 017; spec FR-035, SC-012). O Atlas nunca reverte no OMIE.
+
+**Independent Test**: quickstart cenário 12.
+
+- [X] T087 Migration `packages/db/migrations/0060_stockbridge_fiscal_revertido.sql` (status `revertido` e as colunas `revertido_em`, `revertido_origem`, `revertido_omie_em`, `revertido_por` e `aviso_fiscal_em` no ledger, `CHECK`s e índice `recebimento_fiscal_chave_idx`; status `revertido` em `recebimento_fiscal_pc`), schema Drizzle em `packages/db/src/schemas/stockbridge.ts` e a chave `STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED` (kill switch, default `true`) em `packages/core/src/config.ts`, nos `.env.example`, nas duas stacks e no YAML do UAT, com `config-fiscal-revertido.test.ts`
+- [X] T088 Módulo folha `modules/stockbridge/src/services/fiscal-revertido.ts`: `fiscalRevertidoHabilitado` (chave da 016, kill switch e a coluna da 0060, conferida no `information_schema`), o sinal em SQL (`fiscalRevertidoSql` e os fragmentos de hora de evento), `nfComFiscalRevertido`, `ledgerFiscalVigente`, `leituraAoVivoPodeDeclararReversao` (75 s), `marcarLedgerRevertido` (uma transação: ledger e vínculos de PC) e `RecebimentoFiscalRevertidoError`
+- [X] T089 [US4] Fila e detalhe (`fila-nacional.service.ts`): `fiscalRevertido` e `fiscalRevertidoEm`; a NF revertida sai da fonte (a) e é servida pela (b), com a precedência e a elegibilidade ajustadas; `fiscalConcluidoPeloAtlasEm` nulo e estoque lançado ignorando as linhas do espelho; `SituacaoFiscal` continua binária; com a D21 da 017 indisponível o SQL sai idêntico (golden `*-desligado` intactos) e os golden novos cobrem o tratamento ligado
+- [X] T090 [US4] Ledger (`recebimento-fiscal.service.ts`): `adquirirLedger` marca `revertido` a linha viva com o sinal do espelho ligado e tenta a trava de novo; `StatusFiscalLedger` ganha `revertido` (o `FecharLedgerArgs` não o aceita); `listarLedgerFiscal` e o `GET …/nacional/fiscal` aceitam o status e devolvem `revertidoEm`, `revertidoOrigem` e `revertidoOmieEm` (sem `erro_omie_*`)
+- [X] T091 [US4] Clique (`recebimento-nacional.service.ts`): leitura ao vivo do recebimento (`{ nIdReceb }`, 75 s depois da conclusão) para a NF com ledger vigente, reaproveitada pela trava de estoque já lançado; `cRecebido ≠ 'S'` marca `revertido` (`omie_ao_vivo`) e lança `RecebimentoFiscalRevertidoError`; a falha da leitura fecha falhando só quando a D7 já a exigia. Comentário apontando para a seção 2 da 007 (Princípio II)
+- [X] T092 [US4] Rota (`recebimento-nacional.routes.ts`): `RecebimentoFiscalRevertidoError` → `409 RECEBIMENTO_FISCAL_REVERTIDO` em `responderErroFilaNacional`, com `userMessage` e sem `retryAfterSeconds`
+- [X] T093 [US4] Varredura no job `5,35` do cron (`fiscal-revertido-varredura.service.ts`, `cron/index.ts`): a fase A marca os ledgers com o sinal ligado (14 dias, 50 por rodada) e a fase B avisa o fiscal das reversões com entrada física ativa e sem dispensa (7 dias, 10 por rodada, `aviso_fiscal_em`). Nunca lança; Q2P sempre e ACXE só com a Fase 2 habilitada
+- [X] T094 [US4] E-mail ao fiscal: `enviarAvisoFiscalRevertido` em `notificacao.service.ts` (`STOCKBRIDGE_FISCAL_EMAILS`, layout dos e-mails existentes, sem códigos de 10 dígitos)
+- [X] T095 Tela (`RecebimentoNacionalNfPanel.tsx`): `fiscalRevertido` e `fiscalRevertidoEm` nos tipos, selo âmbar "Fiscal revertido no OMIE" na fila, aviso âmbar no detalhe com a hora de Brasília e o 409 em `ERROS_QUE_RECARREGAM_NOTA` (recarrega o detalhe e a fila e mantém o formulário)
+- [X] T096 [P] Documentação da rodada: research D21 da 017 (e as notas em D5, D7, D12 e D15), spec (Clarifications de 25/10, US4 cenários 6 e 7, edge cases, FR-035, SC-012), data-model §13, contrato (chaves, §1, §2, §3, §4, §5, §7 e §8), quickstart (pré-requisito da 0060 e cenário 12), plano, `CLAUDE.md`, `docs/prod-golive-runbook.md`, `docs/uat-runbook.md`, a seção 2 de `specs/007-stockbridge-module/research.md` e as notas mínimas na 016
+- [X] T097 Testes (Vitest) da rodada, em `modules/stockbridge/src/__tests__/` e `packages/core/src/__tests__/`: o sinal e o módulo (`fiscal-revertido`), a fila e o detalhe com os golden (`fila-nacional-revertido`, `fila-nacional-q2p-golden`), o clique (`recebimento-nacional-revertido`), a varredura (`fiscal-revertido-varredura` e, opt-in com Postgres real e a 0060, `fiscal-revertido-varredura-db`), o ledger com Postgres real (`recebimento-fiscal-revertido-db`, opt-in), o e-mail (`notificacao-fiscal-revertido`), a chave (`config-fiscal-revertido`) e as extensões de `recebimento-fiscal`, `recebimento-fiscal-pc`, `recebimento-nacional-pc`, `recebimento-nacional-flag-off`, `recebimento-nacional-nf.routes`, `rotas-dispensa`, `cron-acxe` e `auditoria-recebimento-fiscal`. A tela não tem teste automatizado no repositório
+- [ ] T098 Aplicar a 0060 no UAT e em PROD, **antes** da imagem (`psql -1 -f` do arquivo, com o dono `postgres`; no UAT vivo não pelo `apply-migrations-uat.sh`) e conferir (runbook, "Fiscal revertido no OMIE"). Sem ela a D21 da 017 fica desligada, com erro no log
+- [ ] T099 Implantar a imagem com a D21 da 017 (nova `ATLAS_VERSION`), com `STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED` no default (`true`) e `STOCKBRIDGE_FISCAL_EMAILS` conferida. Conferir a fila, o ledger e o log da varredura
+- [ ] T100 [US4] Primeiro uso acompanhado, **com autorização do usuário**: a NF 19252 (ou a próxima NF revertida). Conferir o selo na fila, o ledger `revertido` (e o `concluido` novo depois do clique), o `nQtdeRec` do PC 308 em 13.750 depois do `Concluir`, um só título e nenhum movimento de estoque pelo OMIE (quickstart, cenário 12). Registrar na research (D21 da 017) e na ACXEGDP-437
+- [ ] T101 Validar o cenário 12 do quickstart no UAT (a conclusão é simulada e reiniciar a API simula a reversão) e registrar o resultado na ACXEGDP-437
+- [ ] T102 Pesquisar o achado lateral (pendência 8 da research): o espelho de itens de NF funde linhas ligadas ao mesmo item de PC (19252: 1 de 4; 60199: 3 de 4; 10342, de 2023). Confirmar a origem da fusão (nota de entrada do OMIE ou chave do upsert do n8n) e o alcance no histórico. **Sem correção até haver o diagnóstico**
+
+**Checkpoint**: NF revertida volta a fiscal pendente (ou, com a entrada física lançada, o fiscal é avisado); o clique de NF cujo fiscal o Atlas concluiu confere o OMIE ao vivo; a 0060 vai antes da imagem e o primeiro uso é acompanhado (T100).
+
 ## Dependencies & Execution Order
 
 - **Phase 1 → Phase 2 → histórias.** O T003 (n8n) corre em paralelo com tudo e só bloqueia a validação em UAT/PROD (T057). Em dev, o espelho é populado por linhas de teste.
@@ -417,12 +444,15 @@ Os workflows n8n vivem fora do repositório (`backup-workflow-n8n`), guiados por
 - **Phase 8** depois das Histórias 1 a 4 (Fase 1 de entrega).
 - **US5 (Phase 7)** depois do deploy da Fase 1.
 - **Phase 9 (ajustes pós-estreia)** sobre a Fase 1 já em PROD. T061 a T065 dependem do T018/T020 (sugestão e detalhe); T067 depende do T066; o front (T069) depende de T065 e T061; o deploy (T071) depende de T066, T068 e T069 e vem depois do T070; T074 depende do T073.
+- **Phase 10 (fila e peso conferido)**: o deploy (T084) depende da 0059 (T079), e o primeiro uso (T085), do T084.
+- **Phase 11 (fiscal revertido)** sobre a Fase 2 já em PROD. O T087 (0060 e config) é a base: o T088 (módulo) depende dele; T089 (fila), T090 (ledger) e T093 (varredura) dependem do T088. O clique (T091) depende do T088 e do T090, e a rota (T092), do T091. A varredura (T093) usa o e-mail (T094). A tela (T095) depende do T089 e do T092, e os testes (T097) vêm depois de todos. Deploy: T098 (0060) antes do T099 (imagem), que depende de T092, T093 e T095; o T100 depende do T099 e o T101, do T098 no UAT. O T102 é independente.
 
 ```
 Phase 2 ──▶ US1 (T017–T025) ──▶ US2 (T026–T033) ──▶ US3 (T034–T037)
    │                                   └──────────▶ US4 (T038, T040–T044)
    └──▶ T039 (estoque já lançado — pode antecipar)
 US1–US4 ──▶ Phase 8 (T053–T058) ──▶ deploy Fase 1 ──▶ Phase 9 (T059–T075) ──▶ US5 (T045–T052)
+Phase 9 ──▶ Phase 10 (T078–T086) ──▶ Phase 11 (T087–T102): 0060 (T098) ──▶ imagem (T099) ──▶ T100
 T003 (n8n) ───────────────────────────────▶ validações em UAT/PROD
 ```
 
@@ -441,12 +471,13 @@ T003 (n8n) ───────────────────────
 4. **Ativação da Fase 1**: o deploy segue a ordem do T054 e o T033 aprovado é pré-requisito. Religar a chave primeiro no UAT, observar algumas NFs reais em PROD com a chave ligada e encerrar a contenção (SC-007).
 5. **Ajustes pós-estreia (Phase 9)**: a Fase 1 entrou em PROD em 22/10/2026 e a NF 60199 pediu os quatro ajustes. A 0057 vai antes da imagem; `converter` só depois do teste com NF real.
 6. **Fase 2 (US5)**: só depois da Fase 1 estável em PROD e de existirem PCs nacionais na ACXE.
+7. **Fiscal revertido (Phase 11)**: a NF 19252 mostrou que o ledger `concluido` da 016 não podia ser final. A 0060 vai antes da imagem, a chave nova vem ligada (e só vale com a da 016), e o primeiro uso é acompanhado na própria 19252 (T100).
 
 ## Format Validation
 
-Todas as tarefas seguem `- [ ] T### [P?] [US?] descrição com caminho de arquivo`. Setup, Foundational e Polish não têm rótulo de história; US1 a US5 têm. O T003, o T033, o T052, o T057, o T070, o T071, o T073, o T074, o T075, o T076, o T077, o T084 e o T085 são tarefas operacionais (n8n, teste com NF real, deploy, validação em UAT) e citam os artefatos onde o resultado é registrado.
+Todas as tarefas seguem `- [ ] T### [P?] [US?] descrição com caminho de arquivo`. Setup, Foundational e Polish não têm rótulo de história; US1 a US5 têm. O T003, o T033, o T052, o T057, o T070, o T071, o T073, o T074, o T075, o T076, o T077, o T084, o T085, o T098, o T099, o T100, o T101 e o T102 são tarefas operacionais (n8n, teste com NF real, deploy, validação em UAT, pesquisa) e citam os artefatos onde o resultado é registrado.
 
-Total: **86 tarefas**:
+Total: **102 tarefas**:
 
 | Fase | Tarefas |
 |---|---|
@@ -460,3 +491,4 @@ Total: **86 tarefas**:
 | Polish | 6 |
 | Ajustes pós-estreia (22/10/2026) | 17 |
 | Fila e peso conferido (23/10/2026) | 9 |
+| Fiscal revertido (25/10/2026) | 16 |

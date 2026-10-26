@@ -247,8 +247,16 @@ export function parseRecebimentoNfeConsultado(raw: RawRecebimento): RecebimentoN
  * Para furar o cache de ~1 min do OMIE, a reconsulta apos uma escrita deve usar
  * a OUTRA forma de referencia (se a primeira foi por cChaveNfe, reconsultar por
  * nIdReceb) — ver research D2 da feature 016.
+ *
+ * `opts.retries` (default 2): a leitura que so confere a reversao do fiscal no clique
+ * (feature 017, research D21) passa 0 — ela e dispensavel (falhou, o clique segue) e
+ * com retry a trava de consumo redundante seguraria o request por ate ~2 min.
  */
-export async function consultarRecebimentoNfe(cnpj: OmieCnpj, ref: RecebimentoNfeRef): Promise<RecebimentoNfeConsultado> {
+export async function consultarRecebimentoNfe(
+  cnpj: OmieCnpj,
+  ref: RecebimentoNfeRef,
+  opts?: { retries?: number },
+): Promise<RecebimentoNfeConsultado> {
   const modo = getOmieMode();
   if (modo === 'mock') {
     return mockConsultarRecebimentoNfe(cnpj, ref);
@@ -261,7 +269,7 @@ export async function consultarRecebimentoNfe(cnpj: OmieCnpj, ref: RecebimentoNf
   const raw = await callOmie<RawRecebimento>(
     cnpj,
     { endpoint: 'produtos/recebimentonfe/', method: 'ConsultarRecebimento', params },
-    { retries: 2 },
+    { retries: opts?.retries ?? 2 },
   );
   const rec = parseRecebimentoNfeConsultado(raw);
   if (modo === 'leitura') lembrarLeituraRecebimentoNfe(cnpj, rec);

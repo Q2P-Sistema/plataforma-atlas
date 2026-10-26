@@ -338,7 +338,11 @@ rodada (research D14 a D17) e **não estão na v1.1.20**.
   PC em kg baixa o PC com a quantidade na unidade da NF (8,25 em vez de 8.250 kg). A mitigação é
   operacional: conferir o `nQtdeRec` do PC depois da conclusão e, se estiver na unidade errada,
   corrigir pelo portal, como na NF 60199 (reverter o recebimento, editar a quantidade recebida de
-  cada item para o valor na unidade do PC e concluir de novo).
+  cada item para o valor na unidade do PC e concluir de novo). Com a D21 da 017 no ar (seção
+  "Fiscal revertido no OMIE", no fim), o Atlas enxerga essa reversão: entre a reversão e a nova
+  conclusão a NF aparece como fiscal pendente, com o selo "Fiscal revertido no OMIE", e o operador
+  não deve dar entrada nessa janela (um clique faria o Atlas concluir o fiscal em paralelo à
+  correção). A conclusão posterior do fiscal no portal reclassifica a NF como "fiscal já feito".
 
 Ordem:
 
@@ -525,3 +529,104 @@ falhou). Uma NF cuja tentativa anterior mandou o peso conferido e não concluiu 
 **Peso muito acima da nota**: excedente acima de `STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT` (padrão 10%) da NF
 do item não vai ao PC (provável erro de digitação). O item segue pela NF e o log registra "acima do limite
 relativo".
+
+## Fiscal revertido no OMIE (ACXEGDP-437, research D21 da 017)
+
+Em 25/10/2026 o usuário reverteu no portal do OMIE o recebimento fiscal que o Atlas tinha concluído
+(NF 19252, Zaraplast × PC 308: concluída às 17:02, revertida às 17:13) e o Atlas seguiu mostrando a NF
+como "fiscal já feito": o clique do operador teria feito só o físico, e a NF ficaria na etapa 40, sem
+conta a pagar e sem baixa no PC. A D21 da 017 faz o Atlas perceber a reversão. A NF volta à fila como
+"fiscal pendente", com o selo "Fiscal revertido no OMIE", e o clique conclui o fiscal de novo, com o PC
+confirmado. Se a entrada física já foi lançada, a NF não volta à fila e o fiscal recebe um e-mail para
+concluir de novo no portal. **O Atlas nunca reverte nada no OMIE.** Desenho e decisões em
+`specs/017-recebimento-nacional-com-pc/research.md` (D21 da 017); passo a passo de teste no quickstart,
+cenário 12.
+
+Vale só com `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED=true` (sem o fiscal pelo Atlas não há como refazê-lo)
+e com a migration 0060 aplicada. A chave nova, `STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED`, vem **ligada** por
+padrão (corrige um estado errado da fila) e é o kill switch.
+
+**Ordem** (não inverter os passos 1 e 3)
+
+1. **Migration 0060** em PROD, **antes** da imagem, com o dono dos objetos (`postgres`):
+
+   ```bash
+   export PROD_USER=<usuario-prod>
+   PGOPTIONS='-c lock_timeout=5s' psql -h db.manager01.q2p.com.br -p 5432 -U "$PROD_USER" -d acxe_q2p \
+     -1 -q -v ON_ERROR_STOP=1 -f packages/db/migrations/0060_stockbridge_fiscal_revertido.sql
+   echo "exit=$?"
+   ```
+
+   - Esperado: `exit=0` e nenhuma linha `ERROR`. `NOTICE ... does not exist, skipping` (os
+     `DROP CONSTRAINT IF EXISTS` da 1ª execução) é normal. Reaplicar é seguro.
+   - O que muda: cinco colunas nulas em `stockbridge.recebimento_fiscal` (`revertido_em`,
+     `revertido_origem`, `revertido_omie_em`, `revertido_por` e `aviso_fiscal_em`), os `CHECK`s de
+     status do ledger e de `recebimento_fiscal_pc` refeitos para aceitar `revertido`, um `CHECK` novo
+     entre `revertido` e `revertido_em`/`revertido_origem` e o índice `recebimento_fiscal_chave_idx`.
+     As duas tabelas são pequenas; o `DROP`/`ADD CONSTRAINT` vale um lock curto.
+   - **Sem a 0060** a imagem sobe e funciona como antes da D21 da 017: o código confere a coluna
+     `revertido_em` no `information_schema` e, ausente, desliga o tratamento inteiro, com `ERROR` no log
+     ("Coluna stockbridge.recebimento_fiscal.revertido_em ausente (migration 0060)"), repetindo a
+     conferência a cada 5 min. Aplicada a migration com a API no ar, o tratamento liga sozinho em até
+     5 min, sem redeploy. Mesmo assim, aplicar antes da imagem.
+   - **UAT**: o mesmo arquivo, com `psql -1 -f` no banco do UAT (`-p 5437 -U postgres`; não pelo
+     `apply-migrations-uat.sh`), antes da imagem `:uat`.
+   - Conferência (somente leitura):
+
+     ```sql
+     SELECT (SELECT count(*) FROM information_schema.columns
+              WHERE table_schema = 'stockbridge' AND table_name = 'recebimento_fiscal'
+                AND column_name IN ('revertido_em', 'revertido_origem', 'revertido_omie_em',
+                                    'revertido_por', 'aviso_fiscal_em')) AS colunas_ledger,   -- 5
+            (SELECT pg_get_constraintdef(oid) LIKE '%revertido%' FROM pg_constraint
+              WHERE conname = 'recebimento_fiscal_status_check') AS status_ledger,            -- true
+            (SELECT pg_get_constraintdef(oid) LIKE '%revertido%' FROM pg_constraint
+              WHERE conname = 'recebimento_fiscal_pc_status_check') AS status_pc,             -- true
+            to_regclass('stockbridge.recebimento_fiscal_chave_idx') AS idx_chave;             -- não nulo
+     ```
+
+2. **Variáveis** no Portainer: `STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED` já está no `atlas.stack.yml`
+   (default `true`); **deixar o default**. `STOCKBRIDGE_FISCAL_EMAILS` já existe (a lista dos avisos de
+   dispensa; default NFe ACXE + Mauricio Yared + Gustavo Dreer) e passa a receber também o e-mail
+   "Recebimento fiscal desfeito no OMIE": conferir os destinatários antes da imagem. No UAT a chave
+   também está no YAML (`uat-atlas - web e api.yaml`); conferir lá `STOCKBRIDGE_FISCAL_EMAILS` e
+   `EMAIL_DESVIO_PARA`.
+3. **Imagem nova** (nova `ATLAS_VERSION`), com a chave da 016 já `true`.
+4. **Conferir**:
+   - a NF 19252, se ainda não foi recebida fisicamente, aparece na fila como "Fiscal pendente" com o
+     selo "Fiscal revertido no OMIE" (a fila lê o sinal direto, sem esperar o cron), e o detalhe traz o
+     aviso com a hora da reversão e o PC 308 pré-selecionado como vínculo do OMIE;
+   - o ledger, depois da primeira rodada do cron `5,35` (até 30 min) ou do clique:
+
+     ```sql
+     SELECT nota_fiscal, status, revertido_origem, revertido_em, revertido_omie_em, aviso_fiscal_em
+       FROM stockbridge.recebimento_fiscal WHERE status = 'revertido' ORDER BY revertido_em DESC LIMIT 20;
+     ```
+
+     Só devem aparecer NFs realmente revertidas (zero falso positivo: em 25/10/2026 o sinal marcava 1 de
+     4.289 recebimentos da Q2P e 0 de 346 da ACXE);
+   - o log do cron, `Varredura de recebimento fiscal revertido no OMIE`, com `marcados`, `avisados` e
+     `falhas` (só sai linha quando algum é maior que zero), e nenhum erro "Coluna ... revertido_em
+     ausente".
+5. **Primeiro uso acompanhado** (T100, com autorização do usuário): refazer o fiscal da NF 19252 pelo
+   Atlas escreve no OMIE de PROD. Clicar em "Concluir fiscal e dar entrada" e conferir ao vivo
+   (workflow de leitura `4OnbxvfALn9OoXLH`): recebimento na etapa 60 com `cRecebido = S`, os itens ainda
+   com "não movimentar estoque" e as quantidades em kg, `nQtdeRec` do PC 308 em 13.750, um só título e
+   nenhum movimento de estoque pelo OMIE; no ledger, o `revertido` antigo e um `concluido` novo.
+   Registrar na research (D21 da 017) e na ACXEGDP-437.
+
+**Desligar**: `STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED=false` e "Update the stack" (a chave é lida na subida
+do processo: é um redeploy rápido, sem trocar a imagem nem mexer em migration). A fila, o detalhe e o
+POST voltam ao comportamento de antes: o ledger `concluido` é final e a NF revertida segue como "fiscal
+já feito". As linhas `revertido` já gravadas ficam como histórico, sem efeito.
+`STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED=false` também desliga o tratamento. A 0060 pode ficar (é aditiva) e
+convive com a imagem anterior, que nunca grava `revertido`.
+
+**Comunicar ao fiscal**: reverter no portal um recebimento que o Atlas concluiu faz a NF reaparecer no
+StockBridge como "Fiscal revertido no OMIE". Quem reverte para corrigir a nota (reverter, editar,
+concluir) deve concluir logo e **conferir, em cada item, "Não gerar movimento de estoque"** (o estoque
+entra pela aprovação no Atlas; sem isso entraria em dobro e o Atlas bloquearia a entrada física) e o
+vínculo com o pedido de compra. Se a entrada física da NF já foi lançada no Atlas, o fiscal recebe o
+e-mail "Recebimento fiscal desfeito no OMIE" e refaz o recebimento no portal: o Atlas não refaz só o
+fiscal de NF já recebida fisicamente. **Comunicar à operação**: a tela avisa "Se a reversão foi feita
+para corrigir a nota no OMIE, fale com o fiscal antes"; não dar entrada nessa janela.

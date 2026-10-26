@@ -31,7 +31,7 @@ Cada item ganha a situação fiscal. A fonte "fiscal pendente" só entra com a f
 } ], "error": null }
 ```
 
-Invariantes: (1) uma chave aparece uma única vez; (2) chave com dispensa ativa não aparece; (3) `fiscal: "concluido"` sempre que a NF existe no espelho de NF **ou** há ledger `concluido`/`ja_concluido` — e a NF concluída pelo Atlas continua na fila (fonte do espelho de recebimentos) até o espelho de NF trazê-la, sem sumir na janela entre os dois syncs (revisão pré-UAT); (4) ordenação por emissão, desempate pelo número — igual à 015; (5) "fiscal pendente" = `c_recebido = 'N'`, `c_cancelada = 'N'` e `c_etapa = '40'` explícitos no espelho; (6) `fiscalConcluidoPeloAtlasEm` só para ledger `concluido` (`ja_concluido` = feito no portal).
+Invariantes: (1) uma chave aparece uma única vez; (2) chave com dispensa ativa não aparece; (3) `fiscal: "concluido"` sempre que a NF existe no espelho de NF **ou** há ledger `concluido`/`ja_concluido` — e a NF concluída pelo Atlas continua na fila (fonte do espelho de recebimentos) até o espelho de NF trazê-la, sem sumir na janela entre os dois syncs (revisão pré-UAT); *exceção desde a D21 da 017: a NF cujo fiscal foi revertido no portal volta como `fiscal: "pendente"` (ver `specs/017-recebimento-nacional-com-pc/contracts/recebimento-nacional-pc.md`)*; (4) ordenação por emissão, desempate pelo número — igual à 015; (5) "fiscal pendente" = `c_recebido = 'N'`, `c_cancelada = 'N'` e `c_etapa = '40'` explícitos no espelho; (6) `fiscalConcluidoPeloAtlasEm` só para ledger `concluido` (`ja_concluido` = feito no portal).
 
 `meta.recebimentoFiscalHabilitado` acompanha a lista (a UI só mostra o selo com a flag ligada). Tabela da 0053 ausente com a flag ligada (migration pendente) → `503 FILA_NACIONAL_NAO_CONFIGURADA`, nunca lista vazia.
 
@@ -124,9 +124,9 @@ Qualquer NF da fila (fiscal pendente **ou** já feito) com ao menos um item pend
 
 ## 7. `GET /api/v1/stockbridge/recebimento/nacional/fiscal` — nova (rastreabilidade)
 
-**Role**: `requireGestor`; `403 RECEBIMENTO_FISCAL_DESABILITADO` com a flag desligada. **Query**: `{ status?: 'concluido'|'ja_concluido'|'falha'|'em_andamento', limit?: 1..200 }`.
+**Role**: `requireGestor`; `403 RECEBIMENTO_FISCAL_DESABILITADO` com a flag desligada. **Query**: `{ status?: 'concluido'|'ja_concluido'|'falha'|'em_andamento'|'revertido', limit?: 1..200 }` (`revertido` desde a D21 da 017).
 
-**200**: lista do ledger (`notaFiscal`, `fornecedorNome`, `status`, `passoFalha`, `confirmadoPor {id, nome}`, `iniciadoEm`, `finalizadoEm`). `erro_omie_*` **não** sai desta rota (fica no banco e no log — ACXEGDP-313).
+**200**: lista do ledger (`notaFiscal`, `fornecedorNome`, `status`, `passoFalha`, `confirmadoPor {id, nome}`, `iniciadoEm`, `finalizadoEm`, e, desde a D21 da 017, `revertidoEm`, `revertidoOrigem` e `revertidoOmieEm`). `erro_omie_*` **não** sai desta rota (fica no banco e no log — ACXEGDP-313).
 
 ---
 
