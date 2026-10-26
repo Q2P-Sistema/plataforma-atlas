@@ -535,12 +535,14 @@ describe('cron :05/:35 — registra o cache de PCs vistos (junto dos alertas de 
     const registrarSpy = vi.fn().mockResolvedValue(0);
     const espelhoSpy = vi.fn().mockResolvedValue(undefined);
     const copiaSpy = vi.fn().mockResolvedValue(undefined);
+    const fiscalRevertidoSpy = vi.fn().mockResolvedValue({ marcados: 0, avisados: 0, falhas: 0 });
     vi.doMock('node-cron', () => ({ default: { schedule: (expr: string, fn: () => void, opts: unknown) => jobs.push({ expr, fn, opts }) } }));
     vi.doMock('../services/cron-comodato.service.js', () => ({ processarAlertasComodatoVencido: vi.fn() }));
     vi.doMock('../services/baixa-pedido.service.js', () => ({ reprocessarBaixasAguardandoVinculo: vi.fn() }));
     vi.doMock('../services/alerta-espelho-recebimentos.service.js', () => ({ verificarEspelhoRecebimentos: espelhoSpy, verificarCopiaPcs: copiaSpy }));
     vi.doMock('../services/pc-visto.service.js', () => ({ registrarPcsVistos: registrarSpy }));
     vi.doMock('../services/pc-peso-conferido.service.js', () => ({ varrerExcedentesRejeitadosSemAviso: vi.fn().mockResolvedValue(0) }));
+    vi.doMock('../services/fiscal-revertido-varredura.service.js', () => ({ varrerFiscaisRevertidos: fiscalRevertidoSpy }));
     const { iniciarCronsStockBridge } = await import('../cron/index.js');
     iniciarCronsStockBridge();
 
@@ -552,6 +554,8 @@ describe('cron :05/:35 — registra o cache de PCs vistos (junto dos alertas de 
     expect(copiaSpy).toHaveBeenCalledTimes(1);
     expect(registrarSpy).toHaveBeenCalledTimes(1);
     expect(registrarSpy).toHaveBeenCalledWith('q2p');
+    // D21: a varredura do recebimento fiscal revertido roda neste mesmo job (uma vez por rodada)
+    expect(fiscalRevertidoSpy).toHaveBeenCalledTimes(1);
     // os outros dois jobs seguem registrados (comodato 08:00 e baixa de pedido :20)
     expect(jobs.map((j) => j.expr)).toEqual(['0 8 * * *', '20 * * * *', '5,35 * * * *']);
 
@@ -561,6 +565,7 @@ describe('cron :05/:35 — registra o cache de PCs vistos (junto dos alertas de 
     vi.doUnmock('../services/alerta-espelho-recebimentos.service.js');
     vi.doUnmock('../services/pc-visto.service.js');
     vi.doUnmock('../services/pc-peso-conferido.service.js');
+    vi.doUnmock('../services/fiscal-revertido-varredura.service.js');
     vi.resetModules();
   });
 
@@ -577,6 +582,7 @@ describe('cron :05/:35 — registra o cache de PCs vistos (junto dos alertas de 
     }));
     vi.doMock('../services/pc-visto.service.js', () => ({ registrarPcsVistos: registrarSpy }));
     vi.doMock('../services/pc-peso-conferido.service.js', () => ({ varrerExcedentesRejeitadosSemAviso: vi.fn().mockResolvedValue(0) }));
+    vi.doMock('../services/fiscal-revertido-varredura.service.js', () => ({ varrerFiscaisRevertidos: vi.fn().mockResolvedValue({ marcados: 0, avisados: 0, falhas: 0 }) }));
     const { iniciarCronsStockBridge } = await import('../cron/index.js');
     iniciarCronsStockBridge();
 
@@ -590,6 +596,7 @@ describe('cron :05/:35 — registra o cache de PCs vistos (junto dos alertas de 
     vi.doUnmock('../services/alerta-espelho-recebimentos.service.js');
     vi.doUnmock('../services/pc-visto.service.js');
     vi.doUnmock('../services/pc-peso-conferido.service.js');
+    vi.doUnmock('../services/fiscal-revertido-varredura.service.js');
     vi.resetModules();
   });
 });

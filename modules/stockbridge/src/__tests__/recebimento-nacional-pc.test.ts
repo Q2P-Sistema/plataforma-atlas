@@ -22,6 +22,10 @@ const spies = vi.hoisted(() => ({
   fiscal: vi.fn(),
   aviso: vi.fn(),
   consultarRecebimento: vi.fn(),
+  // D21 da 017 (fiscal revertido no portal) — a matriz inteira esta em recebimento-nacional-revertido.test.ts
+  d21Habilitado: vi.fn(),
+  ledgerVigente: vi.fn(),
+  marcar: vi.fn(),
 }));
 
 vi.mock('@atlas/core', () => ({
@@ -80,6 +84,17 @@ vi.mock('../services/fila-nacional.service.js', async () => {
 vi.mock('../services/recebimento-fiscal.service.js', async () => {
   const real = await vi.importActual<typeof import('../services/recebimento-fiscal.service.js')>('../services/recebimento-fiscal.service.js');
   return { ...real, concluirRecebimentoFiscal: (i: unknown) => spies.fiscal(i) };
+});
+
+// D21: desligada por default (o clique de "fiscal ja feito" segue so a D7); ligada em teste proprio, abaixo.
+vi.mock('../services/fiscal-revertido.js', async () => {
+  const real = await vi.importActual<typeof import('../services/fiscal-revertido.js')>('../services/fiscal-revertido.js');
+  return {
+    ...real,
+    fiscalRevertidoHabilitado: (...a: unknown[]) => spies.d21Habilitado(...a),
+    ledgerFiscalVigente: (...a: unknown[]) => spies.ledgerVigente(...a),
+    marcarLedgerRevertido: (...a: unknown[]) => spies.marcar(...a),
+  };
 });
 
 import {
@@ -211,6 +226,9 @@ beforeEach(() => {
   spies.aviso.mockReset();
   spies.aviso.mockResolvedValue('enviado');
   spies.consultarRecebimento.mockReset();
+  spies.d21Habilitado.mockReset().mockResolvedValue(false);
+  spies.ledgerVigente.mockReset().mockResolvedValue(null);
+  spies.marcar.mockReset().mockResolvedValue([]);
 });
 
 describe('NF sem PC possivel (D6, FR-019/FR-020)', () => {
@@ -441,11 +459,39 @@ describe('estoque ja lancado pelo OMIE (D7, FR-021a)', () => {
     expect(movOuAprovacao()).toHaveLength(0);
   });
 
-  it('conclusao confirmada pelo espelho (c_recebido S) ou pelo ledger: nenhuma leitura ao vivo (Principio II)', async () => {
+  it('conclusao confirmada pelo espelho (c_recebido S), sem fiscal concluido pelo Atlas no ledger: nenhuma leitura ao vivo (Principio II)', async () => {
     det = detalhe({ fiscal: 'concluido' });
     usarPc(null);
+    spies.d21Habilitado.mockResolvedValue(true); // D21 ligada, mas sem ledger vigente (spies.ledgerVigente → null)
     await processarRecebimentoNacionalPorNf(post());
+    expect(spies.ledgerVigente).toHaveBeenCalledWith(CHAVE);
     expect(spies.consultarRecebimento).not.toHaveBeenCalled();
+  });
+
+  it('conclusao confirmada pelo ledger do Atlas com a D21 DESLIGADA (chave da 016, kill switch ou migration 0060): nenhuma leitura ao vivo, como na 017', async () => {
+    det = detalhe({ fiscal: 'concluido' });
+    usarPc(null);
+    spies.d21Habilitado.mockResolvedValue(false);
+    spies.ledgerVigente.mockResolvedValue({ id: 'l-1', status: 'concluido', empresa: 'q2p', nIdReceb: 8517930857, notaFiscal: '7813', fornecedorNome: FORNECEDOR, finalizadoEm: new Date(Date.now() - 3600_000).toISOString() });
+    await processarRecebimentoNacionalPorNf(post());
+    expect(spies.ledgerVigente).not.toHaveBeenCalled();
+    expect(spies.consultarRecebimento).not.toHaveBeenCalled();
+  });
+
+  // D21 (ACXEGDP-437): antes, o ledger concluido bastava para NAO ler (o teste dizia "ou pelo ledger"). Agora, com a D21 ligada, o
+  // fiscal que o Atlas concluiu ha 75 s ou mais e conferido numa leitura ao vivo — o recebimento pode ter sido desfeito no portal.
+  it('fiscal concluido pelo Atlas (ledger) com a D21 LIGADA: UMA leitura ao vivo por nIdReceb; OMIE ainda concluido sem estoque -> segue', async () => {
+    det = detalhe({ fiscal: 'concluido' });
+    usarPc(null);
+    spies.d21Habilitado.mockResolvedValue(true);
+    spies.ledgerVigente.mockResolvedValue({ id: 'l-1', status: 'concluido', empresa: 'q2p', nIdReceb: 8517930857, notaFiscal: '7813', fornecedorNome: FORNECEDOR, finalizadoEm: new Date(Date.now() - 3600_000).toISOString() });
+    spies.consultarRecebimento.mockResolvedValue({ cRecebido: 'S', cCancelada: 'N', itens: [{ nSequencia: 1, cIgnorarItem: 'N', cNaoGerarMovEstoque: 'S' }] });
+    await processarRecebimentoNacionalPorNf(post());
+    expect(spies.consultarRecebimento).toHaveBeenCalledTimes(1);
+    // o ledger confirma a conclusao (a D7 nao exige a leitura): so a conferencia da reversao, sem retry
+    expect(spies.consultarRecebimento).toHaveBeenCalledWith('q2p', { nIdReceb: 8517930857 }, { retries: 0 });
+    expect(spies.marcar).not.toHaveBeenCalled();
+    expect(movOuAprovacao().length).toBeGreaterThan(0);
   });
 });
 

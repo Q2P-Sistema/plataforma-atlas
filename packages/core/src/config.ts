@@ -84,11 +84,25 @@ const envSchema = z.object({
     .enum(['true', 'false', '1', '0', ''])
     .default('false')
     .transform((v) => v === 'true' || v === '1'),
+  // Feature 017 (25/10/2026, NF 19252, research D21): recebimento fiscal REVERTIDO no
+  // portal do OMIE depois de concluido. Ligada (e com a chave acima ligada e a migration
+  // 0060), o Atlas percebe a reversao pelo espelho de recebimentos e por uma leitura ao
+  // vivo no clique do recebimento de NF que ele concluiu: a NF volta a fila como fiscal
+  // pendente e o fiscal e concluido de novo; com a entrada fisica ja lancada, o cron 5,35
+  // avisa o fiscal por e-mail. Default LIGADA (corrige um estado errado da fila); 'false'
+  // e o kill switch sem redeploy: volta ao comportamento de antes (concluido e final).
+  STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED: z
+    .enum(['true', 'false', '1', '0', ''])
+    .default('true')
+    .transform((v) => v !== 'false' && v !== '0'),
   // Feature 016 (FR-026): destinatarios do e-mail "NF dispensada da fila" ao
   // fiscal, com a pendencia que fica no OMIE (etapa 40 aguardando manifestacao
-  // ou cancelamento; conta a pagar a estornar ou manter). Lista separada por
-  // virgula; cada endereco e validado. Vazia/ausente = lista padrao abaixo (o
-  // parse trata string vazia como ausente — linha `${VAR:-}` da stack cai aqui).
+  // ou cancelamento; conta a pagar a estornar ou manter). Feature 017 (research
+  // D21): tambem do aviso "Recebimento fiscal desfeito no OMIE" (cron 5,35), quando
+  // a entrada fisica ja foi lancada e o fiscal precisa concluir de novo no portal.
+  // Lista separada por virgula; cada endereco e validado. Vazia/ausente = lista
+  // padrao abaixo (o parse trata string vazia como ausente — linha `${VAR:-}` da
+  // stack cai aqui).
   // Feature 016 (revisao pre-UAT): idade maxima (min) do espelho de recebimentos de
   // NF-e antes de o health marcar degraded e o cron alertar STOCKBRIDGE_OPS_EMAIL.
   // PROD: 120 (n8n a cada 30 min). UAT: maior — o espelho chega pela copia PROD->UAT.

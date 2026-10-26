@@ -111,6 +111,7 @@ import {
   PcVinculoInvalidoError,
 } from '../services/pc-sugestao.service.js';
 import { VinculoOmieMudouError } from '../services/recebimento-fiscal.service.js';
+import { RecebimentoFiscalRevertidoError } from '../services/fiscal-revertido.js';
 import { ItemJaRecebidoError, NenhumItemPendenteError, MotivoObrigatorioError, ItemNaoCorrespondeError } from '../services/recebimento-externo.service.js';
 
 const CHAVE = '35260868176072000128550010000667241693158505';
@@ -313,6 +314,7 @@ describe('POST /recebimento/nacional/por-nf', () => {
     [new CopiaPcsDefasadaError(), 503, 'COPIA_PCS_DEFASADA'],
     [new PcVinculoInvalidoError('7813', '304', 'não tem saldo disponível (saldo atual: 0 kg)'), 409, 'PC_VINCULO_INVALIDO'],
     [new VinculoOmieMudouError('7813', 'SUCATA PLASTICO'), 409, 'VINCULO_OMIE_MUDOU'],
+    [new RecebimentoFiscalRevertidoError('19252', 'ZARAPLAST S/A'), 409, 'RECEBIMENTO_FISCAL_REVERTIDO'],
     [new VerificacaoEstoqueOmieError('7813'), 502, 'VERIFICACAO_ESTOQUE_OMIE_FAIL'],
   ])('017: mapeia %s -> %i %s, com userMessage sem codigo OMIE', async (err, status, code) => {
     svc.processarRecebimentoNacionalPorNf.mockRejectedValue(err);
@@ -335,6 +337,32 @@ describe('POST /recebimento/nacional/por-nf', () => {
     svc.processarRecebimentoNacionalPorNf.mockRejectedValue(new PcVinculoInvalidoError('7813', '304', 'é de outro fornecedor'));
     const sem = await request(app).post('/api/v1/stockbridge/recebimento/nacional/por-nf').send(bodyValido());
     expect(sem.body.error.pc).toBeUndefined();
+  });
+
+  // D21 (fiscal revertido no portal): o ledger ja foi marcado e nada foi gravado — a tela recarrega a nota, que volta como fiscal pendente.
+  it('017/D21: RECEBIMENTO_FISCAL_REVERTIDO e 409 com a mensagem do servico, sem retryAfterSeconds (recarregar basta) e sem codigo OMIE', async () => {
+    svc.processarRecebimentoNacionalPorNf.mockRejectedValue(new RecebimentoFiscalRevertidoError('19252', 'ZARAPLAST S/A'));
+    const res = await request(app).post('/api/v1/stockbridge/recebimento/nacional/por-nf').send(bodyValido());
+    expect(res.status).toBe(409);
+    expect(res.body.data).toBeNull();
+    expect(res.body.error.code).toBe('RECEBIMENTO_FISCAL_REVERTIDO');
+    expect(res.body.error.userMessage).toBe(res.body.error.message);
+    expect(res.body.error.userMessage).toContain('NF 19252 (ZARAPLAST S/A)');
+    expect(res.body.error.userMessage).toContain('desfeito no OMIE');
+    expect(res.body.error.userMessage).not.toMatch(/\d{10}/);
+    expect(res.body.error).not.toHaveProperty('retryAfterSeconds');
+  });
+
+  it('017/D21: o mesmo 409 vale nas demais rotas que usam o mapeador da fila (detalhe e aviso a compras), nao so no POST', async () => {
+    svc.getDetalheNfNacional.mockRejectedValue(new RecebimentoFiscalRevertidoError('19252', null));
+    let res = await request(app).get(`/api/v1/stockbridge/recebimento/nacional/fila/${CHAVE}`);
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('RECEBIMENTO_FISCAL_REVERTIDO');
+    expect(res.body.error.userMessage).toContain('NF 19252 foi desfeito no OMIE'); // sem fornecedor: sem os parenteses
+    svc.avisarComprasNfSemPc.mockRejectedValue(new RecebimentoFiscalRevertidoError('19252', 'ZARAPLAST S/A'));
+    res = await request(app).post('/api/v1/stockbridge/recebimento/nacional/aviso-compras').send({ nf_chave_acesso: CHAVE });
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('RECEBIMENTO_FISCAL_REVERTIDO');
   });
 
   it('017: PC_RECEM_USADO_AGUARDE leva retryAfterSeconds para a contagem da tela', async () => {

@@ -63,11 +63,14 @@ interface Chamada {
 const chamadas: Chamada[] = [];
 let banco: Banco;
 
+// D21 (fiscal revertido no OMIE): o kill switch fica DESLIGADO — este arquivo trava o SQL do detalhe das duas empresas SEM a
+// D21 (o texto de antes, byte a byte, inclusive o golden da Q2P). Com a D21 ligada: fila-nacional-revertido.test.ts.
 function configurar(opts: { acxe?: boolean } = {}): void {
   for (const k of Object.keys(mocks.config)) delete mocks.config[k];
   mocks.config.STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE = CORTE_Q2P;
   mocks.config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
   mocks.config.STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED = opts.acxe ?? true;
+  mocks.config.STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED = false;
   mocks.config.STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_DATA_CORTE = CORTE_ACXE;
 }
 

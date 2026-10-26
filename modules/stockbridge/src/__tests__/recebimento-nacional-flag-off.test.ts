@@ -221,4 +221,29 @@ describe('flag desligada — regressao para o comportamento da 015 (FR-020, SC-0
     await expect(post()).rejects.toBeInstanceOf(EstoqueJaLancadoPeloOmieError);
     expect(inserts).toHaveLength(0);
   });
+
+  // ── Feature 017, research D21 (fiscal revertido no portal): sem a chave da 016 a D21 inteira esta desligada ──
+  // (o fiscal-revertido.ts e o REAL aqui: fiscalRevertidoHabilitado devolve false antes de tocar o banco)
+  it('D21: NF "fiscal ja feito" com o espelho confirmando: nenhuma consulta ao ledger do fiscal e nenhuma leitura ao vivo', async () => {
+    noEspelho = true;
+    detalheMock.mockResolvedValue({ ...detalhe(), fiscal: 'concluido' });
+    const r = await post();
+    expect(r.fiscal.status).toBe('desligado');
+    expect(omie.consultarRecebimentoNfe).not.toHaveBeenCalled();
+    expect(poolQuerySpy.mock.calls.some((c) => String(c[0]).includes('stockbridge.recebimento_fiscal'))).toBe(false);
+    expect(poolQuerySpy.mock.calls.some((c) => String(c[0]).includes('information_schema'))).toBe(false);
+    expect(inserts.filter((i) => i.table === 'movimentacao')).toHaveLength(1);
+  });
+
+  it('D21: a leitura ao vivo da D7 devolvendo recebimento NAO concluido (cRecebido N) nao e reversao — nada marcado, o fisico segue como na 017', async () => {
+    noEspelho = false;
+    detalheMock.mockResolvedValue({ ...detalhe(), fiscal: 'concluido' });
+    omie.consultarRecebimentoNfe.mockResolvedValue({ cRecebido: 'N', cCancelada: 'N', itens: [{ nSequencia: 1, cIgnorarItem: 'N', cNaoGerarMovEstoque: 'N' }] });
+    const r = await post();
+    expect(omie.consultarRecebimentoNfe).toHaveBeenCalledTimes(1);
+    expect(omie.consultarRecebimentoNfe).toHaveBeenCalledWith('q2p', { cChaveNfe: CHAVE });
+    expect(poolQuerySpy.mock.calls.some((c) => String(c[0]).includes('stockbridge.recebimento_fiscal'))).toBe(false);
+    expect(r.fiscal.status).toBe('desligado');
+    expect(inserts.filter((i) => i.table === 'movimentacao')).toHaveLength(1);
+  });
 });

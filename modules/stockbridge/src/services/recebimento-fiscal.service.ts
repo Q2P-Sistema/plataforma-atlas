@@ -9,6 +9,13 @@ import {
 } from '@atlas/integration-omie';
 import { EstoqueJaLancadoPeloOmieError, FORNECEDOR_NAO_IDENTIFICADO } from './fila-nacional.service.js';
 import {
+  colunaRevertidoExiste,
+  fiscalRevertidoHabilitado,
+  marcarLedgerRevertido,
+  nfComFiscalRevertido,
+  type OrigemReversao,
+} from './fiscal-revertido.js';
+import {
   relerEReservarPcs,
   anteriorDaSequencia,
   colunaKgRecebidoPcExiste,
@@ -74,9 +81,16 @@ const logger = createLogger('stockbridge:recebimento-fiscal');
  * movimento de estoque -> EstoqueJaLancadoPeloOmieError (D7), tambem na reconsulta.
  * Cada vinculo vira linha em stockbridge.recebimento_fiscal_pc:
  * confirmado (reserva) -> associado -> concluido | falha.
+ *
+ * Feature 017, research D21 — fiscal REVERTIDO no portal do OMIE. `concluido`/`ja_concluido` deixaram de
+ * ser finais: quando o recebimento e desfeito no OMIE depois de concluido (NF 19252, 25/10/2026), a linha
+ * vira `revertido` (fiscal-revertido.ts: sinal, marcacao e vinculos de PC na mesma transacao) e a trava da
+ * NF e liberada — o indice parcial lista so os status vivos. `adquirirLedger` percebe pelo espelho; o
+ * clique do recebimento (recebimento-nacional.service.ts) percebe pela leitura ao vivo; a varredura do
+ * cron cobre o resto. A NF volta a fila como fiscal pendente e o proximo clique conclui o fiscal de novo.
  */
 
-export type StatusFiscalLedger = 'em_andamento' | 'concluido' | 'ja_concluido' | 'falha';
+export type StatusFiscalLedger = 'em_andamento' | 'concluido' | 'ja_concluido' | 'falha' | 'revertido';
 export type PassoFiscal = 'consultar' | 'consultar_pc' | 'associar' | 'editar' | 'ignorar' | 'concluir' | 'reconsultar';
 
 /**
@@ -242,6 +256,8 @@ interface LinhaViva {
   status: StatusFiscalLedger;
   iniciado_em: string;
   finalizado_em: string | null;
+  /** empresa do ledger (0056) — o sinal de reversao le o espelho dela (D21) */
+  empresa?: string | null;
 }
 
 function violacaoLedgerViva(err: unknown): boolean {
@@ -254,10 +270,39 @@ function violacaoLedgerViva(err: unknown): boolean {
   return false;
 }
 
+/** D21: quantas vezes uma aquisicao marca a conclusao como revertida antes de desistir (dado oscilando entre as leituras). */
+const MAX_REVERSOES_POR_AQUISICAO = 2;
+
+/**
+ * D21: a conclusao `concluido`/`ja_concluido` que segura a trava da NF foi DESFEITA no portal do OMIE? O sinal
+ * (fiscal-revertido.ts) compara a hora da conclusao com a do espelho de recebimentos mostrando o recebimento
+ * pendente. Com sinal, marca o ledger como `revertido` — e os vinculos de PC da tentativa, na mesma transacao —
+ * e devolve true: o indice parcial so lista os status vivos, entao o INSERT da recursao passa. Quem perde a
+ * corrida (a varredura do cron, outro clique) marca 0 linhas e recursa do mesmo jeito. false = nao ha o que
+ * reabrir (D21 desligada, migration 0060 ausente, ou sem sinal): o clique repetido logo depois de concluir
+ * continua devolvendo `jaConcluido`, sem OMIE.
+ */
+async function reabrirSeRevertidoPeloEspelho(input: ConcluirRecebimentoFiscalInput, linha: LinhaViva, tentativa: number): Promise<boolean> {
+  if (!(await fiscalRevertidoHabilitado())) return false;
+  const empresa: EmpresaPc = linha.empresa === 'acxe' || linha.empresa === 'q2p' ? linha.empresa : (input.empresa ?? 'q2p');
+  if (!(await nfComFiscalRevertido(input.nfChaveAcesso, empresa))) return false;
+  // Sinal que nao se resolve com a marcacao (conclusao e reversao alternando entre as leituras): nunca devolve
+  // jaConcluido aqui — o clique faria so o fisico, o bug original. Pede para recarregar.
+  if (tentativa >= MAX_REVERSOES_POR_AQUISICAO) throw new RecebimentoFiscalEmAndamentoError(input.notaFiscal);
+  const marcadas = await marcarLedgerRevertido({ nfChaveAcesso: input.nfChaveAcesso, empresa, origem: 'espelho', ledgerId: linha.id });
+  logger.info(
+    { ledgerId: linha.id, nf: input.notaFiscal, marcadas: marcadas.length },
+    'Fiscal concluído pelo Atlas aparece revertido no OMIE (espelho) — trava liberada para concluir de novo',
+  );
+  return true;
+}
+
 /**
  * Adquire o lock: INSERT `em_andamento`. Antes, a espera apos uma falha com
  * escrita (cache do OMIE). Se ja existe linha viva para a chave:
- *  - `concluido`/`ja_concluido` -> devolve `jaConcluido` (nenhuma chamada OMIE);
+ *  - `concluido`/`ja_concluido` -> devolve `jaConcluido` (nenhuma chamada OMIE) — exceto se o espelho
+ *                                  mostra o recebimento DESFEITO no portal depois da conclusao (D21):
+ *                                  a linha vira `revertido` e a aquisicao recomeca;
  *  - `em_andamento` recente     -> RecebimentoFiscalEmAndamentoError (duplo clique);
  *  - `em_andamento` orfa        -> retoma a linha (UPDATE atomico, novo token).
  */
@@ -298,7 +343,7 @@ async function adquirirLedger(
   }
 
   const viva = await pool.query<LinhaViva>(
-    `SELECT id, status, iniciado_em::text AS iniciado_em, finalizado_em::text AS finalizado_em
+    `SELECT id, status, iniciado_em::text AS iniciado_em, finalizado_em::text AS finalizado_em, empresa
        FROM stockbridge.recebimento_fiscal
       WHERE nf_chave_acesso = $1 AND status IN ('em_andamento', 'concluido', 'ja_concluido')
       LIMIT 1`,
@@ -312,6 +357,8 @@ async function adquirirLedger(
     return adquirirLedger(input, tentativa + 1);
   }
   if (linha.status === 'concluido' || linha.status === 'ja_concluido') {
+    // D21: fiscal desfeito no portal depois de concluido -> marca 'revertido' e recomeca (a trava e liberada)
+    if (await reabrirSeRevertidoPeloEspelho(input, linha, tentativa)) return adquirirLedger(input, tentativa + 1);
     return {
       ledger: { id: linha.id, token: linha.iniciado_em },
       jaConcluido: { concluidoEm: linha.finalizado_em ? new Date(linha.finalizado_em).toISOString() : new Date().toISOString() },
@@ -333,7 +380,8 @@ async function adquirirLedger(
 }
 
 interface FecharLedgerArgs {
-  status: Exclude<StatusFiscalLedger, 'em_andamento'>;
+  // 'revertido' nasce so em marcarLedgerRevertido (fiscal-revertido.ts), de uma linha ja concluida
+  status: Exclude<StatusFiscalLedger, 'em_andamento' | 'revertido'>;
   nIdReceb?: number | null;
   etapaAntes?: string | null;
   recebidoAntes?: string | null;
@@ -1018,7 +1066,8 @@ export interface LedgerFiscalVinculo {
   pcNumero: string;
   origem: OrigemVinculoPc;
   justificativa: string | null;
-  status: 'confirmado' | 'associado' | 'concluido' | 'falha';
+  /** 'revertido' (0060, D21): a tentativa foi desfeita no portal do OMIE depois de concluida */
+  status: 'confirmado' | 'associado' | 'concluido' | 'falha' | 'revertido';
   confirmadoPor: { id: string; nome: string | null };
   confirmadoEm: string;
 }
@@ -1037,11 +1086,29 @@ export interface LedgerFiscalItem {
   /** feature 017 */
   empresa: EmpresaPc;
   vinculos: LedgerFiscalVinculo[];
+  /**
+   * D21 (0060): quando o Atlas percebeu que o recebimento concluido foi desfeito no OMIE, como ('espelho' ou
+   * 'omie_ao_vivo') e a hora da alteracao la, quando o espelho a traz. null fora do status 'revertido' (ou sem a 0060).
+   */
+  revertidoEm: string | null;
+  revertidoOrigem: OrigemReversao | null;
+  revertidoOmieEm: string | null;
+}
+
+/** ISO de um timestamptz lido como texto; null para ausente ou invalido. */
+function isoOuNull(v: string | null | undefined): string | null {
+  if (!v) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
 /** Lista o ledger para o gestor — SEM erro_omie_* (fica no banco e no log; ACXEGDP-313). */
 export async function listarLedgerFiscal(params: { status?: StatusFiscalLedger | null; limit?: number } = {}): Promise<LedgerFiscalItem[]> {
   const pool = getPool();
+  // D21: as colunas da 0060 so existem depois da migration — antes dela a listagem segue sem elas, nunca 42703.
+  const colunasRevertido = (await colunaRevertidoExiste())
+    ? 'rf.revertido_em::text AS revertido_em, rf.revertido_origem, rf.revertido_omie_em::text AS revertido_omie_em'
+    : 'NULL::text AS revertido_em, NULL::text AS revertido_origem, NULL::text AS revertido_omie_em';
   const limit = Math.min(200, Math.max(1, params.limit ?? 100));
   const args: unknown[] = [limit];
   let filtro = '';
@@ -1053,10 +1120,12 @@ export async function listarLedgerFiscal(params: { status?: StatusFiscalLedger |
     id: string; nf_chave_acesso: string; nota_fiscal: string; fornecedor_nome: string | null; status: StatusFiscalLedger;
     passo_falha: PassoFiscal | null; itens_total: number | null; confirmado_por: string; confirmado_por_nome: string | null;
     iniciado_em: string; finalizado_em: string | null; empresa: EmpresaPc | null;
+    revertido_em?: string | null; revertido_origem?: OrigemReversao | null; revertido_omie_em?: string | null;
   }>(
     `SELECT rf.id, rf.nf_chave_acesso, rf.nota_fiscal, rf.fornecedor_nome, rf.status, rf.passo_falha, rf.itens_total,
             rf.confirmado_por, u.name AS confirmado_por_nome,
-            rf.iniciado_em::text AS iniciado_em, rf.finalizado_em::text AS finalizado_em, rf.empresa
+            rf.iniciado_em::text AS iniciado_em, rf.finalizado_em::text AS finalizado_em, rf.empresa,
+            ${colunasRevertido}
        FROM stockbridge.recebimento_fiscal rf
        LEFT JOIN atlas.users u ON u.id = rf.confirmado_por
        ${filtro}
@@ -1107,5 +1176,8 @@ export async function listarLedgerFiscal(params: { status?: StatusFiscalLedger |
     finalizadoEm: x.finalizado_em ? new Date(x.finalizado_em).toISOString() : null,
     empresa: x.empresa ?? 'q2p',
     vinculos: vinculosPorLedger.get(x.id) ?? [],
+    revertidoEm: isoOuNull(x.revertido_em),
+    revertidoOrigem: x.revertido_origem ?? null,
+    revertidoOmieEm: isoOuNull(x.revertido_omie_em),
   }));
 }

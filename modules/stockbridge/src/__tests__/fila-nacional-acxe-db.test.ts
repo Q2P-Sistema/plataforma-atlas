@@ -16,7 +16,8 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 //   ATLAS_DB_INTEGRATION=1 DATABASE_URL=postgres://... REDIS_URL=redis://localhost:6379 SESSION_SECRET=<32+ chars> \
 //     pnpm --filter @atlas/stockbridge exec vitest run src/__tests__/fila-nacional-acxe-db.test.ts
 //
-// Precisa do schema `stockbridge` com as migrations ate a 0058 e `unaccent`. As tabelas do ESPELHO OMIE (`public.tbl_*`)
+// Precisa do schema `stockbridge` com as migrations ate a 0058 (a D21 da 017 pede a 0060: sem ela so o describe dela e pulado) e
+// `unaccent`. As tabelas do ESPELHO OMIE (`public.tbl_*`)
 // sao do n8n, nao das migrations: cada uma e CRIADA no inicio se faltar (e removida no fim), ou reaproveitada se existir
 // VAZIA (as linhas do teste saem no fim). Se alguma ja tiver dados (espelho real), o teste e PULADO — nunca escreve num
 // espelho com dados. Chaves de acesso do teste comecam com 99 (UF inexistente) e os ids ficam numa faixa propria.
@@ -102,7 +103,8 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
     return [
       [`tbl_nf_header_${S}`, `CREATE TABLE public."tbl_nf_header_${S}" (
          n_id_nf bigint PRIMARY KEY, c_chave_nfe varchar(44), n_nf varchar(20), dest_razao varchar(200), dest_cnpj_cpf varchar(20),
-         d_emi date, n_id_receb bigint, cancelada boolean NOT NULL DEFAULT false, deletada boolean NOT NULL DEFAULT false, tp_nf smallint)`],
+         d_emi date, n_id_receb bigint, cancelada boolean NOT NULL DEFAULT false, deletada boolean NOT NULL DEFAULT false, tp_nf smallint,
+         d_alt date, h_alt time)`],
       [`tbl_nf_itens_${S}`, `CREATE TABLE public."tbl_nf_itens_${S}" (
          n_id_nf bigint NOT NULL, n_cod_item bigint NOT NULL, n_cod_prod bigint, c_prod varchar(60), x_prod varchar(200), cfop varchar(10),
          q_com numeric(14,3), u_com varchar(6), v_un_com numeric(14,4), v_prod numeric(14,2), v_tot_item numeric(14,2), codigo_local_estoque bigint,
@@ -133,9 +135,9 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
 
   /** Colunas que o teste le/escreve em cada tabela do espelho: uma tabela que ja exista (vazia) sem elas nao serve (outro teste a criou?). */
   const COLUNAS: Record<string, string[]> = {
-    tbl_nf_header: ['n_id_nf', 'c_chave_nfe', 'n_nf', 'dest_razao', 'dest_cnpj_cpf', 'd_emi', 'n_id_receb', 'cancelada', 'deletada', 'tp_nf'],
+    tbl_nf_header: ['n_id_nf', 'c_chave_nfe', 'n_nf', 'dest_razao', 'dest_cnpj_cpf', 'd_emi', 'n_id_receb', 'cancelada', 'deletada', 'tp_nf', 'd_alt', 'h_alt'],
     tbl_nf_itens: ['n_id_nf', 'n_cod_item', 'n_cod_prod', 'x_prod', 'cfop', 'q_com', 'u_com', 'v_un_com', 'v_prod', 'v_tot_item', 'codigo_local_estoque'],
-    tbl_recebimentoNFe: ['n_id_receb', 'c_chave_nfe', 'c_numero_nfe', 'd_emissao', 'n_id_fornecedor', 'c_cnpj_cpf', 'c_razao_social', 'c_etapa', 'c_recebido', 'c_cancelada', 'c_bloqueado', 'c_devolvido', 'synced_at'],
+    tbl_recebimentoNFe: ['n_id_receb', 'c_chave_nfe', 'c_numero_nfe', 'd_emissao', 'n_id_fornecedor', 'c_cnpj_cpf', 'c_razao_social', 'c_etapa', 'c_recebido', 'c_cancelada', 'c_bloqueado', 'c_devolvido', 'd_alt', 'h_alt', 'd_rec', 'h_rec', 'synced_at'],
     tbl_recebimentoNFe_itens: ['n_id_receb', 'n_sequencia', 'c_descricao_produto', 'c_cfop_entrada', 'n_qtde_nfe', 'c_unidade_nfe', 'n_preco_unit', 'v_total_item', 'n_id_item', 'n_id_produto', 'codigo_local_estoque', 'n_id_pedido', 'n_id_it_pedido', 'c_ignorar_item', 'c_associar_existente', 'c_nao_gerar_mov_estoque', 'synced_at'],
     tbl_produtos: ['codigo_produto', 'descricao', 'inativo', 'unidade'],
     tbl_pedidosCompras: ['ncoditem', 'ncodped', 'cetapa', 'cnumero', 'ddtprevisao', 'ncodfor', 'cdescricao', 'cproduto', 'cunidade', 'codigo_local_estoque', 'ncodprod', 'nqtde', 'nqtderec', 'nvaltot', 'nvalunit', 'data_atualizacao'],
@@ -144,10 +146,14 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
 
   // ── Semeadura ────────────────────────────────────────────────────────────────────────────────────────────────
   interface ItemNf { nCodItem: number; xProd: string; cfop: string; qCom: number; uCom: string; vProd: number; vUnCom: number; nCodProd?: number | null; local?: number | null }
-  async function nf(e: Emp, o: { nIdNf: number; chave: string; numero: string; razao: string; cnpj: string; dEmi: string; nIdReceb?: number | null; cancelada?: boolean; deletada?: boolean; itens: ItemNf[] }): Promise<void> {
+  async function nf(
+    e: Emp,
+    o: { nIdNf: number; chave: string; numero: string; razao: string; cnpj: string; dEmi: string; nIdReceb?: number | null; cancelada?: boolean; deletada?: boolean; dAlt?: string | null; hAlt?: string | null; itens: ItemNf[] },
+  ): Promise<void> {
+    // dAlt/hAlt: quando a nota de entrada foi alterada no OMIE (a D21 compara com a conclusao do fiscal); NULL como o espelho antigo
     await q(
-      `INSERT INTO public."${tab('tbl_nf_header', e)}" (n_id_nf, c_chave_nfe, n_nf, dest_razao, dest_cnpj_cpf, d_emi, n_id_receb, tp_nf, cancelada, deletada) VALUES ($1,$2,$3,$4,$5,$6,$7,0,$8,$9)`,
-      [o.nIdNf, o.chave, o.numero, o.razao, o.cnpj, o.dEmi, o.nIdReceb ?? null, o.cancelada ?? false, o.deletada ?? false],
+      `INSERT INTO public."${tab('tbl_nf_header', e)}" (n_id_nf, c_chave_nfe, n_nf, dest_razao, dest_cnpj_cpf, d_emi, n_id_receb, tp_nf, cancelada, deletada, d_alt, h_alt) VALUES ($1,$2,$3,$4,$5,$6,$7,0,$8,$9,$10,$11)`,
+      [o.nIdNf, o.chave, o.numero, o.razao, o.cnpj, o.dEmi, o.nIdReceb ?? null, o.cancelada ?? false, o.deletada ?? false, o.dAlt ?? null, o.hAlt ?? null],
     );
     for (const i of o.itens) {
       await q(
@@ -162,11 +168,16 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
     nIdItem?: number | null; nIdProduto?: number | null; local?: number | null; nIdPedido?: number | null; nIdItPedido?: number | null;
     ignorar?: string; naoGerarMov?: string;
   }
-  async function receb(e: Emp, o: { nIdReceb: number; chave: string; numero: string; dEmissao: string; fornecedor: number; cnpj: string; razao: string; recebido?: string; etapa?: string; itens: ItemRec[] }): Promise<void> {
+  async function receb(
+    e: Emp,
+    o: { nIdReceb: number; chave: string; numero: string; dEmissao: string; fornecedor: number; cnpj: string; razao: string; recebido?: string; etapa?: string; dAlt?: string | null; hAlt?: string | null; dRec?: string | null; hRec?: string | null; itens: ItemRec[] },
+  ): Promise<void> {
+    // dAlt/hAlt: quando o recebimento foi alterado no OMIE ('HH:MI:SS' em varchar, como no espelho); a D21 le a hora do 'N' e do 'S'.
+    // dRec/hRec: quando foi concluido (concluir no portal nao mexe em d_alt — NF 67988); a D21 conta o 'S' tambem por ela
     await q(
-      `INSERT INTO public."${tab('tbl_recebimentoNFe', e)}" (n_id_receb, c_chave_nfe, c_numero_nfe, d_emissao, n_id_fornecedor, c_cnpj_cpf, c_razao_social, c_etapa, c_recebido, c_cancelada, c_bloqueado, c_devolvido)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'N','N','N')`,
-      [o.nIdReceb, o.chave, o.numero, o.dEmissao, o.fornecedor, o.cnpj, o.razao, o.etapa ?? '40', o.recebido ?? 'N'],
+      `INSERT INTO public."${tab('tbl_recebimentoNFe', e)}" (n_id_receb, c_chave_nfe, c_numero_nfe, d_emissao, n_id_fornecedor, c_cnpj_cpf, c_razao_social, c_etapa, c_recebido, c_cancelada, c_bloqueado, c_devolvido, d_alt, h_alt, d_rec, h_rec)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'N','N','N',$10,$11,$12,$13)`,
+      [o.nIdReceb, o.chave, o.numero, o.dEmissao, o.fornecedor, o.cnpj, o.razao, o.etapa ?? '40', o.recebido ?? 'N', o.dAlt ?? null, o.hAlt ?? null, o.dRec ?? null, o.hRec ?? null],
     );
     for (const i of o.itens) {
       await q(
@@ -428,13 +439,15 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
     idsDispensa.push(String(d.rows[0]!.id));
   }
 
-  function configurar(o: { acxe?: boolean; fiscal?: boolean; corteAcxe?: string | null } = {}): void {
-    const { acxe = true, fiscal = true, corteAcxe = CORTE_ACXE } = o;
+  function configurar(o: { acxe?: boolean; fiscal?: boolean; corteAcxe?: string | null; revertido?: boolean } = {}): void {
+    const { acxe = true, fiscal = true, corteAcxe = CORTE_ACXE, revertido } = o;
     for (const k of Object.keys(cfg.valores)) delete cfg.valores[k];
     cfg.valores.STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE = CORTE_Q2P;
     cfg.valores.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = fiscal;
     cfg.valores.STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED = acxe;
     if (corteAcxe) cfg.valores.STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_DATA_CORTE = corteAcxe;
+    // D21: o kill switch fica no default (ligada, com a chave da 016 e a coluna da 0060); `revertido: false` e o caminho de antes
+    if (revertido !== undefined) cfg.valores.STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED = revertido;
   }
   const doTeste = <T extends { nfChaveAcesso: string }>(fila: T[]): T[] => fila.filter((f) => f.nfChaveAcesso.startsWith('99'));
   const chaves = (fila: Array<{ nfChaveAcesso: string }>): string[] => doTeste(fila).map((f) => f.nfChaveAcesso);
@@ -1097,6 +1110,367 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
       } finally {
         configurar();
       }
+    });
+  });
+
+  // ═══ D21 da 017 — recebimento fiscal REVERTIDO no portal do OMIE ═════════════════════════════════════════════
+  //
+  // NF 19252 (Zaraplast, Q2P, 25/10/2026): o Atlas concluiu o fiscal as 17:02 (ledger 'concluido'), o usuario o reverteu no portal as
+  // 17:13 (etapa 40, cRecebido N) e a fila seguia mostrando "fiscal ja feito" — a nota de entrada nunca sai do espelho de NF e ela tem
+  // 1 das 4 linhas do recebimento. Aqui o SINAL (fiscal-revertido.ts) roda de verdade num Postgres, com as horas de EVENTO do OMIE
+  // (d_alt + h_alt, horario de Brasilia) contra o instante da conclusao (ledger finalizado_em, timestamptz): margem de 2 min, fuso
+  // explicito, hora malformada = sem evidencia (nunca erro de cast: um 22007 derrubaria a fila inteira), marcador do ledger estrito.
+  // As NFs deste bloco sao semeadas e apagadas AQUI (os outros testes, que comparam o conjunto inteiro da fila, nao as veem); pede a
+  // migration 0060 (stockbridge.recebimento_fiscal.revertido_em) — sem ela o bloco e pulado, e o codigo segue sem a D21.
+  describe('fiscal REVERTIDO no OMIE (D21 da 017, NF 19252) — o sinal executado de verdade', () => {
+    const K = (n: number): string => chave(700 + n);
+    const R = { r1: K(1), r2: K(2), r3: K(3), r4a: K(4), r4b: K(5), r5a: K(6), r5b: K(7), r5c: K(8), r6: K(9), r7: K(10), r11: K(11), r12: K(12), r13: K(13), r14: K(14), r15: K(15) };
+    /** As NFs que o bloco espera ver na fila (a r11 tem a entrada fisica lancada: fica de fora; a r15 so volta com a nota de entrada). */
+    const NA_FILA = [R.r1, R.r2, R.r3, R.r4a, R.r4b, R.r5a, R.r5b, R.r5c, R.r6, R.r7, R.r12, R.r13, R.r14];
+    // as 4 linhas do recebimento da 19252, em kg (a 19252 vem em toneladas; a conversao tem testes proprios): 13.750 kg, R$ 145.750,05
+    const LINHAS = [
+      { seq: 1, qtde: 4125, total: 43725.01 },
+      { seq: 2, qtde: 1375, total: 14575.01 },
+      { seq: 3, qtde: 6875, total: 72875.02 },
+      { seq: 4, qtde: 1375, total: 14575.01 },
+    ];
+    const PC308 = { ncodped: id(1046), ncoditem: id(1047) };
+
+    interface Cen {
+      k: string;
+      n: number;
+      e?: Emp;
+      numero: string;
+      /** nota de entrada valida no espelho de NF (1 linha das 4): [d_alt, h_alt]; ausente = a NF so existe no espelho de recebimentos */
+      header?: [string, string];
+      receb: { recebido: 'N' | 'S'; etapa: string; dAlt: string | null; hAlt: string | null; dRec?: string; hRec?: string };
+      ledger?: { status: 'concluido' | 'revertido'; finalizadoEm: string; revertidoEm?: string; origem?: 'espelho' | 'omie_ao_vivo'; omieEm?: string };
+      /** c_nao_gerar_mov_estoque dos itens do recebimento (default 'S', como na 19252) */
+      naoGerarMov?: 'S' | 'N';
+      /** os itens do recebimento ja vinculados ao PC 308 (vinculo preservado pela reversao) */
+      pc?: boolean;
+      /** entrada fisica ja lancada (movimentacao ativa dos 13.750 kg) */
+      fisicaLancada?: boolean;
+    }
+
+    let semeado = false;
+    const ledgers: string[] = [];
+    const movs: string[] = [];
+    const nfs: Array<{ e: Emp; nIdNf: number; nIdReceb: number }> = [];
+
+    async function cenario(c: Cen): Promise<void> {
+      const e = c.e ?? 'q2p';
+      const nIdNf = id(1100 + c.n);
+      const nIdReceb = id(1200 + c.n);
+      const nCodItem = id(1300 + c.n);
+      const [forn, cnpj, razao, cfop] = e === 'acxe' ? [FORN.gga, CNPJ.gga, 'GGA RECICLAGEM LTDA', '1.101'] : [FORN.zaraplast, CNPJ.zaraplast, 'ZARAPLAST SA', '2.102'];
+      nfs.push({ e, nIdNf, nIdReceb });
+      if (c.header) {
+        await nf(e, {
+          nIdNf, chave: c.k, numero: c.numero, razao, cnpj, dEmi: '2026-10-20', nIdReceb, dAlt: c.header[0], hAlt: c.header[1],
+          itens: [{ nCodItem, xProd: 'PEBD EB', cfop, qCom: 1375, uCom: 'KG', vProd: 14575.01, vUnCom: 10.6 }],
+        });
+      }
+      await receb(e, {
+        nIdReceb, chave: c.k, numero: c.numero, dEmissao: '2026-10-20', fornecedor: forn, cnpj, razao, recebido: c.receb.recebido, etapa: c.receb.etapa, dAlt: c.receb.dAlt, hAlt: c.receb.hAlt,
+        dRec: c.receb.dRec ?? null, hRec: c.receb.hRec ?? null,
+        itens: LINHAS.map((l) => ({
+          seq: l.seq, descricao: 'PEBD EB', cfopEntrada: cfop, qtde: l.qtde, un: 'KG', preco: 10.6, total: l.total, nIdItem: nCodItem,
+          naoGerarMov: c.naoGerarMov ?? 'S', ...(c.pc ? { nIdPedido: PC308.ncodped, nIdItPedido: PC308.ncoditem } : {}),
+        })),
+      });
+      if (c.ledger) {
+        const r = await q(
+          `INSERT INTO stockbridge.recebimento_fiscal (nf_chave_acesso, nota_fiscal, status, confirmado_por, empresa, finalizado_em, itens_total, revertido_em, revertido_origem, revertido_omie_em)
+           VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, $9) RETURNING id`,
+          [c.k, c.numero, c.ledger.status, usuario, e, c.ledger.finalizadoEm, c.ledger.revertidoEm ?? null, c.ledger.origem ?? null, c.ledger.omieEm ?? null],
+        );
+        ledgers.push(String(r.rows[0]!.id));
+      }
+      if (c.fisicaLancada) {
+        const m = await q(
+          `INSERT INTO stockbridge.movimentacao (nota_fiscal, tipo_movimento, subtipo, quantidade_kg, empresa, galpao, produto_codigo_q2p, status_omie, ativo,
+              nf_chave_acesso, nf_item_descricao, nf_item_descricao_normalizada, nf_item_sequencias, quantidade_nf_kg)
+           VALUES ($1, 'entrada_manual', 'compra_nacional', 13750, 'q2p', '11.2', $2, 'concluida', true, $3, 'PEBD EB', 'PEBD EB', ARRAY[1,2,3,4], 13750) RETURNING id`,
+          [c.numero, id(98), c.k],
+        );
+        movs.push(String(m.rows[0]!.id));
+      }
+    }
+
+    // Conclusao 25/10 17:02:01 (Brasilia) = 20:02:01Z; reversao no portal 17:13:36. As outras NFs: conclusao 24/10 12:00:00 = 15:00:00Z.
+    const CONCLUIDO_19252 = '2026-10-25T20:02:01Z';
+    const CONCLUIDO_24 = '2026-10-24T15:00:00Z';
+
+    beforeAll(async () => {
+      if (!pronto) return;
+      const col = await q(`SELECT 1 FROM information_schema.columns WHERE table_schema = 'stockbridge' AND table_name = 'recebimento_fiscal' AND column_name = 'revertido_em'`);
+      if (col.rows.length === 0) {
+        console.warn('[fila-nacional-acxe-db] D21 pulada: schema stockbridge sem a migration 0060 (recebimento_fiscal.revertido_em)');
+        return;
+      }
+      // PC 308 da Zaraplast (Q2P): o vinculo que a reversao preserva nos itens da 19252
+      await pc('q2p', { ncodped: PC308.ncodped, ncoditem: PC308.ncoditem, numero: '308', fornecedor: FORN.zaraplast, qtde: 13750, preco: 10.6, produto: id(1062), local: '8115873874', descricao: 'PEBD EB' });
+      // R1 — a 19252: ledger concluido 17:02:01, nota de entrada valida (1 linha), recebimento N/40 alterado as 17:13:36 (11 min depois)
+      await cenario({ k: R.r1, n: 1, numero: '19252', header: ['2026-10-25', '17:02:00'], receb: { recebido: 'N', etapa: '40', dAlt: '2026-10-25', hAlt: '17:13:36' }, ledger: { status: 'concluido', finalizadoEm: CONCLUIDO_19252 }, pc: true });
+      // R2 — revertida PELO MARCADOR (leitura ao vivo do clique) com a linha do espelho ainda 'S'/etapa 60 e "estoque lancado" aparente
+      await cenario({
+        k: R.r2, n: 2, numero: '19253', header: ['2026-10-25', '17:02:00'], receb: { recebido: 'S', etapa: '60', dAlt: '2026-10-25', hAlt: '17:02:00' }, naoGerarMov: 'N',
+        ledger: { status: 'revertido', finalizadoEm: CONCLUIDO_19252, revertidoEm: '2026-10-25T20:20:00Z', origem: 'omie_ao_vivo' },
+      });
+      // R3 — NAO revertida: o espelho confirma a conclusao (S/60, mesma hora)
+      await cenario({ k: R.r3, n: 3, numero: '19254', header: ['2026-10-25', '17:02:00'], receb: { recebido: 'S', etapa: '60', dAlt: '2026-10-25', hAlt: '17:02:00' }, ledger: { status: 'concluido', finalizadoEm: CONCLUIDO_19252 } });
+      // R4 — a margem de 2 min do sinal pelo espelho: 1m59s depois da conclusao NAO marca; 2m01s marca
+      await cenario({ k: R.r4a, n: 4, numero: '19255', receb: { recebido: 'N', etapa: '40', dAlt: '2026-10-24', hAlt: '12:01:59' }, ledger: { status: 'concluido', finalizadoEm: CONCLUIDO_24 } });
+      await cenario({ k: R.r4b, n: 5, numero: '19256', receb: { recebido: 'N', etapa: '40', dAlt: '2026-10-24', hAlt: '12:02:01' }, ledger: { status: 'concluido', finalizadoEm: CONCLUIDO_24 } });
+      // R5 — hora de alteracao ausente ou malformada: sem evidencia, NUNCA erro de cast que derrube a fila
+      await cenario({ k: R.r5a, n: 6, numero: '19257', receb: { recebido: 'N', etapa: '40', dAlt: '2026-10-24', hAlt: null }, ledger: { status: 'concluido', finalizadoEm: CONCLUIDO_24 } });
+      await cenario({ k: R.r5b, n: 7, numero: '19258', receb: { recebido: 'N', etapa: '40', dAlt: '2026-10-24', hAlt: '' }, ledger: { status: 'concluido', finalizadoEm: CONCLUIDO_24 } });
+      await cenario({ k: R.r5c, n: 8, numero: '19259', receb: { recebido: 'N', etapa: '40', dAlt: '2026-10-24', hAlt: '25:61' }, ledger: { status: 'concluido', finalizadoEm: CONCLUIDO_24 } });
+      // R6 — o fiscal reconcluiu no portal DEPOIS do marcador (S/60 as 12:05, marcador 12:03): a conclusao mais nova desliga o sinal
+      await cenario({
+        k: R.r6, n: 9, numero: '19260', header: ['2026-10-24', '12:05:00'], receb: { recebido: 'S', etapa: '60', dAlt: '2026-10-24', hAlt: '12:05:00' },
+        ledger: { status: 'revertido', finalizadoEm: CONCLUIDO_24, revertidoEm: '2026-10-24T15:03:00Z', origem: 'espelho' },
+      });
+      // R7 — o equivalente na ACXE (o sinal le o espelho da ACXE)
+      await cenario({ k: R.r7, n: 10, e: 'acxe', numero: '19261', header: ['2026-10-24', '12:00:00'], receb: { recebido: 'N', etapa: '40', dAlt: '2026-10-24', hAlt: '12:11:00' }, ledger: { status: 'concluido', finalizadoEm: CONCLUIDO_24 } });
+      // R11 — revertida, mas a entrada fisica ja foi lancada: nao volta a fila (nada a receber), o detalhe ainda avisa
+      await cenario({ k: R.r11, n: 11, numero: '19262', header: ['2026-10-25', '17:02:00'], receb: { recebido: 'N', etapa: '40', dAlt: '2026-10-25', hAlt: '17:13:36' }, ledger: { status: 'concluido', finalizadoEm: CONCLUIDO_19252 }, fisicaLancada: true });
+      // R12 — espelho N com hora ANTERIOR a conclusao (linha defasada de antes do Concluir): nao marca
+      await cenario({ k: R.r12, n: 12, numero: '19263', receb: { recebido: 'N', etapa: '40', dAlt: '2026-10-24', hAlt: '11:30:00' }, ledger: { status: 'concluido', finalizadoEm: CONCLUIDO_24 } });
+      // R13 — marcador (leitura ao vivo) com a linha do espelho ainda N de ANTES da conclusao: a hora mostrada e a do marcador, nunca a antiga
+      await cenario({
+        k: R.r13, n: 13, numero: '19264', header: ['2026-10-24', '12:00:00'], receb: { recebido: 'N', etapa: '40', dAlt: '2026-10-24', hAlt: '11:30:00' },
+        ledger: { status: 'revertido', finalizadoEm: CONCLUIDO_24, revertidoEm: '2026-10-24T15:10:00Z', origem: 'omie_ao_vivo' },
+      });
+      // R14 — o fiscal reverteu (12:13:36) e RECONCLUIU no portal (12:28) ANTES de o Atlas perceber: a varredura so marcou as 12:35
+      // (revertido_em), com a hora do OMIE da reversao (revertido_omie_em 12:13:36). O recebimento volta 'S' com d_alt na hora da
+      // reversao (concluir nao mexe em d_alt) e d_rec 12:28; a nota de entrada nova e das 12:28. A reconclusao desliga o sinal
+      await cenario({
+        k: R.r14, n: 14, numero: '19265', header: ['2026-10-24', '12:28:00'],
+        receb: { recebido: 'S', etapa: '60', dAlt: '2026-10-24', hAlt: '12:13:36', dRec: '2026-10-24', hRec: '12:28:10' },
+        ledger: { status: 'revertido', finalizadoEm: CONCLUIDO_24, revertidoEm: '2026-10-24T15:35:00Z', origem: 'espelho', omieEm: '2026-10-24T15:13:36Z' },
+      });
+      // R15 — o mesmo, sem a nota de entrada no espelho de NF ainda: so o recebimento 'S' (pelo d_rec) prova a reconclusao
+      await cenario({
+        k: R.r15, n: 15, numero: '19266',
+        receb: { recebido: 'S', etapa: '60', dAlt: '2026-10-24', hAlt: '12:13:36', dRec: '2026-10-24', hRec: '12:28:10' },
+        ledger: { status: 'revertido', finalizadoEm: CONCLUIDO_24, revertidoEm: '2026-10-24T15:35:00Z', origem: 'espelho', omieEm: '2026-10-24T15:13:36Z' },
+      });
+      semeado = true;
+    }, 60_000);
+
+    afterAll(async () => {
+      if (!pool) return;
+      const apagar = async (sql: string, params?: unknown[]) => {
+        try {
+          await q(sql, params);
+        } catch {
+          /* limpeza em melhor esforco */
+        }
+      };
+      await apagar(`DELETE FROM stockbridge.movimentacao WHERE id = ANY($1::uuid[])`, [movs]);
+      await apagar(`DELETE FROM stockbridge.recebimento_fiscal WHERE id = ANY($1::uuid[])`, [ledgers]);
+      for (const e of ['q2p', 'acxe'] as const) {
+        const meus = nfs.filter((x) => x.e === e);
+        await apagar(`DELETE FROM public."${tab('tbl_recebimentoNFe', e)}" WHERE n_id_receb = ANY($1::bigint[])`, [meus.map((x) => x.nIdReceb)]); // itens em cascata
+        await apagar(`DELETE FROM public."${tab('tbl_nf_itens', e)}" WHERE n_id_nf = ANY($1::bigint[])`, [meus.map((x) => x.nIdNf)]);
+        await apagar(`DELETE FROM public."${tab('tbl_nf_header', e)}" WHERE n_id_nf = ANY($1::bigint[])`, [meus.map((x) => x.nIdNf)]);
+      }
+      await apagar(`DELETE FROM public."${tab('tbl_pedidosCompras', 'q2p')}" WHERE ncodped = $1`, [PC308.ncodped]);
+    });
+
+    const daFila = async (opts: Parameters<typeof svc.getFilaNacional>[0] = {}) =>
+      Object.fromEntries(doTeste(await svc.getFilaNacional(opts)).map((f) => [f.nfChaveAcesso, f]));
+
+    it('R1 — a 19252: ledger concluido, nota de entrada valida com 1 linha, recebimento N/40 11 min depois -> a fila a mostra como fiscal PENDENTE + revertida, com as 4 linhas (R$ 145.750,05)', async (ctx) => {
+      if (!semeado) return ctx.skip();
+      const f = (await daFila())[R.r1]!;
+      expect(f).toMatchObject({
+        empresa: 'q2p', notaFiscal: '19252', fiscal: 'pendente', fiscalRevertido: true, fiscalConcluidoPeloAtlasEm: null,
+        itensTotal: 1, itensPendentes: 1, estoqueLancadoPeloOmie: false, pcSituacao: 'vinculado_omie',
+      });
+      expect(f.valorTotalBrl).toBeCloseTo(145750.05, 2); // as 4 linhas do recebimento — a nota de entrada so tem 1 (R$ 14.575,01)
+    });
+
+    it('R1 — o detalhe: 4 linhas (13.750 kg), vinculo do OMIE com o PC 308 preservado, fornecedor, e a hora da reversao no OMIE (17:13:36 de Brasilia)', async (ctx) => {
+      if (!semeado) return ctx.skip();
+      const d = await svc.getDetalheNfNacional(R.r1);
+      expect(d).toMatchObject({ empresa: 'q2p', notaFiscal: '19252', fiscal: 'pendente', fiscalRevertido: true, fiscalRevertidoEm: '2026-10-25T20:13:36.000Z', dispensavel: true, estoqueLancadoPeloOmie: false });
+      expect(d.itens).toHaveLength(1);
+      expect(d.itens[0]).toMatchObject({ linhasAgregadas: 4, jaRecebido: false, sequenciasRecebimento: [1, 2, 3, 4] });
+      expect(d.itens[0]!.quantidadeNfKg).toBeCloseTo(13750, 3);
+      expect(d.itens[0]!.pc!.vinculoOmie).toMatchObject({ pcNumero: '308', dentroTolerancia: true });
+      const { interno } = await svc.montarDetalheNfNacional(R.r1);
+      expect(interno.fornecedorCodigo).toBe(FORN.zaraplast); // so a fonte (b) traz o fornecedor: a nota de entrada nao
+      // abrir a NF revertida marcou a tentativa antiga (ainda 'concluido'): os vinculos dela saem do saldo do PC da sugestao
+      const l = await q(`SELECT status, revertido_origem, revertido_omie_em FROM stockbridge.recebimento_fiscal WHERE nf_chave_acesso = $1`, [R.r1]);
+      expect(l.rows).toHaveLength(1);
+      expect(l.rows[0]).toMatchObject({ status: 'revertido', revertido_origem: 'espelho' });
+      expect(new Date(l.rows[0]!.revertido_omie_em as string).toISOString()).toBe('2026-10-25T20:13:36.000Z');
+    });
+
+    it('R1 — CONTROLE: com a D21 desligada (kill switch) o defeito da 19252 reaparece: fiscal ja feito, 1 linha, com a data do ledger', async (ctx) => {
+      if (!semeado) return ctx.skip();
+      // o detalhe aberto antes marcou a tentativa como revertida: volta ao estado da fixture (ledger 'concluido')
+      await q(
+        `UPDATE stockbridge.recebimento_fiscal SET status = 'concluido', revertido_em = NULL, revertido_origem = NULL, revertido_omie_em = NULL, revertido_por = NULL
+          WHERE nf_chave_acesso = $1`,
+        [R.r1],
+      );
+      configurar({ revertido: false });
+      try {
+        const f = (await daFila())[R.r1]!;
+        expect(f).toMatchObject({ fiscal: 'concluido', fiscalRevertido: false, fiscalConcluidoPeloAtlasEm: '2026-10-25T20:02:01.000Z' });
+        expect(f.valorTotalBrl).toBeCloseTo(14575.01, 2); // so a linha da nota de entrada
+        expect(await svc.getDetalheNfNacional(R.r1)).toMatchObject({ fiscal: 'concluido', fiscalRevertido: false, fiscalRevertidoEm: null });
+      } finally {
+        configurar();
+      }
+    });
+
+    it('R2 — revertida PELO MARCADOR do ledger com a linha do espelho ainda S/60: fiscal pendente + revertida; a linha "S" sem "nao movimentar estoque" NAO e estoque lancado; sem hora do OMIE (leitura ao vivo), o banner fica sem hora', async (ctx) => {
+      if (!semeado) return ctx.skip();
+      const f = (await daFila())[R.r2]!;
+      expect(f).toMatchObject({ fiscal: 'pendente', fiscalRevertido: true, fiscalConcluidoPeloAtlasEm: null, estoqueLancadoPeloOmie: false });
+      const d = await svc.getDetalheNfNacional(R.r2);
+      // a hora do clique (20:20) nao e a da reversao: sem a hora do OMIE, nula
+      expect(d).toMatchObject({ fiscal: 'pendente', fiscalRevertido: true, estoqueLancadoPeloOmie: false, fiscalRevertidoEm: null });
+      // controle: a MESMA linha de uma NF de fiscal concluido no portal COM movimento de estoque (A4) segue bloqueando
+      expect((await svc.getDetalheNfNacional(C.a4)).estoqueLancadoPeloOmie).toBe(true);
+    });
+
+    it('R3 — NAO revertida (o espelho confirma a conclusao, S/60 na mesma hora): igual a hoje — fiscal concluido, com a data do Atlas', async (ctx) => {
+      if (!semeado) return ctx.skip();
+      const f = (await daFila())[R.r3]!;
+      expect(f).toMatchObject({ fiscal: 'concluido', fiscalRevertido: false, fiscalConcluidoPeloAtlasEm: '2026-10-25T20:02:01.000Z' });
+      expect(await svc.getDetalheNfNacional(R.r3)).toMatchObject({ fiscal: 'concluido', fiscalRevertido: false, fiscalRevertidoEm: null });
+    });
+
+    it('R4 — margem de 2 min: espelho N 1m59s depois da conclusao NAO marca; 2m01s depois marca', async (ctx) => {
+      if (!semeado) return ctx.skip();
+      const por = await daFila();
+      expect(por[R.r4a]).toMatchObject({ fiscal: 'concluido', fiscalRevertido: false });
+      expect(por[R.r4b]).toMatchObject({ fiscal: 'pendente', fiscalRevertido: true });
+      expect((await svc.getDetalheNfNacional(R.r4b)).fiscalRevertidoEm).toBe('2026-10-24T15:02:01.000Z');
+    });
+
+    it('R5 — hora de alteracao NULL, vazia ou malformada (25:61): nao marca e NAO derruba a fila (sem erro de cast)', async (ctx) => {
+      if (!semeado) return ctx.skip();
+      const por = await daFila();
+      for (const k of [R.r5a, R.r5b, R.r5c]) expect(por[k], k).toMatchObject({ fiscal: 'concluido', fiscalRevertido: false });
+      for (const k of [R.r5a, R.r5b, R.r5c]) expect(await svc.getDetalheNfNacional(k), k).toMatchObject({ fiscal: 'concluido', fiscalRevertido: false });
+    });
+
+    it('R6 — o fiscal reconcluiu no portal DEPOIS do marcador (S/60 as 12:05, marcador 12:03): a conclusao mais nova desliga o sinal', async (ctx) => {
+      if (!semeado) return ctx.skip();
+      expect((await daFila())[R.r6]).toMatchObject({ fiscal: 'concluido', fiscalRevertido: false });
+    });
+
+    it('R14 — reconclusao no portal ANTES de o Atlas perceber a reversao: o marcador vale pela hora do OMIE e a reconclusao desliga o sinal (fiscal ja feito)', async (ctx) => {
+      if (!semeado) return ctx.skip();
+      expect((await daFila())[R.r14]).toMatchObject({ fiscal: 'concluido', fiscalRevertido: false });
+      expect(await svc.getDetalheNfNacional(R.r14)).toMatchObject({ fiscal: 'concluido', fiscalRevertido: false, fiscalRevertidoEm: null });
+    });
+
+    it('R15 — o mesmo sem a nota de entrada no espelho de NF: o recebimento S (d_rec) desliga o sinal; a NF so volta a fila com a nota de entrada', async (ctx) => {
+      if (!semeado) return ctx.skip();
+      const { fiscalRevertidoSql } = await import('../services/fiscal-revertido.js');
+      const sinal = await q(`SELECT ${fiscalRevertidoSql('$1::text', 'q2p')} AS rev`, [R.r15]);
+      expect(sinal.rows[0]!.rev).toBe(false);
+      expect((await daFila())[R.r15]).toBeUndefined();
+    });
+
+    it('R7 — ACXE: o sinal le o espelho da ACXE — fiscal pendente + revertida, e a hora vem das tabelas da ACXE', async (ctx) => {
+      if (!semeado) return ctx.skip();
+      const f = (await daFila())[R.r7]!;
+      expect(f).toMatchObject({ empresa: 'acxe', notaFiscal: '19261', fiscal: 'pendente', fiscalRevertido: true });
+      expect(f.valorTotalBrl).toBeCloseTo(145750.05, 2);
+      expect(await svc.getDetalheNfNacional(R.r7)).toMatchObject({ empresa: 'acxe', fiscal: 'pendente', fiscalRevertido: true, fiscalRevertidoEm: '2026-10-24T15:11:00.000Z' });
+      // restringindo a fila a uma empresa o resultado e o mesmo
+      expect((await daFila({ empresa: 'acxe' }))[R.r7]).toMatchObject({ fiscalRevertido: true });
+      expect((await daFila({ empresa: 'q2p' }))[R.r7]).toBeUndefined();
+    });
+
+    it('R11 — revertida com a entrada fisica ja lancada: sai da fila (nada a receber), mas o detalhe responde com fiscalRevertido para a tela avisar o fiscal', async (ctx) => {
+      if (!semeado) return ctx.skip();
+      expect(chaves(await svc.getFilaNacional())).not.toContain(R.r11);
+      const d = await svc.getDetalheNfNacional(R.r11);
+      expect(d).toMatchObject({ fiscal: 'pendente', fiscalRevertido: true, dispensavel: false });
+      expect(d.itens[0]).toMatchObject({ jaRecebido: true, quantidadeNfJaAtribuidaKg: 13750, quantidadeRestanteKg: 0 });
+    });
+
+    it('R12 — espelho N com hora ANTERIOR a conclusao (linha defasada de antes do Concluir): nao marca', async (ctx) => {
+      if (!semeado) return ctx.skip();
+      expect((await daFila())[R.r12]).toMatchObject({ fiscal: 'concluido', fiscalRevertido: false });
+    });
+
+    it('R13 — marcador do clique + espelho ainda N de ANTES da conclusao: revertida; a hora nunca e a do N antigo (11:30) nem a do clique (12:10): fica nula ate o espelho trazer a do OMIE', async (ctx) => {
+      if (!semeado) return ctx.skip();
+      expect((await daFila())[R.r13]).toMatchObject({ fiscal: 'pendente', fiscalRevertido: true });
+      expect((await svc.getDetalheNfNacional(R.r13)).fiscalRevertidoEm).toBeNull();
+    });
+
+    it('o conjunto do bloco na fila: exatamente as NFs esperadas (a r11 fica de fora), e SO as revertidas viram pendente + fiscalRevertido', async (ctx) => {
+      if (!semeado) return ctx.skip();
+      const meus = (await svc.getFilaNacional()).filter((f) => Object.values(R).includes(f.nfChaveAcesso));
+      expect(meus.map((f) => f.nfChaveAcesso).sort()).toEqual([...NA_FILA].sort());
+      expect(meus.filter((f) => f.fiscalRevertido).map((f) => f.nfChaveAcesso).sort()).toEqual([R.r1, R.r2, R.r4b, R.r7, R.r13].sort());
+      // toda NF revertida e fiscal pendente (a tela compara fiscal === 'pendente'); nenhuma outra e
+      for (const f of meus) expect(f.fiscal === 'pendente' && f.fiscalRevertido === true || !f.fiscalRevertido, f.nfChaveAcesso).toBe(true);
+    });
+
+    it('o resto da fila nao mudou: nenhuma NF dos cenarios de antes virou revertida (conjunto exato e fiscalRevertido false)', async (ctx) => {
+      if (!semeado) return ctx.skip();
+      const outras = doTeste(await svc.getFilaNacional()).filter((f) => !Object.values(R).includes(f.nfChaveAcesso));
+      expect(outras.map((f) => f.nfChaveAcesso)).toEqual(ESPERADA_AMBAS);
+      for (const f of outras) expect(f.fiscalRevertido, f.nfChaveAcesso).toBe(false);
+    });
+
+    it('sem a chave da 016 (ou com ela e a D21 desligada) nenhuma NF vem como revertida e a fila nao pergunta pelo sinal', async (ctx) => {
+      if (!semeado) return ctx.skip();
+      for (const opts of [{ fiscal: false }, { revertido: false }]) {
+        configurar(opts);
+        try {
+          const fila = await svc.getFilaNacional();
+          expect(fila.every((f) => f.fiscalRevertido === false)).toBe(true);
+          if (opts.fiscal === false) expect(chaves(fila)).not.toContain(R.r7); // sem a 016 a ACXE nem entra
+        } finally {
+          configurar();
+        }
+      }
+    });
+
+    it('fuso: o sinal e o mesmo com a sessao em UTC, em America/Sao_Paulo ou em Asia/Tokyo (as horas do OMIE sao de Brasilia, convertidas de forma explicita)', async (ctx) => {
+      if (!semeado) return ctx.skip();
+      const { fiscalRevertidoSql } = await import('../services/fiscal-revertido.js');
+      const pool2 = core.getPool() as unknown as { connect: () => Promise<{ query: Pool['query']; release: () => void }> };
+      const client = await pool2.connect();
+      try {
+        for (const tz of ['UTC', 'America/Sao_Paulo', 'Asia/Tokyo']) {
+          await client.query(`SET TIME ZONE '${tz}'`);
+          const rev = async (k: string, e: Emp) => (await client.query(`SELECT ${fiscalRevertidoSql('$1::text', e)} AS rev`, [k])).rows[0]!.rev;
+          expect(await rev(R.r1, 'q2p'), `${tz} r1`).toBe(true);
+          expect(await rev(R.r4a, 'q2p'), `${tz} r4a`).toBe(false);
+          expect(await rev(R.r4b, 'q2p'), `${tz} r4b`).toBe(true);
+          expect(await rev(R.r3, 'q2p'), `${tz} r3`).toBe(false);
+          expect(await rev(R.r7, 'acxe'), `${tz} r7`).toBe(true);
+        }
+      } finally {
+        await client.query('RESET TIME ZONE');
+        client.release();
+      }
+    });
+
+    it('nfComFiscalRevertido (usado pelo adquirirLedger e pela leitura do clique) avalia o MESMO sinal; chave desconhecida = false', async (ctx) => {
+      if (!semeado) return ctx.skip();
+      const rv = await import('../services/fiscal-revertido.js');
+      expect(await rv.nfComFiscalRevertido(R.r1, 'q2p')).toBe(true);
+      expect(await rv.nfComFiscalRevertido(R.r13, 'q2p')).toBe(true);
+      expect(await rv.nfComFiscalRevertido(R.r3, 'q2p')).toBe(false);
+      expect(await rv.nfComFiscalRevertido(R.r6, 'q2p')).toBe(false);
+      expect(await rv.nfComFiscalRevertido(R.r7, 'acxe')).toBe(true);
+      expect(await rv.nfComFiscalRevertido(chave(799), 'q2p')).toBe(false);
     });
   });
 });

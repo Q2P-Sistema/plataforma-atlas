@@ -203,6 +203,8 @@ describe('getFilaNacional — configuracao e degrade (T013/T014)', () => {
       fiscal: 'concluido', fiscalConcluidoPeloAtlasEm: null,
       // feature 017: empresa, selo do PC (so com fiscal pendente) e estoque ja lancado
       empresa: 'q2p', pcSituacao: 'nao_aplicavel', estoqueLancadoPeloOmie: false,
+      // feature 017 (D21): sempre presente; false sem a D21 (aqui a chave da 016 esta desligada)
+      fiscalRevertido: false,
     });
   });
 });

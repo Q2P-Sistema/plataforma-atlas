@@ -85,7 +85,12 @@ services:
       # imagem da feature 017 e o teste do vinculo novo (ASSOCIAR-PEDIDO) aprovado — com
       # imagem anterior, o IGNORAR volta a desfazer o vinculo do item com o PC.
       STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED: ${STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED:-false}
-      # Destinatarios do aviso "NF dispensada da fila" (lista separada por virgula).
+      # Recebimento fiscal revertido no portal do OMIE depois de concluido (feature 017,
+      # research D21): a NF volta a fila como fiscal pendente e o Atlas conclui de novo.
+      # Padrao ligado; false = kill switch. Exige a migration 0060 aplicada antes da imagem.
+      STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED: ${STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED:-true}
+      # Destinatarios dos avisos "NF dispensada da fila" e "Recebimento fiscal desfeito no
+      # OMIE" (D21 da 017) ao fiscal (lista separada por virgula).
       # Vazio = default do codigo (NFe ACXE, Mauricio Yared, Gustavo Dreer).
       STOCKBRIDGE_FISCAL_EMAILS: ${STOCKBRIDGE_FISCAL_EMAILS:-}
       # Idade maxima (min) do espelho de recebimentos de NF-e antes de degradar o health

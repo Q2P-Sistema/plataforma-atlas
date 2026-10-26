@@ -17,6 +17,25 @@ const poolQuerySpy = vi.fn();
 const consultarSpy = vi.fn();
 const alterarSpy = vi.fn();
 const concluirSpy = vi.fn();
+// D21 da 017 (fiscal revertido no portal): o sinal e a marcacao tem testes proprios (fiscal-revertido.test.ts); aqui sao spies.
+// Default: D21 desligada — o ledger se comporta como na 016 (jaConcluido sem OMIE, sem SQL de sinal).
+const revertido = vi.hoisted(() => ({
+  habilitado: vi.fn(),
+  nfRevertida: vi.fn(),
+  marcar: vi.fn(),
+  colunaExiste: vi.fn(),
+}));
+
+vi.mock('../services/fiscal-revertido.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../services/fiscal-revertido.js')>();
+  return {
+    ...real,
+    fiscalRevertidoHabilitado: (...a: unknown[]) => revertido.habilitado(...a),
+    nfComFiscalRevertido: (...a: unknown[]) => revertido.nfRevertida(...a),
+    marcarLedgerRevertido: (...a: unknown[]) => revertido.marcar(...a),
+    colunaRevertidoExiste: (...a: unknown[]) => revertido.colunaExiste(...a),
+  };
+});
 
 vi.mock('@atlas/core', () => ({
   createLogger: () => loggerMock,
@@ -112,6 +131,8 @@ let ordem: string[] = [];
 let fechamentos: unknown[][] = [];
 /** O INSERT do ledger falha com este erro (uma vez). */
 let insertFalha: unknown = null;
+/** O INSERT do ledger falha com este erro em TODA tentativa (a trava segue ocupada por outra requisicao). */
+let insertFalhaSempre: unknown = null;
 /** Linha viva devolvida pelo SELECT apos 23505. */
 let linhaViva: Record<string, unknown> | null = null;
 /** O UPDATE de retomada do lock orfao encontra a linha? */
@@ -136,8 +157,8 @@ function responderLedger(sql: string, params?: unknown[]) {
   }
   if (sql.includes('INSERT INTO stockbridge.recebimento_fiscal')) {
     ordem.push('ledger:insert');
-    if (insertFalha) {
-      const e = insertFalha;
+    if (insertFalha || insertFalhaSempre) {
+      const e = insertFalha ?? insertFalhaSempre;
       insertFalha = null;
       throw e;
     }
@@ -166,6 +187,7 @@ beforeEach(() => {
   ordem = [];
   fechamentos = [];
   insertFalha = null;
+  insertFalhaSempre = null;
   linhaViva = null;
   retomadaOk = false;
   esperaSegundos = null;
@@ -175,6 +197,10 @@ beforeEach(() => {
   ledgerRows = [];
   vinculoRows = [];
   for (const f of Object.values(loggerMock)) f.mockClear();
+  revertido.habilitado.mockReset().mockResolvedValue(false);
+  revertido.nfRevertida.mockReset().mockResolvedValue(false);
+  revertido.marcar.mockReset().mockResolvedValue([]);
+  revertido.colunaExiste.mockReset().mockResolvedValue(true);
   poolQuerySpy.mockReset();
   poolQuerySpy.mockImplementation(async (sql: string, params?: unknown[]) => responderLedger(sql, params));
   consultarSpy.mockReset();
@@ -673,5 +699,264 @@ describe('listarLedgerFiscal — vinculos com PC (017, T042)', () => {
     ledgerRows = [];
     expect(await listarLedgerFiscal({})).toEqual([]);
     expect(poolQuerySpy.mock.calls.some((c) => String(c[0]).includes('recebimento_fiscal_pc'))).toBe(false);
+  });
+});
+
+// ── D21 da 017 — fiscal REVERTIDO no portal do OMIE (NF 19252, 25/10/2026) ──────────────────────────
+// A conclusao `concluido`/`ja_concluido` deixou de ser final: quando o espelho mostra o recebimento pendente
+// DEPOIS da conclusao, adquirirLedger marca a linha 'revertido' (marcarLedgerRevertido faz os vinculos de PC
+// na mesma transacao) e recomeca a aquisicao — o indice parcial so lista os status vivos, entao o INSERT passa.
+// O sinal em si (SQL, margem, fuso) e a marcacao (transacao) tem testes proprios em fiscal-revertido.test.ts e
+// no banco real; aqui prova-se o ENCAIXE no ledger: ordem, recursao, corrida, limite e o que nunca muda.
+describe('concluirRecebimentoFiscal — fiscal revertido no portal (D21 da 017)', () => {
+  const violacaoViva = () => Object.assign(new Error('duplicate key'), { code: '23505', constraint: 'recebimento_fiscal_nf_viva_uq' });
+  const concluidaPeloAtlas = (over: Record<string, unknown> = {}) => ({
+    id: 'ledger-antigo', status: 'concluido', iniciado_em: '2026-10-25 20:01:00+00', finalizado_em: '2026-10-25 20:02:05+00', empresa: 'q2p', ...over,
+  });
+  const marcouAntigo = async () => {
+    ordem.push('ledger:revertido');
+    return [{ id: 'ledger-antigo', nfChaveAcesso: CHAVE, notaFiscal: '6842' }];
+  };
+
+  beforeEach(() => {
+    revertido.habilitado.mockResolvedValue(true);
+    revertido.marcar.mockImplementation(marcouAntigo);
+    insertFalha = violacaoViva();
+    linhaViva = concluidaPeloAtlas();
+  });
+
+  it('sinal ligado: marca o ledger como revertido (origem espelho, a linha lida) e abre a trava NOVA — o fiscal roda de novo', async () => {
+    revertido.nfRevertida.mockResolvedValue(true);
+
+    const r = await concluirRecebimentoFiscal(input());
+
+    expect(ordemSemEspera()).toEqual([
+      'ledger:insert', 'ledger:revertido', 'ledger:insert', 'omie:consultar', 'omie:editar', 'omie:ignorar', 'omie:concluir', 'ledger:concluido',
+    ]);
+    expect(r).toMatchObject({ status: 'concluido', ledgerId: 'ledger-1', itensTotal: 2 });
+    expect(revertido.nfRevertida).toHaveBeenCalledWith(CHAVE, 'q2p');
+    expect(revertido.marcar).toHaveBeenCalledTimes(1);
+    expect(revertido.marcar).toHaveBeenCalledWith({ nfChaveAcesso: CHAVE, empresa: 'q2p', origem: 'espelho', ledgerId: 'ledger-antigo' });
+    // a conclusao nova fecha a linha NOVA, com o token dela — nunca a antiga
+    expect(fechamentos).toHaveLength(1);
+    expect(fechamentos[0]![0]).toBe('ledger-1');
+    expect(fechamentos[0]![9]).toBe(TOKEN);
+    // a consulta do fiscal e por chave, como sempre (corpo A); a leitura por nIdReceb e so do clique
+    expect(consultarSpy).toHaveBeenCalledWith('q2p', { cChaveNfe: CHAVE });
+  });
+
+  it('ja_concluido (fiscal feito no portal e visto pelo Atlas) revertido depois: a mesma reabertura', async () => {
+    linhaViva = concluidaPeloAtlas({ status: 'ja_concluido' });
+    revertido.nfRevertida.mockResolvedValue(true);
+
+    const r = await concluirRecebimentoFiscal(input());
+
+    expect(r.status).toBe('concluido');
+    expect(revertido.marcar).toHaveBeenCalledWith(expect.objectContaining({ ledgerId: 'ledger-antigo', origem: 'espelho' }));
+    expect(ordemSemEspera().slice(0, 3)).toEqual(['ledger:insert', 'ledger:revertido', 'ledger:insert']);
+  });
+
+  it('sem sinal: continua ja_concluido, sem OMIE, sem marcar — o clique repetido logo depois de concluir (comportamento da 016)', async () => {
+    revertido.nfRevertida.mockResolvedValue(false);
+
+    const r = await concluirRecebimentoFiscal(input());
+
+    expect(r).toMatchObject({ status: 'ja_concluido', ledgerId: 'ledger-antigo', itensTotal: 0 });
+    expect(r.concluidoEm).toBe(new Date('2026-10-25 20:02:05+00').toISOString());
+    expect(revertido.nfRevertida).toHaveBeenCalledTimes(1);
+    expect(revertido.marcar).not.toHaveBeenCalled();
+    expect(consultarSpy).not.toHaveBeenCalled();
+    expect(fechamentos).toHaveLength(0);
+    expect(ordemSemEspera()).toEqual(['ledger:insert']);
+  });
+
+  it('D21 indisponivel (chave da 016, kill switch ou migration 0060 ausente): nem avalia o sinal — ja_concluido como na 016', async () => {
+    revertido.habilitado.mockResolvedValue(false);
+    revertido.nfRevertida.mockResolvedValue(true); // se fosse avaliado, reabriria
+
+    const r = await concluirRecebimentoFiscal(input());
+
+    expect(r.status).toBe('ja_concluido');
+    expect(revertido.nfRevertida).not.toHaveBeenCalled();
+    expect(revertido.marcar).not.toHaveBeenCalled();
+    expect(consultarSpy).not.toHaveBeenCalled();
+  });
+
+  it('o sinal e a marcacao usam a empresa gravada no ledger (acxe); sem ela na linha, a da chamada', async () => {
+    revertido.nfRevertida.mockResolvedValue(true);
+    // a chamada nao diz a empresa (default q2p): vale a do ledger
+    linhaViva = concluidaPeloAtlas({ empresa: 'acxe' });
+    await concluirRecebimentoFiscal(input());
+    expect(revertido.nfRevertida).toHaveBeenLastCalledWith(CHAVE, 'acxe');
+    expect(revertido.marcar).toHaveBeenLastCalledWith({ nfChaveAcesso: CHAVE, empresa: 'acxe', origem: 'espelho', ledgerId: 'ledger-antigo' });
+
+    // linha sem a coluna (nulo/ausente): vale a empresa da chamada
+    insertFalha = violacaoViva();
+    linhaViva = concluidaPeloAtlas({ empresa: null });
+    await concluirRecebimentoFiscal(input({ empresa: 'acxe' }));
+    expect(revertido.nfRevertida).toHaveBeenLastCalledWith(CHAVE, 'acxe');
+    insertFalha = violacaoViva();
+    linhaViva = concluidaPeloAtlas({ empresa: undefined });
+    await concluirRecebimentoFiscal(input());
+    expect(revertido.nfRevertida).toHaveBeenLastCalledWith(CHAVE, 'q2p');
+  });
+
+  it('a consulta da linha viva traz a empresa do ledger (sem mudar o prefixo que o harness reconhece)', async () => {
+    revertido.nfRevertida.mockResolvedValue(false);
+    await concluirRecebimentoFiscal(input());
+    const viva = poolQuerySpy.mock.calls.find((c) => String(c[0]).includes('SELECT id, status, iniciado_em'))!;
+    expect(String(viva[0])).toMatch(/SELECT id, status, iniciado_em::text AS iniciado_em, finalizado_em::text AS finalizado_em, empresa\s+FROM stockbridge\.recebimento_fiscal/);
+    expect(String(viva[0])).toContain("status IN ('em_andamento', 'concluido', 'ja_concluido')");
+  });
+
+  it('corrida: a marcacao devolve 0 linhas (cron ou outro clique marcou antes) e a trava passou para outra requisicao -> EmAndamento, zero OMIE', async () => {
+    revertido.nfRevertida.mockResolvedValue(true);
+    revertido.marcar.mockImplementation(async () => {
+      ordem.push('ledger:revertido');
+      // enquanto isso, a outra requisicao gravou o em_andamento dela
+      insertFalha = violacaoViva();
+      linhaViva = { id: 'ledger-outro', status: 'em_andamento', iniciado_em: '2026-10-25 20:20:00+00', finalizado_em: null, empresa: 'q2p' };
+      retomadaOk = false;
+      return [];
+    });
+
+    await expect(concluirRecebimentoFiscal(input())).rejects.toBeInstanceOf(RecebimentoFiscalEmAndamentoError);
+
+    expect(ordemSemEspera()).toEqual(['ledger:insert', 'ledger:revertido', 'ledger:insert', 'ledger:retomar']);
+    expect(consultarSpy).not.toHaveBeenCalled();
+    expect(alterarSpy).not.toHaveBeenCalled();
+    expect(fechamentos).toHaveLength(0);
+  });
+
+  it('corrida: a marcacao devolve 0 linhas mas a trava esta livre (o cron marcou antes) -> a aquisicao segue e conclui', async () => {
+    revertido.nfRevertida.mockResolvedValue(true);
+    revertido.marcar.mockImplementation(async () => {
+      ordem.push('ledger:revertido');
+      return [];
+    });
+
+    const r = await concluirRecebimentoFiscal(input());
+
+    expect(r).toMatchObject({ status: 'concluido', ledgerId: 'ledger-1' });
+    expect(ordemSemEspera().slice(0, 3)).toEqual(['ledger:insert', 'ledger:revertido', 'ledger:insert']);
+  });
+
+  it('a espera apos falha com escrita tambem vale depois da reabertura (a recursao passa de novo por ela)', async () => {
+    revertido.nfRevertida.mockResolvedValue(true);
+    esperaFila = [null, 55];
+
+    await expect(concluirRecebimentoFiscal(input())).rejects.toBeInstanceOf(RecebimentoFiscalAguardeError);
+
+    expect(ordem.filter((o) => o === 'ledger:espera?')).toHaveLength(2);
+    expect(ordemSemEspera()).toEqual(['ledger:insert', 'ledger:revertido']);
+    expect(consultarSpy).not.toHaveBeenCalled();
+  });
+
+  it('dado oscilando (o sinal segue ligado e a marcacao nao resolve): reabre no maximo 2 vezes e entao pede para recarregar — nunca ja_concluido, que faria so o fisico', async () => {
+    revertido.nfRevertida.mockResolvedValue(true);
+    revertido.marcar.mockImplementation(async () => {
+      ordem.push('ledger:revertido');
+      return [];
+    });
+    insertFalha = null;
+    insertFalhaSempre = violacaoViva(); // a trava nunca libera
+
+    await expect(concluirRecebimentoFiscal(input())).rejects.toBeInstanceOf(RecebimentoFiscalEmAndamentoError);
+
+    expect(revertido.marcar).toHaveBeenCalledTimes(2);
+    expect(ordemSemEspera()).toEqual(['ledger:insert', 'ledger:revertido', 'ledger:insert', 'ledger:revertido', 'ledger:insert']);
+    expect(consultarSpy).not.toHaveBeenCalled();
+  });
+
+  it('erro de banco ao marcar sobe como esta (500 na rota): nao segue para o OMIE nem devolve ja_concluido', async () => {
+    revertido.nfRevertida.mockResolvedValue(true);
+    revertido.marcar.mockRejectedValue(new Error('connection terminated'));
+
+    await expect(concluirRecebimentoFiscal(input())).rejects.toThrow('connection terminated');
+
+    expect(consultarSpy).not.toHaveBeenCalled();
+    expect(ordemSemEspera()).toEqual(['ledger:insert']);
+  });
+
+  it('em_andamento (duplo clique) e lock orfao nunca consultam o sinal: so a linha concluida pode ser reaberta', async () => {
+    revertido.nfRevertida.mockResolvedValue(true);
+    linhaViva = { id: 'ledger-vivo', status: 'em_andamento', iniciado_em: '2026-10-25 20:20:00+00', finalizado_em: null, empresa: 'q2p' };
+    retomadaOk = false;
+    await expect(concluirRecebimentoFiscal(input())).rejects.toBeInstanceOf(RecebimentoFiscalEmAndamentoError);
+
+    insertFalha = violacaoViva();
+    linhaViva = { id: 'ledger-orfao', status: 'em_andamento', iniciado_em: '2026-10-25 08:00:00+00', finalizado_em: null, empresa: 'q2p' };
+    retomadaOk = true;
+    const r = await concluirRecebimentoFiscal(input());
+    expect(r).toMatchObject({ status: 'concluido', ledgerId: 'ledger-orfao' });
+
+    expect(revertido.nfRevertida).not.toHaveBeenCalled();
+    expect(revertido.marcar).not.toHaveBeenCalled();
+  });
+});
+
+describe('listarLedgerFiscal — fiscal revertido (D21 da 017, migration 0060)', () => {
+  const linhaRevertida = {
+    id: 'l9', nf_chave_acesso: CHAVE, nota_fiscal: '19252', fornecedor_nome: 'ZARAPLAST S/A', status: 'revertido',
+    passo_falha: null, itens_total: 4, confirmado_por: USER, confirmado_por_nome: 'Operador',
+    iniciado_em: '2026-10-25 20:01:00+00', finalizado_em: '2026-10-25 20:02:05+00', empresa: 'q2p',
+    revertido_em: '2026-10-25 20:23:00+00', revertido_origem: 'espelho', revertido_omie_em: '2026-10-25 20:13:36+00',
+  };
+
+  it('devolve revertidoEm/revertidoOrigem/revertidoOmieEm (ISO) e nada de erro_omie_*; vinculo revertido aparece com o status', async () => {
+    ledgerRows = [linhaRevertida];
+    vinculoRows = [
+      { recebimento_fiscal_id: 'l9', n_sequencia: 1, pc_numero: '308', origem: 'omie', justificativa: null, status: 'revertido', confirmado_por: USER, confirmado_por_nome: 'Operador', confirmado_em: '2026-10-25 20:01:30+00' },
+    ];
+
+    const lista = await listarLedgerFiscal({ status: 'revertido', limit: 10 });
+
+    const chamada = poolQuerySpy.mock.calls.find((c) => String(c[0]).includes('FROM stockbridge.recebimento_fiscal rf'))!;
+    const sql = String(chamada[0]);
+    expect(sql).toContain('rf.revertido_em::text AS revertido_em');
+    expect(sql).toContain('rf.revertido_origem');
+    expect(sql).toContain('rf.revertido_omie_em::text AS revertido_omie_em');
+    expect(sql).not.toContain('erro_omie');
+    expect(sql).not.toContain('revertido_por'); // quem clicou fica no banco; a listagem nao o expoe
+    expect(chamada[1]).toEqual([10, 'revertido']);
+    expect(lista[0]).toMatchObject({
+      id: 'l9', status: 'revertido', notaFiscal: '19252',
+      revertidoEm: new Date('2026-10-25 20:23:00+00').toISOString(),
+      revertidoOrigem: 'espelho',
+      revertidoOmieEm: new Date('2026-10-25 20:13:36+00').toISOString(),
+      vinculos: [expect.objectContaining({ nSequencia: 1, pcNumero: '308', status: 'revertido' })],
+    });
+    expect(JSON.stringify(lista)).not.toContain('erro_omie');
+  });
+
+  it('origem omie_ao_vivo sem a hora do OMIE (leitura ao vivo): revertidoOmieEm nulo; linha que nao e revertida traz os tres campos nulos', async () => {
+    ledgerRows = [
+      { ...linhaRevertida, revertido_origem: 'omie_ao_vivo', revertido_omie_em: null },
+      { ...linhaRevertida, id: 'l1', status: 'concluido', revertido_em: null, revertido_origem: null, revertido_omie_em: null },
+    ];
+    const lista = await listarLedgerFiscal({});
+    expect(lista[0]).toMatchObject({ revertidoOrigem: 'omie_ao_vivo', revertidoOmieEm: null });
+    expect(lista[0]!.revertidoEm).toBe(new Date('2026-10-25 20:23:00+00').toISOString());
+    expect(lista[1]).toMatchObject({ status: 'concluido', revertidoEm: null, revertidoOrigem: null, revertidoOmieEm: null });
+  });
+
+  it('antes da migration 0060 (coluna ausente): a listagem segue sem as colunas novas — nunca 42703 — e os campos saem nulos', async () => {
+    revertido.colunaExiste.mockResolvedValue(false);
+    ledgerRows = [{ ...linhaRevertida, status: 'concluido', revertido_em: undefined, revertido_origem: undefined, revertido_omie_em: undefined }];
+
+    const lista = await listarLedgerFiscal({});
+
+    const sql = String(poolQuerySpy.mock.calls.find((c) => String(c[0]).includes('FROM stockbridge.recebimento_fiscal rf'))![0]);
+    expect(sql).not.toContain('rf.revertido_em');
+    expect(sql).not.toContain('rf.revertido_origem');
+    expect(sql).not.toContain('rf.revertido_omie_em');
+    expect(sql).toContain('NULL::text AS revertido_em');
+    expect(lista[0]).toMatchObject({ revertidoEm: null, revertidoOrigem: null, revertidoOmieEm: null });
+  });
+
+  it('hora invalida no banco nao derruba a listagem: vira nula', async () => {
+    ledgerRows = [{ ...linhaRevertida, revertido_em: 'nao-e-data' }];
+    const lista = await listarLedgerFiscal({});
+    expect(lista[0]!.revertidoEm).toBeNull();
   });
 });

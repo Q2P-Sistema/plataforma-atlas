@@ -31,7 +31,7 @@ Saída esperada: nenhum `ERROR`; na 1ª execução, só `NOTICE: trigger ... doe
 
 **Espelho**: o workflow n8n "Q2P - Exporta Recebimentos NF-e" precisa estar ativo (contrato `contracts/espelho-recebimentos-n8n.md`) e, no UAT, a cópia `scripts/sync-omie-public-prod-to-uat.sh` precisa já incluir as tabelas (acontece sozinho quando existem em PROD e UAT). Sem espelho, a fila mostra só "fiscal já feito" — e isto é o Cenário 5.
 
-> ⚠️ Toda NF usada nos cenários 1–3 sofre **escrita fiscal real no OMIE** (conta a pagar incluída). Use NFs que vão **mesmo** ser recebidas, combinadas com o fiscal. Reverter no OMIE (`ReverterRecebimento`) um fiscal concluído pelo Atlas deixa o Atlas mostrando "fiscal já feito" para sempre (ledger terminal — research, "Limitações conhecidas"): o fiscal precisa reconcluir no portal. Não use a reversão como "volta" de teste.
+> ⚠️ Toda NF usada nos cenários 1–3 sofre **escrita fiscal real no OMIE** (conta a pagar incluída). Use NFs que vão **mesmo** ser recebidas, combinadas com o fiscal. Reverter no OMIE (`ReverterRecebimento`) um fiscal concluído pelo Atlas deixava o Atlas mostrando "fiscal já feito" para sempre (ledger terminal — research, "Limitações conhecidas"). Desde a D21 da 017 o Atlas detecta a reversão (a NF volta a fiscal pendente, com o selo "Fiscal revertido no OMIE", e o clique conclui o fiscal de novo; cenário 12 do quickstart da 017), mas reverter continua sendo escrita real no OMIE de PROD: só com autorização, e não como "volta" de teste.
 
 ---
 

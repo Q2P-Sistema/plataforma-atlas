@@ -6,6 +6,7 @@ import { verificarCopiaPcs, verificarEspelhoRecebimentos } from '../services/ale
 import { registrarPcsVistos } from '../services/pc-visto.service.js';
 import { recebimentoNacionalAcxeHabilitado } from '../services/empresa-nacional.js';
 import { varrerExcedentesRejeitadosSemAviso } from '../services/pc-peso-conferido.service.js';
+import { varrerFiscaisRevertidos } from '../services/fiscal-revertido-varredura.service.js';
 
 const logger = createLogger('stockbridge:cron');
 
@@ -19,6 +20,11 @@ let started = false;
  *   - alerta-comodato-vencido: 08:00 BR todos os dias. Dispara emails pros
  *     responsaveis em D+1 (operador+gestor) e a cada 15 dias depois disso
  *     (operador+gestor+diretor). Detalhes em cron-comodato.service.ts.
+ *   - baixa-pedido-aguardando-vinculo: :20 de toda hora (ACXEGDP-344).
+ *   - vigilancia do recebimento nacional: :05/:35 (features 016/017) — alerta de
+ *     espelho e de copia de PCs defasados, cache de PCs vistos, aviso a compras de
+ *     PC baixado acima da nota e varredura do recebimento fiscal revertido no OMIE
+ *     (D21). Novas varreduras entram NESTE job, nao numa 4a expressao.
  */
 export function iniciarCronsStockBridge(): void {
   if (started) {
@@ -76,6 +82,11 @@ export function iniciarCronsStockBridge(): void {
       // 017 (research D20): entrada rejeitada com o PC baixado acima da nota (peso conferido) sem aviso a
       // compras — o aviso da hora da rejeicao pode ter falhado. Nunca lanca.
       void varrerExcedentesRejeitadosSemAviso();
+      // 017 (research D21): recebimento fiscal que o Atlas concluiu e foi revertido no portal do OMIE — marca o
+      // ledger como 'revertido' (a NF volta a fila como fiscal pendente) e avisa o fiscal quando a entrada fisica
+      // ja foi lancada. Cuida da Q2P e, com a ACXE habilitada, da ACXE; respeita a chave da 016, o kill switch e a
+      // migration 0060. Nunca lanca (o .catch e so cinto e suspensorio).
+      varrerFiscaisRevertidos().catch((err) => logger.error({ err }, 'Falha na varredura de recebimento fiscal revertido no OMIE'));
       if (recebimentoNacionalAcxeHabilitado()) {
         verificarEspelhoRecebimentos('acxe').catch((err) => logger.error({ err }, 'Falha ao verificar o espelho de recebimentos de NF-e da ACXE'));
         verificarCopiaPcs('acxe').catch((err) => logger.error({ err }, 'Falha ao verificar a cópia de pedidos de compra da ACXE'));
@@ -84,5 +95,5 @@ export function iniciarCronsStockBridge(): void {
     },
     { timezone: 'America/Sao_Paulo' },
   );
-  logger.info('Cron registrado: alerta-espelho-recebimentos + cópia de PCs + cache de PCs vistos + avisos de PC baixado acima da nota, Q2P e ACXE (5,35 * * * * BR)');
+  logger.info('Cron registrado: alerta-espelho-recebimentos + cópia de PCs + cache de PCs vistos + avisos de PC baixado acima da nota + varredura de fiscal revertido no OMIE, Q2P e ACXE (5,35 * * * * BR)');
 }

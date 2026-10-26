@@ -45,6 +45,7 @@ import {
 } from '../services/fila-nacional.service.js';
 import { definirConjuntoCorrelacao } from '../services/correlacao-produto.service.js';
 import { recebimentoNacionalAcxeHabilitado } from '../services/empresa-nacional.js';
+import { RecebimentoFiscalRevertidoError } from '../services/fiscal-revertido.js';
 import {
   RecebimentoFiscalError,
   RecebimentoFiscalEmAndamentoError,
@@ -299,6 +300,9 @@ function responderErroFilaNacional(res: Response, err: unknown): boolean {
   // `pc`: o item de PC recusado, para a tela desmarcar a escolha (id de selecao, nunca exibido).
   if (err instanceof PcVinculoInvalidoError) return erro017(409, 'PC_VINCULO_INVALIDO', err, err.pc ? { pc: err.pc } : {});
   if (err instanceof VinculoOmieMudouError) return erro017(409, 'VINCULO_OMIE_MUDOU', err);
+  // D21: o fiscal que o Atlas concluiu foi desfeito no portal do OMIE — ledger ja marcado, nada gravado. Sem
+  // retryAfterSeconds: a nota recarregada volta como fiscal pendente e o proximo clique conclui o fiscal de novo.
+  if (err instanceof RecebimentoFiscalRevertidoError) return erro017(409, 'RECEBIMENTO_FISCAL_REVERTIDO', err);
   if (err instanceof PcRecemUsadoAguardeError) return erro017(409, 'PC_RECEM_USADO_AGUARDE', err, { retryAfterSeconds: err.segundos });
   if (err instanceof VerificacaoEstoqueOmieError) {
     logger.error({ err }, 'Leitura ao vivo do recebimento falhou — nada gravado');
@@ -760,7 +764,7 @@ const DispensasQuerySchema = z.object({
 });
 
 const LedgerFiscalQuerySchema = z.object({
-  status: z.enum(['em_andamento', 'concluido', 'ja_concluido', 'falha']).optional(),
+  status: z.enum(['em_andamento', 'concluido', 'ja_concluido', 'falha', 'revertido']).optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
 });
 

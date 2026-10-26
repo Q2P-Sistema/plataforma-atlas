@@ -9,11 +9,16 @@ import { join } from 'node:path';
 //    exclusao de dispensa, fiscal_pendente consultando o ledger, mapeamento de
 //    colunas da fonte (b) (v_total_item, c_cfop_entrada, c_descricao_produto...).
 // Com DUMP_SQL_DIR definido, grava o SQL gerado para EXPLAIN num banco real.
+//
+// D21 (fiscal revertido no OMIE): aqui o kill switch STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED fica DESLIGADO — este arquivo
+// prova o texto e o comportamento da 016/017 SEM a D21 (o SQL que a D21 desligada gera e o mesmo de antes, byte a byte).
+// O SQL e o mapeamento com a D21 ligada estao em fila-nacional-revertido.test.ts e nos goldens `*-revertido`.
 
 const poolQuerySpy = vi.fn();
 const config: Record<string, unknown> = {
   STOCKBRIDGE_RECEBIMENTO_NACIONAL_DATA_CORTE: '2026-09-11',
   STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED: false,
+  STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED: false,
 };
 
 vi.mock('@atlas/core', () => ({

@@ -17,7 +17,9 @@ import {
   type ProdutoEscolhido,
 } from './RecebimentoNacionalForm.js';
 import {
+  AVISO_AMBAR,
   PedidoCompraBloco,
+  SELO_AMBAR,
   fmtBrlKg,
   fmtKg,
   localSugeridoPeloPc,
@@ -27,6 +29,7 @@ import {
   pcOpcaoEscolhida,
   pcParaEnvio,
   pcPendencia,
+  pcSemOpcao,
   rotuloPc,
   type LocalSugeridoPeloPc,
   type PcCompactoNota,
@@ -82,6 +85,13 @@ import {
  * "Entra só na ACXE" — e o estoque do PC escolhido vem marcado (derivado, sem useEffect; a escolha manual nunca e sobrescrita).
  * Produto sem correspondente na Q2P nao entra em estoque que tambem e da Q2P: a tela previne e bloqueia, e o servidor recusa antes do
  * fiscal. A memoria fornecedor x descricao e so da Q2P: a NF da ACXE nao chama o PUT /correlacao.
+ *
+ * D21 da 017 — recebimento fiscal REVERTIDO no OMIE: o fiscal da nota foi concluido e alguem o desfez no portal (a nota voltou para
+ * a caixa de recebimento de NF-e). O servidor devolve `fiscal: 'pendente'` + `fiscalRevertido: true` — NUNCA um terceiro valor em
+ * `SituacaoFiscal`: cada `=== 'pendente'` daqui trata o resto como "concluido" e a nota perderia o bloco de PC e o "Concluir fiscal". A
+ * tela so informa (selo na fila, aviso no detalhe, 409 ambar no clique) e deixa o fluxo normal de fiscal pendente fazer o resto: o
+ * operador confirma o PC e o Atlas conclui o fiscal de novo. Campo ausente (backend anterior) ou chave do fiscal desligada = nada muda.
+ * O texto diz sempre "no OMIE": "revertido" sozinho ja significa outra coisa nesta tela ("Reverter baixa", em Aprovacoes).
  */
 
 interface FilaNacionalItem {
@@ -104,6 +114,11 @@ interface FilaNacionalItem {
   pcSituacao?: PcSituacao;
   /** o fiscal ja lancou o estoque no OMIE: o recebimento fisico aqui lancaria em dobro */
   estoqueLancadoPeloOmie?: boolean;
+  /**
+   * D21 da 017 (campo novo: ausente = backend anterior = nao): o fiscal foi concluido (pelo Atlas ou no portal) e desfeito no OMIE
+   * depois. Vem JUNTO de `fiscal: 'pendente'` — a reversao nunca e um terceiro valor de `SituacaoFiscal`.
+   */
+  fiscalRevertido?: boolean;
 }
 
 type SituacaoFiscal = 'pendente' | 'concluido';
@@ -181,6 +196,13 @@ interface DetalheNf {
   exigePc?: boolean;
   /** true = o estoque ja entrou pelo OMIE: bloqueia o recebimento */
   estoqueLancadoPeloOmie?: boolean;
+  /**
+   * D21 da 017 (campos novos: ausentes = backend anterior): o fiscal foi concluido (pelo Atlas ou no portal) e desfeito no OMIE
+   * depois — vem JUNTO de `fiscal: 'pendente'`. `fiscalRevertidoEm` = instante da reversao no OMIE (ISO; null = o OMIE ainda nao
+   * disse: o Atlas percebeu pela leitura ao vivo do clique e o espelho ainda nao trouxe a hora — o banner omite a hora).
+   */
+  fiscalRevertido?: boolean;
+  fiscalRevertidoEm?: string | null;
   /** true = lista local de PCs desatualizada: sem sugestao confiavel e, com fiscal pendente, sem recebimento */
   copiaPcsDefasada?: boolean;
   /**
@@ -309,6 +331,19 @@ const fmtData = (iso: string) => {
   const d = new Date(iso.length === 10 ? `${iso}T00:00:00` : iso);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('pt-BR');
 };
+/**
+ * " em 25/10 às 17:13" — dia/mes e hora de Brasilia (o fuso das horas do OMIE e da operacao, qualquer que seja o do navegador), para
+ * completar uma frase. '' quando o instante falta ou e invalido: a frase segue sem horario, nunca com "Invalid Date".
+ */
+export function emDataHoraBr(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const fuso = 'America/Sao_Paulo';
+  const dia = d.toLocaleString('pt-BR', { timeZone: fuso, day: '2-digit', month: '2-digit' });
+  const hora = d.toLocaleString('pt-BR', { timeZone: fuso, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  return ` em ${dia} às ${hora}`;
+}
 const parseNum = (s: string): number | null => {
   const t = s.trim();
   if (!t) return null;
@@ -391,7 +426,16 @@ const ERROS_QUE_RECARREGAM_NOTA = new Set([
   // servidor manda recarregar — a tela recarrega e mantem o formulario (achado portao-r02)
   'NF_INCOMPLETA',
   'ITEM_NAO_ENCONTRADO',
+  // D21: o fiscal que o Atlas concluiu foi desfeito no OMIE. O servidor ja marcou o ledger como revertido: a nota recarregada volta como
+  // fiscal pendente (bloco de PC, "Concluir fiscal e dar entrada") e o formulario digitado fica — nenhum setForm roda para este codigo.
+  'RECEBIMENTO_FISCAL_REVERTIDO',
 ]);
+
+/**
+ * Recusas que orientam o operador (o proximo passo e dele, nada falhou): caixa ambar em vez da vermelha, que no arquivo significa
+ * bloqueio ou falha. NF_SEM_PC: avisar compras. RECEBIMENTO_FISCAL_REVERTIDO: a nota reabriu como fiscal pendente, confirmar o PC.
+ */
+const ERROS_DE_ORIENTACAO = new Set(['NF_SEM_PC', 'RECEBIMENTO_FISCAL_REVERTIDO']);
 
 /** "ao PC 304" | "aos PCs 304 e 305" | "ao PC (número não informado)" — o PC (ou os PCs) a que um item foi vinculado. */
 function textoPcsVinculados(pcs: Array<{ pcNumero: string }>): string {
@@ -575,6 +619,8 @@ function FilaSection({
   });
   const fila = data?.fila ?? [];
   const fiscalHabilitado = data?.fiscalHabilitado ?? false;
+  /** D21: o fiscal que o Atlas concluiu foi desfeito no OMIE — so lido com a chave do fiscal ligada e com a nota em fiscal pendente */
+  const fiscalRevertidoNaFila = (x: FilaNacionalItem) => fiscalHabilitado && x.fiscal === 'pendente' && x.fiscalRevertido === true;
   /** a ACXE esta ligada ou ha NF dela na lista: so entao a tela mostra a empresa (sem ACXE ela e a de sempre) */
   const mostrarEmpresa = (data?.acxeHabilitada ?? false) || fila.some((x) => x.empresa === 'acxe');
   useEffect(() => {
@@ -644,6 +690,12 @@ function FilaSection({
               recebimento fiscal concluído ao confirmar, com cada item vinculado ao pedido de compra (PC) escolhido; as demais já tiveram o fiscal feito e recebem só o estoque.
               Quantidade e valor vêm do documento.
             </p>
+            {fila.some(fiscalRevertidoNaFila) && (
+              <p>
+                As marcadas como <strong className="text-atlas-ink font-medium">fiscal revertido no OMIE</strong> também estão com o fiscal pendente: o recebimento
+                fiscal foi concluído e depois desfeito no portal do OMIE. Ao confirmar, o Atlas o conclui de novo.
+              </p>
+            )}
             <p>
               Notas recém-chegadas da SEFAZ aparecem após a próxima atualização do espelho do OMIE. O formulário manual não conclui o recebimento fiscal:
               use-o só para nota que não está nesta lista e, nesse caso, avise o fiscal.
@@ -728,6 +780,14 @@ function FilaSection({
                           Fiscal já feito
                         </span>
                       ))}
+                    {fiscalRevertidoNaFila(x) && (
+                      <span
+                        className={SELO_AMBAR}
+                        title="O recebimento fiscal desta nota foi concluído e depois desfeito no OMIE. Ao dar entrada, o Atlas conclui o fiscal de novo."
+                      >
+                        Fiscal revertido no OMIE
+                      </span>
+                    )}
                     {x.pcSituacao && x.pcSituacao !== 'nao_aplicavel' && SELO_PC[x.pcSituacao] && (
                       <span className={`text-xs px-1.5 py-0.5 rounded ${SELO_PC[x.pcSituacao].cls}`} title={SELO_PC[x.pcSituacao].title}>
                         {SELO_PC[x.pcSituacao].label}
@@ -749,6 +809,13 @@ function FilaSection({
                         : `emitida em ${fmtData(x.dtEmissao)} · há ${x.diasDesdeEmissao} ${x.diasDesdeEmissao === 1 ? 'dia' : 'dias'}`}
                     </span>
                   </div>
+                  {/* o title dos selos nao alcanca teclado nem toque: o motivo da reversao fica escrito na linha */}
+                  {fiscalRevertidoNaFila(x) && (
+                    <div className="text-xs text-amber-800 dark:text-amber-300 mt-0.5">
+                      O recebimento fiscal desta nota foi concluído e depois desfeito no OMIE.
+                      {x.fornecedorCnpj ? ' Ao dar entrada, o Atlas conclui o fiscal de novo.' : ''}
+                    </div>
+                  )}
                 </div>
                 <div className="text-right">
                   <div className="font-serif text-atlas-ink">{fmtBrl(x.valorTotalBrl)}</div>
@@ -864,6 +931,8 @@ function DetalheSection({
   const baixaHabilitada = nf?.recebimentoExternoHabilitado !== false;
   /** feature 016: a NF esta com o recebimento fiscal pendente no OMIE */
   const fiscalPendente = nf?.recebimentoFiscalHabilitado === true && nf.fiscal === 'pendente';
+  /** D21: o Atlas concluiu o fiscal e ele foi desfeito no OMIE depois (so informa: o fluxo e o do fiscal pendente, `fiscal` segue 'pendente') */
+  const fiscalRevertido = fiscalPendente && nf?.fiscalRevertido === true;
   /** fornecedor nao cadastrado no OMIE: o fiscal nao pode ser concluido ate o fiscal cadastrar */
   const fiscalSemFornecedor = fiscalPendente && !nf?.fornecedorCnpj;
   /** o fiscal sera concluido no OMIE neste clique (ha o que receber e fornecedor cadastrado) */
@@ -1021,6 +1090,8 @@ function DetalheSection({
                     : `Falta escolher o pedido de compra do item ${nomeItem(primeiraPendenciaPc.it)}.`;
   /** ha item com PC para confirmar neste envio (muda o texto do aviso do fiscal) */
   const haPcParaConfirmar = pcAtivo && !copiaPcsDefasada && recebiveis.some((it) => it.pc != null);
+  /** D21: algum item a receber tem PC que o operador possa de fato confirmar (opcao selecionavel) — o aviso da reversao so o promete entao */
+  const haPcSelecionavel = pcAtivo && !copiaPcsDefasada && recebiveis.some((it) => it.pc != null && !pcSemOpcao(it.pc));
 
   /** Peso que ainda entra por este envio: conferido (ou da NF) menos o que ja foi gravado. */
   function alvoKg(it: ItemNf, fi: ItemForm): number {
@@ -1420,6 +1491,23 @@ function DetalheSection({
             </div>
           )}
 
+          {/* D21: fora da guarda do aviso abaixo, para a historia aparecer tambem com o recebimento barrado por outro aviso */}
+          {fiscalRevertido && !resultado && (
+            <div className={`mb-3 ${AVISO_AMBAR}`}>
+              <p>
+                <strong className="font-semibold">O recebimento fiscal desta nota foi desfeito no {omieDaNf}{emDataHoraBr(nf.fiscalRevertidoEm)} depois de concluído.</strong>
+                {/* com o recebimento barrado por outro aviso (PC, lista de PCs, unidade), nao prometer "ao dar entrada" */}
+                {fiscalNoClique && !recebimentoBarrado && (
+                  <>
+                    {' '}
+                    Ao dar entrada, o Atlas conclui o fiscal de novo{haPcSelecionavel ? ', com o pedido de compra confirmado abaixo' : ''}.
+                  </>
+                )}{' '}
+                Se a reversão foi feita para corrigir a nota no {omieDaNf}, fale com o fiscal antes de dar entrada.
+              </p>
+            </div>
+          )}
+
           {fiscalPendente && !resultado && (fiscalSemFornecedor || recebiveis.length === 0 || !recebimentoBarrado) && (
             <div className="mb-3 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-sm text-amber-900 dark:text-amber-200">
               {fiscalSemFornecedor
@@ -1558,7 +1646,7 @@ function DetalheSection({
           {erroEnvio && (
             <div
               className={`mt-4 p-3 border rounded text-sm flex items-start gap-3 flex-wrap ${
-                erroCodigo === 'NF_SEM_PC'
+                erroCodigo != null && ERROS_DE_ORIENTACAO.has(erroCodigo)
                   ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200'
                   : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-800 dark:text-red-300'
               }`}

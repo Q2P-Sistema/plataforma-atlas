@@ -539,8 +539,11 @@ export const baixaPedidoQ2p = stockbridgeSchema.table(
 // chamada ao OMIE e e o lock contra duplo clique (indice unico parcial: uma
 // linha "viva" por NF). 'concluido'/'ja_concluido' fazem a fila marcar a NF
 // como "fiscal ja feito" antes de o espelho refletir; 'falha' fica como
-// historico. erro_omie_* e tecnico — nunca vai a UI (ACXEGDP-313).
-export type RecebimentoFiscalStatus = 'em_andamento' | 'concluido' | 'ja_concluido' | 'falha';
+// historico. 'revertido' (0060, research D21 da 017): o recebimento concluido foi
+// revertido no OMIE depois — a NF volta a fila como fiscal pendente. erro_omie_*
+// e tecnico — nunca vai a UI (ACXEGDP-313).
+export type RecebimentoFiscalStatus = 'em_andamento' | 'concluido' | 'ja_concluido' | 'falha' | 'revertido';
+export type RecebimentoFiscalRevertidoOrigem = 'espelho' | 'omie_ao_vivo';
 /** 'consultar_pc' e 'associar' entraram com a feature 017 (migration 0056). */
 export type RecebimentoFiscalPasso =
   | 'consultar'
@@ -573,6 +576,15 @@ export const recebimentoFiscal = stockbridgeSchema.table(
     confirmadoPor: uuid('confirmado_por').notNull().references(() => users.id),
     iniciadoEm: timestamp('iniciado_em', { withTimezone: true }).notNull().defaultNow(),
     finalizadoEm: timestamp('finalizado_em', { withTimezone: true }),
+    // 0060 (research D21 da 017): o recebimento concluido foi revertido no OMIE depois — quando e como
+    // o Atlas percebeu, a hora da alteracao no OMIE (quando o espelho a traz), quem clicou (leitura ao
+    // vivo) e o aviso ao fiscal (entrada fisica ja lancada: a NF nao volta a fila)
+    revertidoEm: timestamp('revertido_em', { withTimezone: true }),
+    revertidoOrigem: varchar('revertido_origem', { length: 14 }).$type<RecebimentoFiscalRevertidoOrigem>(),
+    // marcador do sinal na origem 'espelho' (COALESCE(revertido_omie_em, revertido_em)): a hora da reversao no OMIE
+    revertidoOmieEm: timestamp('revertido_omie_em', { withTimezone: true }),
+    revertidoPor: uuid('revertido_por').references(() => users.id),
+    avisoFiscalEm: timestamp('aviso_fiscal_em', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -581,6 +593,7 @@ export const recebimentoFiscal = stockbridgeSchema.table(
       .on(t.nfChaveAcesso)
       .where(sql`status IN ('em_andamento', 'concluido', 'ja_concluido')`),
     index('recebimento_fiscal_status_idx').on(t.status, t.iniciadoEm),
+    index('recebimento_fiscal_chave_idx').on(t.nfChaveAcesso, t.status),
   ],
 );
 
@@ -591,7 +604,9 @@ export const recebimentoFiscal = stockbridgeSchema.table(
 // iniciadas há menos de 15 min, são a reserva de saldo do item de PC (research
 // D4). Justificativa obrigatória por CHECK fora da tolerância, na escolha manual
 // e na troca do vínculo do OMIE (data-model §4). erro_omie_* nunca vai à UI.
-export type RecebimentoFiscalPcStatus = 'confirmado' | 'associado' | 'concluido' | 'falha';
+// 'revertido' (0060, research D21 da 017): o recebimento foi revertido no OMIE
+// depois de concluido; a linha sai do índice de item vivo e do saldo do PC.
+export type RecebimentoFiscalPcStatus = 'confirmado' | 'associado' | 'concluido' | 'falha' | 'revertido';
 export type RecebimentoFiscalPcOrigem = 'omie' | 'sugestao' | 'manual';
 
 /** Retrato do que foi oferecido ao operador para o item (jsonb `candidatos`). */

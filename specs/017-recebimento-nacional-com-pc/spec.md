@@ -29,6 +29,8 @@ As features 015 (ACXEGDP-328) e 016 (ACXEGDP-395) levaram para o StockBridge o r
 - **O PC da matriz serve à NF da filial.** O Atlas passa a oferecer PC de outro cadastro com a mesma raiz de CNPJ (FR-002).
 - **Escolher o PC item por item é repetitivo.** Na NF 60199 foram 3 confirmações e 3 justificativas iguais. A escolha passa a ser uma por nota (FR-032).
 
+**Reversão no portal (25/10/2026).** O Atlas concluiu o fiscal da NF 19252 (Zaraplast × PC 308) às 17:02, e o usuário reverteu o recebimento no portal do OMIE às 17:13, depois de o gestor rejeitar a entrada física. O Atlas não percebeu: a fila seguiu mostrando "fiscal já feito", e o clique seguinte teria feito só o físico, deixando a NF na etapa 40, sem conta a pagar e sem baixa no PC. O Atlas passa a perceber a reversão (FR-035, research D21 da 017).
+
 ## Clarifications
 
 ### Session 2026-10-21
@@ -64,6 +66,15 @@ Pedidos do usuário depois da estreia da NF 60199 (Zaraplast × PC 306) em PROD,
 - Q: Como tratar PC em unidade diferente da NF (toneladas × kg)? → A: **Bloquear por padrão**, com a conversão (`itensAjustes.nQtdeRecebida` na unidade do PC) atrás de chave, a ligar só depois de teste com NF real (FR-031). Evidência: o OMIE baixou o PC 306 com a quantidade na unidade da NF, e o usuário corrigiu no portal editando a quantidade recebida de cada item.
 - Q: O que mostrar quando o PC sai da lista de pendentes por ter item associado a um recebimento aberto? → A: **O número e o saldo da última vez em que o Atlas viu o PC**, vindos de um cache (migration 0057), com alerta de que a confirmação confere o saldo ao vivo (FR-033). Ler o OMIE ao vivo no detalhe foi descartado (Princípio II).
 - Q: Onde a compra nacional da ACXE dá entrada no estoque? (Fase 2, depois de ver os dados de PROD: de jul/2025 a out/2026, 50 NFs nacionais da ACXE entraram no 20.0.7 PRODUÇÃO, 1 no 20.0.5 PROCESSO, 3 no 21.2 e só 4, de 2025, no 21.1; o PC 580, primeiro PC nacional da ACXE, aponta para o 20.0.7) → A: **O operador escolhe, e o PC sugere.** A lista traz os locais que também são da Q2P (11.1, 12.1, 21.1, 31.1), com entrada na ACXE e na Q2P pelo mesmo valor, e os locais só da ACXE onde ela compra hoje (20.0.7 PRODUÇÃO, 20.0.5 PROCESSO, 21.2 EXTREMA NACIONAL), com entrada só na ACXE. O local do PC vem marcado. Substitui a decisão de 21/10 ("sempre nas duas empresas, nunca só na ACXE"), que tinha sido tomada sem compra nacional da ACXE à vista (FR-028 revisado, research D18).
+
+### Session 2026-10-25
+
+- Q: O Atlas deve perceber que o recebimento fiscal que ele concluiu foi revertido no portal do OMIE? → A: **Sim.** A NF volta à fila como "fiscal pendente", com o selo "Fiscal revertido no OMIE", e o clique do operador conclui o fiscal de novo, com o PC confirmado. O Atlas percebe pelo espelho de recebimentos (comparando horas de evento do OMIE) e, no clique, por uma leitura ao vivo do recebimento (FR-035). Evidência: NF 19252 × PC 308, concluída às 17:02 e revertida no portal às 17:13 de 25/10/2026, com a fila ainda mostrando "fiscal já feito".
+- Q: E se a entrada física da NF já foi lançada no Atlas? → A: A NF não volta à fila (já foi recebida), e o **fiscal é avisado por e-mail** para concluir o recebimento de novo no portal, sem movimentar estoque (o estoque entra pela aprovação no Atlas) e conferindo o vínculo com o PC.
+- Q: O Atlas passa a reverter o recebimento no OMIE? → A: **Não.** Reverter continua fora do escopo (016, decisão de 02/10/2026). O Atlas só detecta a reversão feita no portal e refaz a conclusão no clique do operador.
+- Q: E o fiscal que reverte de propósito para corrigir a nota (reverter, editar, concluir, como na NF 60199)? → A: Enquanto ele edita, a NF aparece como "Fiscal revertido no OMIE", com o aviso de que, se a reversão foi feita para corrigir a nota, o operador deve falar com o fiscal antes de dar entrada. Quando o fiscal conclui de novo no portal, a NF volta a "fiscal já feito".
+- Q: A rejeição do gestor também conta como reversão? → A: **Não** (FR-018). Só a reversão feita no OMIE marca a NF.
+- Q: Chave própria? → A: Sim, além da chave da 016: `STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED`, ligada por padrão, para desligar o tratamento sem redeploy de código.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -129,11 +140,11 @@ Nem toda compra nacional terá PC, ao menos na transição: o fornecedor ainda n
 
 ### User Story 4 - Falhas, repetições e rejeições não deixam NF nem PC inconsistentes (Priority: P2)
 
-O vínculo acrescenta escritas ao clique. Qualquer uma pode falhar, o operador pode clicar duas vezes, e o gestor pode rejeitar um recebimento com divergência depois de o fiscal e o vínculo já estarem feitos. Em todos os casos a NF e o PC precisam acabar num estado conhecido, e nada pode ser vinculado, recebido no PC ou lançado em estoque duas vezes.
+O vínculo acrescenta escritas ao clique. Qualquer uma pode falhar, o operador pode clicar duas vezes, e o gestor pode rejeitar um recebimento com divergência depois de o fiscal e o vínculo já estarem feitos. O fiscal ainda pode reverter no portal o recebimento que o Atlas concluiu (NF 19252, 25/10/2026). Em todos os casos a NF e o PC precisam acabar num estado conhecido, e nada pode ser vinculado, recebido no PC ou lançado em estoque duas vezes.
 
 **Why this priority**: mesmo motivo da História 3 da feature 016. Sem isto, um problema visível (PC aberto) vira um invisível (PC recebido duas vezes, ou fiscal concluído com o vínculo errado).
 
-**Independent Test**: simular cada falha (vínculo recusado, conclusão recusada depois do vínculo, falha do estoque depois do fiscal, clique repetido, rejeição do gestor) e verificar o estado da NF e do PC no OMIE e da NF no Atlas.
+**Independent Test**: simular cada falha (vínculo recusado, conclusão recusada depois do vínculo, falha do estoque depois do fiscal, clique repetido, rejeição do gestor, reversão no portal) e verificar o estado da NF e do PC no OMIE e da NF no Atlas.
 
 **Acceptance Scenarios**:
 
@@ -142,6 +153,8 @@ O vínculo acrescenta escritas ao clique. Qualquer uma pode falhar, o operador p
 3. **Given** o fiscal concluído com vínculo e o estoque com falha, **When** a NF volta à fila, **Then** ela aparece como "fiscal já feito", com o PC vinculado à vista, e o novo recebimento faz só o estoque.
 4. **Given** um recebimento com divergência de peso (fiscal e vínculo já feitos), **When** o gestor rejeita, **Then** o fiscal e o vínculo **não** são desfeitos, e a NF volta à fila como "fiscal já feito", como na 016.
 5. **Given** o operador confirma duas vezes, **When** o Atlas processa, **Then** o vínculo, a conclusão do fiscal e o estoque acontecem uma única vez cada.
+6. **Given** o fiscal concluído pelo Atlas e revertido depois no portal do OMIE (caso real: NF 19252 × PC 308, concluída às 17:02 e revertida às 17:13 de 25/10/2026), **When** o espelho de recebimentos mostra o recebimento pendente depois da conclusão, ou o operador tenta dar entrada antes disso, **Then** a NF volta à fila como "fiscal pendente", com o selo "Fiscal revertido no OMIE"; o clique antes de o espelho atualizar responde `409 RECEBIMENTO_FISCAL_REVERTIDO` sem gravar nada, e o recebimento seguinte conclui o fiscal de novo, com o PC confirmado (o OMIE manteve o vínculo, o "não movimentar estoque" e as quantidades; o PC volta a mostrar o recebido ao fim).
+7. **Given** o fiscal revertido no portal e a entrada física da NF já lançada no Atlas (pendente de aprovação ou aprovada), **When** o Atlas percebe a reversão, **Then** a NF não volta à fila e o fiscal recebe um e-mail para concluir o recebimento de novo no portal, sem movimentar estoque; o Atlas não faz nenhuma escrita no OMIE.
 
 ---
 
@@ -185,8 +198,10 @@ A compra nacional também pode ser feita pela ACXE. A NF e o PC chegam só ao OM
 - **Descrição do item trocada pelo vínculo**: não devolve a NF à fila (reconhecimento pela sequência, ACXEGDP-412).
 - **PCs-espelho da importação** (fornecedor ACXE, valor abaixo de R$ 200): nunca aparecem na sugestão. A baixa do PC Q2P de importação (ACXEGDP-344) continua igual.
 - **Divergência de peso**: o fiscal e o vínculo acontecem no clique, como na 016. A divergência é assunto do físico e da aprovação do gestor.
-- **Dispensa de NF** (016): continua valendo. A dispensa não desfaz vínculo nem fiscal no OMIE, e o aviso ao fiscal passa a citar o PC vinculado, quando houver.
-- **Chave de operação desligada**: comportamento da contenção. A fila mostra só NFs com fiscal já feito, e o Atlas faz só o físico.
+- **Dispensa de NF** (016): continua valendo. A dispensa não desfaz vínculo nem fiscal no OMIE, e o aviso ao fiscal passa a citar o PC vinculado, quando houver. A dispensa ativa continua tirando a NF da fila mesmo revertida, e o fiscal não recebe o aviso de reversão de NF dispensada (o e-mail da dispensa já o mandou tratar a nota).
+- **Fiscal revertido no portal depois de concluído pelo Atlas** (caso real de 25/10/2026: NF 19252 × PC 308, concluída às 17:02 e revertida às 17:13): a reversão devolve o recebimento à etapa 40, desfaz a conta a pagar e o recebido do PC, e mantém o vínculo, o "não movimentar estoque" e as quantidades dos itens. O Atlas compara as horas de evento do OMIE (nunca as de sincronização) e, quando a pendência é posterior à conclusão, a NF volta como "fiscal pendente", com o selo e o aviso (FR-035). O espelho de recebimentos leva até ~30 min para refletir a reversão: nessa janela, o clique de NF cujo fiscal o Atlas concluiu (há pelo menos 75 s) lê o recebimento ao vivo e responde `409 RECEBIMENTO_FISCAL_REVERTIDO`, sem gravar nada. Se a entrada física já foi lançada, a NF não volta à fila e o fiscal é avisado por e-mail. Se o fiscal concluir de novo no portal, a conclusão mais nova desliga o sinal e a NF volta a "fiscal já feito"; sem marcar "não movimentar estoque", vale a trava de estoque já lançado (FR-021a). A nota de entrada no espelho de NF não serve de sinal: o espelho nunca a marca como excluída.
+- **Correção do fiscal no portal (reverter, editar, concluir)**, como na NF 60199 (research D15): entre a reversão e a nova conclusão a NF aparece como "Fiscal revertido no OMIE", e o aviso da tela manda o operador falar com o fiscal antes de dar entrada, porque um clique nessa janela faria o Atlas concluir o fiscal em paralelo à correção.
+- **Chave de operação desligada**: comportamento da contenção. A fila mostra só NFs com fiscal já feito, e o Atlas faz só o físico. O tratamento do fiscal revertido (FR-035) vale só com a chave ligada, com `STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED` e com a migration 0060; sem isso o ledger `concluido` é final, como na 016.
 
 ## Requirements *(mandatory)*
 
@@ -219,7 +234,7 @@ A compra nacional também pode ser feita pela ACXE. A NF e o PC chegam só ao OM
 - **FR-015**: Repetir o clique ou reenviar o recebimento MUST NOT vincular, concluir o fiscal, registrar recebimento no PC nem lançar estoque mais de uma vez.
 - **FR-016**: A troca da descrição do item no OMIE depois do vínculo MUST NOT devolver à fila uma NF já recebida. O item é reconhecido pela sequência na NF (ACXEGDP-412).
 - **FR-017**: O recebimento físico (correlação item → produtos, 1 item → N produtos, divergência com motivo e aprovação do gestor, NF recebida por inteiro, entrada de estoque) MUST permanecer como nas features 015 e 016. O produto do PC pode ser mostrado como referência, mas não substitui a correlação.
-- **FR-018**: A rejeição do gestor MUST NOT desfazer o fiscal nem o vínculo. A NF volta à fila como "fiscal já feito", como na 016.
+- **FR-018**: A rejeição do gestor MUST NOT desfazer o fiscal nem o vínculo. A NF volta à fila como "fiscal já feito", como na 016. A reversão feita **no portal do OMIE** é outra coisa e é tratada no FR-035.
 
 **NF sem PC e NF com fiscal já feito**
 
@@ -247,6 +262,10 @@ A compra nacional também pode ser feita pela ACXE. A NF e o PC chegam só ao OM
 - **FR-034** (baixa do PC pelo peso conferido, research D20): com `STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO` ligada, quando o peso conferido de um item vinculado a PC passar da NF acima da tolerância de 1 kg, o sistema MUST mandar no `EDITAR` do fiscal a quantidade recebida igual ao peso conferido, limitada ao saldo disponível do PC (nunca acima dele; NF que já passa do saldo não leva excedente) e só quando o excedente não passar de `STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT` (padrão 10%) da NF do item. Peso a menos MUST NOT ser mandado. As reservas entre NFs MUST contar o que cada vínculo baixa do PC. Numa nova tentativa da mesma NF, a quantidade que o Atlas mandou antes e que não vale mais MUST voltar à da NF. Se o gestor rejeitar a entrada de um item cujo PC foi baixado acima da nota, o sistema MUST avisar compras por e-mail, deduplicado por item, e MUST tentar de novo se o envio falhar. Com a chave desligada (padrão), o Atlas não manda ao PC quantidade acima da NF; o registro do que o OMIE baixou (`ja_concluido`), a devolução da quantidade da NF na retomada e o aviso na rejeição não dependem da chave.
 - **FR-033** (PC fora da lista de pendentes): o sistema MUST guardar a última versão vista de cada item de PC (cache, atualizado só quando algo muda) e, quando a cópia local não trouxer o PC, MUST usar o cache para mostrar o número, o produto e o saldo do vínculo do OMIE e para oferecer o PC aos demais itens, com alerta de que os dados são da última sincronização. Como candidato, o PC do cache vale 7 dias (o PC que saiu da lista por recebimento total, cancelamento ou exclusão não volta); o PC do vínculo do OMIE é lido sempre. A confirmação MUST continuar conferindo o saldo ao vivo (FR-009), sem consulta ao OMIE na abertura do detalhe (FR-008).
 
+**Fiscal revertido no OMIE (25/10/2026, research D21 da 017)**
+
+- **FR-035**: Quando o recebimento fiscal que o Atlas concluiu for revertido no portal do OMIE, o sistema MUST tratá-lo como pendente e MUST NOT desfazer nada no OMIE. (a) A NF MUST voltar à fila como "fiscal pendente", com o selo "Fiscal revertido no OMIE" e, no detalhe, o aviso com a hora da reversão; o clique do operador MUST concluir o fiscal de novo, com o PC confirmado (FR-007, FR-009). (b) A reversão MUST ser percebida comparando horas de evento do OMIE (alteração do recebimento e da nota de entrada, em horário de Brasília) com a conclusão, com margem de 2 minutos para a pendência vinda do espelho; horas de sincronização (`synced_at`) e a presença da nota de entrada no espelho de NF MUST NOT servir de sinal. (c) O clique de NF cujo fiscal o Atlas concluiu há pelo menos 75 s MUST ler o recebimento no OMIE antes de pular o fiscal e, se ele não estiver recebido, MUST marcar a reversão, recusar com `409 RECEBIMENTO_FISCAL_REVERTIDO` e não gravar movimentação, aprovação nem escrita no OMIE. (d) A reversão MUST deixar rastro auditável (ledger `revertido`, com a origem, espelho ou OMIE ao vivo, quando e, na leitura ao vivo, quem), e os vínculos de PC da tentativa revertida MUST sair do saldo e da reserva do PC. (e) A NF revertida com a entrada física já lançada MUST NOT voltar à fila; o fiscal MUST ser avisado por e-mail (uma vez por NF, e não quando há dispensa ativa) para concluir de novo no portal, sem movimentar estoque. (f) A rejeição do gestor MUST NOT marcar a reversão (FR-018). (g) O tratamento MUST valer só com a chave da 016 ligada e MUST poder ser desligado por `STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED`, voltando ao comportamento anterior.
+
 **Compra nacional pela ACXE (User Story 5)**
 
 - **FR-025**: A fila de recebimento nacional MUST incluir as NFs de compra nacional da ACXE, com fiscal pendente e já feito, identificadas pela empresa, com os mesmos critérios de elegibilidade da Q2P.
@@ -262,7 +281,7 @@ A compra nacional também pode ser feita pela ACXE. A NF e o PC chegam só ao OM
 - **Vínculo do OMIE**: associação item de NF → item de PC que o recebimento da NF-e já traz do OMIE, junto com o número do pedido informado na NF. É a sugestão principal do item. Fonte: cópia local dos recebimentos de NF-e, que ainda precisa ganhar essas colunas.
 - **Sugestão de PC por item**: para um item de NF, o vínculo do OMIE, ou, sem ele, os PCs candidatos em ordem, com o motivo de cada um (número do pedido na NF, quantidade e preço compatíveis) ou o motivo de não haver candidato.
 - **Vínculo confirmado**: item de NF (chave de acesso + sequência) → item de PC, com quem confirmou, quando, a situação do PC relida na confirmação e o resultado no OMIE.
-- **Registro da conclusão fiscal** (existente, 016): estendido para indicar o vínculo com PC.
+- **Registro da conclusão fiscal** (existente, 016): estendido para indicar o vínculo com PC e a reversão no portal (status `revertido`, com a origem, espelho ou leitura ao vivo, e o aviso ao fiscal).
 - **Recebimento físico** (existente, 015/016): movimentação de estoque por item → produto(s), com aprovação quando há divergência. Na compra pela ACXE, lançada nas duas empresas, no local espelhado escolhido.
 
 ## Success Criteria *(mandatory)*
@@ -281,6 +300,7 @@ A compra nacional também pode ser feita pela ACXE. A NF e o PC chegam só ao OM
 - **SC-009**: Zero NFs com estoque lançado duas vezes (pelo OMIE no portal e pelo Atlas).
 - **SC-010**: Zero PCs baixados em unidade diferente da NF (kg × tonelada) por recebimento feito pelo Atlas.
 - **SC-011**: Uma confirmação e uma justificativa por nota quando um único PC atende todos os itens (NF 60199: eram 3 de cada).
+- **SC-012**: Zero NFs paradas na etapa 40 do OMIE por fiscal revertido no portal depois de concluído pelo Atlas (caso da NF 19252): a NF volta a "fiscal pendente" em até uma rodada do espelho ou no clique, e nenhum falso positivo entre os recebimentos já concluídos (validação em PROD em 25/10/2026: 1 de 4.289 recebimentos da Q2P marcado, a própria 19252, e 0 de 346 da ACXE).
 
 ## Assumptions
 
@@ -294,6 +314,7 @@ A compra nacional também pode ser feita pela ACXE. A NF e o PC chegam só ao OM
 - Os PCs nacionais são lançados por compras na empresa que compra (Q2P ou ACXE) e não têm a observação "Pedido original ACXE", que marca os PCs-espelho da importação.
 - O operador que hoje faz o recebimento confirma o PC; não há novo papel de usuário.
 - As Histórias 1 a 4 (Q2P) vêm antes da História 5 (ACXE), que pode ser entregue numa fase separada.
+- `d_alt` e `h_alt` do espelho refletem o evento no OMIE em horário de Brasília, e o espelho de recebimentos chega em até ~30 min. A reversão do recebimento no portal devolve a etapa 40, mantém o vínculo, o "não movimentar estoque" e as quantidades dos itens, e devolve o saldo do PC (NF 19252, 25/10/2026).
 
 ## Dependencies
 
@@ -313,3 +334,4 @@ A compra nacional também pode ser feita pela ACXE. A NF e o PC chegam só ao OM
 - Mudar a baixa do PC Q2P de importação (ACXEGDP-344).
 - Recebimento de importação.
 - A atualização frequente da cópia local de PCs, que é trabalho do n8n listado em Dependências.
+- Reverter ou desfazer o fiscal no OMIE pelo Atlas: a D21 da 017 só detecta a reversão feita no portal e refaz a conclusão no clique do operador (FR-035). Refazer só o fiscal de NF com a entrada física já lançada também fica fora: o fiscal conclui no portal, avisado por e-mail.

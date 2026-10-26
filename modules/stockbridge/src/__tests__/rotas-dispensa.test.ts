@@ -102,6 +102,7 @@ import {
   RecebimentoFiscalSemFornecedorError,
   RecebimentoFiscalEtapaInesperadaError,
 } from '../services/recebimento-fiscal.service.js';
+import { RecebimentoFiscalRevertidoError } from '../services/fiscal-revertido.js';
 
 const CHAVE = '35261014555032000753550010000068421827355174';
 const ID = '11111111-1111-4111-8111-111111111111';
@@ -263,6 +264,30 @@ describe('GET /fiscal — ledger (contrato §7)', () => {
     expect((await request(app).get(`${BASE}/fiscal?limit=500`)).status).toBe(400);
     expect((await request(app).get(`${BASE}/fiscal?status=outro`)).status).toBe(400);
   });
+
+  // D21 da 017 (fiscal revertido no portal do OMIE): o ledger ganhou o status 'revertido' (migration 0060)
+  it('status=revertido e aceito (nao e 400) e repassado ao servico; a resposta traz revertidoEm/revertidoOrigem/revertidoOmieEm e nenhum erro_omie_*', async () => {
+    const item = {
+      id: 'l9', notaFiscal: '19252', status: 'revertido', revertidoEm: '2026-10-25T20:23:00.000Z', revertidoOrigem: 'espelho', revertidoOmieEm: '2026-10-25T20:13:36.000Z', vinculos: [],
+    };
+    svc.listarLedgerFiscal.mockResolvedValueOnce([item]);
+    const res = await request(app).get(`${BASE}/fiscal?status=revertido&limit=20`);
+    expect(res.status).toBe(200);
+    expect(svc.listarLedgerFiscal).toHaveBeenCalledWith({ status: 'revertido', limit: 20 });
+    expect(res.body.data).toEqual([item]);
+    expect(JSON.stringify(res.body)).not.toContain('erro_omie');
+    // os demais status continuam aceitos
+    for (const status of ['em_andamento', 'concluido', 'ja_concluido', 'falha']) {
+      expect((await request(app).get(`${BASE}/fiscal?status=${status}`)).status).toBe(200);
+    }
+  });
+
+  it('status=revertido com a chave da 016 desligada: 403 como as demais consultas do ledger (a rota inteira so existe com a chave)', async () => {
+    flagFiscal = false;
+    const res = await request(app).get(`${BASE}/fiscal?status=revertido`);
+    expect(res.status).toBe(403);
+    expect(svc.listarLedgerFiscal).not.toHaveBeenCalled();
+  });
 });
 
 describe('fila e POST por-nf — extensoes da feature 016 (T024)', () => {
@@ -330,6 +355,15 @@ describe('fila e POST por-nf — extensoes da feature 016 (T024)', () => {
     expect(res.status).toBe(422);
     expect(res.body.error.code).toBe('RECEBIMENTO_FISCAL_ETAPA_INESPERADA');
     expect(res.body.error.userMessage).toContain('bloqueado no OMIE');
+
+    // D21: o fiscal que o Atlas concluiu foi desfeito no portal — 409 sem espera (recarregar a nota basta)
+    svc.processarRecebimentoNacionalPorNf.mockRejectedValueOnce(new RecebimentoFiscalRevertidoError('6842', 'REPLAS COMERCIAL LTDA'));
+    res = await request(app).post(`${BASE}/por-nf`).send(body);
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('RECEBIMENTO_FISCAL_REVERTIDO');
+    expect(res.body.error.userMessage).toContain('NF 6842 (REPLAS COMERCIAL LTDA)');
+    expect(res.body.error.userMessage).toContain('desfeito no OMIE');
+    expect(res.body.error).not.toHaveProperty('retryAfterSeconds');
   });
 
   it('detalhe de NF dispensada: 404 NF_DISPENSADA (a UI nao oferece o formulario manual nesse caso)', async () => {
