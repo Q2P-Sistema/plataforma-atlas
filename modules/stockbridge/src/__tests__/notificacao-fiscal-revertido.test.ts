@@ -109,14 +109,15 @@ describe('enviarAvisoFiscalRevertido — destinatarios e assunto', () => {
 });
 
 describe('enviarAvisoFiscalRevertido — corpo', () => {
-  it('diz o que houve: o Atlas concluiu em X, aparece desfeito desde Y, a entrada ja foi lancada e a nota nao volta a fila', async () => {
+  it('diz o que houve: o Atlas concluiu em X, aparece desfeito desde Y, a entrada ja foi lancada e os itens lancados nao voltam a fila', async () => {
     await enviarAvisoFiscalRevertido(base);
     const { html } = emails()[0]!;
     expect(html).toContain('[alerta:Recebimento fiscal desfeito no OMIE]');
     expect(html).toContain('O Atlas concluiu o recebimento fiscal da <strong>NF 19252</strong> de <strong>ZARAPLAST S/A</strong> em 25/10/2026 às 17:02');
     expect(html).toContain('aparece <strong>desfeito no OMIE</strong> desde 25/10/2026 às 17:13');
     expect(html).toContain('A entrada de estoque desta nota já foi lançada pelo Atlas (aguardando aprovação do gestor)');
-    expect(html).toContain('por isso a nota não volta à fila de recebimento do StockBridge');
+    // vale tambem para NF parcial (um item lancado, outro pendente): so os itens lancados ficam fora da fila
+    expect(html).toContain('os itens lançados não voltam à fila de recebimento do StockBridge, e o recebimento fiscal precisa ser refeito no OMIE');
     expect(html).toContain('[Concluído pelo Atlas em: 25/10/2026 às 17:02]');
     expect(html).toContain('[Desfeito no OMIE desde: 25/10/2026 às 17:13]');
     expect(html).toContain('[Entrada de estoque no Atlas: Aguardando aprovação do gestor]');
@@ -186,7 +187,7 @@ describe('enviarAvisoFiscalRevertido — situacao da entrada fisica', () => {
   it('sem nenhum item contado: nao inventa situacao', async () => {
     await enviarAvisoFiscalRevertido({ ...base, entrada: { pendentes: 0, aprovadas: 0, aprovadaEm: null } });
     const { html } = emails()[0]!;
-    expect(html).toContain('A entrada de estoque desta nota já foi lançada pelo Atlas, por isso');
+    expect(html).toContain('A entrada de estoque desta nota já foi lançada pelo Atlas: os itens lançados');
     expect(html).toContain('[Entrada de estoque no Atlas: Lançada]');
   });
 });

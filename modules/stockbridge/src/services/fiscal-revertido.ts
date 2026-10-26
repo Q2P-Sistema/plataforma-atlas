@@ -160,15 +160,16 @@ export function fiscalRevertidoSql(chaveExpr: string, empresa: EmpresaNacional):
               ${marcadorRevertidoEmSql(chaveExpr)}) > ${conclusaoFiscalEmSql(chaveExpr, empresa)}, false)`;
 }
 
-/** A hora do OMIE que a marcacao pelo espelho gravou no ledger (NULL na marcacao pela leitura ao vivo do clique). */
+/**
+ * A hora do OMIE que a marcacao pelo espelho gravou no ledger, da reversao MAIS RECENTE (a linha que da o marcador do sinal);
+ * NULL quando essa reversao so foi percebida pela leitura ao vivo do clique. Nunca a de uma reversao anterior: com duas
+ * reversoes da NF (a primeira pelo espelho, a segunda pelo clique), o banner mostraria a hora da primeira (revisao da D21).
+ */
 export function reversaoOmieDoLedgerEmSql(chaveExpr: string): string {
-  return `(SELECT MAX(rfo.revertido_omie_em) FROM stockbridge.recebimento_fiscal rfo
-                WHERE rfo.nf_chave_acesso = ${chaveExpr} AND rfo.status = 'revertido')`;
-}
-
-/** Quando a reversao aconteceu, para a tela e o e-mail: a hora da alteracao no OMIE, ou o marcador do ledger. */
-export function reversaoFiscalEmSql(chaveExpr: string, empresa: EmpresaNacional): string {
-  return `COALESCE(${pendenciaEspelhoEmSql(chaveExpr, empresa)}, ${marcadorRevertidoEmSql(chaveExpr)})`;
+  return `(SELECT rfo.revertido_omie_em FROM stockbridge.recebimento_fiscal rfo
+                WHERE rfo.nf_chave_acesso = ${chaveExpr} AND rfo.status = 'revertido'
+                ORDER BY COALESCE(rfo.revertido_omie_em, rfo.revertido_em) DESC, rfo.revertido_em DESC
+                LIMIT 1)`;
 }
 
 /** Avalia o sinal para uma NF (adquirirLedger, leitura no clique). Erro de banco vai ao log e conta como "nao revertido". */

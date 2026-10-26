@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 //
 // Rodar (banco descartavel migrado ate a 0060; escreve e apaga linhas de teste, chaves 97...; shared.audit_log e
 // append-only e fica com rastro — NUNCA contra UAT/PROD). Cria as tabelas do espelho que faltarem no schema public e as remove no
-// fim: rode UM arquivo de banco por vez, ou varios com --no-file-parallelism:
+// fim: com o opt-in o vitest.config.ts do modulo roda os arquivos um por vez (fora dele, use --no-file-parallelism):
 //   ATLAS_DB_INTEGRATION=1 DATABASE_URL=postgres://... pnpm --filter @atlas/stockbridge exec vitest run src/__tests__/recebimento-fiscal-revertido-db.test.ts
 
 const DB_URL = process.env.DATABASE_URL;

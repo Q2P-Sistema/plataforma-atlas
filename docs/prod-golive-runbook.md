@@ -374,9 +374,11 @@ Ordem:
      Esperado: `to_regclass` **não nulo** e `triggers = 1`. Outro resultado: reaplicar a migration
      antes de subir a imagem.
 2. **Variável nova** no Portainer: `STOCKBRIDGE_PC_UNIDADE_DIFERENTE`, já listada no
-   `atlas.stack.yml` com default `bloquear`. **Deixar `bloquear`.** Só mudar para `converter` depois
-   do teste do modo com NF real (tarefa T073, em toneladas contra PC em kg, com autorização) e da
-   decisão registrada (T074): o campo `nQtdeRecebida` foi validado no portal, ainda não pela API.
+   `atlas.stack.yml` com default `bloquear`. Na rodada de 22/10 ficou `bloquear`: o campo
+   `nQtdeRecebida` tinha sido validado no portal, ainda não pela API. O modo `converter` foi validado
+   pela API em PROD em 25/10/2026 (tarefa T073, NF 19252 em toneladas contra o PC 308 em kg, com
+   autorização) e ligado em PROD no mesmo dia (T074). O default do `atlas.stack.yml` continua
+   `bloquear`: ao refazer a stack, manter `converter` na variável do Portainer.
 3. **Imagem seguinte à v1.1.20** (nova `ATLAS_VERSION`), com a chave da 016 já `true`.
 4. **Conferir**:
    - o cache se povoa sozinho (cron `5,35` ou ao abrir uma NF):
@@ -398,7 +400,7 @@ do cache parada, sem efeito.
   mesma conferência depois; a 0057 idem, com o arquivo dela e a conferência da rodada de 22/10;
 - `STOCKBRIDGE_PC_UNIDADE_DIFERENTE`: no UAT (`OMIE_MODE=leitura`, escritas simuladas) o modo
   `converter` pode ser exercitado para conferir o `EDITAR` na sombra, mas isso não prova o
-  comportamento do OMIE (T073 é em PROD);
+  comportamento do OMIE (o T073 foi feito em PROD em 25/10/2026);
 - as colunas do espelho chegam pela cópia PROD→UAT ou pela própria 0056 (o bloco `DO` do começo
   da migration só as cria se faltar alguma);
 - `STOCKBRIDGE_COPIA_PCS_MAX_MIN=1440`, porque a cópia de PCs também chega pela cópia PROD→UAT.
@@ -537,8 +539,10 @@ Em 25/10/2026 o usuário reverteu no portal do OMIE o recebimento fiscal que o A
 como "fiscal já feito": o clique do operador teria feito só o físico, e a NF ficaria na etapa 40, sem
 conta a pagar e sem baixa no PC. A D21 da 017 faz o Atlas perceber a reversão. A NF volta à fila como
 "fiscal pendente", com o selo "Fiscal revertido no OMIE", e o clique conclui o fiscal de novo, com o PC
-confirmado. Se a entrada física já foi lançada, a NF não volta à fila e o fiscal recebe um e-mail para
-concluir de novo no portal. **O Atlas nunca reverte nada no OMIE.** Desenho e decisões em
+confirmado. Se a entrada física já foi lançada para todos os itens, a NF não volta à fila e o fiscal
+recebe um e-mail para concluir de novo no portal (numa NF parcial, com a entrada de um item rejeitada
+pelo gestor, o item sem entrada volta à fila como fiscal revertido, e o e-mail sai mesmo assim).
+**O Atlas nunca reverte nada no OMIE.** Desenho e decisões em
 `specs/017-recebimento-nacional-com-pc/research.md` (D21 da 017); passo a passo de teste no quickstart,
 cenário 12.
 
@@ -561,8 +565,10 @@ padrão (corrige um estado errado da fila) e é o kill switch.
      `DROP CONSTRAINT IF EXISTS` da 1ª execução) é normal. Reaplicar é seguro.
    - O que muda: cinco colunas nulas em `stockbridge.recebimento_fiscal` (`revertido_em`,
      `revertido_origem`, `revertido_omie_em`, `revertido_por` e `aviso_fiscal_em`), os `CHECK`s de
-     status do ledger e de `recebimento_fiscal_pc` refeitos para aceitar `revertido`, um `CHECK` novo
-     entre `revertido` e `revertido_em`/`revertido_origem` e o índice `recebimento_fiscal_chave_idx`.
+     status do ledger e de `recebimento_fiscal_pc` refeitos para aceitar `revertido`, dois `CHECK`s
+     novos no ledger (`recebimento_fiscal_revertido_origem_check`, os valores de `revertido_origem`; e
+     `recebimento_fiscal_revertido_check`, status `revertido` exige `revertido_em` e
+     `revertido_origem`) e o índice `recebimento_fiscal_chave_idx`.
      As duas tabelas são pequenas; o `DROP`/`ADD CONSTRAINT` vale um lock curto.
    - **Sem a 0060** a imagem sobe e funciona como antes da D21 da 017: o código confere a coluna
      `revertido_em` no `information_schema` e, ausente, desliga o tratamento inteiro, com `ERROR` no log
@@ -582,6 +588,9 @@ padrão (corrige um estado errado da fila) e é o kill switch.
               WHERE conname = 'recebimento_fiscal_status_check') AS status_ledger,            -- true
             (SELECT pg_get_constraintdef(oid) LIKE '%revertido%' FROM pg_constraint
               WHERE conname = 'recebimento_fiscal_pc_status_check') AS status_pc,             -- true
+            (SELECT count(*) FROM pg_constraint
+              WHERE conname IN ('recebimento_fiscal_revertido_origem_check',
+                                'recebimento_fiscal_revertido_check')) AS checks_novos,       -- 2
             to_regclass('stockbridge.recebimento_fiscal_chave_idx') AS idx_chave;             -- não nulo
      ```
 
@@ -596,7 +605,9 @@ padrão (corrige um estado errado da fila) e é o kill switch.
    - a NF 19252, se ainda não foi recebida fisicamente, aparece na fila como "Fiscal pendente" com o
      selo "Fiscal revertido no OMIE" (a fila lê o sinal direto, sem esperar o cron), e o detalhe traz o
      aviso com a hora da reversão e o PC 308 pré-selecionado como vínculo do OMIE;
-   - o ledger, depois da primeira rodada do cron `5,35` (até 30 min) ou do clique:
+   - o ledger, depois da primeira rodada do cron `5,35` (até 30 min), da primeira abertura da fila ou
+     do detalhe da NF (a listagem e o detalhe também marcam a tentativa antiga, antes do selo e da
+     sugestão de PC) ou do clique:
 
      ```sql
      SELECT nota_fiscal, status, revertido_origem, revertido_em, revertido_omie_em, aviso_fiscal_em

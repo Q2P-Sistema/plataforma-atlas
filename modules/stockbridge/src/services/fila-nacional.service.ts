@@ -1339,7 +1339,11 @@ export interface DetalheNfNacional {
    * Sempre false com a D21 desligada.
    */
   fiscalRevertido: boolean;
-  /** feature 017 (D21): quando o fiscal foi desfeito no OMIE (ISO) — a hora da alteracao la ou, sem ela, a do marcador; null se desconhecida ou nao revertido */
+  /**
+   * feature 017 (D21): quando o fiscal foi desfeito no OMIE (ISO) — a hora da alteracao no OMIE que mostrou a reversao
+   * (a do espelho, quando posterior a conclusao) ou, sem ela, o revertido_omie_em da reversao mais recente no ledger; null
+   * quando so a leitura ao vivo do clique percebeu a reversao (a hora do clique nao e a da reversao) ou a NF nao esta revertida
+   */
   fiscalRevertidoEm: string | null;
   /** id do recebimento na caixa do OMIE (fonte b, ou n_id_receb do espelho de NF) — para a conclusao fiscal */
   nIdReceb: number | null;
@@ -1564,9 +1568,10 @@ async function produtosSugeridosAcxe(codigosPorIndice: Map<number, number[]>, ch
 
 /**
  * D21: quando o fiscal da NF foi desfeito no OMIE, para o banner do detalhe: a hora da alteracao do recebimento no
- * espelho quando ela e posterior a conclusao (mesma margem do sinal) e, senao, a hora do OMIE que a marcacao gravou no
- * ledger (revertido_omie_em). Marcacao pela leitura ao vivo do clique nao tem a hora do OMIE: a hora fica nula e o banner
- * a omite (a hora do clique nao e a da reversao — revisao da tela). Nao basta a hora do espelho (`reversaoFiscalEmSql`):
+ * espelho quando ela e posterior a conclusao (mesma margem do sinal) e, senao, a hora do OMIE que a marcacao da reversao
+ * mais recente gravou no ledger (revertido_omie_em). Marcacao pela leitura ao vivo do clique nao tem a hora do OMIE: a hora
+ * fica nula e o banner a omite (a hora do clique nao e a da reversao — revisao da tela), mesmo com uma reversao anterior
+ * marcada pelo espelho (a hora dela e anterior a conclusao desfeita depois). Nao basta a hora do espelho:
  * na janela entre a conclusao pelo Atlas e o proximo sync de recebimentos o espelho ainda traz o 'N' de ANTES da
  * conclusao, e o banner diria que o fiscal foi desfeito antes de ser feito.
  */

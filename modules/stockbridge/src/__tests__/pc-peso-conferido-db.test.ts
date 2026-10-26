@@ -10,6 +10,8 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 //
 // Opt-in: ATLAS_DB_INTEGRATION=1 + DATABASE_URL, com o schema stockbridge ate a 0059. Sem isso o describe e PULADO.
 // Nunca chama o OMIE (dublê) nem envia e-mail (o aviso e substituido). Chaves de acesso de teste comecam com 99.
+// Os arquivos de banco criam e removem as mesmas tabelas do espelho: com o opt-in o vitest.config.ts do modulo os roda um
+// por vez (fora dele, use --no-file-parallelism).
 //
 //   ATLAS_DB_INTEGRATION=1 DATABASE_URL=postgres://... REDIS_URL=redis://localhost:6379 SESSION_SECRET=<32+ chars> \
 //     pnpm --filter @atlas/stockbridge exec vitest run src/__tests__/pc-peso-conferido-db.test.ts

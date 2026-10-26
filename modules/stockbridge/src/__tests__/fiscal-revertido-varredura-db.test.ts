@@ -10,6 +10,8 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 // tbl_recebimentoNFe_Q2P. Sem isso o describe e PULADO. A varredura age sobre TODOS os ledgers recentes do banco: por
 // seguranca o teste SO roda se nao houver ledger recente com chave fora do prefixo de teste (99) — ou seja, em banco
 // descartavel/DEV, nunca num ambiente com dado real. Nunca chama o OMIE e nao envia e-mail (sendEmail e substituido).
+// Os arquivos de banco criam e removem as mesmas tabelas do espelho: com o opt-in o vitest.config.ts do modulo os roda um
+// por vez (fora dele, use --no-file-parallelism).
 //
 //   ATLAS_DB_INTEGRATION=1 DATABASE_URL=postgres://... REDIS_URL=redis://localhost:6379 SESSION_SECRET=<32+ chars> \
 //     pnpm --filter @atlas/stockbridge exec vitest run src/__tests__/fiscal-revertido-varredura-db.test.ts
@@ -45,6 +47,7 @@ const NF = {
   refeita: chave(10), // revertido, mas o Atlas refez o fiscal depois: nao avisa
   entradaRejeitada: chave(11), // marca, mas a unica entrada esta inativa (rejeitada): nao avisa
   acxe: chave(12), // ACXE (so se o espelho da ACXE existir)
+  parcial: chave(13), // 2 itens: um aprovado, o outro rejeitado (volta a fila) -> marca e avisa (os itens lancados nao voltam)
 };
 const TODAS = Object.values(NF);
 const FISCAL = ['fiscal1@teste.local', 'fiscal2@teste.local'];
@@ -90,14 +93,14 @@ describe.skipIf(!temBanco)('migration 0060 — varredura do recebimento fiscal r
     );
   }
 
-  async function entrada(nf: string, status: 'pendente' | 'aprovada', opts: { ativo?: boolean } = {}): Promise<void> {
+  async function entrada(nf: string, status: 'pendente' | 'aprovada', opts: { ativo?: boolean; descricao?: string } = {}): Promise<void> {
     const ativo = opts.ativo ?? true;
     const m = await pool.query(
       `INSERT INTO stockbridge.movimentacao (nota_fiscal, tipo_movimento, subtipo, quantidade_kg, empresa, galpao, produto_codigo_q2p, status_omie, ativo,
           nf_chave_acesso, nf_item_descricao, nf_item_descricao_normalizada, nf_item_sequencias, quantidade_nf_kg)
-       VALUES ('19252', 'entrada_manual', 'compra_nacional', 13750, 'q2p', '11.2', $1, 'concluida', $3, $2, 'SUCATA PP', 'SUCATA PP', ARRAY[1], 13750)
+       VALUES ('19252', 'entrada_manual', 'compra_nacional', 13750, 'q2p', '11.2', $1, 'concluida', $3, $2, $4, $4, ARRAY[1], 13750)
        RETURNING id`,
-      [BASE + 9, nf, ativo],
+      [BASE + 9, nf, ativo, opts.descricao ?? 'SUCATA PP'],
     );
     movs.push(String(m.rows[0]!.id));
     const a = await pool.query(
@@ -198,6 +201,11 @@ describe.skipIf(!temBanco)('migration 0060 — varredura do recebimento fiscal r
     await ledger(NF.entradaRejeitada, 'concluido', '3 hours', { nota: '11011' });
     await espelho('tbl_recebimentoNFe_Q2P', NF.entradaRejeitada, 'N', '2 hours');
     await entrada(NF.entradaRejeitada, 'pendente', { ativo: false });
+    // marca e avisa: NF de 2 itens com um aprovado e o outro rejeitado (o rejeitado volta a fila como fiscal revertido)
+    await ledger(NF.parcial, 'concluido', '3 hours', { nota: '13013' });
+    await espelho('tbl_recebimentoNFe_Q2P', NF.parcial, 'N', '2 hours');
+    await entrada(NF.parcial, 'aprovada');
+    await entrada(NF.parcial, 'pendente', { ativo: false, descricao: 'SUCATA PEAD' });
     // nao e reversao
     await ledger(NF.reconcluidaNoPortal, 'concluido', '3 hours', { nota: '5005' });
     await espelho('tbl_recebimentoNFe_Q2P', NF.reconcluidaNoPortal, 'S', '2 hours');
@@ -256,15 +264,15 @@ describe.skipIf(!temBanco)('migration 0060 — varredura do recebimento fiscal r
     expect(await estado(NF.revertidaAguardando)).toEqual([{ status: 'revertido', revertido_origem: 'espelho', omie_em: true, avisado: true }]);
     const pcs = await pool.query(`SELECT status, count(*)::int AS n FROM stockbridge.recebimento_fiscal_pc WHERE nf_chave_acesso = $1 GROUP BY status`, [NF.revertidaAguardando]);
     expect(pcs.rows).toEqual([{ status: 'revertido', n: 3 }]);
-    for (const nf of [NF.semEntrada, NF.comDispensa, NF.entradaRejeitada]) {
+    for (const nf of [NF.semEntrada, NF.comDispensa, NF.entradaRejeitada, NF.parcial]) {
       expect(await estado(nf)).toEqual([expect.objectContaining({ status: 'revertido', revertido_origem: 'espelho', omie_em: true })]);
     }
     // nao e reversao: recebimento S depois, N antes da conclusao, fora da janela de 14 dias
     for (const nf of [NF.reconcluidaNoPortal, NF.espelhoAntigo, NF.foraDaJanelaA]) {
       expect(await estado(nf)).toEqual([expect.objectContaining({ status: 'concluido', revertido_origem: null })]);
     }
-    // 4 sempre (A, sem entrada, dispensada, entrada rejeitada); + ACXE quando o espelho dela existe
-    expect(primeira.marcados).toBe(temAcxe ? 5 : 4);
+    // 5 sempre (A, sem entrada, dispensada, entrada rejeitada, parcial); + ACXE quando o espelho dela existe
+    expect(primeira.marcados).toBe(temAcxe ? 6 : 5);
   });
 
   it('fase B: avisa o fiscal da NF com a entrada fisica ativa (um e-mail por destinatario) e grava aviso_fiscal_em so depois', async (ctx) => {
@@ -274,8 +282,18 @@ describe.skipIf(!temBanco)('migration 0060 — varredura do recebimento fiscal r
     expect(nf[0]!.subject).toBe('Recebimento fiscal desfeito no OMIE — NF 19252 (ZARAPLAST S/A)');
     expect(nf[0]!.html).toContain('aguardando aprovação do gestor');
     expect(nf[0]!.html).toContain('PC 308');
-    expect(primeira.avisados).toBe(temAcxe ? 3 : 2);
+    expect(primeira.avisados).toBe(temAcxe ? 4 : 3);
     expect(primeira.falhas).toBe(0);
+  });
+
+  it('NF parcial (um item aprovado, o outro rejeitado): avisa mesmo com o rejeitado de volta a fila — o e-mail fala dos itens lancados, nao da nota inteira', async (ctx) => {
+    if (!pronto) return ctx.skip();
+    const nf = emailsDe('13013');
+    expect(nf.map((e) => e.to).sort()).toEqual(FISCAL);
+    expect(nf[0]!.html).toContain('aprovada em');
+    expect(nf[0]!.html).toContain('os itens lançados não voltam à fila de recebimento do StockBridge');
+    expect(nf[0]!.html).not.toContain('a nota não volta à fila');
+    expect((await estado(NF.parcial))[0]!.avisado).toBe(true);
   });
 
   it('nenhum e-mail carrega sequencia de 10+ digitos (chave de acesso, nIdReceb, nCodPed), nem o PC com cara de codigo do OMIE', async (ctx) => {

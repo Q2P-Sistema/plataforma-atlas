@@ -23,7 +23,7 @@ Colunas que já existem e passam a ser usadas: `c_associar_existente`, `c_ignora
 
 **Estoque lançado pelo OMIE** (derivado, D7): recebimento com `c_recebido = 'S'` e algum item com `c_ignorar_item = 'N' AND c_nao_gerar_mov_estoque = 'N'`.
 
-**Fiscal revertido** (derivado, D21 da 017): o recebimento fiscal foi concluído e depois desfeito no portal. Usa `c_recebido`, `c_cancelada`, `d_alt` e `h_alt` de `tbl_recebimentoNFe_<empresa>` (`h_alt` é `varchar` `HH:MI[:SS]`, horário de Brasília) e `d_alt` (`date`) e `h_alt` (`time`) de `tbl_nf_header_<empresa>`. São horas do **evento** no OMIE, nunca `synced_at`. Definição e conversão de fuso na §13.
+**Fiscal revertido** (derivado, D21 da 017): o recebimento fiscal foi concluído e depois desfeito no portal. Usa `c_recebido`, `c_cancelada`, `d_alt`, `h_alt`, `d_rec` e `h_rec` de `tbl_recebimentoNFe_<empresa>` (`h_alt` e `h_rec` são `varchar` `HH:MI[:SS]`, horário de Brasília; `d_rec`/`h_rec` é a hora em que o recebimento `S` foi concluído, porque concluir no portal não mexe em `d_alt`) e `d_alt` (`date`) e `h_alt` (`time`) de `tbl_nf_header_<empresa>`. São horas do **evento** no OMIE, nunca `synced_at`. Definição e conversão de fuso na §13.
 
 Caso real, NF 7813 na etapa 40 em 21/10/2026: `n_id_pedido` 8516905979, `n_id_it_pedido` 8516907022, `n_num_ped_compra` "304", `c_num_it_ped_compra` 1, `c_associar_existente` S, `c_nao_gerar_mov_estoque` N.
 
@@ -139,7 +139,8 @@ interface FilaNacionalItem {
   empresa: Empresa;                    // 'q2p' até a História 5
   pcSituacao: PcSituacaoNf;            // resumo da NF para o selo da fila (pior caso entre os itens)
   estoqueLancadoPeloOmie: boolean;     // D7
-  fiscalRevertido: boolean;            // D21 da 017 — o Atlas concluiu o fiscal e ele foi desfeito no OMIE: vem com fiscal 'pendente'; sempre false sem a D21 da 017
+  fiscalRevertido: boolean;            // D21 da 017 — o fiscal foi concluído (pelo Atlas ou no portal: ledger, nota de entrada ou recebimento 'S'
+                                       // bastam como evidência) e desfeito depois no OMIE: vem com fiscal 'pendente'; sempre false sem a D21 da 017
 }
 
 interface PcCandidato {
@@ -230,7 +231,10 @@ interface DetalheNfNacional {
   pcsDaNf: PcsDaNf;                    // D14 — só itens a receber (pendentes, unidade convertida, sem baixa externa pedida);
                                        // { pcs: [], preSelecionado: null } fora do fluxo de PC ou com a cópia de PCs defasada
   fiscalRevertido: boolean;            // D21 da 017 — idem à fila; true implica fiscal 'pendente' (SituacaoFiscal da 016 continua 'pendente' | 'concluido')
-  fiscalRevertidoEm: string | null;    // D21 da 017 — ISO: a hora da alteração no OMIE que mostrou a reversão ou, sem ela, a do marcador do ledger; null se desconhecida
+  fiscalRevertidoEm: string | null;    // D21 da 017 — ISO: a hora da alteração no OMIE que mostrou a reversão (a do espelho, quando posterior à
+                                       // conclusão) ou, sem ela, o revertido_omie_em da reversão mais recente no ledger; null quando só a leitura ao
+                                       // vivo do clique percebeu a reversão (a hora do clique não é a da reversão; vale mesmo com uma reversão
+                                       // anterior marcada pelo espelho) ou a NF não está revertida
 }
 ```
 
@@ -271,7 +275,7 @@ fiscal: {
 | `STOCKBRIDGE_COMPRAS_EMAILS` | vazio (cai em `STOCKBRIDGE_OPS_EMAIL`) | D6: aviso de NF sem PC |
 | `STOCKBRIDGE_RECEBIMENTO_NACIONAL_ACXE_ENABLED` | `false` | D11: História 5 |
 | `STOCKBRIDGE_COPIA_PCS_MAX_MIN` | `120` | D13: idade máxima da cópia de PCs antes do alerta e do modo seguro |
-| `STOCKBRIDGE_PC_UNIDADE_DIFERENTE` | `bloquear` | D15: PC em unidade diferente da NF. `bloquear` = o PC não é oferecido e a NF é recusada sem outro PC; `converter` = o `EDITAR` manda `itensAjustes.nQtdeRecebida` na unidade do PC (só depois de teste com NF real) |
+| `STOCKBRIDGE_PC_UNIDADE_DIFERENTE` | `bloquear` | D15: PC em unidade diferente da NF. `bloquear` = o PC não é oferecido e a NF é recusada sem outro PC; `converter` = o `EDITAR` manda `itensAjustes.nQtdeRecebida` na unidade do PC (validado em PROD em 25/10/2026, T073) |
 | `STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO` | `false` | D20: peso conferido acima da NF como quantidade recebida no `EDITAR`, com teto no saldo do PC; rejeição do gestor depois disso avisa compras. Sem a 0059 fica desligada (log) |
 | `STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT` | `10` | D20: excedente acima deste percentual da NF do item não vai ao PC (provável erro de digitação) |
 | `STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED` | `true` | D21 da 017: o Atlas percebe o fiscal revertido no portal (NF volta a fiscal pendente, leitura ao vivo no clique, varredura e aviso ao fiscal). Kill switch: `false` volta ao ledger `concluido` como estado final. Só vale com a chave da 016 ligada e com a 0060 aplicada |
@@ -329,7 +333,7 @@ Cache da última versão vista de cada item de PC (D16). Derivado da cópia `tbl
 | `status` | o `CHECK` `recebimento_fiscal_status_check` passa a aceitar `'revertido'` (terminal, histórico) |
 | `revertido_em timestamptz` | quando o Atlas percebeu a reversão. É o marcador que o sinal lê como evidência de pendência só na leitura ao vivo do clique (sem hora do OMIE) |
 | `revertido_origem varchar(14)` | `espelho` (espelho de recebimentos alterado depois da conclusão: varredura do cron ou nova tentativa do fiscal) \| `omie_ao_vivo` (leitura do recebimento no clique do recebimento físico) — `CHECK` |
-| `revertido_omie_em timestamptz` | hora da alteração no OMIE que mostrou a reversão (`d_alt` + `h_alt`, Brasília), limitada a agora. Só na origem `espelho`, quando o espelho traz a hora; nula na leitura ao vivo. É o marcador que o sinal lê na origem `espelho` (`COALESCE(revertido_omie_em, revertido_em)`) e a hora que o banner mostra |
+| `revertido_omie_em timestamptz` | hora da alteração no OMIE que mostrou a reversão (`d_alt` + `h_alt`, Brasília), limitada a agora. Só na origem `espelho`, quando o espelho traz a hora; nula na leitura ao vivo. É o marcador que o sinal lê na origem `espelho` (`COALESCE(revertido_omie_em, revertido_em)`) e a hora que o banner mostra, a da reversão mais recente (nula se ela veio da leitura ao vivo) |
 | `revertido_por uuid` → `atlas.users(id)` | usuário cujo clique levou à leitura ao vivo; nulo pelo espelho |
 | `aviso_fiscal_em timestamptz` | quando o fiscal foi avisado por e-mail: só com a entrada física lançada (a NF não volta à fila). É a deduplicação do aviso |
 | `CHECK` `recebimento_fiscal_revertido_check` | `status <> 'revertido' OR (revertido_em IS NOT NULL AND revertido_origem IS NOT NULL)` |
@@ -345,7 +349,7 @@ revertido ──(a NF volta a fiscal pendente; novo clique)──▶ nova linha 
 
 O índice `recebimento_fiscal_nf_viva_uq` (0053) não muda: lista `em_andamento`, `concluido` e `ja_concluido`, então `revertido` fica de fora sozinho, o que abre a trava para a nova tentativa. `FecharLedgerArgs` não aceita `revertido`: só `marcarLedgerRevertido` grava esse status.
 
-**Quem marca** (`marcarLedgerRevertido`, uma transação, idempotente: quem chega depois marca 0 linhas): (1) `adquirirLedger`, ao achar a linha viva com o sinal do espelho ligado (`espelho`); (2) a fase A da varredura do cron (`espelho`); (3) o clique, quando a leitura ao vivo mostra o recebimento não concluído (`omie_ao_vivo`, só a linha lida); (4) a abertura do detalhe de NF revertida com a tentativa ainda vigente (`espelho`, melhor esforço, antes da sugestão de PC: as linhas `concluido` da tentativa descontariam o saldo do PC do vínculo). Na origem `espelho` o `UPDATE` reconfere o sinal: uma conclusão mais nova desliga o sinal e nada é marcado.
+**Quem marca** (`marcarLedgerRevertido`, uma transação, idempotente: quem chega depois marca 0 linhas): (1) `adquirirLedger`, ao achar a linha viva com o sinal do espelho ligado (`espelho`); (2) a fase A da varredura do cron (`espelho`); (3) o clique, quando a leitura ao vivo mostra o recebimento não concluído (`omie_ao_vivo`, só a linha lida); (4) a abertura do detalhe de NF revertida com a tentativa ainda vigente (`espelho`, melhor esforço, antes da sugestão de PC: as linhas `concluido` da tentativa descontariam o saldo do PC do vínculo); (5) a listagem `GET /fila`, para cada NF revertida da página com a tentativa ainda vigente, antes do selo de PC (`espelho`, melhor esforço, sem a janela de 14 dias da fase A). Na origem `espelho` o `UPDATE` reconfere o sinal: uma conclusão mais nova desliga o sinal e nada é marcado.
 
 **`stockbridge.recebimento_fiscal_pc`**: o `CHECK` `recebimento_fiscal_pc_status_check` aceita `'revertido'`. Na mesma transação que marca o ledger, as linhas `confirmado`, `associado` e `concluido` da tentativa vão para `revertido`. Saem do índice de item vivo (`recebimento_fiscal_pc_item_vivo_uq`, 0056), do índice de reservas e do saldo do PC (a reversão devolve o saldo no OMIE: o PC 308 voltou a 0 recebido). A nova tentativa grava linhas novas. `concluido_em`, `kg_recebido_pc` e a justificativa ficam como histórico.
 

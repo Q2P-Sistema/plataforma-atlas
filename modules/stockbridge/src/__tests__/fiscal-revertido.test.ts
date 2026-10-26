@@ -37,7 +37,7 @@ import {
   marcarLedgerRevertido,
   nfComFiscalRevertido,
   pendenciaEspelhoEmSql,
-  reversaoFiscalEmSql,
+  reversaoOmieDoLedgerEmSql,
 } from '../services/fiscal-revertido.js';
 
 const CHAVE = '31261061827663002031550010000192521253216947';
@@ -104,10 +104,11 @@ describe('predicado do fiscal revertido', () => {
     expect(s).not.toMatch(/\$\d/);
   });
 
-  it('hora da reversao para a tela: a do OMIE (espelho) antes do marcador', () => {
-    const r = espacos(reversaoFiscalEmSql('x', 'q2p'));
-    expect(r.startsWith('COALESCE((SELECT MAX(CASE WHEN rrp.d_alt')).toBe(true);
-    expect(r).toContain('COALESCE(rfr.revertido_omie_em, rfr.revertido_em)');
+  it('hora do OMIE gravada no ledger para a tela: a da reversao MAIS RECENTE (a que da o marcador), nunca a de uma anterior', () => {
+    const r = espacos(reversaoOmieDoLedgerEmSql('x'));
+    expect(r).toContain("SELECT rfo.revertido_omie_em FROM stockbridge.recebimento_fiscal rfo WHERE rfo.nf_chave_acesso = x AND rfo.status = 'revertido'");
+    expect(r).toContain('ORDER BY COALESCE(rfo.revertido_omie_em, rfo.revertido_em) DESC, rfo.revertido_em DESC LIMIT 1');
+    expect(r).not.toContain('MAX(');
   });
 
   it('nfComFiscalRevertido: avalia o sinal com a chave em $1; erro de banco = "nao revertido" com log', async () => {

@@ -492,7 +492,22 @@ describe('fila — D21: a NF revertida com a tentativa antiga ainda "concluido" 
     expect(marcacao).toBeGreaterThan(chamadas.indexOf(sqlFila()));
     const selo = sqlSeloPc();
     if (selo) expect(marcacao).toBeLessThan(chamadas.indexOf(selo));
-    expect(chamadas[marcacao]!.params).toEqual([CHAVE_19252, 'espelho', null]);
+    const upd = chamadas[marcacao]!;
+    expect(upd.params).toEqual([CHAVE_19252, 'espelho', null]);
+    // o UPDATE re-confere o sinal no espelho da empresa da linha da fila
+    expect(norm(upd.sql)).toContain(`AND ${norm(fiscalRevertidoSql('rf.nf_chave_acesso', 'q2p'))}`);
+    expect(upd.sql).not.toContain('_ACXE"');
+  });
+
+  it('NF revertida da ACXE: a marcacao re-confere o sinal no espelho da ACXE (a empresa vem da linha da fila)', async () => {
+    configurar({ acxe: true });
+    ledgerVigente = { ...vigente, empresa: 'acxe' };
+    banco.fila = [linhaFilaAcxe({ fiscal: 'pendente', fiscal_revertido: true })];
+    await getFilaNacional();
+    const upd = chamadas.find((c) => c.sql.startsWith('UPDATE stockbridge.recebimento_fiscal rf'))!;
+    expect(upd.params).toEqual([CHAVE_ACXE, 'espelho', null]);
+    expect(norm(upd.sql)).toContain(`AND ${norm(fiscalRevertidoSql('rf.nf_chave_acesso', 'acxe'))}`);
+    expect(upd.sql).not.toContain('_Q2P"');
   });
 
   it('NF nao revertida na fila: nem procura a tentativa vigente', async () => {
