@@ -205,6 +205,8 @@ export class ItemIgnoradoNoOmieError extends Error {
     public readonly fornecedorNome: string | null,
     /** descricoes dos itens ignorados (sem codigo OMIE — ACXEGDP-313) */
     public readonly itens: string[],
+    /** Q2P e ACXE sao contas OMIE separadas: a mensagem diz em qual o fiscal desmarca */
+    public readonly empresa: EmpresaPc = 'q2p',
   ) {
     const nomes = itens.map((d) => d.trim()).filter((d) => d.length > 0).map((d) => `"${d}"`);
     const um = nomes.length <= 1;
@@ -214,10 +216,11 @@ export class ItemIgnoradoNoOmieError extends Error {
         : um
           ? `O item ${nomes[0]}`
           : `Os itens ${nomes.slice(0, -1).join(', ')} e ${nomes[nomes.length - 1]}`;
+    const omie = empresa === 'acxe' ? 'OMIE da ACXE' : 'OMIE';
     super(
-      `${quais} da ${rotuloNf(notaFiscal, fornecedorNome)} ${um ? 'está marcado' : 'estão marcados'} como "Ignorar" no recebimento do OMIE, ` +
+      `${quais} da ${rotuloNf(notaFiscal, fornecedorNome)} ${um ? 'está marcado' : 'estão marcados'} como "Ignorar" no recebimento do ${omie}, ` +
         'e com essa marcação o pedido de compra não pode ser vinculado. Nada foi registrado. ' +
-        `Peça ao fiscal para desmarcar "Ignorar" ${um ? 'nesse item' : 'nesses itens'} no OMIE e tente de novo.`,
+        `Peça ao fiscal para desmarcar "Ignorar" ${um ? 'nesse item' : 'nesses itens'} no ${omie} e tente de novo.`,
     );
     this.name = 'ItemIgnoradoNoOmieError';
   }
@@ -980,7 +983,7 @@ export async function concluirRecebimentoFiscal(input: ConcluirRecebimentoFiscal
     const ignorados = itensIgnoradosComEscolha(rec, escolhas);
     if (ignorados.sequencias.length > 0) {
       throw await recusar(
-        new ItemIgnoradoNoOmieError(input.notaFiscal, input.fornecedorNome, ignorados.descricoes),
+        new ItemIgnoradoNoOmieError(input.notaFiscal, input.fornecedorNome, ignorados.descricoes, empresa),
         `Item com PC escolhido marcado para ignorar no OMIE: ${ignorados.sequencias.length === 1 ? 'sequência' : 'sequências'} ${ignorados.sequencias.join(', ')}`,
         'consultar',
       );

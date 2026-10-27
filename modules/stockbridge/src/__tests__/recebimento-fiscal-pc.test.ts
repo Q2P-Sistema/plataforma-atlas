@@ -1028,6 +1028,15 @@ describe('concluirRecebimentoFiscal com PC — item marcado como "Ignorar" no OM
     expect(concluirSpy).not.toHaveBeenCalled();
   });
 
+  it('NF da ACXE: a mensagem diz "OMIE da ACXE" (são contas OMIE separadas; o fiscal precisa saber em qual desmarcar)', async () => {
+    consultaUnica({ itens: [itemRec(1, { cIgnorarItem: 'S' })] });
+    const erro = await concluirRecebimentoFiscal(input({ empresa: 'acxe', vinculos: [escolha(PC304)] })).catch((e: unknown) => e);
+    expect(erro).toBeInstanceOf(ItemIgnoradoNoOmieError);
+    expect((erro as Error).message).toContain('no recebimento do OMIE da ACXE');
+    expect((erro as Error).message).toContain('desmarcar "Ignorar" nesse item no OMIE da ACXE');
+    expect(alterarSpy).not.toHaveBeenCalled();
+  });
+
   it('3 itens ignorados: a lista da mensagem é "A", "B" e "C"', async () => {
     consultaUnica({ itens: ['A', 'B', 'C'].map((d, i) => itemRec(i + 1, { cDescricaoProduto: d, cIgnorarItem: 'S' })) });
     const vinculos = ['A', 'B', 'C'].map((d, i) => escolha(PC304, { indice: i, sequencias: [i + 1], itemDescricao: d, kgPorSequencia: { [i + 1]: 18000 } }));

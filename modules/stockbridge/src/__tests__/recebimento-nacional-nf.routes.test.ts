@@ -354,8 +354,9 @@ describe('POST /recebimento/nacional/por-nf', () => {
     expect(res.body.error).not.toHaveProperty('retryAfterSeconds');
   });
 
-  // NF 19252: item com PC escolhido marcado como "Ignorar" no portal — so o fiscal desmarca. Sem retryAfterSeconds: nao ha o que esperar.
-  it('017: ITEM_IGNORADO_NO_OMIE é 409 com a mensagem do serviço (orienta pedir ao fiscal), sem retryAfterSeconds e sem código OMIE', async () => {
+  // NF 19252: item com PC escolhido marcado como "Ignorar" no portal — so o fiscal desmarca. retryAfterSeconds 70: a ConsultarRecebimento
+  // repetida em menos de ~1 min volta do cache do OMIE, e um reenvio logo depois de o fiscal desmarcar leria a marcacao de novo.
+  it('017: ITEM_IGNORADO_NO_OMIE é 409 com a mensagem do serviço (orienta pedir ao fiscal), retryAfterSeconds 70 e sem código OMIE', async () => {
     const err = new ItemIgnoradoNoOmieError('19252', 'ZARAPLAST S/A', ['LDPE 923.270 DB + AX']);
     svc.processarRecebimentoNacionalPorNf.mockRejectedValue(err);
     const res = await request(app).post('/api/v1/stockbridge/recebimento/nacional/por-nf').send(bodyValido());
@@ -367,7 +368,7 @@ describe('POST /recebimento/nacional/por-nf', () => {
     expect(res.body.error.userMessage).toContain('NF 19252 (ZARAPLAST S/A)');
     expect(res.body.error.userMessage).toContain('desmarcar "Ignorar"');
     expect(res.body.error.userMessage).not.toMatch(/\d{10}/);
-    expect(res.body.error).not.toHaveProperty('retryAfterSeconds');
+    expect(res.body.error.retryAfterSeconds).toBe(70);
   });
 
   it('017/D21: o mesmo 409 vale nas demais rotas que usam o mapeador da fila (detalhe e aviso a compras), nao so no POST', async () => {

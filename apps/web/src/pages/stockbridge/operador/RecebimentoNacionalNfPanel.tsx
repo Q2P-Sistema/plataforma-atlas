@@ -1117,6 +1117,7 @@ function DetalheSection({
     if (erroCodigo === 'ITEM_IGNORADO_NO_OMIE' && !pcAtivo) {
       setErroEnvio(null);
       setErroCodigo(null);
+      setRetryLiberaEm(null);
     }
   }, [erroCodigo, pcAtivo]);
   /** recebimento barrado por um aviso proprio (banner acima dos itens): botao desabilitado */
@@ -1742,12 +1743,17 @@ function DetalheSection({
                   Recarregar nota
                 </button>
               )}
-              {(erroCodigo === 'RECEBIMENTO_FISCAL_FAIL' || erroCodigo === 'RECEBIMENTO_FISCAL_AGUARDE' || erroCodigo === 'PC_RECEM_USADO_AGUARDE' || erroCodigo === 'FALHA_DE_REDE') && (
+              {/* ITEM_IGNORADO_NO_OMIE: o servidor manda esperar ~1 min (cache da ConsultarRecebimento) antes de reenviar */}
+              {(erroCodigo === 'RECEBIMENTO_FISCAL_FAIL' || erroCodigo === 'RECEBIMENTO_FISCAL_AGUARDE' || erroCodigo === 'PC_RECEM_USADO_AGUARDE' || erroCodigo === 'FALHA_DE_REDE' || erroCodigo === 'ITEM_IGNORADO_NO_OMIE') && (
                 <button
                   type="button"
                   onClick={handleEnviar}
                   disabled={enviarMut.isPending || retryRestanteSeg > 0}
-                  className="px-3 py-1 border border-red-300 dark:border-red-700 rounded text-xs font-medium hover:bg-red-100 dark:hover:bg-red-900/40 whitespace-nowrap disabled:opacity-50"
+                  className={`px-3 py-1 border rounded text-xs font-medium whitespace-nowrap disabled:opacity-50 ${
+                    ERROS_DE_ORIENTACAO.has(erroCodigo)
+                      ? 'border-amber-700 dark:border-amber-500 hover:bg-amber-100 dark:hover:bg-amber-900/40'
+                      : 'border-red-300 dark:border-red-700 hover:bg-red-100 dark:hover:bg-red-900/40'
+                  }`}
                 >
                   {retryRestanteSeg > 0 ? `Tentar novamente em ${retryRestanteSeg} s` : 'Tentar novamente'}
                 </button>
