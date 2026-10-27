@@ -77,7 +77,8 @@ const logger = createLogger('stockbridge:recebimento-fiscal');
  *  - item sem PC -> receita da 016 (EDITAR + IGNORAR).
  * Antes de escrever: releitura AO VIVO dos PCs escolhidos + reserva de saldo
  * (relerEReservarPcs, D4), e recusa se o vinculo vivo mudou em relacao ao que a
- * tela mostrou (VINCULO_OMIE_MUDOU). Recebimento concluido no portal COM
+ * tela mostrou (VINCULO_OMIE_MUDOU) ou se o item escolhido esta marcado como
+ * "Ignorar" no portal (ITEM_IGNORADO_NO_OMIE, NF 19252). Recebimento concluido no portal COM
  * movimento de estoque -> EstoqueJaLancadoPeloOmieError (D7), tambem na reconsulta.
  * Cada vinculo vira linha em stockbridge.recebimento_fiscal_pc:
  * confirmado (reserva) -> associado -> concluido | falha.
@@ -189,6 +190,39 @@ export class VinculoOmieMudouError extends Error {
         'Recarregue a nota e confira o pedido de cada item.',
     );
     this.name = 'VinculoOmieMudouError';
+  }
+}
+
+/**
+ * 409 ITEM_IGNORADO_NO_OMIE (NF 19252, 26/10/2026): item com PC escolhido esta marcado como "Ignorar" no
+ * recebimento do OMIE. O IGNORAR desfaz o vinculo com o PC e o Atlas nao desfaz a marcacao (ASSOCIAR ou
+ * EDITAR em item ignorado nunca foi testado no OMIE real): quem desmarca e o fiscal, no portal. Antes caia
+ * no VINCULO_OMIE_MUDOU, cujo "recarregue a nota" levava o operador a repetir o envio sem saber o motivo.
+ */
+export class ItemIgnoradoNoOmieError extends Error {
+  constructor(
+    public readonly notaFiscal: string,
+    public readonly fornecedorNome: string | null,
+    /** descricoes dos itens ignorados (sem codigo OMIE — ACXEGDP-313) */
+    public readonly itens: string[],
+    /** Q2P e ACXE sao contas OMIE separadas: a mensagem diz em qual o fiscal desmarca */
+    public readonly empresa: EmpresaPc = 'q2p',
+  ) {
+    const nomes = itens.map((d) => d.trim()).filter((d) => d.length > 0).map((d) => `"${d}"`);
+    const um = nomes.length <= 1;
+    const quais =
+      nomes.length === 0
+        ? 'Um item'
+        : um
+          ? `O item ${nomes[0]}`
+          : `Os itens ${nomes.slice(0, -1).join(', ')} e ${nomes[nomes.length - 1]}`;
+    const omie = empresa === 'acxe' ? 'OMIE da ACXE' : 'OMIE';
+    super(
+      `${quais} da ${rotuloNf(notaFiscal, fornecedorNome)} ${um ? 'está marcado' : 'estão marcados'} como "Ignorar" no recebimento do ${omie}, ` +
+        'e com essa marcação o pedido de compra não pode ser vinculado. Nada foi registrado. ' +
+        `Peça ao fiscal para desmarcar "Ignorar" ${um ? 'nesse item' : 'nesses itens'} no ${omie} e tente de novo.`,
+    );
+    this.name = 'ItemIgnoradoNoOmieError';
   }
 }
 
@@ -550,9 +584,35 @@ function planejarAcoes(
 }
 
 /**
+ * Itens com PC escolhido marcados como "Ignorar" no recebimento (NF 19252): recusa propria
+ * (ItemIgnoradoNoOmieError), antes da checagem de vinculo. Item sem escolha pode estar
+ * ignorado — retomada do modo sem vinculo, ou o portal ja fez o IGNORAR da receita da 016 —
+ * e segue como antes (planejarAcoes o pula).
+ */
+function itensIgnoradosComEscolha(
+  rec: RecebimentoNfeConsultado,
+  escolhas: EscolhaPcValidada[],
+): { descricoes: string[]; sequencias: number[] } {
+  const descricoes: string[] = [];
+  const sequencias: number[] = [];
+  for (const e of escolhas) {
+    const seqs = e.sequencias.filter((seq) => {
+      const it = rec.itens.find((i) => i.nSequencia === seq);
+      return it != null && ignorado(it);
+    });
+    if (seqs.length === 0) continue;
+    sequencias.push(...seqs);
+    const descricao = e.itemDescricao.trim();
+    if (descricao && !descricoes.includes(descricao)) descricoes.push(descricao);
+  }
+  return { descricoes, sequencias };
+}
+
+/**
  * T028: vinculo vivo diferente do que a tela mostrou E do escolhido -> conflito.
- * Tambem: item escolhido ausente ou ja ignorado no OMIE, e item que seguiria sem
- * vinculo mas ganhou vinculo no OMIE. Vinculo vivo igual ao escolhido nunca e
+ * Tambem: item escolhido ausente do recebimento, e item que seguiria sem vinculo mas
+ * ganhou vinculo no OMIE (item escolhido marcado como "Ignorar" tem recusa propria,
+ * itensIgnoradosComEscolha, antes desta). Vinculo vivo igual ao escolhido nunca e
  * conflito; vinculo removido no OMIE tambem nao (o ASSOCIAR refaz a escolha).
  * Item com linhas ligadas a PCs diferentes (vinculosDivergentes): a tela nao tem um
  * "visto" unico, entao a base de cada sequencia e o vinculo lido no portao 1 — a
@@ -567,7 +627,6 @@ function vinculoMudou(
     for (const seq of e.sequencias) {
       const it = rec.itens.find((i) => i.nSequencia === seq);
       if (!it) return { itemDescricao: e.itemDescricao, motivo: `sequência ${seq} ausente no recebimento` };
-      if (ignorado(it)) return { itemDescricao: e.itemDescricao, motivo: `sequência ${seq} marcada para ignorar no OMIE` };
       const vivo = vinculoVivo(it);
       const base = e.vinculosDivergentes ? (e.vinculosPorSequencia?.[seq]?.nIdItPedido ?? null) : e.nCodItemOmieVisto;
       if (vivo && vivo.nIdItPedido !== base && vivo.nIdItPedido !== e.candidato.nCodItem) {
@@ -830,6 +889,7 @@ function erroDeDominio(err: unknown): boolean {
     err instanceof RecebimentoFiscalEtapaInesperadaError ||
     err instanceof RecebimentoFiscalError ||
     err instanceof VinculoOmieMudouError ||
+    err instanceof ItemIgnoradoNoOmieError ||
     err instanceof EstoqueJaLancadoPeloOmieError
   );
 }
@@ -847,6 +907,7 @@ function erroDeDominio(err: unknown): boolean {
  *  - PcRecemUsadoAguardeError / PcVinculoInvalidoError — releitura do PC (017, D4).
  *  - EstoqueJaLancadoPeloOmieError        — concluido no portal com estoque (017, D7).
  *  - VinculoOmieMudouError                — vinculo vivo mudou (017, T028).
+ *  - ItemIgnoradoNoOmieError              — item com PC escolhido marcado como "Ignorar" no portal (NF 19252).
  *  - RecebimentoFiscalSemFornecedorError  — NF sem fornecedor cadastrado no OMIE.
  *  - RecebimentoFiscalNfCanceladaError    — NF cancelada no OMIE.
  *  - RecebimentoFiscalEtapaInesperadaError — fora da etapa 40, bloqueado ou devolvido.
@@ -917,6 +978,16 @@ export async function concluirRecebimentoFiscal(input: ConcluirRecebimentoFiscal
 
     const recusa = recusaAntesDeEscrever(rec, input);
     if (recusa) throw await recusar(recusa.erro, recusa.motivo, 'consultar');
+
+    // NF 19252 (26/10/2026): item com PC escolhido marcado como "Ignorar" no portal — so o fiscal desmarca.
+    const ignorados = itensIgnoradosComEscolha(rec, escolhas);
+    if (ignorados.sequencias.length > 0) {
+      throw await recusar(
+        new ItemIgnoradoNoOmieError(input.notaFiscal, input.fornecedorNome, ignorados.descricoes, empresa),
+        `Item com PC escolhido marcado para ignorar no OMIE: ${ignorados.sequencias.length === 1 ? 'sequência' : 'sequências'} ${ignorados.sequencias.join(', ')}`,
+        'consultar',
+      );
+    }
 
     // 017 (T028): o vinculo vivo mudou em relacao ao que a tela mostrou.
     const mudou = vinculoMudou(rec, escolhas, semVinculo);

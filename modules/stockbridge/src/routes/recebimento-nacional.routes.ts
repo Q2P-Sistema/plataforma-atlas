@@ -54,6 +54,8 @@ import {
   RecebimentoFiscalNfCanceladaError,
   RecebimentoFiscalEtapaInesperadaError,
   VinculoOmieMudouError,
+  ItemIgnoradoNoOmieError,
+  ESPERA_APOS_FALHA_SEG,
   segundosAteNovaTentativa,
   listarLedgerFiscal,
 } from '../services/recebimento-fiscal.service.js';
@@ -300,6 +302,9 @@ function responderErroFilaNacional(res: Response, err: unknown): boolean {
   // `pc`: o item de PC recusado, para a tela desmarcar a escolha (id de selecao, nunca exibido).
   if (err instanceof PcVinculoInvalidoError) return erro017(409, 'PC_VINCULO_INVALIDO', err, err.pc ? { pc: err.pc } : {});
   if (err instanceof VinculoOmieMudouError) return erro017(409, 'VINCULO_OMIE_MUDOU', err);
+  // NF 19252: item com PC escolhido marcado como "Ignorar" no portal — o fiscal desmarca; nada gravado. A ConsultarRecebimento
+  // repetida em < ~1 min volta do cache do OMIE: reenviar logo depois de o fiscal desmarcar leria a marcacao de novo.
+  if (err instanceof ItemIgnoradoNoOmieError) return erro017(409, 'ITEM_IGNORADO_NO_OMIE', err, { retryAfterSeconds: ESPERA_APOS_FALHA_SEG });
   // D21: o fiscal que o Atlas concluiu foi desfeito no portal do OMIE — ledger ja marcado, nada gravado. Sem
   // retryAfterSeconds: a nota recarregada volta como fiscal pendente e o proximo clique conclui o fiscal de novo.
   if (err instanceof RecebimentoFiscalRevertidoError) return erro017(409, 'RECEBIMENTO_FISCAL_REVERTIDO', err);

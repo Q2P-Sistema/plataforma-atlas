@@ -604,9 +604,10 @@ padrão (corrige um estado errado da fila) e é o kill switch.
    `EMAIL_DESVIO_PARA`.
 3. **Imagem nova** (nova `ATLAS_VERSION`), com a chave da 016 já `true`.
 4. **Conferir**:
-   - a NF 19252, se ainda não foi recebida fisicamente, aparece na fila como "Fiscal pendente" com o
-     selo "Fiscal revertido no OMIE" (a fila lê o sinal direto, sem esperar o cron), e o detalhe traz o
-     aviso com a hora da reversão e o PC 308 pré-selecionado como vínculo do OMIE;
+   - uma NF revertida, se houver e ainda não foi recebida fisicamente, aparece na fila como "Fiscal
+     pendente" com o selo "Fiscal revertido no OMIE" (a fila lê o sinal direto, sem esperar o cron), e o
+     detalhe traz o aviso com a hora da reversão e o PC do vínculo do OMIE (na 19252, em 26/10/2026, o
+     PC 308; ela foi concluída no portal em 27/10/2026);
    - o ledger, depois da primeira rodada do cron `5,35` (até 30 min), da primeira abertura da fila ou
      do detalhe da NF (a listagem e o detalhe também marcam a tentativa antiga, antes do selo e da
      sugestão de PC) ou do clique:
@@ -621,10 +622,10 @@ padrão (corrige um estado errado da fila) e é o kill switch.
    - o log do cron, `Varredura de recebimento fiscal revertido no OMIE`, com `marcados`, `avisados` e
      `falhas` (só sai linha quando algum é maior que zero), e nenhum erro "Coluna ... revertido_em
      ausente".
-5. **Primeiro uso acompanhado** (T100, com autorização do usuário): refazer o fiscal da NF 19252 pelo
-   Atlas escreve no OMIE de PROD. Clicar em "Concluir fiscal e dar entrada" e conferir ao vivo
+5. **Primeiro uso acompanhado** (T100, com autorização do usuário): refazer o fiscal da primeira NF
+   revertida pelo Atlas escreve no OMIE de PROD. Clicar em "Concluir fiscal e dar entrada" e conferir ao vivo
    (workflow de leitura `4OnbxvfALn9OoXLH`): recebimento na etapa 60 com `cRecebido = S`, os itens ainda
-   com "não movimentar estoque" e as quantidades em kg, `nQtdeRec` do PC 308 em 13.750, um só título e
+   com "não movimentar estoque" e as quantidades em kg, `nQtdeRec` do PC da NF, um só título e
    nenhum movimento de estoque pelo OMIE; no ledger, o `revertido` antigo e um `concluido` novo.
    Registrar na research (D21 da 017) e na ACXEGDP-437.
 

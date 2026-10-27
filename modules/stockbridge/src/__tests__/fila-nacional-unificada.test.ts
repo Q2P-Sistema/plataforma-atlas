@@ -930,6 +930,28 @@ describe('017 — pedido de compra na fila e no detalhe', () => {
     expect((await getDetalheNfNacional(CHAVE)).itensSemAvaliacaoPc).toEqual([]);
   });
 
+  it('itensIgnoradosNoOmie (caso base: Q2P, D21 desligada): item a receber com ALGUMA linha marcada "Ignorar" no recebimento, só com fiscal pendente e o fluxo de PC', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+    detalheRows = [
+      linhaPc({ x_prod: 'Sucata de Plástico', desc_norm: 'SUCATA DE PLASTICO' }), // item 0 sem Ignorar: o indice do ignorado nao e a posicao na lista filtrada
+      linhaPc({ n_cod_item: '2', x_prod: 'Tampa PP', desc_norm: 'TAMPA PP', n_seq: 2, c_ignorar_item: 'N' }),
+      linhaPc({ n_cod_item: '4', x_prod: 'Tampa PP', desc_norm: 'TAMPA PP', n_seq: 4, c_ignorar_item: 'S' }), // item 1: "S" DEPOIS de uma linha nao ignorada
+      linhaPc({ n_cod_item: '5', x_prod: 'Caixa PE', desc_norm: 'CAIXA PE', n_seq: 5, c_ignorar_item: 'S' }), // item 2: "S" ANTES de uma linha nao ignorada
+      linhaPc({ n_cod_item: '6', x_prod: 'Caixa PE', desc_norm: 'CAIXA PE', n_seq: 6, c_ignorar_item: 'N' }),
+      linhaPc({ n_cod_item: '3', x_prod: 'TAMPA', desc_norm: 'TAMPA', n_seq: 3, c_ignorar_item: 'S', recebido: true }), // ja recebido: fora
+    ];
+    expect((await getDetalheNfNacional(CHAVE)).itensIgnoradosNoOmie).toEqual([
+      { indice: 1, descricao: 'Tampa PP' },
+      { indice: 2, descricao: 'Caixa PE' },
+    ]);
+    // fiscal ja feito: o "Ignorar" e o da receita da 016 — nada a avisar
+    detalheRows = [linhaPc({ fiscal_pendente: false, receb_recebido: 'S', c_ignorar_item: 'S', c_nao_gerar_mov_estoque: 'S' })];
+    expect((await getDetalheNfNacional(CHAVE)).itensIgnoradosNoOmie).toEqual([]);
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = false;
+    detalheRows = [linhaPc({ c_ignorar_item: 'S' })];
+    expect((await getDetalheNfNacional(CHAVE)).itensIgnoradosNoOmie).toEqual([]);
+  });
+
   it('fiscal ja feito PELO ATLAS: o PC do ledger tem precedencia sobre o espelho (troca ainda nao refletida — achado fila-04)', async () => {
     ledgerPcRows = [{ n_sequencia: 1, pc_numero: '304' }];
     numerosRows = [{ ncodped: '8516900302', numero: '302', prio: 1 }];

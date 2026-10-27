@@ -225,6 +225,9 @@ interface DetalheNfNacional {
   exigePc: boolean;                    // STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC (só relevante com fiscal pendente)
   estoqueLancadoPeloOmie: boolean;     // D7 — bloqueia o POST
   copiaPcsDefasada: boolean;           // D13 — cópia de PCs acima de STOCKBRIDGE_COPIA_PCS_MAX_MIN: sem sugestão confiável; POST com fiscal pendente dá 503
+  itensIgnoradosNoOmie: Array<{ indice: number; descricao: string }>; // NF 19252: pendentes com alguma linha marcada "Ignorar" no recebimento (espelho, c_ignorar_item='S');
+                                       // com PC escolhido o POST dá 409 ITEM_IGNORADO_NO_OMIE (só o fiscal desmarca); a tela só avisa, sem desabilitar o botão.
+                                       // Só com o fluxo de PC (chave da 016 + fiscal pendente); senão []
   itensSemAvaliacaoPc: Array<{ indice: number; descricao: string }>; // pendentes que o Atlas não recebe (unidade não convertida) e sem PC no OMIE;
                                        // modo bloquear: POST → 422 NF_SEM_PC (orienta o fiscal, sem aviso a compras); sem vínculo: seguem sem PC
                                        // e compras é avisado. Só com o fluxo de PC (chave da 016 + fiscal pendente); senão []
