@@ -213,6 +213,12 @@ interface DetalheNf {
    */
   itensSemAvaliacaoPc?: Array<{ indice: number; descricao: string }>;
   /**
+   * NF 19252: itens a receber com linha marcada como "Ignorar" no recebimento do OMIE (espelho). Com PC escolhido o servidor
+   * recusa o envio (409 ITEM_IGNORADO_NO_OMIE) — so o fiscal desmarca. So vem preenchido com o fluxo de PC valendo; ausente =
+   * backend anterior (nenhum aviso).
+   */
+  itensIgnoradosNoOmie?: Array<{ indice: number; descricao: string }>;
+  /**
    * PC por NF: os pedidos que atendem a nota, com a atribuicao item da NF -> item do PC, para o operador escolher uma vez.
    * Vazio fora do fluxo de PC ou com a lista local defasada; ausente = backend anterior (a tela segue so com o PC por item).
    */
@@ -429,13 +435,18 @@ const ERROS_QUE_RECARREGAM_NOTA = new Set([
   // D21: o fiscal que o Atlas concluiu foi desfeito no OMIE. O servidor ja marcou o ledger como revertido: a nota recarregada volta como
   // fiscal pendente (bloco de PC, "Concluir fiscal e dar entrada") e o formulario digitado fica — nenhum setForm roda para este codigo.
   'RECEBIMENTO_FISCAL_REVERTIDO',
+  // NF 19252: item com PC escolhido marcado como "Ignorar" no portal. A nota e recarregada (se o fiscal concluiu no portal, ela
+  // deixa de ser fiscal pendente e a caixa sai sozinha); a escolha de PC fica — nao e ela que esta errada, e o fiscal que precisa
+  // desmarcar.
+  'ITEM_IGNORADO_NO_OMIE',
 ]);
 
 /**
  * Recusas que orientam o operador (o proximo passo e dele, nada falhou): caixa ambar em vez da vermelha, que no arquivo significa
  * bloqueio ou falha. NF_SEM_PC: avisar compras. RECEBIMENTO_FISCAL_REVERTIDO: a nota reabriu como fiscal pendente, confirmar o PC.
+ * ITEM_IGNORADO_NO_OMIE: pedir ao fiscal para desmarcar "Ignorar" no OMIE.
  */
-const ERROS_DE_ORIENTACAO = new Set(['NF_SEM_PC', 'RECEBIMENTO_FISCAL_REVERTIDO']);
+const ERROS_DE_ORIENTACAO = new Set(['NF_SEM_PC', 'RECEBIMENTO_FISCAL_REVERTIDO', 'ITEM_IGNORADO_NO_OMIE']);
 
 /** "ao PC 304" | "aos PCs 304 e 305" | "ao PC (número não informado)" — o PC (ou os PCs) a que um item foi vinculado. */
 function textoPcsVinculados(pcs: Array<{ pcNumero: string }>): string {
@@ -482,6 +493,27 @@ function textoSemAvaliacaoInforma(nomes: string[]): string {
   return nomes.length === 1
     ? `O item ${itens[0]} será concluído no OMIE sem vínculo com pedido de compra.`
     : `Os itens ${listaPt(itens)} serão concluídos no OMIE sem vínculo com pedido de compra.`;
+}
+
+/**
+ * NF 19252: item com pedido de compra a confirmar marcado como "Ignorar" no recebimento do OMIE — o servidor recusaria o envio
+ * (409 ITEM_IGNORADO_NO_OMIE). `destaque` diz o que ha; `orientacao`, o que fazer. O aviso nao bloqueia: o espelho pode estar
+ * atrasado e o fiscal pode ja ter desmarcado.
+ */
+function textoIgnoradoNoOmie(nomes: string[], omieDaNf: string, recebimentoBarrado: boolean): { destaque: string; orientacao: string } {
+  const itens = nomes.map((n) => `"${n}"`);
+  return {
+    destaque:
+      nomes.length === 1
+        ? `O item ${itens[0]} está marcado como "Ignorar" no recebimento do ${omieDaNf}.`
+        : `Os itens ${listaPt(itens)} estão marcados como "Ignorar" no recebimento do ${omieDaNf}.`,
+    orientacao:
+      `Com essa marcação o pedido de compra não pode ser vinculado, e o Atlas recusa a entrada. Peça ao fiscal para desmarcar "Ignorar" no ${omieDaNf}. ` +
+      // com outro aviso barrando o botao, nao prometer "pode dar entrada"
+      (recebimentoBarrado
+        ? `Este aviso sai na próxima atualização do espelho do ${omieDaNf} (até cerca de 30 minutos).`
+        : 'Se ele já desmarcou, pode dar entrada: este aviso pode levar até cerca de 30 minutos para sair.'),
+  };
 }
 
 /** Selo de PC na fila, por `pcSituacao` ('nao_aplicavel' fica sem selo). */
@@ -1061,8 +1093,42 @@ function DetalheSection({
   const semAvaliacaoBloqueia = exigePc && nomesSemAvaliacao.length > 0;
   const semAvaliacaoInforma = !exigePc && nomesSemAvaliacao.length > 0;
   const avisoSemAvaliacao = semAvaliacaoBloqueia ? textoSemAvaliacaoBloqueio(nomesSemAvaliacao) : null;
+  /**
+   * NF 19252: itens a receber marcados como "Ignorar" no recebimento do OMIE e com pedido de compra a confirmar — o servidor
+   * recusaria o envio (409 ITEM_IGNORADO_NO_OMIE). So avisa, sem desabilitar o botao: o espelho atualiza a cada 30 min e o
+   * fiscal pode ter acabado de desmarcar; quem decide e a leitura ao vivo do clique. Item ignorado sem PC segue sem vinculo.
+   */
+  const nomesIgnoradosNoOmie =
+    pcAtivo && !copiaPcsDefasada
+      ? (nf?.itensIgnoradosNoOmie ?? []).flatMap((x) => {
+          const it = recebiveis.find((i) => i.indice === x.indice);
+          if (!it?.pc || pcSemOpcao(it.pc)) return [];
+          return [(x.descricao ?? '').trim() || it.descricaoFornecedor.trim() || '(sem descrição)'];
+        })
+      : [];
+  /**
+   * O espelho ou o ultimo clique (409 ITEM_IGNORADO_NO_OMIE) viu a marcacao: a tela deixa de prometer que o fiscal sera concluido
+   * com o pedido de compra vinculado (avisos do fiscal pendente, da reversao e o rodape do botao).
+   */
+  const haIgnoradoNoOmie = nomesIgnoradosNoOmie.length > 0 || erroCodigo === 'ITEM_IGNORADO_NO_OMIE';
+  // O 409 descreve a nota como estava no clique. Se ela deixa de ser fiscal pendente (o fiscal concluiu no portal), a caixa
+  // mandaria esperar uma desmarcacao que ja nao e necessaria: sai sozinha.
+  useEffect(() => {
+    if (erroCodigo === 'ITEM_IGNORADO_NO_OMIE' && !pcAtivo) {
+      setErroEnvio(null);
+      setErroCodigo(null);
+    }
+  }, [erroCodigo, pcAtivo]);
   /** recebimento barrado por um aviso proprio (banner acima dos itens): botao desabilitado */
   const recebimentoBarrado = estoqueLancadoPeloOmie || copiaPcsDefasada || aguardandoPcCompras || semAvaliacaoBloqueia;
+  /**
+   * Aviso do espelho. Some enquanto a caixa do 409 ITEM_IGNORADO_NO_OMIE esta na tela: ela traz a lista lida ao vivo, e o espelho
+   * pode estar atrasado (duas listas diferentes lado a lado confundiriam).
+   */
+  const avisoIgnoradoNoOmie =
+    nomesIgnoradosNoOmie.length > 0 && erroCodigo !== 'ITEM_IGNORADO_NO_OMIE'
+      ? textoIgnoradoNoOmie(nomesIgnoradosNoOmie, omieDaNf, recebimentoBarrado)
+      : null;
   const bloqueadoPorPc = recebimentoBarrado || pcPendencias.length > 0 || faltaJustificativaNota;
   /** por que o botao esta desabilitado (aviso visivel ao lado do botao) */
   const primeiraPendenciaPc = pendenciasItens[0];
@@ -1211,6 +1277,7 @@ function DetalheSection({
       setErroEnvio(
         code === 'VINCULO_OMIE_MUDOU'
           ? `${e.message.replace(/\s*[.!?]*\s*$/, '.')} A nota foi recarregada. ${pcNfDisponivel ? 'Confira o pedido de compra da nota.' : 'Confira o pedido de cada item.'}`
+          // ITEM_IGNORADO_NO_OMIE: a mensagem do servidor nomeia os itens lidos ao vivo (o aviso do espelho sai enquanto ela esta na tela)
           : e.message,
       );
       // feature 017: o servidor recusou com base em dado que mudou no OMIE — a nota e recarregada junto com a mensagem
@@ -1496,8 +1563,8 @@ function DetalheSection({
             <div className={`mb-3 ${AVISO_AMBAR}`}>
               <p>
                 <strong className="font-semibold">O recebimento fiscal desta nota foi desfeito no {omieDaNf}{emDataHoraBr(nf.fiscalRevertidoEm)} depois de concluído.</strong>
-                {/* com o recebimento barrado por outro aviso (PC, lista de PCs, unidade), nao prometer "ao dar entrada" */}
-                {fiscalNoClique && !recebimentoBarrado && (
+                {/* com o recebimento barrado por outro aviso (PC, lista de PCs, unidade) ou item em "Ignorar", nao prometer "ao dar entrada" */}
+                {fiscalNoClique && !recebimentoBarrado && !haIgnoradoNoOmie && (
                   <>
                     {' '}
                     Ao dar entrada, o Atlas conclui o fiscal de novo{haPcSelecionavel ? ', com o pedido de compra confirmado abaixo' : ''}.
@@ -1508,7 +1575,17 @@ function DetalheSection({
             </div>
           )}
 
-          {fiscalPendente && !resultado && (fiscalSemFornecedor || recebiveis.length === 0 || !recebimentoBarrado) && (
+          {/* NF 19252: so avisa — o espelho pode estar atrasado, e o clique le o OMIE ao vivo */}
+          {avisoIgnoradoNoOmie && !resultado && (
+            <div id="rec-nacional-ignorado-omie" className={`mb-3 ${AVISO_AMBAR}`}>
+              <p>
+                <strong className="font-semibold">{avisoIgnoradoNoOmie.destaque}</strong> {avisoIgnoradoNoOmie.orientacao}
+              </p>
+            </div>
+          )}
+
+          {/* item em "Ignorar": a promessa de concluir o fiscal com o PC some; sem fornecedor e "nada a receber" continuam */}
+          {fiscalPendente && !resultado && (fiscalSemFornecedor || recebiveis.length === 0 || (!recebimentoBarrado && !haIgnoradoNoOmie)) && (
             <div className="mb-3 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-sm text-amber-900 dark:text-amber-200">
               {fiscalSemFornecedor
                 ? `Esta nota está sem fornecedor cadastrado no ${omieDaNf}, então o recebimento fiscal não pode ser concluído. Peça ao fiscal para cadastrar o fornecedor; a nota pode ser recebida depois da próxima atualização do espelho do ${omieDaNf}.`
@@ -1684,7 +1761,7 @@ function DetalheSection({
                 {ehAcxe
                   ? 'Cada item vira uma aprovação do gestor. O ajuste de estoque no OMIE acontece na aprovação: na ACXE e, nos estoques que também são da Q2P, na Q2P.'
                   : 'Cada item vira uma aprovação do gestor. O ajuste no OMIE acontece na aprovação.'}
-                {fiscalNoClique && !recebimentoBarrado && ` O recebimento fiscal é concluído no ${omieDaNf} agora, ao confirmar${haPcParaConfirmar ? ', com cada item vinculado ao pedido de compra escolhido' : ''}.`}
+                {fiscalNoClique && !recebimentoBarrado && !haIgnoradoNoOmie && ` O recebimento fiscal é concluído no ${omieDaNf} agora, ao confirmar${haPcParaConfirmar ? ', com cada item vinculado ao pedido de compra escolhido' : ''}.`}
                 {baixaPermitida && baixaveis.length > 0 && (
                   <>
                     {' '}
@@ -1706,7 +1783,7 @@ function DetalheSection({
                 type="button"
                 onClick={handleEnviar}
                 disabled={enviarMut.isPending || recebiveis.length === 0 || fiscalSemFornecedor || retryRestanteSeg > 0 || bloqueadoPorPc}
-                aria-describedby={dicaPc ? 'rec-nacional-pc-dica' : undefined}
+                aria-describedby={[dicaPc ? 'rec-nacional-pc-dica' : null, avisoIgnoradoNoOmie ? 'rec-nacional-ignorado-omie' : null].filter(Boolean).join(' ') || undefined}
                 className="px-5 py-2 bg-atlas-btn-bg text-atlas-btn-text rounded text-sm font-medium hover:opacity-90 disabled:opacity-50"
               >
                 {enviarMut.isPending

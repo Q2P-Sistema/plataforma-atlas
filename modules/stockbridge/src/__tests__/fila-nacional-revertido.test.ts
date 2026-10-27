@@ -378,6 +378,13 @@ describe('detalhe — D21 ligada', () => {
     dump('detalhe-revertido-q2p.sql', sql, params);
   });
 
+  it('NF 19252 revertida com as linhas em "Ignorar" no portal (o IGNORAR desfez o vinculo): itensIgnoradosNoOmie traz o item', async () => {
+    banco.detalhe = detalhe19252({ c_ignorar_item: 'S', n_id_pedido: null, n_id_it_pedido: null });
+    const d = await getDetalheNfNacional(CHAVE_19252);
+    expect(d).toMatchObject({ fiscal: 'pendente', fiscalRevertido: true });
+    expect(d.itensIgnoradosNoOmie).toEqual([{ indice: 0, descricao: 'PEBD EB' }]);
+  });
+
   it('NF 19252 revertida PELO ESPELHO: fiscal pendente + fiscalRevertido, as 4 linhas (13.750 kg) e o vinculo do OMIE com o PC 308; a hora vem do espelho', async () => {
     mocks.config.STOCKBRIDGE_PC_UNIDADE_DIFERENTE = 'converter';
     reversaoEm = new Date('2026-10-25T20:13:36.000Z'); // 17:13:36 em Brasilia

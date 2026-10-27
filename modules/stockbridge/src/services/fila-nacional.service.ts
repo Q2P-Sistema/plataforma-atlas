@@ -1365,6 +1365,14 @@ export interface DetalheNfNacional {
    */
   itensSemAvaliacaoPc: Array<{ indice: number; descricao: string }>;
   /**
+   * NF 19252 (26/10/2026): itens a receber com alguma linha marcada como "Ignorar" no recebimento
+   * do OMIE (espelho de recebimentos). Com PC escolhido o POST e recusado (409
+   * ITEM_IGNORADO_NO_OMIE): o IGNORAR desfaz o vinculo e so o fiscal desmarca. A tela avisa antes
+   * do clique nos itens com PC a confirmar; item ignorado sem PC segue sem vinculo, como antes. So
+   * com o fluxo de PC (chave da 016 + fiscal pendente).
+   */
+  itensIgnoradosNoOmie: Array<{ indice: number; descricao: string }>;
+  /**
    * PC por NF (22/10/2026): os PCs que atendem a nota, com a atribuicao item da NF ->
    * item do PC, para o operador escolher o pedido UMA vez. Derivado das listas de cada
    * item (o POST continua por item). Vazio fora do fluxo de PC ou com a copia defasada.
@@ -2026,6 +2034,13 @@ export async function montarDetalheNfNacional(
           .filter((it) => itemNfPendente(it) && !it.conversao.ok && (entradas[it.indice]?.vinculos.length ?? 0) === 0)
           .map((it) => ({ indice: it.indice, descricao: it.descricaoFornecedor }))
       : [];
+  // NF 19252: linha marcada como "Ignorar" no portal num item a receber — a tela avisa antes do clique.
+  const itensIgnoradosNoOmie =
+    fiscal === 'pendente' && flag
+      ? itens
+          .filter((it) => itemNfPendente(it) && (linhasPorIndice.get(it.indice) ?? []).some((l) => l.c_ignorar_item === 'S'))
+          .map((it) => ({ indice: it.indice, descricao: it.descricaoFornecedor }))
+      : [];
 
   const detalhe: DetalheNfNacional = {
     nfChaveAcesso: cab.nf_chave_acesso,
@@ -2049,6 +2064,7 @@ export async function montarDetalheNfNacional(
     estoqueLancadoPeloOmie,
     copiaPcsDefasada: copiaDefasada,
     itensSemAvaliacaoPc,
+    itensIgnoradosNoOmie,
     pcsDaNf,
   };
   return {

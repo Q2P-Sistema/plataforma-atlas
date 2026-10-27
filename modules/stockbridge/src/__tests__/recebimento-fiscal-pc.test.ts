@@ -104,6 +104,7 @@ import {
   RecebimentoFiscalSemFornecedorError,
   RecebimentoFiscalEtapaInesperadaError,
   VinculoOmieMudouError,
+  ItemIgnoradoNoOmieError,
   instanteConclusaoOmie,
 } from '../services/recebimento-fiscal.service.js';
 import { EstoqueJaLancadoPeloOmieError } from '../services/fila-nacional.service.js';
@@ -927,16 +928,130 @@ describe('concluirRecebimentoFiscal com PC — VINCULO_OMIE_MUDOU (cenário 5)',
     expect(fechamentos[0]![6]).toBe('consultar');
   });
 
-  it('item escolhido ausente do recebimento, ou já ignorado no OMIE: conflito (o vínculo não pode mais ser mantido nem gravado)', async () => {
+  it('item escolhido ausente do recebimento: conflito (o vínculo não pode mais ser mantido nem gravado)', async () => {
     consultaUnica({ itens: [itemRec(2)] }); // a seq 1 escolhida nao existe mais
     await expect(concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304, { sequencias: [1] })] }))).rejects.toBeInstanceOf(VinculoOmieMudouError);
     expect(String(fechamentos[0]![8])).toContain('ausente');
+    expect(relerSpy).not.toHaveBeenCalled();
+    expect(alterarSpy).not.toHaveBeenCalled();
+    expect(concluirSpy).not.toHaveBeenCalled();
+  });
+});
 
-    fechamentos = [];
+// ── Item com PC escolhido marcado como "Ignorar" no portal (NF 19252, 26/10/2026) ──
+
+describe('concluirRecebimentoFiscal com PC — item marcado como "Ignorar" no OMIE (NF 19252)', () => {
+  // As 4 linhas da 19252 foram marcadas como "Ignorar" no portal depois da reversao; o 409 VINCULO_OMIE_MUDOU
+  // mandava recarregar a nota e o operador repetiu o envio sem saber que so o fiscal resolvia.
+  it('ItemIgnoradoNoOmieError, não VINCULO_OMIE_MUDOU: a mensagem diz o item e o que fazer; zero escrita, ledger em falha (consultar), sem releitura do PC', async () => {
     consultaUnica({ itens: [itemRec(1, { cIgnorarItem: 'S' })] });
-    await expect(concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304)] }))).rejects.toBeInstanceOf(VinculoOmieMudouError);
-    expect(String(fechamentos[0]![8])).toContain('ignorar');
-    expect(relerSpy).not.toHaveBeenCalled(); // nenhum dos dois conflitos chegou a reler o PC
+
+    const erro = await concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304)] })).catch((e: unknown) => e);
+
+    expect(erro).toBeInstanceOf(ItemIgnoradoNoOmieError);
+    const msg = (erro as Error).message;
+    expect(msg).toBe(
+      'O item "SUCATA PLASTICO" da NF 7813 (REPLAS COMERCIAL LTDA) está marcado como "Ignorar" no recebimento do OMIE, ' +
+        'e com essa marcação o pedido de compra não pode ser vinculado. Nada foi registrado. ' +
+        'Peça ao fiscal para desmarcar "Ignorar" nesse item no OMIE e tente de novo.',
+    );
+    expect(msg).not.toMatch(/\d{9,}/); // sem codigos do OMIE (ACXEGDP-313)
+    expect(alterarSpy).not.toHaveBeenCalled();
+    expect(concluirSpy).not.toHaveBeenCalled();
+    expect(consultarSpy).toHaveBeenCalledTimes(1); // erro de dominio: sem reconsulta
+    expect(relerSpy).not.toHaveBeenCalled();
+    expect(ordemSemEspera()).toEqual(['ledger:insert', 'omie:consultar', 'ledger:falha', 'pc:falha']);
+    expect(fechamentos[0]!.slice(1, 9)).toEqual(['falha', N_ID_RECEB, '40', 'N', 1, 'consultar', null, 'Item com PC escolhido marcado para ignorar no OMIE: sequência 1']);
+  });
+
+  it('vem antes do VINCULO_OMIE_MUDOU (vínculo vivo divergente na outra linha) e lista todos os itens ignorados, no plural', async () => {
+    consultaUnica({
+      itens: [
+        itemRec(1, { cIgnorarItem: 'S' }),
+        itemRec(2, { ...vinculadoA(PC302), cDescricaoProduto: 'SUCATA DE PEAD', cIgnorarItem: 'S' }),
+        itemRec(3, { ...vinculadoA(PC305), cDescricaoProduto: 'TAMPA' }),
+      ],
+    });
+    const vinculos = [
+      escolha(PC304, { sequencias: [1] }),
+      escolha(PC304, { indice: 1, sequencias: [2], itemDescricao: 'SUCATA DE PEAD', kgPorSequencia: { 2: 18000 } }),
+      // a seq 3 esta viva no 305, a tela viu sem vinculo e o operador escolheu o 304: sozinha seria VINCULO_OMIE_MUDOU
+      escolhaVendo(PC304, null, { indice: 2, sequencias: [3], itemDescricao: 'TAMPA', kgPorSequencia: { 3: 18000 } }),
+    ];
+
+    const erro = await concluirRecebimentoFiscal(input({ vinculos })).catch((e: unknown) => e);
+
+    expect(erro).toBeInstanceOf(ItemIgnoradoNoOmieError);
+    expect((erro as Error).message).toContain('Os itens "SUCATA PLASTICO" e "SUCATA DE PEAD" da NF 7813');
+    expect((erro as Error).message).toContain('estão marcados como "Ignorar"');
+    expect((erro as Error).message).toContain('nesses itens');
+    expect((erro as ItemIgnoradoNoOmieError).itens).toEqual(['SUCATA PLASTICO', 'SUCATA DE PEAD']);
+    expect(String(fechamentos[0]![8])).toBe('Item com PC escolhido marcado para ignorar no OMIE: sequências 1, 2');
+    expect(alterarSpy).not.toHaveBeenCalled();
+  });
+
+  it('item ignorado SEM escolha de PC (modo sem vínculo) não é recusado: segue sem vínculo e o item escolhido é associado', async () => {
+    consultaUnica({ itens: [itemRec(1), itemRec(2, { cIgnorarItem: 'S', cDescricaoProduto: 'TAMPA' })] });
+
+    const r = await concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304, { sequencias: [1] })], sequenciasSemVinculo: [2] }));
+
+    expect(r.status).toBe('concluido');
+    expect(seqsDaAcao('ASSOCIAR-PEDIDO')).toEqual([1]);
+    expect(seqsDaAcao('IGNORAR')).toEqual([]); // ja ignorado no OMIE: o passo e pulado
+    expect(r.semVinculo).toEqual([2]);
+  });
+
+  // Formato real da NF 19252: UM item agregado com 4 sequencias (escolha.sequencias = [1,2,3,4]).
+  const kg4: Record<number, number> = { 1: 3437.5, 2: 3437.5, 3: 3437.5, 4: 3437.5 };
+  const itens4 = (ignoradas: number[]) =>
+    [1, 2, 3, 4].map((s) => itemRec(s, { cDescricaoProduto: 'PEBD EB', nQtdeNFe: 3437.5, cIgnorarItem: ignoradas.includes(s) ? 'S' : 'N' }));
+  const escolha4 = () => escolha(PC304, { sequencias: [1, 2, 3, 4], itemDescricao: 'PEBD EB', qtdNfKg: 13750, kgPorSequencia: kg4 });
+
+  it('1 item com 4 sequências, todas ignoradas (NF 19252): singular, descrição uma vez, motivo lista as 4; nada escrito', async () => {
+    consultaUnica({ itens: itens4([1, 2, 3, 4]) });
+    const erro = await concluirRecebimentoFiscal(input({ notaFiscal: '19252', fornecedorNome: 'ZARAPLAST S/A', vinculos: [escolha4()] })).catch((e: unknown) => e);
+    expect(erro).toBeInstanceOf(ItemIgnoradoNoOmieError);
+    expect((erro as ItemIgnoradoNoOmieError).itens).toEqual(['PEBD EB']);
+    expect((erro as Error).message).toMatch(/^O item "PEBD EB" da NF 19252 \(ZARAPLAST S\/A\) está marcado como "Ignorar"/);
+    expect(String(fechamentos[0]![8])).toBe('Item com PC escolhido marcado para ignorar no OMIE: sequências 1, 2, 3, 4');
+    expect(relerSpy).not.toHaveBeenCalled();
+    expect(alterarSpy).not.toHaveBeenCalled();
+    expect(concluirSpy).not.toHaveBeenCalled();
+  });
+
+  it('item de 4 sequências com só a 2 e a 4 ignoradas (a 1ª livre): recusa e o motivo lista só as ignoradas', async () => {
+    consultaUnica({ itens: itens4([2, 4]) });
+    const erro = await concluirRecebimentoFiscal(input({ vinculos: [escolha4()] })).catch((e: unknown) => e);
+    expect(erro).toBeInstanceOf(ItemIgnoradoNoOmieError);
+    expect(String(fechamentos[0]![8])).toBe('Item com PC escolhido marcado para ignorar no OMIE: sequências 2, 4');
+    expect(alterarSpy).not.toHaveBeenCalled();
+    expect(concluirSpy).not.toHaveBeenCalled();
+  });
+
+  it('3 itens ignorados: a lista da mensagem é "A", "B" e "C"', async () => {
+    consultaUnica({ itens: ['A', 'B', 'C'].map((d, i) => itemRec(i + 1, { cDescricaoProduto: d, cIgnorarItem: 'S' })) });
+    const vinculos = ['A', 'B', 'C'].map((d, i) => escolha(PC304, { indice: i, sequencias: [i + 1], itemDescricao: d, kgPorSequencia: { [i + 1]: 18000 } }));
+    const erro = await concluirRecebimentoFiscal(input({ vinculos })).catch((e: unknown) => e);
+    expect(erro).toBeInstanceOf(ItemIgnoradoNoOmieError);
+    expect((erro as Error).message).toContain('Os itens "A", "B" e "C" da NF 7813');
+  });
+
+  // Ordem do contrato (§3, passo 2): recusas da 016 -> ITEM_IGNORADO_NO_OMIE -> VINCULO_OMIE_MUDOU. Sem isso, NF cancelada,
+  // devolvida ou bloqueada com item em "Ignorar" mandaria o fiscal desmarcar a toa e o ledger perderia o motivo real.
+  it.each([
+    ['NF cancelada no OMIE', { cCancelada: 'S' }, RecebimentoFiscalNfCanceladaError, 'cancelada', 'cCancelada=S'],
+    ['fornecedor não cadastrado', { nIdFornecedor: null }, RecebimentoFiscalSemFornecedorError, 'sem fornecedor cadastrado', 'sem fornecedor cadastrado'],
+    ['recebimento devolvido', { cDevolvido: 'S' }, RecebimentoFiscalEtapaInesperadaError, 'devolvida', 'cDevolvido=S'],
+    ['recebimento bloqueado', { cBloqueado: 'S' }, RecebimentoFiscalEtapaInesperadaError, 'bloqueado', 'cBloqueado=S'],
+    ['fora da etapa 40', { cEtapa: '50' }, RecebimentoFiscalEtapaInesperadaError, 'Faturado pelo fornecedor', 'Etapa 50'],
+  ])('%s + item ignorado com PC escolhido: a recusa da 016 vem antes do ITEM_IGNORADO_NO_OMIE', async (_nome, over, Classe, trechoMensagem, trechoMotivo) => {
+    consultaUnica({ ...over, itens: [itemRec(1, { cIgnorarItem: 'S' })] });
+    const erro = await erroDe(concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304)] })));
+    expect(erro).toBeInstanceOf(Classe);
+    expect(erro).not.toBeInstanceOf(ItemIgnoradoNoOmieError);
+    expect(erro.message).toContain(trechoMensagem);
+    expect(String(fechamentos[0]![8])).toContain(trechoMotivo);
+    expect(relerSpy).not.toHaveBeenCalled();
     expect(alterarSpy).not.toHaveBeenCalled();
     expect(concluirSpy).not.toHaveBeenCalled();
   });

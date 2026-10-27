@@ -220,7 +220,7 @@ deploy/portainer/atlas.stack.yml, YAML UAT, .env.example   # ESTENDER: variávei
 - **Fase 1** (Histórias 1 a 4, Q2P): 0056, n8n Q2P, monitoramento da cópia de PCs, sugestão, fiscal com vínculo, portão 1, leitores. Fecha a contenção.
 - **Ajustes pós-estreia** (22/10/2026): 0057 (cache de PCs vistos) e a imagem seguinte à v1.1.20, com PC por NF, PC de outro cadastro e trava de unidade.
 - **Fase 2** (História 5, ACXE): 0058, n8n ACXE, empresa na fila e no fiscal, entrada dual (ACXE + Q2P) no local espelhado; Extrema = 21.1 (research D11).
-- **Ajuste de 25/10/2026** (D21 da 017, fiscal revertido): 0060 **antes** da imagem; a chave nova (`STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED`) já vem ligada, mas a D21 da 017 só vale com a chave da 016 e com a 0060; primeiro uso acompanhado na NF 19252.
+- **Ajuste de 25/10/2026** (D21 da 017, fiscal revertido): 0060 **antes** da imagem; a chave nova (`STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED`) já vem ligada, mas a D21 da 017 só vale com a chave da 016 e com a 0060; primeiro uso acompanhado na próxima NF revertida (a 19252 foi concluída no portal em 27/10/2026).
 
 ## Complexity Tracking
 

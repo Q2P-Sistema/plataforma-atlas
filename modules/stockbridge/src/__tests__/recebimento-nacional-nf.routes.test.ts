@@ -110,7 +110,7 @@ import {
   PcRecemUsadoAguardeError,
   PcVinculoInvalidoError,
 } from '../services/pc-sugestao.service.js';
-import { VinculoOmieMudouError } from '../services/recebimento-fiscal.service.js';
+import { VinculoOmieMudouError, ItemIgnoradoNoOmieError } from '../services/recebimento-fiscal.service.js';
 import { RecebimentoFiscalRevertidoError } from '../services/fiscal-revertido.js';
 import { ItemJaRecebidoError, NenhumItemPendenteError, MotivoObrigatorioError, ItemNaoCorrespondeError } from '../services/recebimento-externo.service.js';
 
@@ -314,6 +314,7 @@ describe('POST /recebimento/nacional/por-nf', () => {
     [new CopiaPcsDefasadaError(), 503, 'COPIA_PCS_DEFASADA'],
     [new PcVinculoInvalidoError('7813', '304', 'não tem saldo disponível (saldo atual: 0 kg)'), 409, 'PC_VINCULO_INVALIDO'],
     [new VinculoOmieMudouError('7813', 'SUCATA PLASTICO'), 409, 'VINCULO_OMIE_MUDOU'],
+    [new ItemIgnoradoNoOmieError('19252', 'ZARAPLAST S/A', ['LDPE 923.270 DB + AX']), 409, 'ITEM_IGNORADO_NO_OMIE'],
     [new RecebimentoFiscalRevertidoError('19252', 'ZARAPLAST S/A'), 409, 'RECEBIMENTO_FISCAL_REVERTIDO'],
     [new VerificacaoEstoqueOmieError('7813'), 502, 'VERIFICACAO_ESTOQUE_OMIE_FAIL'],
   ])('017: mapeia %s -> %i %s, com userMessage sem codigo OMIE', async (err, status, code) => {
@@ -349,6 +350,22 @@ describe('POST /recebimento/nacional/por-nf', () => {
     expect(res.body.error.userMessage).toBe(res.body.error.message);
     expect(res.body.error.userMessage).toContain('NF 19252 (ZARAPLAST S/A)');
     expect(res.body.error.userMessage).toContain('desfeito no OMIE');
+    expect(res.body.error.userMessage).not.toMatch(/\d{10}/);
+    expect(res.body.error).not.toHaveProperty('retryAfterSeconds');
+  });
+
+  // NF 19252: item com PC escolhido marcado como "Ignorar" no portal — so o fiscal desmarca. Sem retryAfterSeconds: nao ha o que esperar.
+  it('017: ITEM_IGNORADO_NO_OMIE é 409 com a mensagem do serviço (orienta pedir ao fiscal), sem retryAfterSeconds e sem código OMIE', async () => {
+    const err = new ItemIgnoradoNoOmieError('19252', 'ZARAPLAST S/A', ['LDPE 923.270 DB + AX']);
+    svc.processarRecebimentoNacionalPorNf.mockRejectedValue(err);
+    const res = await request(app).post('/api/v1/stockbridge/recebimento/nacional/por-nf').send(bodyValido());
+    expect(res.status).toBe(409);
+    expect(res.body.data).toBeNull();
+    expect(res.body.error.code).toBe('ITEM_IGNORADO_NO_OMIE');
+    expect(res.body.error.userMessage).toBe(err.message);
+    expect(res.body.error.message).toBe(err.message);
+    expect(res.body.error.userMessage).toContain('NF 19252 (ZARAPLAST S/A)');
+    expect(res.body.error.userMessage).toContain('desmarcar "Ignorar"');
     expect(res.body.error.userMessage).not.toMatch(/\d{10}/);
     expect(res.body.error).not.toHaveProperty('retryAfterSeconds');
   });

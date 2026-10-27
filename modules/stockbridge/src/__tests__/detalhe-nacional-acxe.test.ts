@@ -149,6 +149,13 @@ describe('getDetalheNfNacional — NF da ACXE', () => {
     banco.locais = [localAtlas()];
   });
 
+  it('linha em "Ignorar" no recebimento da ACXE: itensIgnoradosNoOmie traz o item', async () => {
+    banco.detalhe = [linhaDetalheAcxe({ c_ignorar_item: 'S' })];
+    const d = await getDetalheNfNacional(CHAVE_ACXE);
+    expect(d).toMatchObject({ empresa: 'acxe', fiscal: 'pendente' });
+    expect(d.itensIgnoradosNoOmie).toEqual([{ indice: 0, descricao: 'PP PRETO Q35' }]);
+  });
+
   it('empresa "acxe", fiscal pendente e o fornecedor da linha; a memoria fornecedor x descricao (so Q2P) NAO e consultada', async () => {
     const d = await getDetalheNfNacional(CHAVE_ACXE);
     expect(d).toMatchObject({
