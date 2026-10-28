@@ -415,7 +415,7 @@ describe('health do espelho de recebimentos (revisao pre-UAT, ROT-6)', () => {
 // fontes passaram a trazer a do XML — o item recebido voltou inteiro a fila.
 // A movimentacao passa a casar tambem pela sequencia do item no recebimento.
 describe('identidade do item pela sequencia no recebimento (ACXEGDP-412)', () => {
-  it('flag ligada: fonte (b) expoe ri.n_sequencia; fonte (a) liga o item pelo n_id_item e, so na janela entre syncs, pela ordem', async () => {
+  it('flag ligada: fonte (b) expoe ri.n_sequencia; fonte (a) liga o item pelo id e, sem nenhum id que case, pela posicao', async () => {
     config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
     await getFilaNacional();
     const { sql } = sqlFila();
@@ -424,8 +424,13 @@ describe('identidade do item pela sequencia no recebimento (ACXEGDP-412)', () =>
     // (a): ligacao exata pelo id do item (n_id_item do recebimento = n_cod_item da NF)
     expect(sql).toContain('MAX(ri.n_sequencia) FILTER (WHERE ri.n_id_item = i.n_cod_item)');
     expect(sql).toContain('WHERE r.c_chave_nfe = h.c_chave_nfe)');
-    // ordem so quando o recebimento existe e ainda nao tem nenhum n_id_item (espelho de recebimentos atrasado)
-    expect(sql).toContain('CASE WHEN COUNT(*) > 0 AND COUNT(*) FILTER (WHERE COALESCE(ri.n_id_item, 0) <> 0) = 0');
+    // T102: linhas com o mesmo n_cod_item casam com as sequencias do codigo na mesma ordem, alinhadas pelo fim (n_item por to_jsonb)
+    expect(sql).toContain('(array_agg(ri.n_sequencia ORDER BY ri.n_sequencia) FILTER (WHERE ri.n_id_item = i.n_cod_item))[');
+    expect(sql).toContain("i3.n_cod_item = i.n_cod_item AND (to_jsonb(i3)->>'n_item')::int > (to_jsonb(i)->>'n_item')::int)]");
+    // posicao so quando nenhum id do recebimento casa com a NF (espelho atrasado ou NF registrada de novo) e o numero de linhas bate
+    expect(sql).toContain('CASE WHEN COUNT(*) FILTER (WHERE ri.n_id_item IN (SELECT i2.n_cod_item FROM public."tbl_nf_itens_Q2P" i2 WHERE i2.n_id_nf = i.n_id_nf)) = 0');
+    expect(sql).toContain('AND COUNT(*) = (SELECT COUNT(*) FROM public."tbl_nf_itens_Q2P" i2 WHERE i2.n_id_nf = i.n_id_nf)');
+    expect(sql).toContain("THEN COALESCE((to_jsonb(i)->>'n_item')::int, (SELECT COUNT(*)::int FROM public.\"tbl_nf_itens_Q2P\" i2");
     expect(sql).toContain('i2.n_id_nf = i.n_id_nf AND i2.n_cod_item <= i.n_cod_item');
   });
 

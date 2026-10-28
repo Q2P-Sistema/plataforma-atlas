@@ -42,3 +42,13 @@ Só ativar quando a História 5 for implantada. Até lá, a tabela pode existir 
 ## 3. Cópia de PCs (já entregue)
 
 A Rev 1.5 do `qPJFEIY1PQ2LDQG2` está no ar desde 21/10/2026. Esta feature depende dela e não pede mudança.
+
+## 4. Espelho de itens de NF: uma linha por linha da NF (T102, entregue em 27/10/2026)
+
+O OMIE dá o mesmo `nCodItem` às linhas da NF ligadas ao mesmo item de pedido de compra, e a NF com PC é o caso desta feature. O espelho `tbl_nf_itens_Q2P` / `_ACXE` / `_Q2P_Filial` guarda cada linha:
+
+- chave `(n_id_nf, n_item)`, com `n_item` = posição da linha no `det[]` do `ListarNF` (1..N); `(n_id_nf, n_cod_item)` é índice não único;
+- gravação por NF num só comando: `DELETE` das posições acima do total e `INSERT ... ON CONFLICT (n_id_nf, n_item) DO UPDATE`;
+- o `det[]` vem em ordem crescente de `nCodItem`, não na sequência do XML. Quem liga a linha da NF à sequência do recebimento usa o `nCodItem` (`n_id_item` do recebimento concluído) e, quando ele se repete, a ordem dentro do mesmo código (`sequenciaItemNfSql`).
+
+Fluxos, DDL e validação no repositório dos fluxos (`specs/437-espelho-itens-nf/`, `docs/migration-nf-itens-posicao-2026-10-27.sql`). O UAT precisa do mesmo DDL antes de receber dados do PROD (o sync só copia dados).
