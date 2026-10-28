@@ -52,6 +52,8 @@ interface SidebarProps {
   collapsed?: boolean;
   onToggleCollapse?: () => void;
   userRole?: string;
+  /** Tag da versão em execução (ex. "v1.1.32"), exibida no rodapé. Ausente = não mostra. */
+  versao?: string | null;
 }
 
 export function Sidebar({
@@ -61,6 +63,7 @@ export function Sidebar({
   collapsed = false,
   onToggleCollapse,
   userRole,
+  versao,
 }: SidebarProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -220,6 +223,9 @@ export function Sidebar({
         {!collapsed && (
           <div className="px-4 py-3 border-t border-atlas-border">
             <p className="text-[10px] text-atlas-muted">ACXE + Q2P</p>
+            {versao && (
+              <p className="text-[10px] text-atlas-muted truncate">Versão {versao.replace(/^v/i, '')}</p>
+            )}
           </div>
         )}
       </aside>

@@ -83,14 +83,22 @@ describe('GET /api/v1/health', () => {
   it('informa ambiente, modo OMIE e destino dos e-mails (ACXEGDP-405)', async () => {
     const res = await request(app).get('/api/v1/health');
 
-    expect(res.body.data.ambiente).toEqual({ nome: 'uat', omie_modo: 'leitura', email: 'suprimido' });
+    expect(res.body.data.ambiente).toEqual({
+      nome: 'uat',
+      omie_modo: 'leitura',
+      email: 'suprimido',
+      versao: null,
+    });
   });
 
   it('GET /api/v1/ambiente devolve o mesmo resumo, sem sessão', async () => {
     const res = await request(app).get('/api/v1/ambiente');
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ data: { nome: 'uat', omie_modo: 'leitura', email: 'suprimido' }, error: null });
+    expect(res.body).toEqual({
+      data: { nome: 'uat', omie_modo: 'leitura', email: 'suprimido', versao: null },
+      error: null,
+    });
   });
 
   it('includes uptime_seconds as number', async () => {

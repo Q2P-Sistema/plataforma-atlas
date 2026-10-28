@@ -217,6 +217,10 @@ const envSchema = z.object({
   // (o UAT tem chaves OMIE de produção) e desvia ou suprime os e-mails. Ausente =
   // produção com NODE_ENV=production, desenvolvimento nos demais casos.
   ATLAS_ENV: z.enum(['prod', 'uat', 'dev']).optional(),
+  // Tag da imagem em execução (ex. "v1.1.32"), só para exibição no rodapé do
+  // menu — não controla comportamento. Ausente em dev local e no UAT (tag fixa
+  // ":uat", sem número de release).
+  ATLAS_VERSION: z.string().optional(),
   // Modo do cliente OMIE (@atlas/integration-omie lê process.env na hora da
   // chamada; aqui só valida no boot): real | leitura (lê o ERP, simula escritas)
   // | mock (fixtures, sem rede).

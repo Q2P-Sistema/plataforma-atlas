@@ -5,6 +5,8 @@ export interface AmbienteInfo {
   nome: 'prod' | 'uat' | 'dev';
   omie_modo: 'real' | 'leitura' | 'mock';
   email: 'normal' | 'log' | 'desviado' | 'suprimido';
+  /** Tag da imagem em execução (ex. "v1.1.32"). null em dev local e no UAT. */
+  versao: string | null;
 }
 
 export function useAmbiente() {

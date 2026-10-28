@@ -23,6 +23,10 @@ services:
       NODE_ENV: production
       API_PORT: "3005"
 
+      # Mesma tag usada na imagem acima — só para exibição no rodapé do menu
+      # (GET /api/v1/ambiente). Não controla comportamento.
+      ATLAS_VERSION: ${ATLAS_VERSION}
+
       # App é Brasil-only: roda o container em BRT para a lógica de datas locais
       # (ex: "Data do Movimento" do ajuste OMIE, via getDate/getMonth). Sem isto o
       # container fica em UTC e, após ~21h BRT, manda a data de amanhã -> OMIE rejeita.

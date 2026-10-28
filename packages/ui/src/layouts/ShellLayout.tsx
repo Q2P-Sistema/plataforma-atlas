@@ -11,6 +11,8 @@ interface ShellLayoutProps {
   onLogout: () => void;
   children: React.ReactNode;
   topBarSlot?: React.ReactNode;
+  /** Tag da versão em execução (ex. "v1.1.32"), exibida no rodapé do menu. */
+  versao?: string | null;
 }
 
 export function ShellLayout({
@@ -22,6 +24,7 @@ export function ShellLayout({
   onLogout,
   children,
   topBarSlot,
+  versao,
 }: ShellLayoutProps) {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -34,6 +37,7 @@ export function ShellLayout({
         collapsed={collapsed}
         onToggleCollapse={() => setCollapsed(!collapsed)}
         userRole={userRole}
+        versao={versao}
       />
 
       <div className="flex-1 flex flex-col min-w-0">
