@@ -28,6 +28,7 @@ import { TwoFactorSetupPage } from './pages/TwoFactorSetupPage.js';
 import { DashboardPage } from './pages/DashboardPage.js';
 import { ModulePlaceholder } from './components/ModulePlaceholder.js';
 import { FaixaAmbiente } from './components/FaixaAmbiente.js';
+import { useAmbiente } from './hooks/useAmbiente.js';
 import { AdminUsersPage } from './pages/AdminUsersPage.js';
 import { PositionDashboard } from './pages/hedge/PositionDashboard.js';
 import { NDFListPage } from './pages/hedge/NDFListPage.js';
@@ -184,6 +185,7 @@ function ProtectedShell() {
   const navigate = useNavigate();
   const logout = useAuthStore((s) => s.logout);
   const csrfToken = useAuthStore((s) => s.csrfToken);
+  const { data: ambiente } = useAmbiente();
 
   // Contador de aprovacoes pendentes — so pra gestor/diretor (operador 403 na rota).
   // Hook precisa rodar SEMPRE (Rules of Hooks); guarded por `enabled` quando user nao esta pronto.
@@ -380,6 +382,7 @@ function ProtectedShell() {
         logout().then(() => navigate('/login', { replace: true }));
       }}
       topBarSlot={isHedge ? <HedgePtaxBadge /> : undefined}
+      versao={ambiente?.versao}
     >
       <Routes>
         <Route index element={<DashboardPage />} />

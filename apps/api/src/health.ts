@@ -10,7 +10,12 @@ const router: Router = Router();
  * — uma imagem sem este bloco é anterior ao modo leitura.
  */
 function resumoAmbiente(config: Env) {
-  return { nome: getAmbiente(config), omie_modo: config.OMIE_MODE, email: getModoEmail(config) };
+  return {
+    nome: getAmbiente(config),
+    omie_modo: config.OMIE_MODE,
+    email: getModoEmail(config),
+    versao: config.ATLAS_VERSION ?? null,
+  };
 }
 
 // Público (sem sessão): a faixa "ambiente de testes" aparece já na tela de login.
