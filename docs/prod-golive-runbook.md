@@ -689,3 +689,7 @@ sequência, e sem a coluna `n_item` (espelho sem o DDL) o SQL dá o resultado de
 
 **Desfazer**: voltar à imagem anterior. A 0061 pode ficar: a sequência é um dado a mais, que a imagem
 anterior também usa.
+
+**Feito em 28/10/2026**: 0061 aplicada em PROD (39 entradas) e UAT (38); PR #146 mesclado = `v1.1.32`, em
+PROD desde ~12h47. Fila conferida depois da imagem: ficaram só a 60323 e a 91292 (NFs novas); a 36624
+(dispensada por compras) não voltou. Cópias `zz_bkp_437_*` apagadas no PROD no mesmo dia.
