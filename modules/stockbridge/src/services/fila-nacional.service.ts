@@ -473,21 +473,50 @@ const ledgerFiscalVigenteSql = (chaveExpr: string, revertidoSql: string): string
  * recebimento passa a ser o `n_cod_item` da NF (5.072 de 5.072 itens em PROD,
  * 07/10/2026; antes da conclusao ele e 0). Ligacao exata por esse id.
  *
- * Janela: o espelho de NF (:08/:38) pode trazer a NF antes de o de recebimentos
- * (:23/:53) refletir a conclusao — o recebimento ainda esta la, mas sem nenhum
- * `n_id_item`. So nesse caso vale a ORDEM do item na NF (posicao por
- * `n_cod_item`), que bateu com a sequencia em todos os itens desde o go-live (as
- * 9 excecoes medidas sao devolucoes de 2023). Recebimento ausente do espelho =
- * NULL (casa so por descricao, como na 015).
+ * T102 (27/10/2026): o OMIE da o MESMO `n_cod_item` a linhas diferentes da NF
+ * ligadas ao mesmo item de pedido de compra (e em devolucoes), e o recebimento
+ * tem uma sequencia para cada linha (60276: as linhas de 8.250 e 5.500 kg, seq 2
+ * e 3). Desde 27/10 o espelho guarda cada linha, com a posicao no `det[]` do
+ * `ListarNF` em `n_item` (chave `(n_id_nf, n_item)`); o `det[]` vem em ordem de
+ * `n_cod_item`, nao na sequencia do XML (60199, 60276, 72560), entao a posicao
+ * absoluta NAO e a sequencia. As linhas do mesmo codigo casam com as sequencias
+ * do codigo NA MESMA ORDEM, alinhadas pelo fim: indice = sequencias do codigo -
+ * linhas do codigo que vem DEPOIS desta. Sem codigo repetido e o indice 1 (a
+ * unica sequencia); no espelho antigo, que guardava so a ULTIMA das linhas
+ * fundidas, e a maior sequencia (o comportamento de antes). `n_item` e lido por
+ * `to_jsonb(i)`: sem a coluna (DEV, espelho sem o DDL) ele e nulo, nenhuma linha
+ * conta como "depois" e o resultado e o de antes.
+ *
+ * A linha ligada a pedido de compra ja traz o `n_id_item` (o id do item do PC)
+ * desde a associacao, antes da conclusao (22 de 22 linhas com PC em PROD,
+ * 28/10/2026).
+ *
+ * Sem ligacao por id: o espelho de NF (:08/:38) pode trazer a NF antes de o de
+ * recebimentos (:23/:53) refletir a conclusao (linha sem PC ainda sem
+ * `n_id_item`), e o OMIE pode registrar a NF de novo com ids novos depois da
+ * conclusao (36624, 27/10/2026: o recebimento ficou com os ids antigos). Nos dois
+ * casos, e so se nenhum id do recebimento casa com a NF e o numero de linhas bate,
+ * vale a POSICAO do item na NF (`n_item`; sem a coluna, a ordem por `n_cod_item`),
+ * que bateu com a sequencia em todos os itens desde o go-live fora das linhas com
+ * PC, que tem id (as outras excecoes medidas sao devolucoes de 2023). Limite: numa
+ * NF de varios itens registrada de novo cuja ordem de ids nao siga a do XML, a
+ * posicao pode trocar as linhas (so a 36624, de um item, caiu aqui ate 28/10/2026).
+ * Recebimento ausente do espelho = NULL (casa so por descricao, como na 015).
  * Historia 5: as tabelas sao as da empresa (a Q2P por padrao — o texto de antes).
  */
 function sequenciaItemNfSql(h: string, i: string, empresa: EmpresaNacional = 'q2p'): string {
   const t = tabelasNacional(empresa);
+  const nItem = (alias: string): string => `(to_jsonb(${alias})->>'n_item')::int`;
   return `(SELECT COALESCE(
+                  (array_agg(ri.n_sequencia ORDER BY ri.n_sequencia) FILTER (WHERE ri.n_id_item = ${i}.n_cod_item))[
+                    COUNT(*) FILTER (WHERE ri.n_id_item = ${i}.n_cod_item)::int
+                    - (SELECT COUNT(*)::int FROM public.${t.nfItens} i3
+                        WHERE i3.n_id_nf = ${i}.n_id_nf AND i3.n_cod_item = ${i}.n_cod_item AND ${nItem('i3')} > ${nItem(i)})],
                   MAX(ri.n_sequencia) FILTER (WHERE ri.n_id_item = ${i}.n_cod_item),
-                  CASE WHEN COUNT(*) > 0 AND COUNT(*) FILTER (WHERE COALESCE(ri.n_id_item, 0) <> 0) = 0
-                       THEN (SELECT COUNT(*)::int FROM public.${t.nfItens} i2
-                              WHERE i2.n_id_nf = ${i}.n_id_nf AND i2.n_cod_item <= ${i}.n_cod_item)
+                  CASE WHEN COUNT(*) FILTER (WHERE ri.n_id_item IN (SELECT i2.n_cod_item FROM public.${t.nfItens} i2 WHERE i2.n_id_nf = ${i}.n_id_nf)) = 0
+                        AND COUNT(*) = (SELECT COUNT(*) FROM public.${t.nfItens} i2 WHERE i2.n_id_nf = ${i}.n_id_nf)
+                       THEN COALESCE(${nItem(i)}, (SELECT COUNT(*)::int FROM public.${t.nfItens} i2
+                              WHERE i2.n_id_nf = ${i}.n_id_nf AND i2.n_cod_item <= ${i}.n_cod_item))
                   END)
              FROM public.${t.recebimento} r
              JOIN public.${t.recebimentoItens} ri ON ri.n_id_receb = r.n_id_receb
@@ -1203,7 +1232,7 @@ async function pcSituacaoPorNfDaEmpresa(
          FROM nf_unificada u
         WHERE u.c_chave_nfe = ANY($3::text[]) AND u.fiscal_pendente AND u.cfop = ANY($1::text[])
           AND NOT u.cancelada AND NOT u.deletada
-        ORDER BY u.c_chave_nfe, u.n_cod_item`,
+        ORDER BY u.c_chave_nfe, u.n_cod_item, u.n_seq`,
     [Array.from(CFOPS_RECEBIMENTO_NACIONAL), empresa === 'q2p' ? dataCorte : dataCorteAcxe(), chaves],
   );
   const porNf = new Map<string, { fornecedor: number | null; grupos: Map<string, LinhaFilaPc[]> }>();
@@ -1762,7 +1791,7 @@ export async function montarDetalheNfNacional(
       ${comRevertido ? ledgerFiscalVigenteSql('u.c_chave_nfe', 'u.fiscal_revertido') : LEDGER_FISCAL_CONCLUIDO_SQL('u.c_chave_nfe')}  AS ledger_concluido${emp ? ',\n      u.empresa                                        AS empresa,\n      u.produto_omie::text                             AS produto_omie' : ''}${comRevertido ? ',\n      u.fiscal_revertido                               AS fiscal_revertido' : ''}
     FROM nf_unificada u
     WHERE u.c_chave_nfe = $1
-    ORDER BY u.n_cod_item
+    ORDER BY u.n_cod_item, u.n_seq  -- T102: linhas com o mesmo n_cod_item (mesmo item de PC) saem na ordem da sequencia
     `,
     args,
     );

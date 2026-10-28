@@ -17,10 +17,15 @@ WITH nf_unificada AS (
                  i.x_prod, i.cfop, i.q_com, i.u_com,
                  i.v_prod                                             AS valor_item,  -- D26: NAO v_tot_item (IPI em dobro)
                  (SELECT COALESCE(
+                  (array_agg(ri.n_sequencia ORDER BY ri.n_sequencia) FILTER (WHERE ri.n_id_item = i.n_cod_item))[
+                    COUNT(*) FILTER (WHERE ri.n_id_item = i.n_cod_item)::int
+                    - (SELECT COUNT(*)::int FROM public."tbl_nf_itens_Q2P" i3
+                        WHERE i3.n_id_nf = i.n_id_nf AND i3.n_cod_item = i.n_cod_item AND (to_jsonb(i3)->>'n_item')::int > (to_jsonb(i)->>'n_item')::int)],
                   MAX(ri.n_sequencia) FILTER (WHERE ri.n_id_item = i.n_cod_item),
-                  CASE WHEN COUNT(*) > 0 AND COUNT(*) FILTER (WHERE COALESCE(ri.n_id_item, 0) <> 0) = 0
-                       THEN (SELECT COUNT(*)::int FROM public."tbl_nf_itens_Q2P" i2
-                              WHERE i2.n_id_nf = i.n_id_nf AND i2.n_cod_item <= i.n_cod_item)
+                  CASE WHEN COUNT(*) FILTER (WHERE ri.n_id_item IN (SELECT i2.n_cod_item FROM public."tbl_nf_itens_Q2P" i2 WHERE i2.n_id_nf = i.n_id_nf)) = 0
+                        AND COUNT(*) = (SELECT COUNT(*) FROM public."tbl_nf_itens_Q2P" i2 WHERE i2.n_id_nf = i.n_id_nf)
+                       THEN COALESCE((to_jsonb(i)->>'n_item')::int, (SELECT COUNT(*)::int FROM public."tbl_nf_itens_Q2P" i2
+                              WHERE i2.n_id_nf = i.n_id_nf AND i2.n_cod_item <= i.n_cod_item))
                   END)
              FROM public."tbl_recebimentoNFe_Q2P" r
              JOIN public."tbl_recebimentoNFe_itens_Q2P" ri ON ri.n_id_receb = r.n_id_receb
@@ -98,4 +103,4 @@ WITH nf_unificada AS (
          FROM nf_unificada u
         WHERE u.c_chave_nfe = ANY($3::text[]) AND u.fiscal_pendente AND u.cfop = ANY($1::text[])
           AND NOT u.cancelada AND NOT u.deletada
-        ORDER BY u.c_chave_nfe, u.n_cod_item
+        ORDER BY u.c_chave_nfe, u.n_cod_item, u.n_seq

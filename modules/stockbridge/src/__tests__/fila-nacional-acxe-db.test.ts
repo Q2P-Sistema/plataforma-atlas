@@ -105,10 +105,11 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
          n_id_nf bigint PRIMARY KEY, c_chave_nfe varchar(44), n_nf varchar(20), dest_razao varchar(200), dest_cnpj_cpf varchar(20),
          d_emi date, n_id_receb bigint, cancelada boolean NOT NULL DEFAULT false, deletada boolean NOT NULL DEFAULT false, tp_nf smallint,
          d_alt date, h_alt time)`],
+      // chave por POSICAO da linha desde 27/10/2026 (T102): o OMIE repete n_cod_item nas linhas ligadas ao mesmo item de PC
       [`tbl_nf_itens_${S}`, `CREATE TABLE public."tbl_nf_itens_${S}" (
-         n_id_nf bigint NOT NULL, n_cod_item bigint NOT NULL, n_cod_prod bigint, c_prod varchar(60), x_prod varchar(200), cfop varchar(10),
+         n_id_nf bigint NOT NULL, n_item integer NOT NULL, n_cod_item bigint NOT NULL, n_cod_prod bigint, c_prod varchar(60), x_prod varchar(200), cfop varchar(10),
          q_com numeric(14,3), u_com varchar(6), v_un_com numeric(14,4), v_prod numeric(14,2), v_tot_item numeric(14,2), codigo_local_estoque bigint,
-         PRIMARY KEY (n_id_nf, n_cod_item))`],
+         PRIMARY KEY (n_id_nf, n_item))`],
       [`tbl_recebimentoNFe_${S}`, `CREATE TABLE public."tbl_recebimentoNFe_${S}" (
          n_id_receb bigint PRIMARY KEY, c_chave_nfe varchar(44) NOT NULL, c_numero_nfe varchar(20), c_serie_nfe varchar(5), c_modelo_nfe varchar(3),
          d_emissao date, n_id_fornecedor bigint, c_cnpj_cpf varchar(20), c_razao_social varchar(255), c_nome varchar(255), c_natureza_operacao varchar(60),
@@ -136,7 +137,7 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
   /** Colunas que o teste le/escreve em cada tabela do espelho: uma tabela que ja exista (vazia) sem elas nao serve (outro teste a criou?). */
   const COLUNAS: Record<string, string[]> = {
     tbl_nf_header: ['n_id_nf', 'c_chave_nfe', 'n_nf', 'dest_razao', 'dest_cnpj_cpf', 'd_emi', 'n_id_receb', 'cancelada', 'deletada', 'tp_nf', 'd_alt', 'h_alt'],
-    tbl_nf_itens: ['n_id_nf', 'n_cod_item', 'n_cod_prod', 'x_prod', 'cfop', 'q_com', 'u_com', 'v_un_com', 'v_prod', 'v_tot_item', 'codigo_local_estoque'],
+    tbl_nf_itens: ['n_id_nf', 'n_item', 'n_cod_item', 'n_cod_prod', 'x_prod', 'cfop', 'q_com', 'u_com', 'v_un_com', 'v_prod', 'v_tot_item', 'codigo_local_estoque'],
     tbl_recebimentoNFe: ['n_id_receb', 'c_chave_nfe', 'c_numero_nfe', 'd_emissao', 'n_id_fornecedor', 'c_cnpj_cpf', 'c_razao_social', 'c_etapa', 'c_recebido', 'c_cancelada', 'c_bloqueado', 'c_devolvido', 'd_alt', 'h_alt', 'd_rec', 'h_rec', 'synced_at'],
     tbl_recebimentoNFe_itens: ['n_id_receb', 'n_sequencia', 'c_descricao_produto', 'c_cfop_entrada', 'n_qtde_nfe', 'c_unidade_nfe', 'n_preco_unit', 'v_total_item', 'n_id_item', 'n_id_produto', 'codigo_local_estoque', 'n_id_pedido', 'n_id_it_pedido', 'c_ignorar_item', 'c_associar_existente', 'c_nao_gerar_mov_estoque', 'synced_at'],
     tbl_produtos: ['codigo_produto', 'descricao', 'inativo', 'unidade'],
@@ -155,11 +156,12 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
       `INSERT INTO public."${tab('tbl_nf_header', e)}" (n_id_nf, c_chave_nfe, n_nf, dest_razao, dest_cnpj_cpf, d_emi, n_id_receb, tp_nf, cancelada, deletada, d_alt, h_alt) VALUES ($1,$2,$3,$4,$5,$6,$7,0,$8,$9,$10,$11)`,
       [o.nIdNf, o.chave, o.numero, o.razao, o.cnpj, o.dEmi, o.nIdReceb ?? null, o.cancelada ?? false, o.deletada ?? false, o.dAlt ?? null, o.hAlt ?? null],
     );
-    for (const i of o.itens) {
+    // n_item = posicao da linha no det[] do ListarNF, que vem em ordem de n_cod_item (os itens sao passados nessa ordem)
+    for (const [pos, i] of o.itens.entries()) {
       await q(
-        `INSERT INTO public."${tab('tbl_nf_itens', e)}" (n_id_nf, n_cod_item, n_cod_prod, x_prod, cfop, q_com, u_com, v_un_com, v_prod, v_tot_item, codigo_local_estoque)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10)`,
-        [o.nIdNf, i.nCodItem, i.nCodProd ?? null, i.xProd, i.cfop, i.qCom, i.uCom, i.vUnCom, i.vProd, i.local ?? null],
+        `INSERT INTO public."${tab('tbl_nf_itens', e)}" (n_id_nf, n_item, n_cod_item, n_cod_prod, x_prod, cfop, q_com, u_com, v_un_com, v_prod, v_tot_item, codigo_local_estoque)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11)`,
+        [o.nIdNf, pos + 1, i.nCodItem, i.nCodProd ?? null, i.xProd, i.cfop, i.qCom, i.uCom, i.vUnCom, i.vProd, i.local ?? null],
       );
     }
   }
@@ -239,10 +241,14 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
   //       entrada (13.400 de 13.500): o XML menor nao pode esconder os 100 kg (revisao de 23/10/2026)  -> na fila, restante 100 kg
   //  Q10  nota de entrada editada para MENOS (13.382) que o XML (13.500), item 1:N recebido em duas levas com bases diferentes:
   //       8.070,543 na 1a (ancorada no XML) + 5.311,457 na retomada, que reparte o restante da fila (2a revisao) -> FORA
+  //  Q11  NF 60276 (T102): duas linhas ligadas ao mesmo item do PC com o MESMO n_cod_item; o det[] vem por codigo e o
+  //       recebimento na ordem do XML; recebida pelo Atlas (sequencias 2 e 3 numa movimentacao, 1 na outra)  -> FORA
+  //  Q12  NF 36624 (T102): o OMIE registrou a NF de novo com ids novos e a descricao do produto; o recebimento ficou com o id
+  //       antigo; a movimentacao guarda a descricao do XML e a seq 1: so a posicao liga as duas            -> FORA
   const C = {
     q5: chave(5), q2: chave(6), a2: chave(7), q1: chave(8), a1: chave(9), q8201: chave(10), a8200: chave(11), q3: chave(12), a3: chave(13), a4: chave(14),
     a9: chave(15), a7: chave(16), a5: chave(17), q4: chave(18), a6: chave(19), a8: chave(20), a10: chave(21), a11: chave(22), a12: chave(23), a13: chave(24), a14: chave(25),
-    q6: chave(26), q7: chave(27), q8: chave(28), q9: chave(29), q10: chave(30),
+    q6: chave(26), q7: chave(27), q8: chave(28), q9: chave(29), q10: chave(30), q11: chave(31), q12: chave(32),
   };
   // O que a consulta SO da Q2P (ACXE desligada ou ?empresa=q2p) devolve: a Q8201 esta la, porque a exclusao feita so para a
   // ACXE nao vale na Q2P (defeito achado por este teste e corrigido com `fe.empresa = 'q2p'` na consulta so da Q2P).
@@ -420,6 +426,45 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
       );
       idsMovimentacao.push(String(m10.rows[0]!.id));
     }
+
+    // Q11 (NF 60276, T102): as linhas de 8.250 e 5.500 kg estao ligadas ao mesmo item do PC e tem o mesmo n_cod_item. O det[]
+    // vem em ordem de codigo (as duas primeiro); o recebimento, na do XML (a linha do outro produto e a seq 1). O Atlas recebeu
+    // com o fiscal: a movimentacao do PEBD guarda as seq 2 e 3; a do PELBD, a descricao do produto e a seq 1.
+    await nf('q2p', { nIdNf: id(119), chave: C.q11, numero: '000060276', razao: 'ZARAPLAST SA', cnpj: CNPJ.zaraplast, dEmi: '2026-10-24', nIdReceb: id(108),
+      itens: [
+        { nCodItem: id(125), xProd: 'PEBD LD', cfop: '2.102', qCom: 8250, uCom: 'KG', vProd: 89100.05, vUnCom: 10.8 },
+        { nCodItem: id(125), xProd: 'PEBD LD', cfop: '2.102', qCom: 5500, uCom: 'KG', vProd: 59400.03, vUnCom: 10.8 },
+        { nCodItem: id(126), xProd: 'PELBD LH', cfop: '2.102', qCom: 12000, uCom: 'KG', vProd: 129600, vUnCom: 10.8 },
+      ] });
+    await receb('q2p', { nIdReceb: id(108), chave: C.q11, numero: '000060276', dEmissao: '2026-10-24', fornecedor: FORN.zaraplast, cnpj: CNPJ.zaraplast, razao: 'ZARAPLAST SA', recebido: 'S', etapa: '60',
+      itens: [
+        { seq: 1, descricao: 'MC PEL LH218+AY', cfopEntrada: '2.102', qtde: 12000, un: 'KG', preco: 10.8, total: 129600, nIdItem: id(126), nIdPedido: id(127), nIdItPedido: id(126), naoGerarMov: 'S' },
+        { seq: 2, descricao: 'PEBD LD', cfopEntrada: '2.102', qtde: 8250, un: 'KG', preco: 10.8, total: 89100.05, nIdItem: id(125), nIdPedido: id(127), nIdItPedido: id(125), naoGerarMov: 'S' },
+        { seq: 3, descricao: 'PEBD LD', cfopEntrada: '2.102', qtde: 5500, un: 'KG', preco: 10.8, total: 59400.03, nIdItem: id(125), nIdPedido: id(127), nIdItPedido: id(125), naoGerarMov: 'S' },
+      ] });
+    for (const [descricao, sequencias, kg] of [['MC PEL LH218+AY', [1], 12000], ['PEBD LD', [2, 3], 13750]] as const) {
+      const m11 = await q(
+        `INSERT INTO stockbridge.movimentacao (nota_fiscal, tipo_movimento, subtipo, quantidade_kg, empresa, galpao, produto_codigo_q2p, status_omie, ativo,
+            nf_chave_acesso, nf_item_descricao, nf_item_descricao_normalizada, nf_item_sequencias, quantidade_nf_kg)
+         VALUES ('60276', 'entrada_manual', 'compra_nacional', $1, 'q2p', '11.2', $2, 'concluida', true, $3, $4, $4, $5::int[], $1) RETURNING id`,
+        [kg, id(98), C.q11, descricao, [...sequencias]],
+      );
+      idsMovimentacao.push(String(m11.rows[0]!.id));
+    }
+    // Q12 (NF 36624, T102): o OMIE registrou a NF de novo com ids novos e a descricao do produto ('SUCATA DE PP'); o recebimento
+    // ficou com o id antigo; a movimentacao guarda a descricao do XML e a seq 1 (a 0061 preenche a das entradas antigas)
+    await nf('q2p', { nIdNf: id(128), chave: C.q12, numero: '000036624', razao: 'REPLAS COMERCIAL LTDA', cnpj: CNPJ.replas, dEmi: '2026-10-06', nIdReceb: id(109),
+      itens: [{ nCodItem: id(129), xProd: 'SUCATA DE PP', cfop: '1.102', qCom: 6128, uCom: 'KG', vProd: 49024, vUnCom: 8 }] });
+    await receb('q2p', { nIdReceb: id(109), chave: C.q12, numero: '000036624', dEmissao: '2026-10-06', fornecedor: FORN.replas, cnpj: CNPJ.replas, razao: 'REPLAS COMERCIAL LTDA', recebido: 'S', etapa: '60',
+      itens: [{ seq: 1, descricao: 'SUCATA DE PP', cfopEntrada: '1.102', qtde: 6128, un: 'KG', preco: 8, total: 49024, nIdItem: id(130), naoGerarMov: 'S' }] });
+    const m12 = await q(
+      `INSERT INTO stockbridge.movimentacao (nota_fiscal, tipo_movimento, subtipo, quantidade_kg, empresa, galpao, produto_codigo_q2p, status_omie, ativo,
+          nf_chave_acesso, nf_item_descricao, nf_item_descricao_normalizada, nf_item_sequencias, quantidade_nf_kg)
+       VALUES ('36624', 'entrada_manual', 'compra_nacional', 6078, 'q2p', '11.2', $1, 'concluida', true, $2,
+               'SUCATA DE PLASTICO - POS CONSUMO', 'SUCATA DE PLASTICO - POS CONSUMO', ARRAY[1], 6128) RETURNING id`,
+      [id(98), C.q12],
+    );
+    idsMovimentacao.push(String(m12.rows[0]!.id));
 
     // stockbridge: lancamentos manuais (via 2), exclusoes por empresa, dispensa
     await movimentoManual('q2p', '6842', '2026-10-20T12:00:00Z');
@@ -754,6 +799,26 @@ describe.skipIf(!temBanco)('NF nacional Q2P + ACXE — SQL executado em Postgres
       const d = await svc.getDetalheNfNacional(C.q7);
       expect(d.itens[0]).toMatchObject({ jaRecebido: true, quantidadeNfKg: 13500, quantidadeRestanteKg: 118 });
       expect(svc.itemNfPendente(d.itens[0]!)).toBe(true);
+    });
+  });
+
+  describe('linhas da NF com o mesmo n_cod_item e NF registrada de novo pelo OMIE (T102 da 017)', () => {
+    it('NF 60276: as linhas do mesmo item do PC casam com as sequencias 2 e 3, na ordem, e a NF nao volta a fila', async (ctx) => {
+      if (!pronto) return ctx.skip();
+      expect(chaves(await svc.getFilaNacional())).not.toContain(C.q11);
+      const d = await svc.getDetalheNfNacional(C.q11);
+      const por = Object.fromEntries(d.itens.map((it) => [it.descricaoNormalizada, it]));
+      // antes da T102 as duas linhas ganhavam a maior sequencia (o item ficava so com a 3)
+      expect(por['PEBD LD']).toMatchObject({ linhasAgregadas: 2, sequenciasRecebimento: [2, 3], jaRecebido: true, quantidadeNfJaAtribuidaKg: 13750, quantidadeRestanteKg: 0 });
+      expect(por['PELBD LH']).toMatchObject({ sequenciasRecebimento: [1], jaRecebido: true, quantidadeNfJaAtribuidaKg: 12000, quantidadeRestanteKg: 0 });
+    });
+
+    it('NF 36624: o recebimento com o id antigo liga pela posicao (mesmo numero de linhas) e a entrada de 06/10 nao volta a fila', async (ctx) => {
+      if (!pronto) return ctx.skip();
+      // antes da T102 a linha ficava sem sequencia, a descricao nao casava e a NF aparecia inteira como pendente
+      expect(chaves(await svc.getFilaNacional())).not.toContain(C.q12);
+      const d = await svc.getDetalheNfNacional(C.q12);
+      expect(d.itens[0]).toMatchObject({ sequenciasRecebimento: [1], jaRecebido: true, quantidadeNfJaAtribuidaKg: 6128, quantidadeRestanteKg: 0 });
     });
   });
 

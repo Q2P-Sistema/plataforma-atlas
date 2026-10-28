@@ -644,3 +644,48 @@ vínculo com o pedido de compra. Se a entrada física da NF já foi lançada no 
 e-mail "Recebimento fiscal desfeito no OMIE" e refaz o recebimento no portal: o Atlas não refaz só o
 fiscal de NF já recebida fisicamente. **Comunicar à operação**: a tela avisa "Se a reversão foi feita
 para corrigir a nota no OMIE, fale com o fiscal antes"; não dar entrada nessa janela.
+
+## Espelho de itens de NF por posição da linha (ACXEGDP-437, T102 da 017)
+
+O OMIE dá o mesmo `nCodItem` às linhas da NF ligadas ao mesmo item de pedido de compra, e o espelho de
+itens de NF guardava só a última delas. A parte do n8n foi feita em 27/10/2026: chave `(n_id_nf, n_item)`,
+DDL das 3 tabelas e recarga completa da Q2P e da ACXE (PR #229 do backup-workflow-n8n). Esta parte é a do
+Atlas. A fila e o detalhe da compra nacional passam a ligar cada linha da NF à sequência certa do
+recebimento: as linhas do mesmo código, na ordem; e, quando o OMIE registra a NF de novo com ids novos, a
+posição. A migration 0061 grava a
+sequência do item nas entradas nacionais antigas (anteriores à ACXEGDP-412), que só casavam pela descrição.
+Desenho em `specs/017-recebimento-nacional-com-pc/research.md`, pendência 8.
+
+Sem variável nova. A ordem entre a 0061 e a imagem é indiferente: o código casa por descrição **ou**
+sequência, e sem a coluna `n_item` (espelho sem o DDL) o SQL dá o resultado de antes.
+
+1. **Migration 0061** em PROD (só dados), com o dono dos objetos (`postgres`):
+
+   ```bash
+   export PROD_USER=<usuario-prod>
+   PGOPTIONS='-c lock_timeout=5s' psql -h db.manager01.q2p.com.br -p 5432 -U "$PROD_USER" -d acxe_q2p \
+     -1 -q -v ON_ERROR_STOP=1 -f packages/db/migrations/0061_stockbridge_sequencia_item_entradas_antigas.sql
+   echo "exit=$?"
+   ```
+
+   - Esperado: `exit=0` e `NOTICE: 0061: 39 entrada(s) nacional(is) da Q2P com a sequencia do item
+     preenchida` (contagem de 28/10/2026; entradas novas já nascem com a sequência). Reaplicar é seguro
+     (`0 entrada(s)`).
+   - A trigger de auditoria de `stockbridge.movimentacao` grava cada linha alterada.
+   - Conferência (somente leitura), esperado 0:
+
+     ```sql
+     SELECT count(*) FROM stockbridge.movimentacao
+      WHERE subtipo = 'compra_nacional' AND empresa = 'q2p' AND nf_chave_acesso IS NOT NULL
+        AND nf_item_sequencias IS NULL;
+     ```
+
+   - **UAT**: o mesmo arquivo, com `psql -1 -f` no banco do UAT. O UAT já tem o DDL do espelho (conferido
+     em 27/10/2026); sem o espelho de recebimentos a 0061 avisa e não faz nada.
+2. **Imagem nova** (nova `ATLAS_VERSION`).
+3. **Conferir**: a fila de compra nacional não ganha NF já recebida. Em 28/10/2026, o SQL novo rodado em PROD
+   (só leitura) mudava a sequência de só 4 das 385 linhas da janela: 60199, 60276, 60281 e 36624. Com a
+   imagem nova e a 0061, a 36624 (recebida em 06/10 e devolvida) sai da fila; só uma das duas não basta.
+
+**Desfazer**: voltar à imagem anterior. A 0061 pode ficar: a sequência é um dado a mais, que a imagem
+anterior também usa.

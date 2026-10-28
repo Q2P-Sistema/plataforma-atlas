@@ -21,6 +21,11 @@ import { fileURLToPath } from 'node:url';
 // nota de entrada do OMIE (quantidade RECEBIDA, editavel no portal) e a via do XML (`nf_kg_xml`, o XML so na faixa
 // comparavel, metade a dobro da nota de entrada) —: o restante e a menor distancia ate uma delas ainda nao atingida
 // (RESTANTE_PENDENCIA_SQL). Os 6 .sql foram regenerados com isso.
+// Terceira diferenca de proposito (28/10/2026, T102 da 017): o espelho de itens de NF passou a guardar cada linha da NF
+// (chave `(n_id_nf, n_item)`), e o OMIE da o mesmo `n_cod_item` as linhas ligadas ao mesmo item de PC. `sequenciaItemNfSql`
+// liga a linha da NF a sequencia do recebimento pela ordem dentro do mesmo codigo (antes todas ganhavam a maior) e usa a posicao
+// tambem quando o OMIE registra a NF de novo com ids novos (antes so com o recebimento sem nenhum id); o detalhe e o selo do PC
+// desempatam a ordem por `n_seq`. Os 9 .sql com a fonte (a) foram regenerados com isso.
 //
 // Se o SQL da Q2P mudar DE PROPOSITO (outra feature), regenere:
 //   UPDATE_GOLDEN=1 pnpm --filter @atlas/stockbridge exec vitest run src/__tests__/fila-nacional-q2p-golden.test.ts

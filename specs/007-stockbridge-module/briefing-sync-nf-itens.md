@@ -87,7 +87,8 @@ public.tbl_nf_itens_Q2P
 | `n_cod_emp_emit` | `nfEmitInt.nCodEmp` | bigint | Código OMIE da empresa emissora |
 | `cnpj_dest` | `nfDestInt.cnpj_cpf` | varchar(20) | CNPJ do destinatário |
 | `razao_dest` | `nfDestInt.cRazao` | varchar(200) | Razão social do destinatário |
-| `n_cod_item` | `det[].nfProdInt.nCodItem` | bigint | ID do item dentro da NF |
+| `n_item` | posição em `det[]` (1..N) | integer | Linha da NF (desde 27/10/2026). O `det[]` vem em ordem de `nCodItem`, não na sequência do XML |
+| `n_cod_item` | `det[].nfProdInt.nCodItem` | bigint | ID do item. **Não** identifica a linha: o OMIE repete o valor em linhas ligadas ao mesmo item de pedido de compra e em devoluções |
 | `n_cod_prod` | `det[].nfProdInt.nCodProd` | bigint | **Código OMIE do produto** (join com catálogo) |
 | `c_prod` | `det[].prod.cProd` | varchar(60) | Código interno (ex: "PP-016", "PEAD-041") |
 | `x_prod` | `det[].prod.xProd` | varchar(200) | Descrição do produto |
@@ -102,15 +103,16 @@ public.tbl_nf_itens_Q2P
 | `n_cmc_unitario` | `det[].prod.nCMCUnitario` | numeric(14,6) | Custo médio ponderado unitário |
 | `synced_at` | gerado no sync | timestamptz | Timestamp da sincronização |
 
-**Chave primária**: `(n_id_nf, n_cod_item)` — identifica unicamente cada item de cada NF.
+**Chave primária**: `(n_id_nf, n_item)` desde 27/10/2026 (ACXEGDP-437, T102 da 017); `(n_id_nf, n_cod_item)` é índice não único. A chave antiga fundia as linhas com o mesmo `nCodItem`, ficando com a última (5 NFs da Q2P). Ver `specs/437-espelho-itens-nf/README.md` no repositório dos fluxos do n8n.
 
 ---
 
 ## Estratégia de sync
 
-**Upsert** por `(n_id_nf, n_cod_item)` — sempre atualizar, pois `n_id_receb` muda
-de `0` para um valor quando a NF é processada fisicamente. Este é o campo que
-precisa ser mantido atualizado.
+Por NF, num só comando: `DELETE` das posições acima do total de linhas da NF e
+**upsert** por `(n_id_nf, n_item)` (atualiza também `n_cod_item`). A gravação é
+sempre feita, pois `n_id_receb` muda de `0` para um valor quando a NF é
+processada fisicamente. NF com `det[]` vazio não apaga nada.
 
 **Frequência sugerida**: a cada 30–60 minutos, buscando NFs dos últimos 90 dias.
 
