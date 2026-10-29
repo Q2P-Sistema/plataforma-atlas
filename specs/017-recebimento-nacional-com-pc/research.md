@@ -452,9 +452,25 @@ O **POST continua por item** (`itens[].pc`): a tela aplica a escolha da nota em 
 
 ---
 
+## D22. Vínculo com PC de saldo MENOR que a NF e o físico: o OMIE aceita sem recusar (29/10/2026)
+
+**Achado em PROD (NF 60359, Zaraplast × PC 319)**: compras avisou que o PC mencionado na NF tinha saldo menor que a nota — PC 319 com 27.500 kg de saldo (0 recebido, etapa 15, R$ 10,80/kg), contra 30.250 kg da NF 60359 em 4 linhas (2.750 + 2.750 + 22.000 + 2.750 kg). O físico também bateu com a NF (30.250 kg, "22 paletes fechados de 1.375 kg" — não é o cenário da D20, que é peso conferido diferente da NF; aqui a NF e o físico são iguais, só o PC é menor). É o oposto do já confirmado na D20 (NF menor que o saldo do PC): aqui o PC é que não cobre a NF.
+
+**Decisão do usuário (29/10/2026)**: testar direto em PROD, sem pedir a compras para aumentar o PC antes — decisão tomada **sem o teste**, só com o raciocínio de que o OMIE nunca recusou nenhum caminho novo desta feature até agora, e de que a reversão no portal (D21) devolve o saldo do PC se precisar desfazer.
+
+**O que o Atlas fez**: o PC 319 apareceu como candidato fora da tolerância (`STOCKBRIDGE_PC_TOLERANCIA_QTD_PCT` = 2%: a NF precisa de 10% mais do que o saldo). O operador (Gustavo Dreer) escolheu o PC manualmente, com a justificativa exigida pelo FR-007 ("Pedido 319 mencionado na NF 60359, recebido 22 paletes fechados de 1.375 kg"). `relerEReservarPcs` leu o saldo ao vivo (27.500 kg, confirmando a cópia), viu que a NF não cabe dentro da tolerância mas aceitou por estar justificada, e seguiu para `ASSOCIAR-PEDIDO` → `EDITAR` → `Concluir`, sem mandar `nQtdeRecebida` explícito (nem conversão de unidade nem peso conferido: a quantidade que o OMIE usa é a da própria NF).
+
+**Resultado (ledger do Atlas, só leitura em PROD)**: as 4 sequências concluídas em 9 segundos (18:03:33 a 18:03:42), `kg_recebido_pc` = `qtd_nf_kg` em cada linha (2.750/2.750/22.000/2.750 kg, soma 30.250 kg), nenhum `erro_omie_codigo`. A entrada física foi gravada (uma movimentação, 30.250 kg) e já aprovada pelo gestor. **O OMIE não recusou em nenhum passo.**
+
+**O que ainda não foi confirmado**: o saldo do PC 319 no OMIE depois da baixa (`nqtderec` provavelmente acima de `nqtde`, "recebido além do pedido"). O espelho local (`tbl_pedidosCompras_Q2P`) só sincroniza 1×/dia e a última leitura (18:00) é anterior à conclusão (18:03); o cache `pedido_compra_visto` também está defasado (26/10). Confirma-se na próxima sincronização, no próximo cron `5,35` que ler esse PC ao vivo, ou na próxima vez que alguém abrir uma NF ligada a ele.
+
+**Conclusão**: soma-se à lista de caminhos antes desconhecidos que o OMIE aceitou sem exceção nesta feature (PC de outro cadastro, conversão de unidade, NF menor que o saldo — D20). O vínculo com PC de saldo menor que a NF/físico passa a ser um caminho **validado** pela API, não só previsto pelo código (FR-007 já permitia a escolha manual fora da tolerância; faltava confirmar que o OMIE a aceita na conclusão).
+
+---
+
 ## Pendências de pesquisa (não bloqueiam o plano)
 
-1. ~~**Teste de D2** com NF real sem vínculo~~: **feito em 22/10/2026 (T033)** e aprovado (D2). Resta (c), a troca de um vínculo existente, para quando houver NF. A (d), NF menor que o saldo do PC, foi confirmada em 23/10/2026 pela NF 67988 (D20): o OMIE aceita, e o PC fica "recebido parcialmente" na etapa 15, com o saldo em aberto. Não bloqueiam.
+1. ~~**Teste de D2** com NF real sem vínculo~~: **feito em 22/10/2026 (T033)** e aprovado (D2). Resta (c), a troca de um vínculo existente, para quando houver NF. A (d), NF menor que o saldo do PC, foi confirmada em 23/10/2026 pela NF 67988 (D20): o OMIE aceita, e o PC fica "recebido parcialmente" na etapa 15, com o saldo em aberto. A (e), PC menor que a NF e o físico, foi confirmada em 29/10/2026 pela NF 60359 (D22): o OMIE também aceita, sem recusar. Não bloqueiam.
 2. ~~**Se a etapa do PC muda depois** do recebimento total~~: resolvido. O PC 306, recebido por inteiro, continuou na etapa 15, como o 304 (D15). A elegibilidade usa o saldo (`nqtde − nqtderec`) além da etapa.
 3. **Como o OMIE associa sozinho.** Na NF 7813, o recebimento foi incluído por `cUsuarioInc = P000548700` já com o vínculo. Ainda não se sabe se foi automático (pelo `xPed` do XML) ou manual. Não afeta o desenho: o vínculo existente é sempre a sugestão principal.
 4. ~~Local da ACXE em Extrema~~: resolvido em D18 (22/10/2026): o operador escolhe; 21.1 EXTREMA entra nas duas empresas, 21.2 e os locais de produção entram só na ACXE.
