@@ -33,10 +33,16 @@
 #       PGPASSWORD_UAT    senha do postgres no UAT (se nao setada, sera pedida)
 #
 # Uso:
-#   export PROD_USER=meu.usuario
-#   export PGPASSWORD_PROD='senhaaqui'
-#   export PGPASSWORD_UAT='senhaaqui'
-#   scripts/sync-omie-public-prod-to-uat.sh
+#   PROD_USER=claude_ro scripts/sync-omie-public-prod-to-uat.sh   # pede as senhas
+#
+# Agendado (cron, ACXEGDP-405): ASSUME_YES=1 (ou --yes) não pergunta nada — nem
+# as senhas: sem PGPASSWORD_*, o libpq lê o ~/.pgpass (host:porta:banco:usuário:
+# senha, chmod 600). Uma cópia por vez, nunca junto com o refresh do estado
+# Atlas: trava em $ATLAS_UAT_LOCK (default /tmp/atlas-uat-db.lock). Termina com
+# código 1 se sobrar tabela divergente.
+#   PROD_USER=claude_ro ASSUME_YES=1 scripts/sync-omie-public-prod-to-uat.sh
+#
+# O PROD só é lido: toda sessão psql do PROD abre como somente leitura.
 # =============================================================================
 
 set -euo pipefail
@@ -68,24 +74,39 @@ ATLAS_TABLES_IN_PUBLIC=(
   exit 1
 }
 
-for cmd in pg_dump pg_restore psql awk join sort; do
+for cmd in pg_dump pg_restore psql awk join sort flock; do
   command -v "$cmd" >/dev/null || { echo "X '$cmd' nao instalado"; exit 1; }
 done
 
-# Senhas
-if [ -z "${PGPASSWORD_PROD:-}" ]; then
+# Modo nao-interativo para execucao agendada (cron): ASSUME_YES=1 ou --yes/-y.
+NAO_INTERATIVO=0
+if [[ "${ASSUME_YES:-}" == "1" || "${1:-}" == "--yes" || "${1:-}" == "-y" ]]; then
+  NAO_INTERATIVO=1
+fi
+
+# Uma copia por vez, e nunca junto com o refresh do estado Atlas: duas rodadas
+# simultaneas deixam pg_restore orfao e travam o TRUNCATE da seguinte.
+LOCK_FILE="${ATLAS_UAT_LOCK:-/tmp/atlas-uat-db.lock}"
+exec 9>"$LOCK_FILE"
+flock -n 9 || { echo "X Outra copia para o UAT esta rodando (trava $LOCK_FILE). Abortado."; exit 1; }
+
+# Senhas: no modo nao-interativo nao pergunta — vazio, o libpq le o ~/.pgpass.
+if [ -z "${PGPASSWORD_PROD:-}" ] && [ "$NAO_INTERATIVO" = 0 ]; then
   read -rsp "Senha do prod ($PROD_USER@$PROD_HOST:$PROD_PORT): " PGPASSWORD_PROD
   echo
 fi
-if [ -z "${PGPASSWORD_UAT:-}" ]; then
+if [ -z "${PGPASSWORD_UAT:-}" ] && [ "$NAO_INTERATIVO" = 0 ]; then
   read -rsp "Senha do UAT ($UAT_USER@$UAT_HOST:$UAT_PORT): " PGPASSWORD_UAT
   echo
 fi
+PGPASSWORD_PROD="${PGPASSWORD_PROD:-}"
+PGPASSWORD_UAT="${PGPASSWORD_UAT:-}"
 
 # Helpers
+# PROD so leitura: qualquer escrita acidental falha no proprio Postgres.
 prod_psql() {
-  PGPASSWORD="$PGPASSWORD_PROD" psql -h "$PROD_HOST" -p "$PROD_PORT" \
-    -U "$PROD_USER" -d "$PROD_DB" "$@"
+  PGOPTIONS='-c default_transaction_read_only=on' PGPASSWORD="$PGPASSWORD_PROD" \
+    psql -h "$PROD_HOST" -p "$PROD_PORT" -U "$PROD_USER" -d "$PROD_DB" "$@"
 }
 uat_psql() {
   PGPASSWORD="$PGPASSWORD_UAT" psql -h "$UAT_HOST" -p "$UAT_PORT" \
@@ -122,9 +143,7 @@ cat <<EOF
 +-------------------------------------------------------------------------+
 
 EOF
-# Modo nao-interativo para execucao agendada (cron). Ative com ASSUME_YES=1
-# ou passando --yes/-y. Sem isso, pede confirmacao como antes.
-if [[ "${ASSUME_YES:-}" == "1" || "${1:-}" == "--yes" || "${1:-}" == "-y" ]]; then
+if [ "$NAO_INTERATIVO" = 1 ]; then
   echo "Continuar? [y/N] y  (ASSUME_YES — modo nao-interativo)"
   confirm=y
 else
@@ -424,6 +443,7 @@ fi
 # Comparar UAT vs PROD LIVE (nao baseline) — detecta tanto falha de restore
 # quanto race com n8n que adicionou dados depois do dump ser tirado.
 DIVERGENT_TABLES=()
+RETRY_ERRORS=()
 while IFS='|' read -r tbl prod_live_cnt uat_cnt; do
   [ -z "$tbl" ] && continue
 
@@ -449,8 +469,6 @@ else
   echo
   echo "  Retentando ${#DIVERGENT_TABLES[@]} tabela(s) individualmente..."
   echo
-
-  RETRY_ERRORS=()
 
   for tbl in "${DIVERGENT_TABLES[@]}"; do
     echo "  --> retry: $tbl"
@@ -649,7 +667,7 @@ echo
 if [ ${#DIVERGENT_TABLES[@]} -gt 0 ] && [ ${#RETRY_ERRORS[@]} -gt 0 ]; then
   echo "  Logs de erro preservados em $DUMP_DIR (nao removido automaticamente)."
 else
-  if [[ "${ASSUME_YES:-}" == "1" || "${1:-}" == "--yes" || "${1:-}" == "-y" ]]; then
+  if [ "$NAO_INTERATIVO" = 1 ]; then
     cleanup=y   # modo nao-interativo (cron): remove o dump por padrao
   else
     read -rp "Remover $DUMP_DIR? [Y/n] " cleanup
@@ -663,5 +681,10 @@ else
 fi
 
 unset PGPASSWORD_PROD PGPASSWORD_UAT
+if [ ${#RETRY_ERRORS[@]} -gt 0 ]; then
+  echo
+  echo "X Sync terminou com ${#RETRY_ERRORS[@]} tabela(s) divergente(s) — ver acima."
+  exit 1
+fi
 echo
 echo "OK Sync seletivo public.* concluido. Schemas Atlas intactos."
