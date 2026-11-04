@@ -1,0 +1,45 @@
+name: Docker Image CI — cópia do espelho para o UAT
+
+# Imagem do serviço atlas-uat-sync (deploy/uat-sync/, ACXEGDP-405): cópia diária
+# do espelho OMIE (public.*) PROD -> UAT. Gerada só quando o script ou o
+# agendador mudam; depois do build, atualizar a stack no Portainer com re-pull.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - scripts/sync-omie-public-prod-to-uat.sh
+      - deploy/uat-sync/**
+      - .github/workflows/docker-build-uat-sync.yml
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v5
+
+      - name: Definir short SHA
+        run: echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+      - name: Login no Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build e push — atlas-uat-sync
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/uat-sync/Dockerfile
+          push: true
+          tags: |
+            plasticosq2p/atlas-uat-sync:main
+            plasticosq2p/atlas-uat-sync:${{ env.SHORT_SHA }}

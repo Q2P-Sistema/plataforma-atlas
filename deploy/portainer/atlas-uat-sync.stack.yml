@@ -1,0 +1,74 @@
+# ── STACK atlas-uat-sync ─────────────────────────────────────
+# Cópia diária do espelho OMIE (public.*) do PROD para o UAT — ACXEGDP-405.
+# Substitui o cron que rodava no notebook (perdia a cópia sempre que o notebook
+# estava desligado às 05:30). Implantação e operação: docs/uat-runbook.md
+#
+# Variáveis do Portainer (Environment variables da stack):
+#   PGPASSWORD_PROD   senha do PROD_USER no PROD          (obrigatória)
+#   PGPASSWORD_UAT    senha do postgres no Postgres do UAT (obrigatória)
+#   PROD_USER         default uat_sync_ro (deploy/uat-sync/usuario-prod.sql)
+#   PROD_HOST/PORT    default db.manager01.q2p.com.br:5432
+#   UAT_HOST/PORT     default db.manager01.q2p.com.br:5437
+#   ATLAS_UAT_SYNC_TAG  default main (imagem gerada a cada merge na main)
+#
+# NUNCA deixe outro agendamento da mesma cópia ligado ao mesmo tempo (ex.: o cron
+# do notebook): duas cópias simultâneas travam o UAT em deadlock de TRUNCATE.
+services:
+  sync:
+    image: plasticosq2p/atlas-uat-sync:${ATLAS_UAT_SYNC_TAG:-main}
+    hostname: "{{.Service.Name}}.{{.Task.Slot}}"
+    environment:
+      TZ: America/Sao_Paulo
+      SYNC_HORA: "05:30"
+      SYNC_RETRY_MIN: "60"
+
+      # PROD: só leitura (o script abre toda sessão do PROD como read-only).
+      PROD_HOST: ${PROD_HOST:-db.manager01.q2p.com.br}
+      PROD_PORT: ${PROD_PORT:-5432}
+      PROD_DB: acxe_q2p
+      PROD_USER: ${PROD_USER:-uat_sync_ro}
+      PGPASSWORD_PROD: ${PGPASSWORD_PROD}
+
+      # UAT: superusuário (TRUNCATE, ALTER de drift aditivo, grants).
+      UAT_HOST: ${UAT_HOST:-db.manager01.q2p.com.br}
+      UAT_PORT: ${UAT_PORT:-5437}
+      UAT_DB: acxe_q2p
+      UAT_USER: postgres
+      PGPASSWORD_UAT: ${PGPASSWORD_UAT}
+
+    volumes:
+      # guarda a data da última cópia bem-sucedida: reiniciar/atualizar não repete a cópia do dia
+      - atlas-uat-sync-estado:/estado
+
+    # network_swarm_public: Postgres do PROD; network_uat_swarm_public: Postgres do UAT.
+    # Só necessárias se PROD_HOST/UAT_HOST forem os nomes internos do Swarm (os mesmos
+    # do DATABASE_URL das stacks atlas e uat-atlas); com o hostname público não fazem diferença.
+    networks:
+      - network_swarm_public
+      - network_uat_swarm_public
+
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          # o volume de estado é local ao nó: manter o serviço sempre no mesmo
+          - node.role == manager
+      update_config:
+        order: stop-first
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+      restart_policy:
+        condition: any
+        delay: 30s
+
+networks:
+  network_swarm_public:
+    external: true
+  network_uat_swarm_public:
+    external: true
+
+volumes:
+  atlas-uat-sync-estado:

@@ -35,12 +35,14 @@
 # Uso:
 #   PROD_USER=claude_ro scripts/sync-omie-public-prod-to-uat.sh   # pede as senhas
 #
-# Agendado (cron, ACXEGDP-405): ASSUME_YES=1 (ou --yes) não pergunta nada — nem
-# as senhas: sem PGPASSWORD_*, o libpq lê o ~/.pgpass (host:porta:banco:usuário:
-# senha, chmod 600). Uma cópia por vez, nunca junto com o refresh do estado
-# Atlas: trava em $ATLAS_UAT_LOCK (default /tmp/atlas-uat-db.lock). Termina com
-# código 1 se sobrar tabela divergente.
-#   PROD_USER=claude_ro ASSUME_YES=1 scripts/sync-omie-public-prod-to-uat.sh
+# Agendado (ACXEGDP-405): roda 1x/dia no serviço atlas-uat-sync do Swarm
+# (deploy/uat-sync/, deploy/portainer/atlas-uat-sync.stack.yml, docs/uat-runbook.md).
+# ASSUME_YES=1 (ou --yes) não pergunta nada — nem as senhas: sem PGPASSWORD_*, o
+# libpq lê o ~/.pgpass (host:porta:banco:usuário:senha, chmod 600). Uma cópia por
+# vez, nunca junto com o refresh do estado Atlas: trava em $ATLAS_UAT_LOCK
+# (default /tmp/atlas-uat-db.lock) — só na mesma máquina; o container não enxerga
+# a trava de outra. Termina com código 1 se sobrar tabela divergente.
+#   PROD_USER=uat_sync_ro ASSUME_YES=1 scripts/sync-omie-public-prod-to-uat.sh
 #
 # O PROD só é lido: toda sessão psql do PROD abre como somente leitura.
 # =============================================================================

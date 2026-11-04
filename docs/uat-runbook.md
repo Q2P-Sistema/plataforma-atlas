@@ -169,36 +169,71 @@ PROD_USER=claude_ro ./scripts/refresh-atlas-prod-to-uat.sh
 
 Os dois scripts usam a mesma trava (`/tmp/atlas-uat-db.lock`): um não começa enquanto
 o outro roda. Duas cópias simultâneas deixavam `pg_restore` órfão e travavam o
-`TRUNCATE` da seguinte.
+`TRUNCATE` da seguinte. **A trava só vale na mesma máquina**: a cópia agendada roda no
+container `atlas-uat-sync` (abaixo), então antes de rodar um dos scripts à mão confira
+no log do serviço que não há cópia em andamento ("início da cópia" sem "fim da cópia"),
+e evite o horário das 05h30.
 
-### Agendamento diário do espelho
+### Agendamento diário do espelho — stack `atlas-uat-sync`
 
-Roda na máquina `primebot` (a mesma que tem o IP liberado no firewall da DigitalOcean):
+Desde 04/11/2026 a cópia roda num serviço do Swarm, `deploy/portainer/atlas-uat-sync.stack.yml`,
+com a imagem `plasticosq2p/atlas-uat-sync` (`deploy/uat-sync/`). Antes era um cron no
+notebook `primebot`, que perdia a cópia sempre que o notebook estava desligado às 05h30:
+de 22/10 a 04/11 deu certo em 5 de 14 dias, e o UAT chegou a 7.541 min de atraso.
 
-```
-# crontab -l
-30 5 * * * /home/primebot/.local/bin/atlas-sync-espelho-uat
-```
-
-- `~/.local/bin/atlas-sync-espelho-uat` busca a `origin/uat` e roda a versão do
-  `sync-omie-public-prod-to-uat.sh` que está nela (não a do checkout de trabalho, que
-  troca de branch), com `ASSUME_YES=1` e `PROD_USER=claude_ro`, limite de 2 h.
-- Log: `~/logs/atlas-sync-espelho-uat.log` (início, saída do script e `rc` de cada
-  rodada). O script sai com código 1 se sobrar tabela divergente.
-- Senhas no `~/.pgpass` (`chmod 600`), uma linha por banco:
-  ```
-  db.manager01.q2p.com.br:5432:acxe_q2p:claude_ro:<senha do claude_ro no PROD>
-  db.manager01.q2p.com.br:5437:acxe_q2p:postgres:<senha do postgres no UAT>
-  ```
-- Pré-requisito no PROD (uma vez, como `postgres`): o n8n recria tabelas de `public`
-  (staging → swap) e o `claude_ro` perderia o `SELECT` nelas — o `pg_dump` falharia.
-  ```sql
-  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT ON TABLES TO claude_ro;
-  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT ON SEQUENCES TO claude_ro;
-  ```
-- Se falhar, o próprio UAT avisa: o cron `5,35` do StockBridge manda e-mail (desviado
+- **O que roda**: o mesmo `scripts/sync-omie-public-prod-to-uat.sh` do repositório,
+  gravado na imagem pelo GitHub Actions (`docker-build-uat-sync.yml`, a cada merge na
+  `main` que mexa no script ou em `deploy/uat-sync/`; tags `:main` e `:<sha>`). Nunca
+  edite uma cópia do script no servidor (ver `docs/uat-sync-autonomous-fix.md`).
+- **Quando**: 1ª tentativa às 05h30 (Brasília); se falhar, de novo a cada 60 min até dar
+  certo uma vez no dia (`SYNC_HORA`, `SYNC_RETRY_MIN`). O sucesso fica gravado no volume
+  `atlas-uat-sync-estado`, então reiniciar ou atualizar o serviço não repete a cópia. No
+  1º deploy (volume vazio) a cópia roda na hora.
+- **Log**: Portainer → Services → `atlas-uat-sync_sync` → Logs. Cada rodada termina com
+  `fim da cópia (rc=0)` ou `fim da cópia (rc=N) — FALHOU`, seguido de "próxima cópia em…"
+  ou "nova tentativa em 60 min". O dump da última rodada que falhou fica em `/tmp` do
+  container para diagnóstico (só o mais recente).
+- **Forçar uma cópia agora / ver a última**: console do container (Portainer → Containers
+  → `atlas-uat-sync_sync…` → Console, `/bin/bash`):
+  `/opt/atlas-sync/agendador.sh agora` ou `/opt/atlas-sync/agendador.sh status`.
+- **Atualizar o script**: PR na `main` → o workflow gera a imagem → Portainer → stack
+  `atlas-uat-sync` → *Update the stack* com **Re-pull image**.
+- **Se falhar**, o próprio UAT avisa: o cron `5,35` do StockBridge manda e-mail (desviado
   para a caixa de testes) quando o espelho de recebimentos passa de
-  `STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN` (1440 min no UAT).
+  `STOCKBRIDGE_ESPELHO_RECEBIMENTOS_MAX_MIN` (1440 min no UAT). Esse alerta parado não
+  quer dizer n8n parado: compare `MAX(synced_at)` de `public."tbl_recebimentoNFe_Q2P"`
+  no PROD e no UAT — se o PROD está em dia, quem parou foi a cópia.
+
+**Implantação (uma vez):**
+
+1. **Usuário no PROD**: rode `deploy/uat-sync/usuario-prod.sql` como `postgres` no PROD
+   (troque a senha no arquivo). Cria o `uat_sync_ro`, só leitura em `public`, com o
+   `DEFAULT PRIVILEGES` para as tabelas que o n8n recria. As duas conferências do fim
+   do arquivo devem mostrar nenhuma tabela sem `SELECT`.
+2. **Imagem**: confira no GitHub Actions o build "Docker Image CI — cópia do espelho para
+   o UAT" depois do merge. O repositório `plasticosq2p/atlas-uat-sync` nasce no Docker Hub
+   no 1º push, com a visibilidade padrão da organização (a `atlas-api` é pública). A
+   imagem não tem senha, só o script; se preferir privada, crie o repositório privado
+   antes do merge e dê ao Portainer a credencial do registro.
+3. **Desligar o cron do notebook ANTES de subir a stack**: `crontab -e` e apague a linha
+   `/home/primebot/.local/bin/atlas-sync-espelho-uat`. Duas cópias ao mesmo tempo, uma
+   em cada máquina, não se enxergam pela trava e travam o UAT.
+4. **Stack**: Portainer → Stacks → Add stack `atlas-uat-sync` → cole
+   `deploy/portainer/atlas-uat-sync.stack.yml` → variáveis `PGPASSWORD_PROD` (senha do
+   `uat_sync_ro`) e `PGPASSWORD_UAT` (senha do `postgres` do UAT). Recomendado: em
+   `PROD_HOST`/`PROD_PORT` e `UAT_HOST`/`UAT_PORT`, os mesmos host e porta do
+   `DATABASE_URL` das stacks `atlas` e `uat-atlas` (nomes internos do Swarm): o acesso
+   pelo hostname público passa pelo firewall da DigitalOcean, que libera por IP.
+5. **Conferir**: o log mostra a 1ª cópia rodando já no deploy e terminando com `rc=0`; o
+   alerta do UAT para na rodada seguinte do cron `5,35`.
+
+Rodar à mão de outra máquina continua possível (bloco acima): senhas no `~/.pgpass`
+(`chmod 600`), uma linha por banco, e o IP da máquina liberado no firewall:
+
+```
+db.manager01.q2p.com.br:5432:acxe_q2p:<usuário do PROD>:<senha>
+db.manager01.q2p.com.br:5437:acxe_q2p:postgres:<senha do postgres no UAT>
+```
 
 O refresh do estado Atlas:
 
