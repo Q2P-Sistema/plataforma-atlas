@@ -426,3 +426,151 @@ describe.skipIf(!temBanco)('migration 0060 — fiscal revertido: status, rastro 
     expect(audit.map((a) => `${a.operation}:${a.antes ?? ''}>${a.depois ?? ''}`)).toEqual(['INSERT:>concluido', 'UPDATE:concluido>revertido']);
   });
 });
+
+// Feature 017, research D23 (ACXEGDP-437), migration 0062 — CFOP de entrada pela finalidade da compra. O que so o
+// banco garante: os CHECKs das duas colunas novas (finalidade restrita aos dois valores; cfops_entrada so como array e
+// so com a finalidade preenchida) e a trigger de auditoria gravando as colunas novas em new_values (to_jsonb). Mesmo
+// opt-in dos blocos acima; sem a coluna finalidade_entrada (0062 nao aplicada) cada teste e PULADO com aviso.
+describe.skipIf(!temBanco)('migration 0062 — CFOP de entrada: finalidade, rastro por item e CHECKs (integracao)', () => {
+  let pool: Pool;
+  const chaves: string[] = [];
+  let seq = 0;
+
+  async function getPoolReal(): Promise<Pool> {
+    const core = await import('@atlas/core');
+    return core.getPool() as unknown as Pool;
+  }
+
+  async function userId(): Promise<string> {
+    const { rows } = await pool.query(`SELECT id FROM atlas.users ORDER BY created_at LIMIT 1`);
+    expect(rows.length, 'precisa de ao menos um usuario em atlas.users').toBeGreaterThan(0);
+    return String(rows[0]!.id);
+  }
+
+  /** A 0062 esta aplicada? Sem ela o teste avisa e e pulado (nunca falha por banco defasado). */
+  async function aplicada(): Promise<boolean> {
+    pool = pool ?? (await getPoolReal());
+    const { rows } = await pool.query(
+      `SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_schema = 'stockbridge' AND table_name = 'recebimento_fiscal' AND column_name = 'finalidade_entrada') AS ok`,
+    );
+    if (rows[0]!.ok !== true) {
+      console.warn('[migration 0062] coluna stockbridge.recebimento_fiscal.finalidade_entrada ausente: teste pulado (aplicar a 0062 no banco de teste)');
+      return false;
+    }
+    return true;
+  }
+
+  /** Chave de 44 digitos, unica por teste, na faixa 95... (fora do que o dado real e os outros testes usam). */
+  function chaveNova(): string {
+    seq += 1;
+    return `95${String(Date.now()).padStart(13, '0')}${String(seq).padStart(29, '0')}`.slice(0, 44);
+  }
+
+  afterAll(async () => {
+    if (!pool || chaves.length === 0) return;
+    // Dado de teste: hard delete permitido aqui (a trigger registra o DELETE).
+    await pool.query(`DELETE FROM stockbridge.recebimento_fiscal WHERE nf_chave_acesso = ANY($1::text[])`, [chaves]);
+  });
+
+  const inserirLedger = (chave: string, uid: string) =>
+    pool.query(
+      `INSERT INTO stockbridge.recebimento_fiscal (nf_chave_acesso, nota_fiscal, fornecedor_nome, status, confirmado_por)
+       VALUES ($1, 'T-D23', 'TESTE D23', 'em_andamento', $2) RETURNING id, finalidade_entrada, cfops_entrada`,
+      [chave, uid],
+    );
+
+  it('finalidade e cfops por item: gravados no ledger e auditados em new_values; linhas sem CFOP ficam NULL', async () => {
+    if (!(await aplicada())) return;
+    const uid = await userId();
+    const chave = chaveNova();
+    chaves.push(chave);
+
+    const { rows: ins } = await inserirLedger(chave, uid);
+    const id = String(ins[0]!.id);
+    // tentativas sem CFOP (chave desligada, anteriores a 0062) seguem validas: as duas colunas nascem NULL
+    expect(ins[0]!.finalidade_entrada).toBeNull();
+    expect(ins[0]!.cfops_entrada).toBeNull();
+
+    const cfops = [
+      { nSequencia: 1, cfopSugerido: '2.102', cfopAlvo: '2.101', enviado: true },
+      { nSequencia: 2, cfopSugerido: '2.556', cfopAlvo: null, enviado: false },
+    ];
+    await pool.query(
+      `UPDATE stockbridge.recebimento_fiscal SET finalidade_entrada = 'industrializacao', cfops_entrada = $2::jsonb, updated_at = now() WHERE id = $1`,
+      [id, JSON.stringify(cfops)],
+    );
+
+    const { rows: lido } = await pool.query(`SELECT finalidade_entrada, cfops_entrada FROM stockbridge.recebimento_fiscal WHERE id = $1`, [id]);
+    expect(lido[0]!.finalidade_entrada).toBe('industrializacao');
+    expect(lido[0]!.cfops_entrada).toEqual(cfops);
+
+    // a trigger da 0053 grava as colunas novas via to_jsonb: antes NULL, depois a escolha e o rastro por item
+    const { rows: audit } = await pool.query(
+      `SELECT operation, old_values->>'finalidade_entrada' AS antes, new_values->>'finalidade_entrada' AS finalidade, new_values->'cfops_entrada' AS cfops
+         FROM shared.audit_log WHERE schema_name = 'stockbridge' AND table_name = 'recebimento_fiscal' AND record_id = $1 ORDER BY id`,
+      [id],
+    );
+    expect(audit.map((a) => a.operation)).toEqual(['INSERT', 'UPDATE']);
+    expect(audit[1]).toMatchObject({ antes: null, finalidade: 'industrializacao' });
+    expect(audit[1]!.cfops).toEqual(cfops);
+
+    // comercializacao tambem vale, e um array vazio (nenhum item no recorte) e um array valido
+    await pool.query(`UPDATE stockbridge.recebimento_fiscal SET finalidade_entrada = 'comercializacao', cfops_entrada = '[]'::jsonb WHERE id = $1`, [id]);
+    const { rows: depois } = await pool.query(`SELECT finalidade_entrada, cfops_entrada FROM stockbridge.recebimento_fiscal WHERE id = $1`, [id]);
+    expect(depois[0]).toMatchObject({ finalidade_entrada: 'comercializacao', cfops_entrada: [] });
+  });
+
+  it('CHECK da finalidade: so industrializacao, comercializacao ou NULL', async () => {
+    if (!(await aplicada())) return;
+    const uid = await userId();
+    const chave = chaveNova();
+    chaves.push(chave);
+    const { rows } = await inserirLedger(chave, uid);
+    const id = String(rows[0]!.id);
+
+    for (const invalida of ['uso_consumo', 'Industrializacao', '', '101']) {
+      await expect(
+        pool.query(`UPDATE stockbridge.recebimento_fiscal SET finalidade_entrada = $2 WHERE id = $1`, [id, invalida]),
+        `finalidade "${invalida}"`,
+      ).rejects.toMatchObject({ code: '23514', constraint: 'recebimento_fiscal_finalidade_entrada_check' });
+    }
+    // NULL de volta e aceito (CHECK admite NULL)
+    await pool.query(`UPDATE stockbridge.recebimento_fiscal SET finalidade_entrada = 'comercializacao' WHERE id = $1`, [id]);
+    await pool.query(`UPDATE stockbridge.recebimento_fiscal SET finalidade_entrada = NULL WHERE id = $1`, [id]);
+  });
+
+  it('CHECK do rastro: cfops_entrada sem finalidade e cfops_entrada que nao e array sao recusados', async () => {
+    if (!(await aplicada())) return;
+    const uid = await userId();
+    const chave = chaveNova();
+    chaves.push(chave);
+    const { rows } = await inserirLedger(chave, uid);
+    const id = String(rows[0]!.id);
+    const item = JSON.stringify([{ nSequencia: 1, cfopSugerido: '2.102', cfopAlvo: '2.101', enviado: true }]);
+
+    // sem finalidade preenchida, o rastro nao tem a que se referir
+    await expect(
+      pool.query(`UPDATE stockbridge.recebimento_fiscal SET cfops_entrada = $2::jsonb WHERE id = $1`, [id, item]),
+    ).rejects.toMatchObject({ code: '23514', constraint: 'recebimento_fiscal_cfops_entrada_check' });
+    await expect(
+      pool.query(`INSERT INTO stockbridge.recebimento_fiscal (nf_chave_acesso, nota_fiscal, status, confirmado_por, cfops_entrada)
+                  VALUES ($1, 'T-D23', 'falha', $2, $3::jsonb)`, [`${chave.slice(0, 43)}1`, uid, item]),
+    ).rejects.toMatchObject({ code: '23514', constraint: 'recebimento_fiscal_cfops_entrada_check' });
+
+    // com finalidade, o rastro precisa ser array: objeto, escalar e o jsonb 'null' sao recusados
+    await pool.query(`UPDATE stockbridge.recebimento_fiscal SET finalidade_entrada = 'industrializacao' WHERE id = $1`, [id]);
+    for (const naoArray of ['{"nSequencia":1}', '"2.101"', '7', 'null']) {
+      await expect(
+        pool.query(`UPDATE stockbridge.recebimento_fiscal SET cfops_entrada = $2::jsonb WHERE id = $1`, [id, naoArray]),
+        `cfops_entrada ${naoArray}`,
+      ).rejects.toMatchObject({ code: '23514', constraint: 'recebimento_fiscal_cfops_entrada_check' });
+    }
+
+    // finalidade nao pode voltar a NULL enquanto houver rastro por item
+    await pool.query(`UPDATE stockbridge.recebimento_fiscal SET cfops_entrada = $2::jsonb WHERE id = $1`, [id, item]);
+    await expect(
+      pool.query(`UPDATE stockbridge.recebimento_fiscal SET finalidade_entrada = NULL WHERE id = $1`, [id]),
+    ).rejects.toMatchObject({ code: '23514', constraint: 'recebimento_fiscal_cfops_entrada_check' });
+  });
+});

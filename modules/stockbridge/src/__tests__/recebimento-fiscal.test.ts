@@ -37,6 +37,23 @@ vi.mock('../services/fiscal-revertido.js', async (importOriginal) => {
   };
 });
 
+// D23 da 017 (CFOP de entrada pela finalidade): o guard (chaves + migration 0062) tem testes proprios em
+// cfop-entrada.test.ts; aqui sao spies. Default: DESLIGADO — o EDITAR sai exatamente como na 016/017 — e a
+// coluna da 0062 presente (a listagem do ledger traz finalidade_entrada/cfops_entrada).
+const cfop = vi.hoisted(() => ({
+  habilitado: vi.fn(),
+  colunaExiste: vi.fn(),
+}));
+
+vi.mock('../services/cfop-entrada.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../services/cfop-entrada.js')>();
+  return {
+    ...real,
+    cfopEntradaHabilitado: (...a: unknown[]) => cfop.habilitado(...a),
+    colunaFinalidadeEntradaExiste: (...a: unknown[]) => cfop.colunaExiste(...a),
+  };
+});
+
 vi.mock('@atlas/core', () => ({
   createLogger: () => loggerMock,
   getDb: vi.fn(),
@@ -148,6 +165,12 @@ let fechamentoLanca = false;
 let ledgerRows: Record<string, unknown>[] = [];
 /** 017 (T042): linhas de recebimento_fiscal_pc devolvidas para a listagem do ledger */
 let vinculoRows: Record<string, unknown>[] = [];
+/** D23: params de cada UPDATE da finalidade/CFOP de entrada no ledger ($1 id, $2 finalidade, $3 cfops json, $4 token) */
+let finalidades: unknown[][] = [];
+/** D23: o UPDATE da finalidade acha a linha (false = lock perdido)? */
+let finalidadeAcha = true;
+/** D23: o UPDATE da finalidade lanca (banco fora)? */
+let finalidadeLanca = false;
 
 function responderLedger(sql: string, params?: unknown[]) {
   if (sql.includes("status = 'falha'") && sql.includes('make_interval(secs')) {
@@ -168,6 +191,12 @@ function responderLedger(sql: string, params?: unknown[]) {
   if (sql.includes('make_interval(mins')) {
     ordem.push('ledger:retomar');
     return { rows: retomadaOk ? [{ id: String(linhaViva?.id ?? 'ledger-0'), token: 'TOKEN-RETOMADA' }] : [] };
+  }
+  if (sql.includes('UPDATE stockbridge.recebimento_fiscal') && sql.includes('SET finalidade_entrada')) {
+    ordem.push('ledger:finalidade');
+    finalidades.push(params ?? []);
+    if (finalidadeLanca) throw new Error('connection terminated');
+    return { rows: finalidadeAcha ? [{ id: String(params?.[0]) }] : [] };
   }
   if (sql.includes('UPDATE stockbridge.recebimento_fiscal') && sql.includes('SET status = $2')) {
     ordem.push(`ledger:${String(params?.[1])}`);
@@ -196,7 +225,12 @@ beforeEach(() => {
   fechamentoLanca = false;
   ledgerRows = [];
   vinculoRows = [];
+  finalidades = [];
+  finalidadeAcha = true;
+  finalidadeLanca = false;
   for (const f of Object.values(loggerMock)) f.mockClear();
+  cfop.habilitado.mockReset().mockResolvedValue(false);
+  cfop.colunaExiste.mockReset().mockResolvedValue(true);
   revertido.habilitado.mockReset().mockResolvedValue(false);
   revertido.nfRevertida.mockReset().mockResolvedValue(false);
   revertido.marcar.mockReset().mockResolvedValue([]);
@@ -958,5 +992,426 @@ describe('listarLedgerFiscal — fiscal revertido (D21 da 017, migration 0060)',
     ledgerRows = [{ ...linhaRevertida, revertido_em: 'nao-e-data' }];
     const lista = await listarLedgerFiscal({});
     expect(lista[0]!.revertidoEm).toBeNull();
+  });
+});
+
+// ── D23 da 017 — CFOP de entrada pela finalidade da compra (06/11/2026, NF 979 da ACXE) ─────────────
+// O OMIE sugeriu 2.102 (comercializacao) e a ACXE compra para industrializacao (2.101): com a finalidade
+// escolhida pelo operador, o EDITAR de cada item manda itensAjustes.cCFOPEntrada = 1o digito do CFOP SUGERIDO
+// (lido ao vivo) + final 101/102. Fora de x.101/x.102 ou ausente o Atlas nao mexe. Retomada/reversao com CFOP
+// diferente refaz o EDITAR; CFOP ja igual nao forca EDITAR. Nunca em IGNORAR (erro 151) nem em item ja
+// ignorado. A escolha e o rastro por item vao ao ledger ANTES da primeira escrita no OMIE. O guard (chaves +
+// migration 0062) tem testes proprios em cfop-entrada.test.ts; aqui e um spy (`cfop.habilitado`).
+describe('concluirRecebimentoFiscal — CFOP de entrada pela finalidade (D23 da 017)', () => {
+  const AJUSTES = { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N' };
+  const comCfop = (cfopSugerido: string | null, over: Record<string, unknown> = {}) => ({ cCFOPEntrada: cfopSugerido, ...over });
+  /** Os itens (3 e 7, como no resto do arquivo) com o CFOP sugerido de cada um */
+  const itensCfop = (cfop3: string | null, cfop7: string | null, over3: Record<string, unknown> = {}, over7: Record<string, unknown> = {}) => [
+    itemRec(3, comCfop(cfop3, over3)),
+    itemRec(7, comCfop(cfop7, over7)),
+  ];
+  const acao = (a: string) => alterarSpy.mock.calls.flatMap((c) => (c[1] as { itens: Array<Record<string, unknown>> }).itens).filter((i) => i.cAcao === a);
+  const updatesDaFinalidade = () => poolQuerySpy.mock.calls.filter((c) => String(c[0]).includes('SET finalidade_entrada'));
+
+  beforeEach(() => {
+    cfop.habilitado.mockResolvedValue(true);
+  });
+
+  it('industrializacao com sugestao 2.102 (NF 979 da ACXE): o EDITAR leva cCFOPEntrada 2.101 em cada item; o IGNORAR segue sem itensAjustes', async () => {
+    consultaUnica({ itens: itensCfop('2.102', '2.102') });
+
+    const r = await concluirRecebimentoFiscal(input({ finalidadeEntrada: 'industrializacao' }));
+
+    expect(r.status).toBe('concluido');
+    expect(acao('EDITAR')).toEqual([
+      { nSequencia: 3, cAcao: 'EDITAR', itensAjustes: { ...AJUSTES, cCFOPEntrada: '2.101' } },
+      { nSequencia: 7, cAcao: 'EDITAR', itensAjustes: { ...AJUSTES, cCFOPEntrada: '2.101' } },
+    ]);
+    expect(acao('IGNORAR')).toEqual([
+      { nSequencia: 3, cAcao: 'IGNORAR' },
+      { nSequencia: 7, cAcao: 'IGNORAR' },
+    ]);
+    for (const it of acao('IGNORAR')) expect(it).not.toHaveProperty('itensAjustes');
+    expect(cfop.habilitado).toHaveBeenCalledTimes(1);
+  });
+
+  it('a finalidade e o rastro por item vao ao ledger ANTES da primeira escrita no OMIE, com o token do lock — e o resultado devolve os dois', async () => {
+    consultaUnica({ itens: itensCfop('2.102', '2.102') });
+
+    const r = await concluirRecebimentoFiscal(input({ finalidadeEntrada: 'industrializacao' }));
+
+    expect(ordemSemEspera()).toEqual([
+      'ledger:insert', 'omie:consultar', 'ledger:finalidade', 'omie:editar', 'omie:ignorar', 'omie:concluir', 'ledger:concluido',
+    ]);
+    const rastro = [
+      { nSequencia: 3, cfopSugerido: '2.102', cfopAlvo: '2.101', enviado: true },
+      { nSequencia: 7, cfopSugerido: '2.102', cfopAlvo: '2.101', enviado: true },
+    ];
+    expect(finalidades).toEqual([['ledger-1', 'industrializacao', JSON.stringify(rastro), TOKEN]]);
+    const sql = String(updatesDaFinalidade()[0]![0]);
+    expect(sql).toContain("WHERE id = $1 AND status = 'em_andamento' AND iniciado_em = $4::timestamptz");
+    expect(sql).toContain('cfops_entrada = $3::jsonb');
+    expect(sql).not.toContain('SET status'); // o harness (e o fechamento) so reconhecem o desfecho por esse texto
+    expect(r.finalidadeEntrada).toBe('industrializacao');
+    expect(r.cfopsEntrada).toEqual(rastro);
+    // o fechamento do ledger nao muda: mesmos 11 parametros de sempre
+    expect(fechamentos[0]).toEqual(['ledger-1', 'concluido', N_ID_RECEB, '40', 'N', 2, null, null, null, TOKEN, null]);
+  });
+
+  it('lock orfao retomado: o UPDATE da finalidade usa o NOVO token da posse', async () => {
+    insertFalha = Object.assign(new Error('duplicate key'), { code: '23505', constraint: 'recebimento_fiscal_nf_viva_uq' });
+    linhaViva = { id: 'ledger-orfao', status: 'em_andamento', iniciado_em: '2026-10-02 08:00:00+00', finalizado_em: null };
+    retomadaOk = true;
+    consultaUnica({ itens: itensCfop('2.102', '2.102') });
+
+    await concluirRecebimentoFiscal(input({ finalidadeEntrada: 'industrializacao' }));
+
+    expect(finalidades[0]![0]).toBe('ledger-orfao');
+    expect(finalidades[0]![3]).toBe('TOKEN-RETOMADA');
+  });
+
+  it.each([
+    ['1.101', 'comercializacao', '1.102'],
+    ['1.102', 'industrializacao', '1.101'],
+    ['2.101', 'comercializacao', '2.102'],
+    ['3.102', 'industrializacao', '3.101'], // importacao: o 1o digito (3) e o do sugerido
+    ['3.101', 'comercializacao', '3.102'],
+  ] as const)('sugerido %s + %s -> %s (so o final muda, o 1o digito e o do sugerido)', async (sugerido, finalidade, alvo) => {
+    consultaUnica({ itens: [itemRec(3, comCfop(sugerido))] });
+    await concluirRecebimentoFiscal(input({ finalidadeEntrada: finalidade }));
+    expect(acao('EDITAR')).toEqual([{ nSequencia: 3, cAcao: 'EDITAR', itensAjustes: { ...AJUSTES, cCFOPEntrada: alvo } }]);
+  });
+
+  it('Q2P (1.102) + comercializacao com o EDITAR por fazer: o CFOP ja igual NAO vai — o EDITAR sai exatamente como antes', async () => {
+    consultaUnica({ itens: itensCfop('1.102', '1.102') });
+    const r = await concluirRecebimentoFiscal(input({ finalidadeEntrada: 'comercializacao' }));
+    expect(acao('EDITAR')).toEqual([
+      { nSequencia: 3, cAcao: 'EDITAR', itensAjustes: AJUSTES },
+      { nSequencia: 7, cAcao: 'EDITAR', itensAjustes: AJUSTES },
+    ]);
+    expect(r.cfopsEntrada).toEqual([
+      { nSequencia: 3, cfopSugerido: '1.102', cfopAlvo: '1.102', enviado: false },
+      { nSequencia: 7, cfopSugerido: '1.102', cfopAlvo: '1.102', enviado: false },
+    ]);
+  });
+
+  it('CFOP lido com espaco e igual ao alvo apos o trim: nao vai (comparacao com trim)', async () => {
+    consultaUnica({ itens: itensCfop(' 2.101 ', '2.102') });
+    await concluirRecebimentoFiscal(input({ finalidadeEntrada: 'industrializacao' }));
+    expect(acao('EDITAR')).toEqual([
+      { nSequencia: 3, cAcao: 'EDITAR', itensAjustes: AJUSTES },
+      { nSequencia: 7, cAcao: 'EDITAR', itensAjustes: { ...AJUSTES, cCFOPEntrada: '2.101' } },
+    ]);
+  });
+
+  it('ajustes ja aplicados E CFOP ja igual ao alvo: nenhum EDITAR (so IGNORAR + Concluir); o rastro mostra enviado=false', async () => {
+    consultaUnica({ itens: itensCfop('1.102', '1.102', AJUSTES, AJUSTES) });
+
+    const r = await concluirRecebimentoFiscal(input({ finalidadeEntrada: 'comercializacao' }));
+
+    expect(acao('EDITAR')).toEqual([]);
+    expect(ordemSemEspera()).toEqual(['ledger:insert', 'omie:consultar', 'ledger:finalidade', 'omie:ignorar', 'omie:concluir', 'ledger:concluido']);
+    expect(r.cfopsEntrada).toEqual([
+      { nSequencia: 3, cfopSugerido: '1.102', cfopAlvo: '1.102', enviado: false },
+      { nSequencia: 7, cfopSugerido: '1.102', cfopAlvo: '1.102', enviado: false },
+    ]);
+  });
+
+  it('retomada com cNaoGerarMovEstoque S ja aplicado mas CFOP diferente do alvo: EDITAR so por causa do CFOP (reversao/EDITAR perdido)', async () => {
+    consultaUnica({ itens: itensCfop('2.102', '2.102', AJUSTES, AJUSTES) });
+
+    await concluirRecebimentoFiscal(input({ finalidadeEntrada: 'industrializacao' }));
+
+    expect(acao('EDITAR')).toEqual([
+      { nSequencia: 3, cAcao: 'EDITAR', itensAjustes: { ...AJUSTES, cCFOPEntrada: '2.101' } },
+      { nSequencia: 7, cAcao: 'EDITAR', itensAjustes: { ...AJUSTES, cCFOPEntrada: '2.101' } },
+    ]);
+  });
+
+  it('retomada onde um item ja esta no CFOP alvo (EDITAR passou) e o outro nao: so o segundo refaz o EDITAR; o rastro guarda o CFOP lido', async () => {
+    consultaUnica({ itens: itensCfop('2.101', '2.102', AJUSTES, AJUSTES) });
+
+    const r = await concluirRecebimentoFiscal(input({ finalidadeEntrada: 'industrializacao' }));
+
+    expect(acao('EDITAR').map((i) => i.nSequencia)).toEqual([7]);
+    expect(r.cfopsEntrada).toEqual([
+      { nSequencia: 3, cfopSugerido: '2.101', cfopAlvo: '2.101', enviado: false },
+      { nSequencia: 7, cfopSugerido: '2.102', cfopAlvo: '2.101', enviado: true },
+    ]);
+  });
+
+  it.each([
+    ['2.556 (uso e consumo)', '2.556'],
+    ['5.102 (CFOP de saida)', '5.102'],
+    ['ausente (null)', null],
+    ['vazio', ''],
+  ])('CFOP sugerido fora do recorte (%s): o Atlas nao manda cCFOPEntrada e o rastro marca cfopAlvo nulo — o outro item segue trocado', async (_nome, fora) => {
+    consultaUnica({ itens: itensCfop('2.102', fora) });
+
+    const r = await concluirRecebimentoFiscal(input({ finalidadeEntrada: 'industrializacao' }));
+
+    const [e3, e7] = acao('EDITAR');
+    expect(e3).toEqual({ nSequencia: 3, cAcao: 'EDITAR', itensAjustes: { ...AJUSTES, cCFOPEntrada: '2.101' } });
+    expect(e7).toEqual({ nSequencia: 7, cAcao: 'EDITAR', itensAjustes: AJUSTES });
+    expect((e7!.itensAjustes as Record<string, unknown>)).not.toHaveProperty('cCFOPEntrada');
+    expect(r.cfopsEntrada![1]).toEqual({ nSequencia: 7, cfopSugerido: fora === '' ? '' : fora, cfopAlvo: null, enviado: false });
+  });
+
+  it('fora do recorte e com os ajustes ja aplicados: o CFOP nao forca EDITAR (nada a trocar)', async () => {
+    consultaUnica({ itens: [itemRec(3, comCfop('2.556', AJUSTES))] });
+    await concluirRecebimentoFiscal(input({ finalidadeEntrada: 'industrializacao' }));
+    expect(acao('EDITAR')).toEqual([]);
+  });
+
+  it('item ja ignorado no OMIE (pulado hoje): continua sem EDITAR mesmo com CFOP diferente; o rastro registra o alvo sem envio', async () => {
+    consultaUnica({ itens: [itemRec(3, comCfop('2.102', { cIgnorarItem: 'S', cNaoGerarMovEstoque: 'S' })), itemRec(7, comCfop('2.102'))] });
+
+    const r = await concluirRecebimentoFiscal(input({ finalidadeEntrada: 'industrializacao' }));
+
+    expect(acao('EDITAR').map((i) => i.nSequencia)).toEqual([7]);
+    expect(acao('IGNORAR').map((i) => i.nSequencia)).toEqual([7]);
+    expect(r.cfopsEntrada).toEqual([
+      { nSequencia: 3, cfopSugerido: '2.102', cfopAlvo: '2.101', enviado: false },
+      { nSequencia: 7, cfopSugerido: '2.102', cfopAlvo: '2.101', enviado: true },
+    ]);
+  });
+
+  it('todos os itens ja ignorados: nenhum AlterarRecebimento, mas a escolha da finalidade ainda fica no ledger antes do Concluir', async () => {
+    consultaUnica({ itens: [itemRec(3, comCfop('2.102', { cIgnorarItem: 'S' })), itemRec(7, comCfop('2.102', { cIgnorarItem: 'S' }))] });
+
+    const r = await concluirRecebimentoFiscal(input({ finalidadeEntrada: 'industrializacao' }));
+
+    expect(alterarSpy).not.toHaveBeenCalled();
+    expect(ordemSemEspera()).toEqual(['ledger:insert', 'omie:consultar', 'ledger:finalidade', 'omie:concluir', 'ledger:concluido']);
+    expect(r.cfopsEntrada!.every((c) => !c.enviado)).toBe(true);
+  });
+
+  describe('sem efeito: payload exatamente como na 016/017', () => {
+    const payloadDe016 = [
+      { nSequencia: 3, cAcao: 'EDITAR', itensAjustes: { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N' } },
+      { nSequencia: 7, cAcao: 'EDITAR', itensAjustes: { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N' } },
+    ];
+
+    it('sem finalidade no input (mesmo com o recurso habilitado): EDITAR sem cCFOPEntrada, sem UPDATE, sem os campos no resultado — nem consulta o guard', async () => {
+      consultaUnica({ itens: itensCfop('2.102', '2.102') });
+
+      const r = await concluirRecebimentoFiscal(input());
+
+      expect(acao('EDITAR')).toEqual(payloadDe016);
+      expect(updatesDaFinalidade()).toHaveLength(0);
+      expect(ordemSemEspera()).not.toContain('ledger:finalidade');
+      expect(r).not.toHaveProperty('cfopsEntrada');
+      expect(r).not.toHaveProperty('finalidadeEntrada');
+      expect(cfop.habilitado).not.toHaveBeenCalled();
+    });
+
+    it('cfopEntradaHabilitado false (chave desligada ou sem a 0062) com finalidade no input: igual a antes, sem UPDATE e sem campos', async () => {
+      cfop.habilitado.mockResolvedValue(false);
+      consultaUnica({ itens: itensCfop('2.102', '2.102') });
+
+      const r = await concluirRecebimentoFiscal(input({ finalidadeEntrada: 'industrializacao' }));
+
+      expect(cfop.habilitado).toHaveBeenCalledTimes(1);
+      expect(acao('EDITAR')).toEqual(payloadDe016);
+      expect(updatesDaFinalidade()).toHaveLength(0);
+      expect(r).not.toHaveProperty('cfopsEntrada');
+      expect(r).not.toHaveProperty('finalidadeEntrada');
+    });
+
+    it('desligado, o CFOP diferente do alvo nao refaz EDITAR (a retomada com ajustes aplicados segue sem EDITAR)', async () => {
+      cfop.habilitado.mockResolvedValue(false);
+      consultaUnica({ itens: itensCfop('2.102', '2.102', AJUSTES, AJUSTES) });
+      await concluirRecebimentoFiscal(input({ finalidadeEntrada: 'industrializacao' }));
+      expect(acao('EDITAR')).toEqual([]);
+    });
+
+    it('finalidade invalida vinda de fora (nao e uma das duas): tratada como ausente', async () => {
+      consultaUnica({ itens: itensCfop('2.102', '2.102') });
+      const r = await concluirRecebimentoFiscal(input({ finalidadeEntrada: 'consumo' as never }));
+      expect(acao('EDITAR')).toEqual(payloadDe016);
+      expect(updatesDaFinalidade()).toHaveLength(0);
+      expect(r).not.toHaveProperty('cfopsEntrada');
+      expect(cfop.habilitado).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('caminhos sem escrita: nada de UPDATE nem de campos', () => {
+    it('OMIE ja mostra cRecebido=S (ja_concluido na 1a consulta): nem consulta o guard', async () => {
+      consultaUnica({
+        cRecebido: 'S', cEtapa: '60', cUsuarioRec: 'gustavo',
+        itens: [itemRec(3, comCfop('2.102', { cNaoGerarMovEstoque: 'S' })), itemRec(7, comCfop('2.102', { cIgnorarItem: 'S' }))],
+      });
+
+      const r = await concluirRecebimentoFiscal(input({ finalidadeEntrada: 'industrializacao' }));
+
+      expect(r.status).toBe('ja_concluido');
+      expect(r).not.toHaveProperty('cfopsEntrada');
+      expect(r).not.toHaveProperty('finalidadeEntrada');
+      expect(updatesDaFinalidade()).toHaveLength(0);
+      expect(alterarSpy).not.toHaveBeenCalled();
+      expect(cfop.habilitado).not.toHaveBeenCalled();
+    });
+
+    it('ledger ja tem a NF concluida (23505): ja_concluido sem OMIE e sem UPDATE', async () => {
+      insertFalha = Object.assign(new Error('duplicate key'), { code: '23505', constraint: 'recebimento_fiscal_nf_viva_uq' });
+      linhaViva = { id: 'ledger-antigo', status: 'concluido', iniciado_em: '2026-10-02 09:00:00+00', finalizado_em: '2026-10-02 09:00:05+00' };
+
+      const r = await concluirRecebimentoFiscal(input({ finalidadeEntrada: 'industrializacao' }));
+
+      expect(r.status).toBe('ja_concluido');
+      expect(r).not.toHaveProperty('cfopsEntrada');
+      expect(consultarSpy).not.toHaveBeenCalled();
+      expect(updatesDaFinalidade()).toHaveLength(0);
+    });
+
+    it('recusas antes de escrever (NF cancelada, fornecedor ausente, etapa): nenhum UPDATE da finalidade', async () => {
+      consultaUnica({ cCancelada: 'S' });
+      await expect(concluirRecebimentoFiscal(input({ finalidadeEntrada: 'industrializacao' }))).rejects.toBeInstanceOf(RecebimentoFiscalNfCanceladaError);
+      consultaUnica({ nIdFornecedor: null, cCNPJ_CPF: null });
+      await expect(concluirRecebimentoFiscal(input({ finalidadeEntrada: 'industrializacao' }))).rejects.toBeInstanceOf(RecebimentoFiscalSemFornecedorError);
+      consultaUnica({ cEtapa: '50' });
+      await expect(concluirRecebimentoFiscal(input({ finalidadeEntrada: 'industrializacao' }))).rejects.toBeInstanceOf(RecebimentoFiscalEtapaInesperadaError);
+      expect(updatesDaFinalidade()).toHaveLength(0);
+      expect(alterarSpy).not.toHaveBeenCalled();
+    });
+
+    it('timeout em Concluir e a reconsulta mostra cRecebido=S: ja_concluido sem os campos (o ledger ja guarda a escolha gravada antes)', async () => {
+      concluirSpy.mockImplementationOnce(async () => {
+        ordem.push('omie:concluir');
+        throw new Error('timeout of 30000ms exceeded');
+      });
+      consultarSpy
+        .mockImplementationOnce(async () => {
+          ordem.push('omie:consultar');
+          return recebimento({ itens: itensCfop('2.102', '2.102') });
+        })
+        .mockImplementationOnce(async () => {
+          ordem.push('omie:reconsultar');
+          return recebimento({
+            cRecebido: 'S', cEtapa: '60', cUsuarioRec: 'WEBSERVICE',
+            itens: [itemRec(3, comCfop('2.101', { cNaoGerarMovEstoque: 'S', cIgnorarItem: 'S' })), itemRec(7, comCfop('2.101', { cNaoGerarMovEstoque: 'S', cIgnorarItem: 'S' }))],
+          });
+        });
+
+      const r = await concluirRecebimentoFiscal(input({ finalidadeEntrada: 'industrializacao' }));
+
+      expect(r.status).toBe('ja_concluido');
+      expect(r).not.toHaveProperty('cfopsEntrada');
+      expect(finalidades).toHaveLength(1);
+      expect(ordemSemEspera()).toEqual([
+        'ledger:insert', 'omie:consultar', 'ledger:finalidade', 'omie:editar', 'omie:ignorar', 'omie:concluir', 'omie:reconsultar', 'ledger:ja_concluido',
+      ]);
+    });
+  });
+
+  describe('o ledger e a trava da escolha', () => {
+    it('UPDATE sem linha (o lock foi retomado por outra requisicao): warn como no fechamento, e a requisicao segue com o resultado', async () => {
+      finalidadeAcha = false;
+      consultaUnica({ itens: itensCfop('2.102', '2.102') });
+
+      const r = await concluirRecebimentoFiscal(input({ finalidadeEntrada: 'industrializacao' }));
+
+      expect(r.status).toBe('concluido');
+      expect(r.finalidadeEntrada).toBe('industrializacao');
+      expect(loggerMock.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ ledgerId: 'ledger-1', finalidade: 'industrializacao' }),
+        expect.stringContaining('Lock fiscal perdido'),
+      );
+      expect(acao('EDITAR')).toHaveLength(2);
+    });
+
+    it('erro de banco ao gravar a escolha: nada e escrito no OMIE (falha no passo consultar, sem espera de 70 s), erro de dominio sobe', async () => {
+      finalidadeLanca = true;
+      consultaUnica({ itens: itensCfop('2.102', '2.102') });
+
+      let erro: unknown;
+      try {
+        await concluirRecebimentoFiscal(input({ finalidadeEntrada: 'industrializacao' }));
+      } catch (e) {
+        erro = e;
+      }
+
+      expect(erro).toBeInstanceOf(RecebimentoFiscalError);
+      expect((erro as RecebimentoFiscalError).passo).toBe('consultar');
+      expect(segundosAteNovaTentativa(erro as RecebimentoFiscalError)).toBe(0); // nenhuma escrita: pode tentar ja
+      expect(alterarSpy).not.toHaveBeenCalled();
+      expect(concluirSpy).not.toHaveBeenCalled();
+      expect(consultarSpy).toHaveBeenCalledTimes(1); // sem reconsulta: passo sem escrita
+      expect(fechamentos[0]!.slice(0, 2)).toEqual(['ledger-1', 'falha']);
+      expect(fechamentos[0]![6]).toBe('consultar');
+      expect(loggerMock.error).toHaveBeenCalledWith(
+        expect.objectContaining({ ledgerId: 'ledger-1', finalidade: 'industrializacao' }),
+        expect.stringContaining('nada foi escrito no OMIE'),
+      );
+    });
+
+    it('falha no EDITAR depois da escolha gravada: a escolha fica no ledger (UPDATE antes do EDITAR) e a falha segue o caminho de sempre', async () => {
+      alterarSpy.mockImplementationOnce(async () => {
+        ordem.push('omie:editar');
+        throw fault('SOAP-ENV:Client-5001', 'Recebimento nao localizado');
+      });
+      consultaUnica({ itens: itensCfop('2.102', '2.102') });
+
+      await expect(concluirRecebimentoFiscal(input({ finalidadeEntrada: 'industrializacao' }))).rejects.toMatchObject({ name: 'RecebimentoFiscalError', passo: 'editar' });
+
+      expect(finalidades).toHaveLength(1);
+      expect(ordem.indexOf('ledger:finalidade')).toBeLessThan(ordem.indexOf('omie:editar'));
+      expect(ordem.at(-1)).toBe('ledger:falha');
+      expect(concluirSpy).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('listarLedgerFiscal — finalidade e CFOP de entrada (D23 da 017, migration 0062)', () => {
+  const linha = {
+    id: 'l1', nf_chave_acesso: CHAVE, nota_fiscal: '979', fornecedor_nome: 'SOLUTEC', status: 'concluido',
+    passo_falha: null, itens_total: 2, confirmado_por: USER, confirmado_por_nome: 'Operador',
+    iniciado_em: '2026-11-06 10:00:00+00', finalizado_em: '2026-11-06 10:00:04+00', empresa: 'acxe',
+  };
+  const rastro = [
+    { nSequencia: 1, cfopSugerido: '2.102', cfopAlvo: '2.101', enviado: true },
+    { nSequencia: 2, cfopSugerido: '2.556', cfopAlvo: null, enviado: false },
+  ];
+
+  it('com a coluna: seleciona finalidade_entrada e cfops_entrada e devolve o rastro tipado; linha sem finalidade traz nulos', async () => {
+    ledgerRows = [
+      { ...linha, finalidade_entrada: 'industrializacao', cfops_entrada: rastro },
+      { ...linha, id: 'l0', finalidade_entrada: null, cfops_entrada: null },
+    ];
+
+    const lista = await listarLedgerFiscal({ limit: 10 });
+
+    const sql = String(poolQuerySpy.mock.calls.find((c) => String(c[0]).includes('FROM stockbridge.recebimento_fiscal rf'))![0]);
+    expect(sql).toContain('rf.finalidade_entrada, rf.cfops_entrada');
+    expect(sql).not.toContain('erro_omie');
+    expect(lista[0]).toMatchObject({ id: 'l1', finalidadeEntrada: 'industrializacao', cfopsEntrada: rastro });
+    expect(lista[1]).toMatchObject({ id: 'l0', finalidadeEntrada: null, cfopsEntrada: null });
+  });
+
+  it('antes da migration 0062 (coluna ausente): a listagem segue sem as colunas novas — nunca 42703 — e os campos saem nulos', async () => {
+    cfop.colunaExiste.mockResolvedValue(false);
+    ledgerRows = [linha];
+
+    const lista = await listarLedgerFiscal({});
+
+    const sql = String(poolQuerySpy.mock.calls.find((c) => String(c[0]).includes('FROM stockbridge.recebimento_fiscal rf'))![0]);
+    expect(sql).not.toContain('rf.finalidade_entrada');
+    expect(sql).not.toContain('rf.cfops_entrada');
+    expect(sql).toContain('NULL::text AS finalidade_entrada');
+    expect(sql).toContain('NULL::jsonb AS cfops_entrada');
+    expect(lista[0]).toMatchObject({ finalidadeEntrada: null, cfopsEntrada: null });
+  });
+
+  it('valor fora do formato no banco nao derruba a listagem: finalidade desconhecida vira nula; cfops que nao e array vira nulo; item mal formado e normalizado', async () => {
+    ledgerRows = [
+      { ...linha, id: 'a', finalidade_entrada: 'consumo', cfops_entrada: 'texto' },
+      { ...linha, id: 'b', finalidade_entrada: 'comercializacao', cfops_entrada: [{ nSequencia: 3, cfopSugerido: 2.102, enviado: 'sim' }, null, 'x'] },
+    ];
+
+    const lista = await listarLedgerFiscal({});
+
+    expect(lista[0]).toMatchObject({ id: 'a', finalidadeEntrada: null, cfopsEntrada: null });
+    expect(lista[1]!.finalidadeEntrada).toBe('comercializacao');
+    expect(lista[1]!.cfopsEntrada).toEqual([{ nSequencia: 3, cfopSugerido: null, cfopAlvo: null, enviado: false }]);
   });
 });

@@ -48,6 +48,16 @@ import {
   preSelecaoDaNf,
   type PcNfItemEstado,
 } from './PedidoCompraNfBloco.js';
+import {
+  FinalidadeEntradaBloco,
+  finalidadeEfetiva,
+  finalidadePadraoDaNf,
+  ehFinalidadeEntrada,
+  textoCfopNaoAplicado,
+  textoCfopResultado,
+  type CfopEntradaResultado,
+  type FinalidadeEntrada,
+} from './FinalidadeEntradaBloco.js';
 
 /**
  * Feature 015 (ACXEGDP-328) — recebimento nacional A PARTIR DA NF.
@@ -92,6 +102,16 @@ import {
  * tela so informa (selo na fila, aviso no detalhe, 409 ambar no clique) e deixa o fluxo normal de fiscal pendente fazer o resto: o
  * operador confirma o PC e o Atlas conclui o fiscal de novo. Campo ausente (backend anterior) ou chave do fiscal desligada = nada muda.
  * O texto diz sempre "no OMIE": "revertido" sozinho ja significa outra coisa nesta tela ("Reverter baixa", em Aprovacoes).
+ *
+ * D23 da 017 (06/11/2026) — FINALIDADE da compra (CFOP de entrada do fiscal). Sem o Atlas mandar o CFOP valia a sugestao do OMIE (NF 979 da
+ * ACXE: 2.102 de comercializacao, a ACXE compra para industrializar). Com o fiscal pendente e o servidor informando
+ * `finalidadeEntradaHabilitada`, a tela mostra um campo por NF e obrigatorio — Industrializacao (final 101) ou Comercializacao (final 102) —
+ * pre-selecionado pela empresa (`finalidadeEntradaPadrao`: ACXE industrializacao, Q2P comercializacao) e vai no POST como `finalidade_entrada`,
+ * valendo para todos os itens. Cada opcao mostra o CFOP que resulta (1o digito do CFOP sugerido pelo OMIE de cada item + o final da opcao); CFOP
+ * fora de x.101/x.102 nao muda. O bloco e `FinalidadeEntradaBloco.tsx`; so a previa e calculada aqui — quem manda o CFOP ao OMIE e o servidor.
+ * Campo ausente ou false (chave desligada ou migration 0062 pendente) = nada aparece e nada e enviado. Apos o envio, `fiscal.cfopsEntrada` diz o
+ * CFOP com que os itens ficaram (enviado agora ou ja igual ao alvo — o servidor so manda o CFOP quando ele muda) e um aviso ambar aponta item em
+ * que a finalidade nao valeu (ja ignorado no recebimento do OMIE, sem EDITAR).
  */
 
 interface FilaNacionalItem {
@@ -223,6 +243,12 @@ interface DetalheNf {
    * Vazio fora do fluxo de PC ou com a lista local defasada; ausente = backend anterior (a tela segue so com o PC por item).
    */
   pcsDaNf?: PcsDaNf;
+  /**
+   * D23 (campos novos: ausentes = backend anterior = nao): o servidor pede a finalidade da compra (CFOP de entrada do fiscal) — chave propria
+   * ligada, fiscal pelo Atlas e migration 0062. `finalidadeEntradaPadrao` = a finalidade pre-selecionada pela empresa da NF.
+   */
+  finalidadeEntradaHabilitada?: boolean;
+  finalidadeEntradaPadrao?: FinalidadeEntrada;
 }
 
 type StatusProduto = 'aguardando_aprovacao' | 'ja_recebido' | 'bloqueado_unidade' | 'bloqueado_unidade_incoerente' | 'falha';
@@ -251,6 +277,9 @@ interface ResultadoPorNf {
     semVinculo?: number[];
     /** feature 017: um aviso a compras partiu neste envio */
     avisoCompras?: boolean;
+    /** D23: CFOP de entrada de cada item (sugerido pelo OMIE, alvo da finalidade e se foi enviado); so vem quando a finalidade foi aplicada */
+    cfopsEntrada?: CfopEntradaResultado[];
+    finalidadeEntrada?: FinalidadeEntrada;
   };
 }
 
@@ -439,6 +468,9 @@ const ERROS_QUE_RECARREGAM_NOTA = new Set([
   // deixa de ser fiscal pendente e a caixa sai sozinha); a escolha de PC fica — nao e ela que esta errada, e o fiscal que precisa
   // desmarcar.
   'ITEM_IGNORADO_NO_OMIE',
+  // D23: o servidor exigiu a finalidade da compra e a tela nao a mandou (detalhe velho, de antes de a chave do CFOP de entrada ser ligada):
+  // a nota recarregada traz `finalidadeEntradaHabilitada` e o campo aparece, ja com o padrao da empresa; o formulario digitado fica.
+  'FINALIDADE_ENTRADA_OBRIGATORIA',
 ]);
 
 /**
@@ -891,6 +923,8 @@ function DetalheSection({
   const apiFetch = useApiFetch();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<Record<number, ItemForm>>({});
+  /** D23: finalidade escolhida pelo operador para a NF; undefined = ainda nao mexeu (vale o padrao da empresa — `finalidadeEntrada`) */
+  const [finalidadeEscolhida, setFinalidadeEscolhida] = useState<FinalidadeEntrada | undefined>();
   const [resultado, setResultado] = useState<ResultadoPorNf | null>(null);
   /** feature 017: PC de cada item do envio, casado por sequencia (montado no sucesso, com os itens da epoca do clique) */
   const [pcResultado, setPcResultado] = useState<ResumoPcResultado | null>(null);
@@ -969,6 +1003,18 @@ function DetalheSection({
   const fiscalSemFornecedor = fiscalPendente && !nf?.fornecedorCnpj;
   /** o fiscal sera concluido no OMIE neste clique (ha o que receber e fornecedor cadastrado) */
   const fiscalNoClique = fiscalPendente && !fiscalSemFornecedor && recebiveis.length > 0;
+  // ── D23: finalidade da compra (CFOP de entrada do fiscal) ──
+  /** o servidor pede a finalidade neste ambiente (chave propria + migration 0062); ausente = backend anterior = nao */
+  const finalidadeHabilitada = nf?.finalidadeEntradaHabilitada === true;
+  /** padrao da NF (o do servidor ou, sem ele, o da empresa) e o valor que vale: a escolha do operador ou o padrao — derivado, sem useEffect */
+  const finalidadePadrao = finalidadePadraoDaNf(nf?.finalidadeEntradaPadrao, empresaNf);
+  const finalidadeEntrada = finalidadeEfetiva(finalidadeEscolhida, finalidadePadrao);
+  /** o campo aparece quando o fiscal sera concluido neste clique (sem fornecedor ou sem item a receber o fiscal nao roda e a escolha nao teria efeito) */
+  const mostrarFinalidade = fiscalNoClique && finalidadeHabilitada;
+  /** "CFOP de entrada: 2.101 (industrialização)" do resultado pos-envio (CFOP com que os itens ficam); null sem rastro */
+  const linhaCfopResultado = textoCfopResultado(resultado?.fiscal?.cfopsEntrada, resultado?.fiscal?.finalidadeEntrada);
+  /** aviso quando a finalidade nao valeu para algum item (ja ignorado no recebimento do OMIE, sem EDITAR) */
+  const avisoCfopNaoAplicado = textoCfopNaoAplicado(resultado?.fiscal?.cfopsEntrada, omieDaNf);
   /** baixa externa nao cabe em NF com fiscal pendente (tiraria a nota da fila com o fiscal parado) */
   const baixaPermitida = baixaHabilitada && !fiscalPendente;
   const retryRestanteSeg = retryLiberaEm != null ? Math.max(0, Math.ceil((retryLiberaEm - agora) / 1000)) : 0;
@@ -1182,6 +1228,8 @@ function DetalheSection({
     if (copiaPcsDefasada) return 'A lista de pedidos de compra está desatualizada. Tente de novo em alguns minutos.';
     if (aguardandoPcCompras) return 'Esta nota está aguardando pedido de compra e não pode ser recebida agora.';
     if (avisoSemAvaliacao) return `${avisoSemAvaliacao.destaque} ${avisoSemAvaliacao.orientacao}`;
+    // D23: nunca deve faltar (o padrao da empresa vem pre-selecionado), mas o servidor recusa sem ela e a mensagem sai antes do envio
+    if (fiscalPendente && finalidadeHabilitada && !ehFinalidadeEntrada(finalidadeEntrada)) return 'Escolha a finalidade da compra.';
     for (const it of recebiveis) {
       const fi = getForm(it);
       const rot = `"${it.descricaoFornecedor.trim()}"`;
@@ -1230,6 +1278,8 @@ function DetalheSection({
     mutationFn: async () => {
       const payload = {
         nf_chave_acesso: chave,
+        // D23: campo da NF (vale para todos os itens); so com o fiscal sendo concluido e o CFOP de entrada habilitado no servidor
+        ...(fiscalPendente && finalidadeHabilitada ? { finalidade_entrada: finalidadeEntrada } : {}),
         itens: recebiveis.map((it) => {
           const fi = getForm(it);
           const conferida = parseNum(fi.quantidadeConferida);
@@ -1617,6 +1667,18 @@ function DetalheSection({
             </div>
           )}
 
+          {/* D23: finalidade da compra = CFOP de entrada do fiscal; antes do pedido de compra e dos itens, pois vale para a nota inteira */}
+          {mostrarFinalidade && !resultado && (
+            <FinalidadeEntradaBloco
+              valor={finalidadeEntrada}
+              padrao={finalidadePadrao}
+              empresa={empresaNf}
+              cfopsSugeridos={recebiveis.map((it) => it.cfop)}
+              omieDaNf={omieDaNf}
+              onEscolher={setFinalidadeEscolhida}
+            />
+          )}
+
           {pcNfDisponivel && (
             <PedidoCompraNfBloco
               pcs={pcsDaNf}
@@ -1668,6 +1730,9 @@ function DetalheSection({
                   {resultado.fiscal.mensagem}
                 </div>
               )}
+              {/* D23: o CFOP de entrada que o Atlas de fato enviou ao OMIE (so aparece quando a finalidade foi aplicada neste envio) */}
+              {linhaCfopResultado && <div className="text-xs mb-2 text-atlas-ink">{linhaCfopResultado}</div>}
+              {avisoCfopNaoAplicado && <div className={`mb-2 ${AVISO_AMBAR}`}>{avisoCfopNaoAplicado}</div>}
               {pcResultado && (pcResultado.linhas.length > 0 || pcResultado.soltos.length > 0) && (
                 <ul className="text-xs space-y-1 mb-2" aria-label="Pedido de compra de cada item">
                   {pcResultado.linhas.map((l) => (

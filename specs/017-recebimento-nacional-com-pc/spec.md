@@ -31,6 +31,8 @@ As features 015 (ACXEGDP-328) e 016 (ACXEGDP-395) levaram para o StockBridge o r
 
 **Reversão no portal (25/10/2026).** O Atlas concluiu o fiscal da NF 19252 (Zaraplast × PC 308) às 17:02, e o usuário reverteu o recebimento no portal do OMIE às 17:13, depois de o gestor rejeitar a entrada física. O Atlas não percebeu: a fila seguiu mostrando "fiscal já feito", e o clique seguinte teria feito só o físico, deixando a NF na etapa 40, sem conta a pagar e sem baixa no PC. O Atlas passa a perceber a reversão (FR-035, research D21 da 017).
 
+**CFOP de entrada (06/11/2026).** No primeiro recebimento da ACXE pelo Atlas (NF 979 da Solutec × PC 581, 03/11/2026), o fiscal concluiu com o CFOP de entrada que o OMIE sugeriu, 2.102 (comercialização), porque o `EDITAR` não mandava CFOP; a ACXE compra para industrialização (2.101), e o financeiro corrigiu a nota de entrada à mão em 06/11/2026. O Atlas passa a mandar o CFOP de entrada pela finalidade da compra que o operador escolhe (FR-036, research D23).
+
 ## Clarifications
 
 ### Session 2026-10-21
@@ -76,6 +78,16 @@ Pedidos do usuário depois da estreia da NF 60199 (Zaraplast × PC 306) em PROD,
 - Q: A rejeição do gestor também conta como reversão? → A: **Não** (FR-018). Só a reversão feita no OMIE marca a NF.
 - Q: Chave própria? → A: Sim, além da chave da 016: `STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED`, ligada por padrão, para desligar o tratamento sem redeploy de código.
 
+### Session 2026-11-06
+
+Pedido do usuário depois da NF 979 da Solutec na ACXE (T076), todo aprovado:
+
+- Q: O CFOP de entrada do recebimento fiscal feito pelo Atlas deve seguir a finalidade da compra, em vez da sugestão do OMIE? → A: **Sim.** O operador escolhe a finalidade, uma vez por NF e para todos os itens: Industrialização (final 101) ou Comercialização (final 102). O campo é obrigatório e vem pré-selecionado pela empresa da NF (ACXE = industrialização, Q2P = comercialização); a tela mostra o CFOP que será usado (FR-036). Evidência: NF 979 da ACXE, sugerida 2.102 pelo OMIE e corrigida à mão para 2.101 pelo financeiro em 06/11/2026, às 12:04.
+- Q: De onde vem o 1º dígito do CFOP? → A: **Do CFOP sugerido pelo OMIE** (1 = mesmo estado, 2 = outro estado, 3 = importação). O Atlas só troca o final 101/102.
+- Q: E o CFOP sugerido que não é x.101 nem x.102 (uso e consumo x.556, outros), ou que não vem? → A: **O Atlas não mexe** naquele item.
+- Q: Onde fica registrada a escolha? → A: **No ledger do fiscal** (`stockbridge.recebimento_fiscal`, migration 0062), com o rastro por item.
+- Q: Chave própria? → A: Sim, `STOCKBRIDGE_FISCAL_CFOP_ENTRADA_ENABLED`, **desligada** por padrão, porque o OMIE nunca recebeu `cCFOPEntrada` pela API. O primeiro uso é acompanhado, com autorização do usuário (T114). Sem a 0062 a funcionalidade fica desligada, com erro no log.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Ver o PC sugerido para cada item e confirmar o vínculo (Priority: P1)
@@ -117,6 +129,7 @@ Com os PCs confirmados, o operador confirma o recebimento. O Atlas conclui o rec
 4. **Given** o fiscal concluído com vínculo, **When** se consulta o PC no OMIE, **Then** ele mostra a quantidade recebida desse item. [Confirmado no teste da NF 7813, em 21/10/2026: o próprio OMIE atualizou o `nQtdeRec` do PC 304 para 18.000 ao concluir. A etapa do PC continuou 15 logo depois da conclusão.]
 5. **Given** o vínculo trocou a descrição do item no OMIE, **When** a NF passa a constar como "fiscal concluído" no espelho, **Then** ela **não** volta para a fila (o item é reconhecido pela sequência).
 6. **Given** um item da NF de sucata que vira vários produtos no estoque, **When** o recebimento é concluído, **Then** o item fiscal fica vinculado a um único item de PC e a entrada de estoque reparte a quantidade entre os produtos, como hoje.
+7. **Given** uma NF de outro estado com fiscal pendente e o CFOP de entrada habilitado (FR-036), **When** o operador confirma o recebimento com a finalidade Industrialização (a pré-selecionada na ACXE), **Then** cada item cujo CFOP sugerido pelo OMIE é x.101/x.102 sai com CFOP de entrada 2.101, o item com outro CFOP segue o do OMIE, e o ledger guarda a finalidade e o CFOP de cada item (caso real: NF 979 da ACXE, sugerido 2.102).
 
 ---
 
@@ -201,6 +214,8 @@ A compra nacional também pode ser feita pela ACXE. A NF e o PC chegam só ao OM
 - **Dispensa de NF** (016): continua valendo. A dispensa não desfaz vínculo nem fiscal no OMIE, e o aviso ao fiscal passa a citar o PC vinculado, quando houver. A dispensa ativa continua tirando a NF da fila mesmo revertida, e o fiscal não recebe o aviso de reversão de NF dispensada (o e-mail da dispensa já o mandou tratar a nota).
 - **Fiscal revertido no portal depois de concluído pelo Atlas** (caso real de 25/10/2026: NF 19252 × PC 308, concluída às 17:02 e revertida às 17:13): a reversão devolve o recebimento à etapa 40, desfaz a conta a pagar e o recebido do PC, e mantém o vínculo, o "não movimentar estoque" e as quantidades dos itens. O Atlas compara as horas de evento do OMIE (nunca as de sincronização) e, quando a pendência é posterior à conclusão, a NF volta como "fiscal pendente", com o selo e o aviso (FR-035). O espelho de recebimentos leva até ~30 min para refletir a reversão: nessa janela, o clique de NF cujo fiscal o Atlas concluiu (há pelo menos 75 s) lê o recebimento ao vivo e responde `409 RECEBIMENTO_FISCAL_REVERTIDO`, sem gravar nada. Se a entrada física já foi lançada, a NF não volta à fila e o fiscal é avisado por e-mail. Se o fiscal concluir de novo no portal, a conclusão mais nova desliga o sinal e a NF volta a "fiscal já feito"; sem marcar "não movimentar estoque", vale a trava de estoque já lançado (FR-021a). A nota de entrada no espelho de NF não serve de sinal: o espelho nunca a marca como excluída.
 - **Correção do fiscal no portal (reverter, editar, concluir)**, como na NF 60199 (research D15): entre a reversão e a nova conclusão a NF aparece como "Fiscal revertido no OMIE", e o aviso da tela manda o operador falar com o fiscal antes de dar entrada, porque um clique nessa janela faria o Atlas concluir o fiscal em paralelo à correção.
+- **CFOP de entrada sugerido fora de x.101/x.102 ou ausente** (uso e consumo x.556, caso de cerca de 9 NFs da ACXE em 2026, ou CFOP que o OMIE não devolve): o Atlas não manda CFOP naquele item, que segue o do OMIE; os demais itens da NF trocam normalmente (FR-036). A finalidade escolhida não muda um CFOP x.556.
+- **NF já concluída antes da funcionalidade** (a NF 979, o fiscal feito no portal): não há `EDITAR` do Atlas para carregar o CFOP, e a nota de entrada fica como o OMIE a gerou. A NF com fiscal já feito não pede a finalidade. A 979 foi corrigida à mão pelo financeiro em 06/11/2026.
 - **Chave de operação desligada**: comportamento da contenção. A fila mostra só NFs com fiscal já feito, e o Atlas faz só o físico. O tratamento do fiscal revertido (FR-035) vale só com a chave ligada, com `STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED` e com a migration 0060; sem isso o ledger `concluido` é final, como na 016.
 
 ## Requirements *(mandatory)*
@@ -266,6 +281,10 @@ A compra nacional também pode ser feita pela ACXE. A NF e o PC chegam só ao OM
 
 - **FR-035**: Quando o recebimento fiscal que o Atlas concluiu for revertido no portal do OMIE, o sistema MUST tratá-lo como pendente e MUST NOT desfazer nada no OMIE. (a) A NF MUST voltar à fila como "fiscal pendente", com o selo "Fiscal revertido no OMIE" e, no detalhe, o aviso com a hora da reversão; o clique do operador MUST concluir o fiscal de novo, com o PC confirmado (FR-007, FR-009). (b) A reversão MUST ser percebida comparando horas de evento do OMIE (alteração do recebimento e da nota de entrada, em horário de Brasília) com a conclusão, com margem de 2 minutos para a pendência vinda do espelho; horas de sincronização (`synced_at`) e a presença da nota de entrada no espelho de NF MUST NOT servir de sinal. (c) O clique de NF cujo fiscal o Atlas concluiu há pelo menos 75 s MUST ler o recebimento no OMIE antes de pular o fiscal e, se ele não estiver recebido, MUST marcar a reversão, recusar com `409 RECEBIMENTO_FISCAL_REVERTIDO` e não gravar movimentação, aprovação nem escrita no OMIE. (d) A reversão MUST deixar rastro auditável (ledger `revertido`, com a origem, espelho ou OMIE ao vivo, quando e, na leitura ao vivo, quem), e os vínculos de PC da tentativa revertida MUST sair do saldo e da reserva do PC. (e) A NF revertida com a entrada física já lançada para todos os itens MUST NOT voltar à fila; o fiscal MUST ser avisado por e-mail (uma vez por NF, e não quando há dispensa ativa) para concluir de novo no portal, sem movimentar estoque. Numa NF parcial (entrada de um item rejeitada pelo gestor), o item sem entrada volta à fila como fiscal revertido, e o aviso ao fiscal sai mesmo assim. (f) A rejeição do gestor MUST NOT marcar a reversão (FR-018). (g) O tratamento MUST valer só com a chave da 016 ligada e MUST poder ser desligado por `STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED`, voltando ao comportamento anterior.
 
+**CFOP de entrada do fiscal (06/11/2026, research D23)**
+
+- **FR-036**: Quando o Atlas conclui o recebimento fiscal, o CFOP de entrada dos itens MUST seguir a finalidade da compra. (a) A tela MUST pedir a finalidade uma vez por NF, obrigatória, com duas opções, Industrialização (final 101) e Comercialização (final 102), pré-selecionada pela empresa da NF (ACXE = industrialização, Q2P = comercialização), e MUST mostrar o CFOP que será usado; a escolha vale para todos os itens. (b) O CFOP enviado ao OMIE no `EDITAR` de cada item MUST ter o 1º dígito do CFOP sugerido pelo OMIE (1 = mesmo estado, 2 = outro estado, 3 = importação) e o final da finalidade escolhida; o Atlas MUST NOT mexer no item cujo CFOP sugerido esteja fora de x.101/x.102 (uso e consumo x.556, outros) ou ausente, e o CFOP já igual ao alvo SHOULD NOT ser reenviado. (c) O CFOP MUST ir só no `EDITAR`, nunca no `IGNORAR` nem no `ASSOCIAR-PEDIDO`. (d) A finalidade escolhida e, por item, o CFOP sugerido, o alvo e se foi enviado MUST ser gravados no ledger do fiscal antes da primeira escrita no OMIE (auditoria). (e) Com o recurso habilitado e a finalidade ausente, o POST MUST ser recusado com `400 FINALIDADE_ENTRADA_OBRIGATORIA` antes de qualquer escrita. (f) O recurso MUST valer só com a chave da 016 ligada, MUST ter chave própria (`STOCKBRIDGE_FISCAL_CFOP_ENTRADA_ENABLED`), desligada por padrão, e MUST exigir a migration 0062; sem qualquer um dos três, vale a sugestão do OMIE, como antes. (g) NF com fiscal já feito MUST NOT pedir a finalidade.
+
 **Compra nacional pela ACXE (User Story 5)**
 
 - **FR-025**: A fila de recebimento nacional MUST incluir as NFs de compra nacional da ACXE, com fiscal pendente e já feito, identificadas pela empresa, com os mesmos critérios de elegibilidade da Q2P.
@@ -281,7 +300,7 @@ A compra nacional também pode ser feita pela ACXE. A NF e o PC chegam só ao OM
 - **Vínculo do OMIE**: associação item de NF → item de PC que o recebimento da NF-e já traz do OMIE, junto com o número do pedido informado na NF. É a sugestão principal do item. Fonte: cópia local dos recebimentos de NF-e, que ainda precisa ganhar essas colunas.
 - **Sugestão de PC por item**: para um item de NF, o vínculo do OMIE, ou, sem ele, os PCs candidatos em ordem, com o motivo de cada um (número do pedido na NF, quantidade e preço compatíveis) ou o motivo de não haver candidato.
 - **Vínculo confirmado**: item de NF (chave de acesso + sequência) → item de PC, com quem confirmou, quando, a situação do PC relida na confirmação e o resultado no OMIE.
-- **Registro da conclusão fiscal** (existente, 016): estendido para indicar o vínculo com PC e a reversão no portal (status `revertido`, com a origem, espelho ou leitura ao vivo, e o aviso ao fiscal).
+- **Registro da conclusão fiscal** (existente, 016): estendido para indicar o vínculo com PC, a reversão no portal (status `revertido`, com a origem, espelho ou leitura ao vivo, e o aviso ao fiscal) e a finalidade da compra com o CFOP de entrada por item (0062).
 - **Recebimento físico** (existente, 015/016): movimentação de estoque por item → produto(s), com aprovação quando há divergência. Na compra pela ACXE, lançada nas duas empresas, no local espelhado escolhido.
 
 ## Success Criteria *(mandatory)*
@@ -301,6 +320,7 @@ A compra nacional também pode ser feita pela ACXE. A NF e o PC chegam só ao OM
 - **SC-010**: Zero PCs baixados em unidade diferente da NF (kg × tonelada) por recebimento feito pelo Atlas.
 - **SC-011**: Uma confirmação e uma justificativa por nota quando um único PC atende todos os itens (NF 60199: eram 3 de cada).
 - **SC-012**: Zero NFs paradas na etapa 40 do OMIE por fiscal revertido no portal depois de concluído pelo Atlas (caso da NF 19252): a NF volta a "fiscal pendente" em até uma rodada do espelho ou no clique, e nenhum falso positivo entre os recebimentos já concluídos (validação em PROD em 25/10/2026: 1 de 4.289 recebimentos da Q2P marcado, a própria 19252, e 0 de 346 da ACXE).
+- **SC-013**: Com o recurso ligado, zero NFs recebidas pelo Atlas cuja nota de entrada saia no OMIE com a finalidade diferente da escolhida pelo operador nos itens de CFOP x.101/x.102 (caso da NF 979: sugerido 2.102, escolhido 2.101), e nenhuma correção manual do financeiro por esse motivo. Verificação no primeiro uso (T114): o ledger (`cfops_entrada`) contra o CFOP de entrada do recebimento e da nota de entrada, ao vivo no OMIE.
 
 ## Assumptions
 
@@ -335,3 +355,5 @@ A compra nacional também pode ser feita pela ACXE. A NF e o PC chegam só ao OM
 - Recebimento de importação.
 - A atualização frequente da cópia local de PCs, que é trabalho do n8n listado em Dependências.
 - Reverter ou desfazer o fiscal no OMIE pelo Atlas: a D21 da 017 só detecta a reversão feita no portal e refaz a conclusão no clique do operador (FR-035). Refazer só o fiscal de NF com a entrada física já lançada também fica fora: o fiscal conclui no portal, avisado por e-mail.
+- Mexer no CFOP de entrada fora de x.101/x.102 (uso e consumo x.556 e outros): o Atlas só troca o final 101/102 (FR-036).
+- Finalidades diferentes por item dentro da mesma NF, e corrigir o CFOP de entrada das NFs já concluídas antes da funcionalidade (a NF 979 foi corrigida à mão pelo financeiro em 06/11/2026).

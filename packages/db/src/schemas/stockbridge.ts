@@ -554,6 +554,15 @@ export type RecebimentoFiscalPasso =
   | 'concluir'
   | 'reconsultar';
 export type EmpresaRecebimento = 'q2p' | 'acxe';
+/** 0062 (research D23 da 017): finalidade da compra que define o final do CFOP de entrada (101 / 102). */
+export type RecebimentoFiscalFinalidadeEntrada = 'industrializacao' | 'comercializacao';
+/** 0062: rastro por item do CFOP de entrada (jsonb `cfops_entrada`, chaves camelCase; cfopAlvo null = fora do recorte x.101/x.102). */
+export interface RecebimentoFiscalCfopEntradaItem {
+  nSequencia: number;
+  cfopSugerido: string | null;
+  cfopAlvo: string | null;
+  enviado: boolean;
+}
 
 export const recebimentoFiscal = stockbridgeSchema.table(
   'recebimento_fiscal',
@@ -585,6 +594,11 @@ export const recebimentoFiscal = stockbridgeSchema.table(
     revertidoOmieEm: timestamp('revertido_omie_em', { withTimezone: true }),
     revertidoPor: uuid('revertido_por').references(() => users.id),
     avisoFiscalEm: timestamp('aviso_fiscal_em', { withTimezone: true }),
+    // 0062 (research D23 da 017): finalidade escolhida pelo operador (final 101/102 do CFOP de entrada) e o
+    // rastro por item do que o Atlas mandou no EDITAR; null = o Atlas nao aplicou CFOP (chave desligada ou
+    // tentativa anterior a 0062). cfops_entrada exige finalidade_entrada (CHECK).
+    finalidadeEntrada: varchar('finalidade_entrada', { length: 20 }).$type<RecebimentoFiscalFinalidadeEntrada>(),
+    cfopsEntrada: jsonb('cfops_entrada').$type<RecebimentoFiscalCfopEntradaItem[]>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

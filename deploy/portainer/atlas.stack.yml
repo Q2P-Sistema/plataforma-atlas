@@ -122,6 +122,12 @@ services:
       STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO: ${STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO:-false}
       # Excedente acima deste % da NF do item nao vai ao PC (provavel erro de digitacao).
       STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT: ${STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT:-10}
+      # CFOP de entrada do fiscal pela finalidade da compra (research D23 da 017): o operador escolhe
+      # industrializacao (final 101) ou comercializacao (final 102) por NF e o Atlas troca so o final do
+      # CFOP sugerido pelo OMIE (NF 979 da ACXE, 06/11/2026). So vale com STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED=true.
+      # Default false; exige a migration 0062 antes da imagem; ligar com o primeiro uso acompanhado
+      # (o OMIE nunca recebeu cCFOPEntrada pela API).
+      STOCKBRIDGE_FISCAL_CFOP_ENTRADA_ENABLED: ${STOCKBRIDGE_FISCAL_CFOP_ENTRADA_ENABLED:-false}
       # Feature 017, Historia 5: NF de compra nacional da ACXE na fila (default false). So vale com
       # STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED=true e com o corte da ACXE (YYYY-MM-DD, definido na ativacao;
       # a ACXE recebe hoje pelo portal com estoque e NF anterior ao corte nunca entra na fila).

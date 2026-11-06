@@ -53,8 +53,12 @@ const svc = {
   avisarComprasNfSemPc: vi.fn(),
   definirConjuntoCorrelacao: vi.fn(),
   solicitarRecebimentoExterno: vi.fn(),
+  listarLedgerFiscal: vi.fn(),
 };
 let flagExterno = true;
+// Feature 017 (research D23): CFOP de entrada habilitado (chave da 016 + chave propria + 0062) e chave da 016.
+let cfopHabilitado = false;
+let flagFiscal = false;
 vi.mock('../services/correlacao-produto.service.js', () => ({
   definirConjuntoCorrelacao: (...a: unknown[]) => svc.definirConjuntoCorrelacao(...a),
 }));
@@ -72,7 +76,16 @@ vi.mock('../services/fila-nacional.service.js', async () => {
     ...real,
     getFilaNacional: (...a: unknown[]) => svc.getFilaNacional(...a),
     getDetalheNfNacional: (...a: unknown[]) => svc.getDetalheNfNacional(...a),
+    recebimentoFiscalHabilitado: () => flagFiscal,
   };
+});
+vi.mock('../services/cfop-entrada.js', async () => {
+  const real = await vi.importActual<typeof import('../services/cfop-entrada.js')>('../services/cfop-entrada.js');
+  return { ...real, cfopEntradaHabilitado: async () => cfopHabilitado };
+});
+vi.mock('../services/recebimento-fiscal.service.js', async () => {
+  const real = await vi.importActual<typeof import('../services/recebimento-fiscal.service.js')>('../services/recebimento-fiscal.service.js');
+  return { ...real, listarLedgerFiscal: (...a: unknown[]) => svc.listarLedgerFiscal(...a) };
 });
 vi.mock('../services/recebimento-nacional.service.js', async () => {
   const real = await vi.importActual<typeof import('../services/recebimento-nacional.service.js')>('../services/recebimento-nacional.service.js');
@@ -129,6 +142,8 @@ beforeEach(() => {
   roleAtual = 'operador';
   armazemVinculado = true;
   flagExterno = true;
+  cfopHabilitado = false;
+  flagFiscal = false;
   for (const f of Object.values(svc)) f.mockReset();
   svc.getFilaNacional.mockResolvedValue([]);
   svc.getDetalheNfNacional.mockResolvedValue({ nfChaveAcesso: CHAVE, notaFiscal: '66724', fornecedorCnpj: '68.176.072/0001-28', fornecedorNome: 'ISOFORMA PLASTICOS INDUSTRIAIS LTDA', itens: [] });
@@ -186,6 +201,33 @@ describe('GET /recebimento/nacional/fila/:chaveAcesso', () => {
     flagExterno = false;
     res = await request(app).get(`/api/v1/stockbridge/recebimento/nacional/fila/${CHAVE}`);
     expect(res.body.data.recebimentoExternoHabilitado).toBe(false);
+  });
+
+  // Feature 017 (research D23): a tela so mostra "Finalidade da compra" com o CFOP de entrada habilitado,
+  // pre-selecionada pela empresa da NF (ACXE = industrializacao, Q2P = comercializacao).
+  it('017 D23: detalhe traz finalidadeEntradaHabilitada (desligada por padrao) e finalidadeEntradaPadrao da Q2P', async () => {
+    const res = await request(app).get(`/api/v1/stockbridge/recebimento/nacional/fila/${CHAVE}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.finalidadeEntradaHabilitada).toBe(false);
+    expect(res.body.data.finalidadeEntradaPadrao).toBe('comercializacao');
+    // o resto do detalhe segue intacto
+    expect(res.body.data.nfChaveAcesso).toBe(CHAVE);
+    expect(res.body.data.recebimentoFiscalHabilitado).toBe(false);
+  });
+
+  it.each([
+    ['q2p', 'comercializacao'],
+    ['acxe', 'industrializacao'],
+    [undefined, 'comercializacao'],
+  ])('017 D23: habilitado e NF da empresa %s -> finalidade padrao %s', async (empresa, padrao) => {
+    cfopHabilitado = true;
+    flagFiscal = true;
+    svc.getDetalheNfNacional.mockResolvedValue({ nfChaveAcesso: CHAVE, notaFiscal: '66724', itens: [], ...(empresa ? { empresa } : {}) });
+    const res = await request(app).get(`/api/v1/stockbridge/recebimento/nacional/fila/${CHAVE}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.finalidadeEntradaHabilitada).toBe(true);
+    expect(res.body.data.finalidadeEntradaPadrao).toBe(padrao);
+    expect(res.body.data.recebimentoFiscalHabilitado).toBe(true);
   });
 
   it.each([
@@ -270,6 +312,72 @@ describe('POST /recebimento/nacional/por-nf', () => {
     expect(res.status).toBe(status);
     expect(res.body.error.code).toBe(code);
     expect(typeof res.body.error.userMessage).toBe('string');
+  });
+
+  // ── Feature 017 (research D23) — finalidade_entrada (CFOP de entrada 101/102 do fiscal pelo Atlas) ──
+  it.each(['industrializacao', 'comercializacao'] as const)('017 D23: aceita finalidade_entrada=%s e repassa como finalidadeEntrada', async (finalidade) => {
+    const res = await request(app).post('/api/v1/stockbridge/recebimento/nacional/por-nf').send({ ...bodyValido(), finalidade_entrada: finalidade });
+    expect(res.status).toBe(201);
+    expect(svc.processarRecebimentoNacionalPorNf).toHaveBeenCalledTimes(1);
+    const input = svc.processarRecebimentoNacionalPorNf.mock.calls[0]![0] as Record<string, unknown>;
+    expect(input.finalidadeEntrada).toBe(finalidade);
+    // o campo do corpo (snake_case) nao vaza para o servico
+    expect('finalidade_entrada' in input).toBe(false);
+    expect(input.nfChaveAcesso).toBe(CHAVE);
+  });
+
+  it('017 D23: corpo SEM finalidade_entrada segue aceito e o servico nao recebe a chave (quem exige e o servico)', async () => {
+    const res = await request(app).post('/api/v1/stockbridge/recebimento/nacional/por-nf').send(bodyValido());
+    expect(res.status).toBe(201);
+    const input = svc.processarRecebimentoNacionalPorNf.mock.calls[0]![0] as Record<string, unknown>;
+    expect('finalidadeEntrada' in input).toBe(false);
+  });
+
+  it.each([
+    ['valor fora do enum', 'revenda'],
+    ['caixa diferente', 'Industrializacao'],
+    ['null', null],
+    ['vazio', ''],
+    ['numero', 101],
+  ])('017 D23: 400 INVALID_INPUT com finalidade_entrada invalida (%s), sem chamar o servico', async (_n, valor) => {
+    const res = await request(app).post('/api/v1/stockbridge/recebimento/nacional/por-nf').send({ ...bodyValido(), finalidade_entrada: valor });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('INVALID_INPUT');
+    expect(res.body.error.message).toContain('finalidade_entrada');
+    expect(svc.processarRecebimentoNacionalPorNf).not.toHaveBeenCalled();
+  });
+
+  it('017 D23: RECUSA cfop_entrada enviado pelo cliente (o CFOP e calculado pelo Atlas a partir da finalidade)', async () => {
+    const res = await request(app).post('/api/v1/stockbridge/recebimento/nacional/por-nf').send({ ...bodyValido(), cfop_entrada: '2.101' });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('INVALID_INPUT');
+    expect(svc.processarRecebimentoNacionalPorNf).not.toHaveBeenCalled();
+  });
+
+  it('017 D23: FINALIDADE_ENTRADA_OBRIGATORIA -> 400 com a mensagem ao usuario (sem codigo OMIE)', async () => {
+    svc.processarRecebimentoNacionalPorNf.mockRejectedValue(
+      new ValidacaoRecebimentoNacionalError(
+        'FINALIDADE_ENTRADA_OBRIGATORIA',
+        'Escolha a finalidade da compra (industrialização ou comercialização) para concluir o recebimento fiscal.',
+      ),
+    );
+    const res = await request(app).post('/api/v1/stockbridge/recebimento/nacional/por-nf').send(bodyValido());
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('FINALIDADE_ENTRADA_OBRIGATORIA');
+    expect(res.body.error.userMessage).toBe('Escolha a finalidade da compra (industrialização ou comercialização) para concluir o recebimento fiscal.');
+    expect(res.body.error.userMessage).not.toMatch(/\d{10}/);
+  });
+
+  it('017 D23: a resposta do POST leva fiscal.cfopsEntrada e fiscal.finalidadeEntrada quando o servico os devolve', async () => {
+    const cfopsEntrada = [{ nSequencia: 1, cfopSugerido: '2.102', cfopAlvo: '2.101', enviado: true }];
+    svc.processarRecebimentoNacionalPorNf.mockResolvedValue({
+      nfChaveAcesso: CHAVE, notaFiscal: '66724', produtos: [], resumo: { enviadosParaAprovacao: 1, jaRecebidos: 0, bloqueados: 0, falhas: 0 },
+      fiscal: { status: 'concluido', concluidoEm: null, mensagem: 'ok', vinculos: [], semVinculo: [], avisoCompras: false, cfopsEntrada, finalidadeEntrada: 'industrializacao' },
+    });
+    const res = await request(app).post('/api/v1/stockbridge/recebimento/nacional/por-nf').send({ ...bodyValido(), finalidade_entrada: 'industrializacao' });
+    expect(res.status).toBe(201);
+    expect(res.body.data.fiscal.cfopsEntrada).toEqual(cfopsEntrada);
+    expect(res.body.data.fiscal.finalidadeEntrada).toBe('industrializacao');
   });
 
   // ── Feature 017 (ACXEGDP-437) — itens[].pc e erros do pedido de compra (T022/T024) ──
@@ -575,5 +683,27 @@ describe('POST /recebimento/nacional/recebimento-externo', () => {
     expect((await request(app).post(url).send(body())).status).toBe(403);
     roleAtual = null;
     expect((await request(app).post(url).send(body())).status).toBe(401);
+  });
+});
+
+// ── Feature 017 (research D23) — GET /nacional/fiscal leva finalidadeEntrada e cfopsEntrada do ledger ──
+describe('GET /recebimento/nacional/fiscal — CFOP de entrada no ledger (017 D23)', () => {
+  const URL_LEDGER = '/api/v1/stockbridge/recebimento/nacional/fiscal';
+
+  it('a listagem do ledger devolve finalidadeEntrada e cfopsEntrada como o servico os entrega', async () => {
+    flagFiscal = true;
+    roleAtual = 'gestor';
+    const cfopsEntrada = [
+      { nSequencia: 1, cfopSugerido: '2.102', cfopAlvo: '2.101', enviado: true },
+      { nSequencia: 2, cfopSugerido: '2.556', cfopAlvo: null, enviado: false },
+    ];
+    svc.listarLedgerFiscal.mockResolvedValue([
+      { id: 'l1', notaFiscal: '979', status: 'concluido', finalidadeEntrada: 'industrializacao', cfopsEntrada },
+      { id: 'l2', notaFiscal: '6842', status: 'concluido', finalidadeEntrada: null, cfopsEntrada: null },
+    ]);
+    const res = await request(app).get(URL_LEDGER);
+    expect(res.status).toBe(200);
+    expect(res.body.data[0]).toMatchObject({ finalidadeEntrada: 'industrializacao', cfopsEntrada });
+    expect(res.body.data[1]).toMatchObject({ finalidadeEntrada: null, cfopsEntrada: null });
   });
 });
