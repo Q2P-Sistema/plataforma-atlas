@@ -46,6 +46,7 @@ import {
 import { definirConjuntoCorrelacao } from '../services/correlacao-produto.service.js';
 import { recebimentoNacionalAcxeHabilitado } from '../services/empresa-nacional.js';
 import { RecebimentoFiscalRevertidoError } from '../services/fiscal-revertido.js';
+import { cfopEntradaHabilitado, finalidadeEntradaPadrao } from '../services/cfop-entrada.js';
 import {
   RecebimentoFiscalError,
   RecebimentoFiscalEmAndamentoError,
@@ -375,7 +376,18 @@ router.get(
       // A UI esconde a acao de baixa externa quando a flag esta desligada (T070);
       // a flag e configuracao de ambiente, e a tela precisa saber sem tentar o POST.
       // Feature 016: a UI mostra o selo/banner fiscal e o botao de dispensa so com a flag ligada.
-      res.json({ data: { ...data, recebimentoExternoHabilitado: recebimentoExternoHabilitado(), recebimentoFiscalHabilitado: recebimentoFiscalHabilitado() }, error: null });
+      // Feature 017 (research D23): a tela so mostra o campo "Finalidade da compra" com o CFOP de entrada
+      // habilitado (chave da 016 + chave propria + migration 0062), pre-selecionado pela empresa da NF.
+      res.json({
+        data: {
+          ...data,
+          recebimentoExternoHabilitado: recebimentoExternoHabilitado(),
+          recebimentoFiscalHabilitado: recebimentoFiscalHabilitado(),
+          finalidadeEntradaHabilitada: await cfopEntradaHabilitado(),
+          finalidadeEntradaPadrao: finalidadeEntradaPadrao(data.empresa ?? 'q2p'),
+        },
+        error: null,
+      });
     } catch (err) {
       if (responderErroFilaNacional(res, err)) return;
       logger.error({ err, chave: parsed.data }, 'Erro ao detalhar NF nacional');
@@ -429,6 +441,9 @@ const PorNfBodySchema = z
   .object({
     nf_chave_acesso: ChaveAcessoSchema,
     observacoes: z.string().max(1000).optional().nullable(),
+    // Feature 017 (research D23): finalidade da compra da NF (CFOP de entrada 101/102 do fiscal pelo Atlas).
+    // Opcional aqui; a obrigatoriedade (fiscal pelo Atlas + chave propria + 0062) e decidida no servico.
+    finalidade_entrada: z.enum(['industrializacao', 'comercializacao']).optional(),
     itens: z.array(ItemPorNfSchema).min(1).max(100),
   })
   .strict();
@@ -458,6 +473,8 @@ router.post(
       const result = await processarRecebimentoNacionalPorNf({
         nfChaveAcesso: parsed.data.nf_chave_acesso,
         observacoes: parsed.data.observacoes ?? null,
+        // so quando o cliente mandou (spread condicional): o servico decide se exige ou ignora (research D23)
+        ...(parsed.data.finalidade_entrada ? { finalidadeEntrada: parsed.data.finalidade_entrada } : {}),
         itens: parsed.data.itens.map((it) => ({
           indice: it.indice,
           descricaoFornecedor: it.descricao_fornecedor,

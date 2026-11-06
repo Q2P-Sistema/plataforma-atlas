@@ -8,7 +8,7 @@
 
 Desde 19/10/2026, compras lança pedido de compra (PC) no OMIE para a compra nacional. A receita fiscal da 016 (`EDITAR → IGNORAR → Concluir`) desfaz o vínculo do item com o PC, e o PC fica aberto. Isso aconteceu nas NFs 7736 e 67913, e por isso o fiscal pelo Atlas está desligado em PROD desde 21/10 (contenção). A feature faz o Atlas sugerir o PC de cada item, o operador confirmar, e o fiscal ser concluído **com o item vinculado ao PC e sem movimentar estoque no OMIE**. O estoque continua entrando pelo Atlas, depois da aprovação.
 
-**Abordagem técnica**: seis peças sobre a estrutura da 015/016, mais os ajustes pós-estreia de 22/10/2026 (peça 7) e o fiscal revertido no portal (peça 8, 25/10/2026).
+**Abordagem técnica**: seis peças sobre a estrutura da 015/016, mais os ajustes pós-estreia de 22/10/2026 (peça 7), o fiscal revertido no portal (peça 8, 25/10/2026) e o CFOP de entrada do fiscal pela finalidade da compra (peça 9, 06/11/2026).
 
 1. **Espelho de recebimentos com o vínculo**: quatro colunas novas (`n_id_pedido`, `n_id_it_pedido`, `n_num_ped_compra`, `c_num_it_ped_compra`) na migration `0056`, gravadas pelo n8n (D9). É de onde vem o "vínculo do OMIE" e a detecção de estoque lançado pelo portal.
 2. **Sugestão de PC** (`pc-sugestao.service.ts`, novo): monta, por item agregado, o vínculo do OMIE, os candidatos dentro da tolerância (2% na quantidade, 1% no preço, etapa 15, mesmo fornecedor), os outros PCs do fornecedor (escolha manual com justificativa) e os PCs aguardando aprovação. Lê só o Postgres: espelho de recebimentos, cópia de PCs na Rev 1.5 e cache de PCs vistos (D3, D16).
@@ -27,6 +27,11 @@ Desde 19/10/2026, compras lança pedido de compra (PC) no OMIE para a compra nac
    - **leitura ao vivo no clique** de NF cujo fiscal o Atlas concluiu (há pelo menos 75 s), com `409 RECEBIMENTO_FISCAL_REVERTIDO`;
    - **varredura no cron `5,35`** e e-mail ao fiscal quando a entrada física já foi lançada (a NF não volta à fila);
    - kill switch `STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED`; vale só com a chave da 016; o Atlas nunca reverte no OMIE.
+9. **CFOP de entrada do fiscal pela finalidade da compra** (D23, 06/11/2026, NF 979 da Solutec na ACXE, T076): o `EDITAR` não mandava CFOP, e valeu a sugestão do OMIE (2.102) numa compra para industrialização (2.101), que o financeiro corrigiu à mão.
+   - **escolha do operador**, uma vez por NF, obrigatória, pré-selecionada pela empresa (ACXE = industrialização, Q2P = comercialização): `finalidade_entrada` no POST e bloco "Finalidade da compra" na tela;
+   - **regra** (`cfop-entrada.ts`): o 1º dígito vem do CFOP sugerido pelo OMIE, lido ao vivo, e o Atlas só troca o final 101/102; sugerido fora de x.101/x.102 ou ausente, não mexe. O `cCFOPEntrada` vai só no `EDITAR` (`itensAjustes`);
+   - **ledger** (migration `0062`): `finalidade_entrada` e `cfops_entrada` (rastro por item), gravados antes da primeira escrita no OMIE;
+   - chave `STOCKBRIDGE_FISCAL_CFOP_ENTRADA_ENABLED`, **desligada** por padrão e só com a chave da 016: o OMIE nunca recebeu `cCFOPEntrada` pela API, então o primeiro uso é acompanhado (T114).
 
 **O que a pesquisa fixou** (detalhe em [research.md](./research.md)):
 
@@ -37,6 +42,7 @@ Desde 19/10/2026, compras lança pedido de compra (PC) no OMIE para a compra nac
 - O OMIE grava no PC a quantidade recebida **na unidade da NF**, sem converter (NF em toneladas × PC em kg). Daí a trava de unidade (D15).
 - O OMIE tira da lista de pendentes o PC com item associado a um recebimento aberto. Daí o cache de PCs vistos (D16).
 - A reversão no portal devolve o recebimento à etapa 40, mantém vínculo, "não movimentar estoque" e quantidades, e devolve o saldo do PC; o espelho de NF nunca marca a nota como excluída (0 de 24.978 cabeçalhos da Q2P). Daí o sinal por horas de evento do OMIE e a leitura ao vivo no clique (D21 da 017).
+- Sem CFOP no `EDITAR`, vale a sugestão do OMIE, que na NF 979 da ACXE saiu de comercialização (2.102) numa compra para industrialização (2.101). Em 2026 a ACXE usou 2.101 em cerca de 21 NFs e 2.556 em cerca de 9; a Q2P, 1.102 em 341 e 2.102 em cerca de 250. Daí a finalidade escolhida pelo operador, que troca só o final 101/102 (D23).
 
 ## Technical Context
 
@@ -63,6 +69,7 @@ Desde 19/10/2026, compras lança pedido de compra (PC) no OMIE para a compra nac
 - Portão 1: `NF_SEM_PC` nos dois modos, estoque já lançado, aviso deduplicado.
 - Regressão da contenção (chave desligada) e da baixa da 344.
 - Fiscal revertido (D21 da 017): o sinal (`fiscal-revertido`), a fila e o detalhe com e sem a D21 da 017 (golden `*-desligado` intactos), `adquirirLedger`, o clique e o 409, a varredura e o e-mail ao fiscal; opt-in com Postgres real e a 0060. A tela não tem teste automatizado no repositório (como em T097).
+- CFOP de entrada (D23): `cfop-entrada` (finalidade padrão, troca do final, 1º dígito, fora do recorte, guarda da 0062), o `EDITAR` com e sem `cCFOPEntrada` no fiscal, `400 FINALIDADE_ENTRADA_OBRIGATORIA`, o parser e o formato no cliente OMIE e, opt-in com Postgres real e a 0062, os `CHECK`s das colunas novas.
 - Supertest no schema `.strict()` do POST.
 - Integração `ATLAS_DB_INTEGRATION=1` para as triggers novas.
 
@@ -84,6 +91,7 @@ Desde 19/10/2026, compras lança pedido de compra (PC) no OMIE para a compra nac
 - `STOCKBRIDGE_PC_UNIDADE_DIFERENTE` (default `bloquear`, 22/10/2026).
 - `STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO` (default `false`, 23/10/2026, research D20; migration 0059) e `STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT` (default 10).
 - `STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED` (default `true`, 25/10/2026, D21 da 017; exige a migration 0060 e a chave da 016).
+- `STOCKBRIDGE_FISCAL_CFOP_ENTRADA_ENABLED` (default `false`, 06/11/2026, D23; exige a migration 0062 e a chave da 016).
 
 Todas no schema Zod de `packages/core/src/config.ts` e listadas nas stacks (`atlas.stack.yml`, YAML do UAT, `.env.example`). Reaproveitada: `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED`.
 
@@ -105,7 +113,7 @@ Todas no schema Zod de `packages/core/src/config.ts` e listadas nas stacks (`atl
 
 **Scale/Scope**:
 - Volume: cerca de 3 PCs nacionais por dia na Q2P (19 a 21/10), zero na ACXE; fila nacional de unidades por dia.
-- Mudanças: cerca de 10 arquivos de backend estendidos e 5 novos (com `pc-visto.service.ts`, `fiscal-revertido.ts` e `fiscal-revertido-varredura.service.ts`), 5 migrations (0056, 0057, na Fase 2 a 0058, para a baixa do PC pelo peso conferido a 0059 e, para o fiscal revertido, a 0060), 3 arquivos do cliente OMIE, 1 tela estendida, 2 workflows n8n (1 revisão e 1 novo).
+- Mudanças: cerca de 10 arquivos de backend estendidos e 6 novos (com `pc-visto.service.ts`, `fiscal-revertido.ts`, `fiscal-revertido-varredura.service.ts` e `cfop-entrada.ts`), 7 migrations (0056, 0057, na Fase 2 a 0058, para a baixa do PC pelo peso conferido a 0059, para o fiscal revertido a 0060, a 0061, só de dados, e, para o CFOP de entrada, a 0062), 3 arquivos do cliente OMIE, 1 tela estendida, 2 workflows n8n (1 revisão e 1 novo).
 
 ## Constitution Check
 
@@ -125,6 +133,8 @@ Todas no schema Zod de `packages/core/src/config.ts` e listadas nas stacks (`atl
 
 **Re-check da D21 da 017** (25/10/2026): mantido PASS. A leitura ao vivo nova é só no POST, imediatamente antes de decidir se pula o fiscal, de uma NF por vez, e fica documentada na seção 2 da 007 e no comentário do código. A fila, o detalhe e a varredura do cron leem só o Postgres, e o Atlas não escreve no OMIE para reverter nada. A 0060 é aditiva, e as colunas novas herdam o trigger de auditoria das duas tabelas (Princípio IV).
 
+**Re-check da D23** (06/11/2026): mantido PASS. Nenhuma leitura nova do OMIE: o CFOP sugerido vem da `ConsultarRecebimento` que o fiscal já faz no clique. A escrita é o mesmo `AlterarRecebimento` `EDITAR` da exceção ao Princípio II já documentada (`produtos/recebimentonfe/`), com um campo a mais em `itensAjustes`. A 0062 é aditiva, e as colunas novas herdam o trigger de auditoria do ledger (Princípio IV). Chave própria desligada por padrão e ativação acompanhada (Princípio V).
+
 ## Project Structure
 
 ### Documentation (this feature)
@@ -132,10 +142,10 @@ Todas no schema Zod de `packages/core/src/config.ts` e listadas nas stacks (`atl
 ```text
 specs/017-recebimento-nacional-com-pc/
 ├── plan.md                                  # Este arquivo
-├── spec.md                                  # 5 histórias, FR-000..035, SC-001..012, clarificações de 21/10, 22/10, 23/10 e 25/10/2026
-├── research.md                              # Phase 0: 21 decisões, D1 a D21 da 017 (teste NF 7813, T033, gate ACXEGDP-376, cache de PCs, unidade, ACXE, quantidade recebida, peso conferido, fiscal revertido)
-├── data-model.md                            # Phase 1: colunas do espelho, 3 tabelas novas (§11 = cache de PCs vistos), extensões, shapes (§13 = fiscal revertido)
-├── quickstart.md                            # Phase 1: 12 cenários + ordem de deploy
+├── spec.md                                  # 5 histórias, FR-000..036, SC-001..013, clarificações de 21/10, 22/10, 23/10, 25/10 e 06/11/2026
+├── research.md                              # Phase 0: 23 decisões, D1 a D23 (teste NF 7813, T033, gate ACXEGDP-376, cache de PCs, unidade, ACXE, quantidade recebida, peso conferido, fiscal revertido, PC menor que a NF, CFOP de entrada pela finalidade)
+├── data-model.md                            # Phase 1: colunas do espelho, 3 tabelas novas (§11 = cache de PCs vistos), extensões, shapes (§13 = fiscal revertido, §14 = finalidade e CFOP de entrada)
+├── quickstart.md                            # Phase 1: 13 cenários + ordem de deploy
 ├── contracts/
 │   ├── recebimento-nacional-pc.md           # API Atlas: fila/detalhe/POST/ledger estendidos, erros novos
 │   └── espelhos-n8n.md                      # n8n: colunas de pedido (Q2P) + espelho ACXE
@@ -157,9 +167,11 @@ packages/db/
 │   │                                                  #   fornecedor_exclusao.empresa (+ Q2P excluída na ACXE)
 │   ├── 0059_stockbridge_pc_peso_conferido.sql         # NOVA (23/10/2026, D20): recebimento_fiscal_pc.kg_recebido_pc;
 │   │                                                  #   motivo 'excedente_rejeitado' em nf_aviso_compras
-│   └── 0060_stockbridge_fiscal_revertido.sql          # NOVA (25/10/2026, D21 da 017): status 'revertido' + revertido_* e
-│                                                      #   aviso_fiscal_em no ledger; 'revertido' em recebimento_fiscal_pc
-└── src/schemas/stockbridge.ts                         # ESTENDER: recebimentoFiscal (+campos, +status da 0060), recebimentoFiscalPc,
+│   ├── 0060_stockbridge_fiscal_revertido.sql          # NOVA (25/10/2026, D21 da 017): status 'revertido' + revertido_* e
+│   │                                                  #   aviso_fiscal_em no ledger; 'revertido' em recebimento_fiscal_pc
+│   ├── 0061_stockbridge_sequencia_item_entradas_antigas.sql # NOVA (28/10/2026, T102): só dados — nf_item_sequencias nas entradas antigas
+│   └── 0062_stockbridge_recebimento_fiscal_cfop_entrada.sql # NOVA (06/11/2026, D23): finalidade_entrada + cfops_entrada no ledger
+└── src/schemas/stockbridge.ts                         # ESTENDER: recebimentoFiscal (+campos, +status da 0060, +finalidade da 0062), recebimentoFiscalPc,
                                                        #   nfAvisoCompras, fornecedorExclusao.empresa
 
 packages/core/src/config.ts                            # ESTENDER: 10 variáveis novas (data-model §10)
@@ -181,12 +193,15 @@ modules/stockbridge/src/
 │   ├── fiscal-revertido.ts                  # NOVO (25/10, D21 da 017): módulo folha — fiscalRevertidoSql (o sinal), guarda da 0060,
 │   │                                        #   marcarLedgerRevertido, ledgerFiscalVigente, RecebimentoFiscalRevertidoError
 │   ├── fiscal-revertido-varredura.service.ts # NOVO (25/10, D21 da 017): cron 5,35 — fase A marca ledgers, fase B avisa o fiscal
+│   ├── cfop-entrada.ts                      # NOVO (06/11, D23): módulo folha — finalidade, cfopEntradaParaFinalidade (x.101/x.102),
+│   │                                        #   guarda da 0062, cfopEntradaHabilitado
 │   ├── fila-nacional.service.ts             # ESTENDER: colunas de pedido nas duas fontes; pc por item agregado;
 │   │                                        #   pcSituacao; estoqueLancadoPeloOmie; empresa (fase 2);
 │   │                                        #   fiscalRevertido/fiscalRevertidoEm: fonte (b) serve a NF revertida (D21 da 017)
 │   ├── recebimento-fiscal.service.ts        # ESTENDER: itensParaIgnorar só sem PC; ASSOCIAR-PEDIDO antes de EDITAR;
 │   │                                        #   recusa VINCULO_OMIE_MUDOU; linhas em recebimento_fiscal_pc;
-│   │                                        #   callOmie por empresa (fase 2); adquirirLedger marca revertido (D21 da 017)
+│   │                                        #   callOmie por empresa (fase 2); adquirirLedger marca revertido (D21 da 017);
+│   │                                        #   cCFOPEntrada no EDITAR pela finalidade e rastro no ledger (D23)
 │   ├── recebimento-nacional.service.ts      # ESTENDER: portão 1 (NF_SEM_PC, estoque já lançado, escolha de PC);
 │   │                                        #   pc no resultado; entrada ACXE/dual sem markup (fase 2);
 │   │                                        #   leitura ao vivo do recebimento no clique de NF concluída pelo Atlas (D21 da 017)
@@ -196,7 +211,8 @@ modules/stockbridge/src/
 │   └── pendencias-fiscais.service.ts        # ESTENDER: idem
 ├── cron/index.ts                            # ESTENDER: a varredura do fiscal revertido entra no job 5,35 (nunca uma 4ª expressão)
 ├── routes/recebimento-nacional.routes.ts    # ESTENDER: schema .strict() com itens[].pc; mapeamento dos erros novos
-│                                            #   (409 RECEBIMENTO_FISCAL_REVERTIDO); GET /fiscal com vínculos e status revertido
+│                                            #   (409 RECEBIMENTO_FISCAL_REVERTIDO); GET /fiscal com vínculos e status revertido;
+│                                            #   finalidade_entrada no POST (400 FINALIDADE_ENTRADA_OBRIGATORIA), no detalhe e no GET /fiscal (D23)
 └── __tests__/                               # NOVOS: pc-sugestao, recebimento-fiscal-pc, recebimento-nacional-pc;
                                              #   ESTENDER: rotas, fila unificada, flag-off, auditoria, cockpit/pendências
 
@@ -204,7 +220,8 @@ apps/web/src/pages/stockbridge/operador/
 └── RecebimentoNacionalNfPanel.tsx           # ESTENDER: selo de PC na fila; bloco "Pedido de compra" no ItemCard
                                              #   (vínculo do OMIE, candidatos, outros com justificativa, aguardando
                                              #   aprovação, sem PC); aviso de estoque já lançado; mensagens dos erros novos;
-                                             #   selo "Fiscal revertido no OMIE", aviso do detalhe e o 409 que recarrega a nota (D21 da 017)
+                                             #   selo "Fiscal revertido no OMIE", aviso do detalhe e o 409 que recarrega a nota (D21 da 017);
+                                             #   bloco "Finalidade da compra" (FinalidadeEntradaBloco.tsx, novo; D23)
 
 specs/007-stockbridge-module/research.md    # ESTENDER: seção 2, ação ASSOCIAR-PEDIDO
 CLAUDE.md                                   # ESTENDER: bloco StockBridge (feature 017)
@@ -221,12 +238,13 @@ deploy/portainer/atlas.stack.yml, YAML UAT, .env.example   # ESTENDER: variávei
 - **Ajustes pós-estreia** (22/10/2026): 0057 (cache de PCs vistos) e a imagem seguinte à v1.1.20, com PC por NF, PC de outro cadastro e trava de unidade.
 - **Fase 2** (História 5, ACXE): 0058, n8n ACXE, empresa na fila e no fiscal, entrada dual (ACXE + Q2P) no local espelhado; Extrema = 21.1 (research D11).
 - **Ajuste de 25/10/2026** (D21 da 017, fiscal revertido): 0060 **antes** da imagem; a chave nova (`STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED`) já vem ligada, mas a D21 da 017 só vale com a chave da 016 e com a 0060; primeiro uso acompanhado na próxima NF revertida (a 19252 foi concluída no portal em 27/10/2026).
+- **Ajuste de 06/11/2026** (D23, CFOP de entrada do fiscal pela finalidade da compra): 0062 **antes** da imagem; a chave nova (`STOCKBRIDGE_FISCAL_CFOP_ENTRADA_ENABLED`) nasce **desligada** e só vale com a da 016 e com a 0062; primeiro uso acompanhado, com autorização do usuário, na próxima NF nacional (T114).
 
 ## Complexity Tracking
 
 > Constitution Check passou sem violações; preenchimento não requerido.
 
-Cinco notas de desenho, nenhuma delas violação:
+Seis notas de desenho, nenhuma delas violação:
 
 **1. Teste com NF real antes de ativar.** O vínculo novo (`ASSOCIAR-PEDIDO`) foi exercitado contra o OMIE de produção, que é o único disponível, na NF 60199 (T033, 22/10/2026), e a chave foi religada depois (quickstart, pré-requisito 5). Não foi testada a troca de um vínculo existente (plano B em D2); a NF menor que o saldo do PC foi confirmada em 23/10/2026 (NF 67988, D20). O modo `converter` da trava de unidade (D15) teve o próprio teste em PROD em 25/10/2026 (T073, NF 19252 × PC 308) e foi ligado no mesmo dia (T074).
 
@@ -237,3 +255,5 @@ Cinco notas de desenho, nenhuma delas violação:
 **4. Sem entrada só na ACXE.** A compra nacional da ACXE entra sempre nas duas empresas. Quando chega fisicamente a Extrema, o local é o 21.1 EXTREMA, espelhado, para que vendas possa vender pela Q2P. O 21.2 EXTREMA (NACIONAL), só da ACXE, não é usado. Decidido em 21/10/2026, sem pendência para a Fase 2.
 
 **5. Sinal por horas de evento do OMIE, com leitura ao vivo no clique.** Comparar `synced_at` com a conclusão (a ideia da 016) marcaria falso positivo, porque o espelho regrava `synced_at` a cada rodada. O sinal usa `d_alt` + `h_alt` (Brasília) com margem de 2 min, e o clique de NF cujo fiscal o Atlas concluiu lê o recebimento ao vivo para cobrir a janela do espelho (~30 min). A 0060 vai antes da imagem; sem ela o tratamento fica desligado, com erro no log (D21 da 017).
+
+**6. Finalidade escolhida pelo operador, com o primeiro dígito do CFOP vindo do OMIE.** Derivar a finalidade do CFOP do fornecedor (x.101 × x.102) não bate com o uso real (a ACXE recebe 6.102 e lança 2.101), e um padrão único errava a ACXE em silêncio (NF 979). O operador decide o que o OMIE não sabe, a finalidade; o Atlas troca só o final 101/102 sobre o CFOP sugerido, que já traz o estado certo. A chave nasce desligada porque o OMIE nunca recebeu `cCFOPEntrada` pela API (D23).

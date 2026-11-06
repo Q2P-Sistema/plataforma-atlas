@@ -1,6 +1,6 @@
 # Data Model — Recebimento Nacional com Pedido de Compra
 
-**Feature**: `017-recebimento-nacional-com-pc` | **Migrations**: `0056` (Q2P, Histórias 1 a 4), `0057` (cache de PCs vistos, ajuste de 22/10/2026), `0058` (ACXE, História 5), `0059` (baixa do PC pelo peso conferido, research D20) e `0060` (fiscal revertido no OMIE, research D21 da 017)
+**Feature**: `017-recebimento-nacional-com-pc` | **Migrations**: `0056` (Q2P, Histórias 1 a 4), `0057` (cache de PCs vistos, ajuste de 22/10/2026), `0058` (ACXE, História 5), `0059` (baixa do PC pelo peso conferido, research D20), `0060` (fiscal revertido no OMIE, research D21 da 017), `0061` (só dados: sequência do item nas entradas nacionais anteriores à ACXEGDP-412, T102) e `0062` (finalidade da compra e CFOP de entrada do fiscal, research D23)
 
 Base: o modelo da feature 016 (`specs/016-recebimento-fiscal-nf/data-model.md`). Aqui ficam só as extensões.
 
@@ -39,7 +39,7 @@ Caso real, NF 7813 na etapa 40 em 21/10/2026: `n_id_pedido` 8516905979, `n_id_it
 | `passo_falha` | o `CHECK` passa a aceitar também `'associar'` (escrita) e `'consultar_pc'` (releitura ao vivo do PC, sem escrita — recusa de PC fecha o ledger com ele) |
 | `itens_vinculados integer` | itens que terminaram com vínculo de PC (nulo = fiscal sem vínculo, receita da 016) |
 
-Índice único parcial: o mesmo da 016. Máquina de estados: a da 016, mais a transição `concluido`/`ja_concluido` → `revertido` (0060, §13).
+Índice único parcial: o mesmo da 016. Máquina de estados: a da 016, mais a transição `concluido`/`ja_concluido` → `revertido` (0060, §13). A 0062 acrescenta `finalidade_entrada` e `cfops_entrada` (§14).
 
 ## 4. `stockbridge.recebimento_fiscal_pc` (nova, 0056)
 
@@ -238,6 +238,9 @@ interface DetalheNfNacional {
                                        // conclusão) ou, sem ela, o revertido_omie_em da reversão mais recente no ledger; null quando só a leitura ao
                                        // vivo do clique percebeu a reversão (a hora do clique não é a da reversão; vale mesmo com uma reversão
                                        // anterior marcada pelo espelho) ou a NF não está revertida
+  finalidadeEntradaHabilitada: boolean; // D23 — o servidor pede a finalidade da compra neste ambiente: chave da 016 + STOCKBRIDGE_FISCAL_CFOP_ENTRADA_ENABLED + coluna da 0062
+                                       // (cfopEntradaHabilitado()). A tela só mostra o bloco "Finalidade da compra" com o fiscal pendente e este campo true
+  finalidadeEntradaPadrao: 'industrializacao' | 'comercializacao'; // D23 — pré-seleção pela empresa da NF: ACXE industrialização, Q2P comercialização
 }
 ```
 
@@ -266,6 +269,26 @@ fiscal: {
 };
 ```
 
+**Finalidade da compra** (D23, 06/11/2026): o corpo ganha um campo no nível da NF, fora de `itens[]`:
+
+```ts
+finalidade_entrada?: 'industrializacao' | 'comercializacao';  // opcional no Zod (.strict()); a obrigatoriedade é do serviço
+```
+
+- Obrigatório quando o Atlas faz o fiscal (fiscal pendente, chave da 016) e o CFOP de entrada está habilitado: sem ele, `400 FINALIDADE_ENTRADA_OBRIGATORIA` no portão 1, antes de qualquer escrita. Valor fora das duas opções é recusado pelo Zod.
+- Com o recurso desligado, ou numa NF em que o Atlas não faz o fiscal (fiscal já feito), o valor enviado é ignorado, com log.
+- Vale para todos os itens da NF. O servidor repassa ao fiscal, que calcula o CFOP de cada item a partir do CFOP sugerido lido ao vivo (§14).
+
+O resultado ganha, quando a finalidade foi aplicada:
+
+```ts
+fiscal: {
+  // …
+  finalidadeEntrada?: 'industrializacao' | 'comercializacao';
+  cfopsEntrada?: Array<{ nSequencia: number; cfopSugerido: string | null; cfopAlvo: string | null; enviado: boolean }>;  // o mesmo rastro do ledger (§14)
+};
+```
+
 **PC por NF** (D14): o corpo não muda. A tela escolhe o PC da nota em `pcsDaNf` e monta o `pc` de cada item com o `nCodItem` atribuído a ele, repetindo a mesma `justificativa` quando exigida. Cada item continua validado, relido ao vivo e reservado sozinho (§4).
 
 ## 10. Configuração nova
@@ -282,6 +305,7 @@ fiscal: {
 | `STOCKBRIDGE_PC_BAIXA_PESO_CONFERIDO` | `false` | D20: peso conferido acima da NF como quantidade recebida no `EDITAR`, com teto no saldo do PC; rejeição do gestor depois disso avisa compras. Sem a 0059 fica desligada (log) |
 | `STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT` | `10` | D20: excedente acima deste percentual da NF do item não vai ao PC (provável erro de digitação) |
 | `STOCKBRIDGE_FISCAL_REVERTIDO_ENABLED` | `true` | D21 da 017: o Atlas percebe o fiscal revertido no portal (NF volta a fiscal pendente, leitura ao vivo no clique, varredura e aviso ao fiscal). Kill switch: `false` volta ao ledger `concluido` como estado final. Só vale com a chave da 016 ligada e com a 0060 aplicada |
+| `STOCKBRIDGE_FISCAL_CFOP_ENTRADA_ENABLED` | `false` | D23: o fiscal pelo Atlas manda o CFOP de entrada da finalidade da compra escolhida (final 101/102, 1º dígito do sugerido pelo OMIE). Só vale com a chave da 016 e com a 0062; o OMIE nunca recebeu `cCFOPEntrada` pela API, então liga-se só com o primeiro uso acompanhado |
 
 Reaproveitada: `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED` (D8). Reaproveitada também, para o aviso ao fiscal da D21 da 017: `STOCKBRIDGE_FISCAL_EMAILS` (a lista da dispensa, da 016).
 
@@ -382,3 +406,36 @@ hora(x)           = (x.d_alt::date + x.h_alt::time) AT TIME ZONE 'America/Sao_Pa
 
 **Constantes** (código): `MARGEM_REVERSAO_ESPELHO_MIN = 2`, `ESPERA_LEITURA_AO_VIVO_SEG = 75`; varredura: fase A com 14 dias e 50 ledgers por rodada, fase B com 7 dias e 10 avisos por rodada.
 
+## 14. Finalidade da compra e CFOP de entrada no ledger do fiscal (0062, research D23)
+
+**`stockbridge.recebimento_fiscal`** (colunas e `CHECK`s da 0062; aditivas e idempotentes, sem backfill; o trigger de auditoria da 0053 grava as colunas novas via `to_jsonb`, sem mudança nele):
+
+| Mudança | Detalhe |
+|---|---|
+| `finalidade_entrada varchar(20)` | A finalidade que o operador escolheu para a NF: `industrializacao` (CFOP de entrada com final 101) ou `comercializacao` (final 102). Nulo = o Atlas não aplicou CFOP: recurso desligado, tentativa anterior à 0062 ou NF fora do fiscal pelo Atlas |
+| `CHECK` `recebimento_fiscal_finalidade_entrada_check` | `finalidade_entrada IS NULL OR finalidade_entrada IN ('industrializacao', 'comercializacao')` |
+| `cfops_entrada jsonb` | Rastro por item do recebimento, array de objetos com chaves camelCase (formato abaixo). Nulo quando a finalidade é nula |
+| `CHECK` `recebimento_fiscal_cfops_entrada_check` | `cfops_entrada IS NULL OR (jsonb_typeof(cfops_entrada) = 'array' AND finalidade_entrada IS NOT NULL)` |
+
+**Formato de `cfops_entrada`** (um objeto por item do recebimento, também os que o Atlas não troca):
+
+```json
+[
+  { "nSequencia": 1, "cfopSugerido": "2.102", "cfopAlvo": "2.101", "enviado": true },
+  { "nSequencia": 2, "cfopSugerido": "2.556", "cfopAlvo": null,    "enviado": false }
+]
+```
+
+- `nSequencia`: sequência do item no recebimento do OMIE.
+- `cfopSugerido`: o `itensAjustes.cCFOPEntrada` lido ao vivo na `ConsultarRecebimento` do clique; nulo se o OMIE não devolveu. Numa retomada pode ser o CFOP que o próprio Atlas gravou antes (o 1º dígito não muda, então o alvo sai o mesmo).
+- `cfopAlvo`: `<1º dígito do sugerido>.<101|102>` quando o sugerido casa com `^([123])\.10[12]$`; nulo = fora do recorte, o Atlas não mexe (uso e consumo x.556, outros, ou ausente).
+- `enviado`: `true` quando o `EDITAR` planejado da tentativa leva o `cCFOPEntrada`, o que só acontece quando o CFOP lido difere do alvo (CFOP já igual não vai). O rastro é gravado **antes** das chamadas ao OMIE, então `enviado` só vale como aplicado com a linha `concluido`; numa falha, `passo_falha` diz até onde a receita foi. O item com o CFOP já igual ao alvo e com os demais ajustes aplicados (retomada) não refaz o `EDITAR`.
+- `cfopAlvo` preenchido com `enviado = false`: com `cfopSugerido` igual, o CFOP já estava no alvo; com `cfopSugerido` diferente, a finalidade não foi aplicada, porque o item já estava ignorado no recebimento do OMIE e não recebe `EDITAR` (o serviço registra um aviso no log e a tela avisa no resultado).
+
+**Quando é gravado**: um `UPDATE` do ledger `em_andamento` pelo dono do lock (`iniciado_em` como token), depois do planejamento das ações e **antes** da primeira escrita no OMIE. Perdeu o lock para uma retomada: aviso no log e a requisição segue, como no fechamento. Erro de banco: falha antes de qualquer escrita no OMIE. A linha de uma tentativa que falha mantém a finalidade e o rastro.
+
+**Habilitação** (`cfopEntradaHabilitado()`): `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED` e `STOCKBRIDGE_FISCAL_CFOP_ENTRADA_ENABLED` ligadas e a coluna `recebimento_fiscal.finalidade_entrada` existente (`information_schema`, guardada no processo: revista a cada 5 min enquanto falta e a cada 30 s depois de erro na consulta). Sem a coluna, a funcionalidade fica desligada, com erro no log, e o `listarLedgerFiscal` não seleciona as colunas novas (devolve nulo).
+
+**Shapes**: §8 (`finalidadeEntradaHabilitada`, `finalidadeEntradaPadrao`) e §9 (`finalidade_entrada` no corpo; `fiscal.finalidadeEntrada` e `fiscal.cfopsEntrada` no resultado). O `GET …/nacional/fiscal` ganha `finalidadeEntrada` e `cfopsEntrada`.
+
+**Constantes** (código): `cfop-entrada.ts` (`FINALIDADES_ENTRADA`, `finalidadeEntradaPadrao`, `cfopEntradaParaFinalidade`, `CfopEntradaItemLedger`).

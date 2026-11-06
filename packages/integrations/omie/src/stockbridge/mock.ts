@@ -545,6 +545,11 @@ export function mockAlterarRecebimentoNfeItens(
       if (it.itensAjustes?.cNaoGerarFinanceiro) item.cNaoGerarFinanceiro = it.itensAjustes.cNaoGerarFinanceiro;
       // Quantidade recebida na unidade do PC (017, trava de unidade): nao mexe em nQtdeNFe.
       if (it.itensAjustes?.nQtdeRecebida != null) item.nQtdeRecebida = it.itensAjustes.nQtdeRecebida;
+      // CFOP de entrada escolhido pela finalidade da compra (017, D23): so grava quando vem (string
+      // nao vazia); um EDITAR sem a chave preserva o CFOP sugerido/gravado, como o OMIE faz com os
+      // demais ajustes. A sombra do OMIE_MODE=leitura passa por este mesmo caminho.
+      const cfopEntrada = it.itensAjustes?.cCFOPEntrada;
+      if (typeof cfopEntrada === 'string' && cfopEntrada !== '') item.cCFOPEntrada = cfopEntrada;
     } else if (it.cAcao === 'ASSOCIAR-PEDIDO') {
       // Substitui o vinculo anterior, se houver.
       item.cAssociarExistente = 'S';

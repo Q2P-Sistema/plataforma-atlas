@@ -88,6 +88,16 @@ vi.mock('../services/recebimento-fiscal.service.js', async () => {
   return { ...real, concluirRecebimentoFiscal: (i: unknown) => fiscalSpy(i) };
 });
 
+// 017 (research D23): CFOP de entrada habilitado = chave da 016 + chave propria + migration 0062. O recorte de
+// habilitacao tem teste proprio (cfop-entrada.test.ts); aqui o interruptor e controlado e as chamadas contadas
+// (a regra e consultar UMA vez por POST, so quando o Atlas faz o fiscal).
+let cfopHabilitado = false;
+const cfopHabilitadoSpy = vi.fn();
+vi.mock('../services/cfop-entrada.js', async () => {
+  const real = await vi.importActual<typeof import('../services/cfop-entrada.js')>('../services/cfop-entrada.js');
+  return { ...real, cfopEntradaHabilitado: async () => { cfopHabilitadoSpy(); return cfopHabilitado; } };
+});
+
 // D21 da 017 (fiscal revertido no portal): o ledger/sinal/marcacao tem testes proprios (recebimento-nacional-revertido,
 // recebimento-fiscal, fiscal-revertido). Aqui a D21 fica DESLIGADA: o clique de "fiscal ja feito" segue so a D7 (leitura
 // ao vivo apenas sem a conclusao confirmada localmente) e nao depende do que o pool simulado devolve ao information_schema.
@@ -96,7 +106,7 @@ vi.mock('../services/fiscal-revertido.js', async () => {
   return { ...real, fiscalRevertidoHabilitado: async () => false };
 });
 
-import { processarRecebimentoNacionalPorNf } from '../services/recebimento-nacional.service.js';
+import { processarRecebimentoNacionalPorNf, ValidacaoRecebimentoNacionalError } from '../services/recebimento-nacional.service.js';
 import { RecebimentoFiscalError, RecebimentoFiscalEmAndamentoError, RecebimentoFiscalSemFornecedorError } from '../services/recebimento-fiscal.service.js';
 import { NfNacionalDispensadaError } from '../services/fila-nacional.service.js';
 import { converterItemNfParaKg } from '../services/unidade-nf.js';
@@ -170,6 +180,8 @@ beforeEach(() => {
   ordem.length = 0;
   falharInserts = false;
   config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
+  cfopHabilitado = false;
+  cfopHabilitadoSpy.mockReset();
   detalheMock.mockReset();
   detalheMock.mockResolvedValue(detalhe([item()]));
   fiscalSpy.mockReset();
@@ -328,5 +340,140 @@ describe('processarRecebimentoNacionalPorNf — T038 (US3): fiscal ok, fisico fa
     expect(inserts).toHaveLength(0);
     // A NF volta a fila como "fiscal ja feito" pelo ledger (fonte b + ledger concluido) —
     // a fila le o ledger, nao este resultado; aqui so se garante que nada tentou revert-lo.
+  });
+});
+
+// ── Feature 017, research D23 (06/11/2026): finalidade da compra -> CFOP de entrada do fiscal pelo Atlas ──
+describe('processarRecebimentoNacionalPorNf — finalidade da compra (CFOP de entrada, research D23)', () => {
+  const MSG = 'Escolha a finalidade da compra (industrialização ou comercialização) para concluir o recebimento fiscal.';
+  const comFinalidade = (f: unknown) => ({ ...base(), finalidadeEntrada: f as never });
+
+  it('fiscal pelo Atlas + CFOP de entrada habilitado + SEM finalidade: 400 FINALIDADE_ENTRADA_OBRIGATORIA, sem fiscal, sem OMIE e sem nenhuma escrita', async () => {
+    cfopHabilitado = true;
+    const erro = await processarRecebimentoNacionalPorNf(base()).catch((e: unknown) => e);
+    expect(erro).toBeInstanceOf(ValidacaoRecebimentoNacionalError);
+    expect((erro as ValidacaoRecebimentoNacionalError).code).toBe('FINALIDADE_ENTRADA_OBRIGATORIA');
+    expect((erro as Error).message).toBe(MSG);
+    expect((erro as Error).message).not.toMatch(/\d{10}/);
+    // portao 1: nada foi chamado nem gravado
+    expect(fiscalSpy).not.toHaveBeenCalled();
+    expect(inserts).toHaveLength(0);
+    expect(ordem).toEqual([]);
+    expect(cfopHabilitadoSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['null', null],
+    ['valor fora do enum', 'revenda'],
+    ['caixa diferente', 'Industrializacao'],
+    ['numero', 101],
+  ])('habilitado + finalidade invalida (%s): a mesma recusa, sem fiscal e sem escrita', async (_n, valor) => {
+    cfopHabilitado = true;
+    await expect(processarRecebimentoNacionalPorNf(comFinalidade(valor))).rejects.toMatchObject({
+      code: 'FINALIDADE_ENTRADA_OBRIGATORIA',
+      message: MSG,
+    });
+    expect(fiscalSpy).not.toHaveBeenCalled();
+    expect(inserts).toHaveLength(0);
+  });
+
+  it.each(['industrializacao', 'comercializacao'] as const)(
+    'habilitado + finalidade %s: o fiscal recebe finalidadeEntrada e roda ANTES de qualquer INSERT',
+    async (finalidade) => {
+      cfopHabilitado = true;
+      const r = await processarRecebimentoNacionalPorNf({ ...base(), finalidadeEntrada: finalidade });
+      expect(fiscalSpy).toHaveBeenCalledTimes(1);
+      expect(fiscalSpy.mock.calls[0]![0]).toMatchObject({ nfChaveAcesso: CHAVE, finalidadeEntrada: finalidade });
+      expect(ordem[0]).toBe('fiscal');
+      expect(ordem.indexOf('fiscal')).toBeLessThan(ordem.indexOf('transacao'));
+      expect(movs()).toHaveLength(1);
+      expect(r.fiscal.status).toBe('concluido');
+      expect(cfopHabilitadoSpy).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('o rastro do fiscal (cfopsEntrada e finalidadeEntrada) sobe para o resultado do POST', async () => {
+    cfopHabilitado = true;
+    const cfopsEntrada = [
+      { nSequencia: 1, cfopSugerido: '2.102', cfopAlvo: '2.101', enviado: true },
+      { nSequencia: 2, cfopSugerido: '2.556', cfopAlvo: null, enviado: false },
+    ];
+    fiscalSpy.mockImplementation(async () => {
+      ordem.push('fiscal');
+      return { ...fiscalOk(), cfopsEntrada, finalidadeEntrada: 'industrializacao' };
+    });
+    const r = await processarRecebimentoNacionalPorNf({ ...base(), finalidadeEntrada: 'industrializacao' });
+    expect(r.fiscal.cfopsEntrada).toEqual(cfopsEntrada);
+    expect(r.fiscal.finalidadeEntrada).toBe('industrializacao');
+    expect(r.fiscal.status).toBe('concluido');
+  });
+
+  it('ja_concluido (OMIE ja mostrava concluido): o rastro so aparece quando o fiscal o devolve', async () => {
+    cfopHabilitado = true;
+    fiscalSpy.mockImplementation(async () => {
+      ordem.push('fiscal');
+      return fiscalOk('ja_concluido');
+    });
+    const r = await processarRecebimentoNacionalPorNf({ ...base(), finalidadeEntrada: 'comercializacao' });
+    expect(fiscalSpy.mock.calls[0]![0]).toMatchObject({ finalidadeEntrada: 'comercializacao' });
+    expect(r.fiscal.status).toBe('ja_concluido');
+    expect('cfopsEntrada' in r.fiscal).toBe(false);
+    expect('finalidadeEntrada' in r.fiscal).toBe(false);
+  });
+
+  it('CFOP de entrada DESLIGADO: nao exige a finalidade, e a enviada nao e repassada ao fiscal (comportamento de antes)', async () => {
+    cfopHabilitado = false;
+    await processarRecebimentoNacionalPorNf(base());
+    expect(fiscalSpy).toHaveBeenCalledTimes(1);
+    expect('finalidadeEntrada' in (fiscalSpy.mock.calls[0]![0] as object)).toBe(false);
+
+    fiscalSpy.mockClear();
+    const r = await processarRecebimentoNacionalPorNf({ ...base(), finalidadeEntrada: 'industrializacao' });
+    expect(fiscalSpy).toHaveBeenCalledTimes(1);
+    expect('finalidadeEntrada' in (fiscalSpy.mock.calls[0]![0] as object)).toBe(false);
+    expect('cfopsEntrada' in r.fiscal).toBe(false);
+    expect('finalidadeEntrada' in r.fiscal).toBe(false);
+  });
+
+  it('chave da 016 desligada: fora do fluxo fiscal a finalidade e ignorada (nem consulta a habilitacao) e a NF e recebida normalmente', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = false;
+    cfopHabilitado = true;
+    const r = await processarRecebimentoNacionalPorNf(comFinalidade('industrializacao'));
+    expect(fiscalSpy).not.toHaveBeenCalled();
+    expect(cfopHabilitadoSpy).not.toHaveBeenCalled();
+    expect(r.fiscal.status).toBe('desligado');
+    expect(movs()).toHaveLength(1);
+  });
+
+  it('chave da 016 desligada e SEM finalidade: nao exige (so vale quando o Atlas faz o fiscal)', async () => {
+    config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = false;
+    cfopHabilitado = true;
+    const r = await processarRecebimentoNacionalPorNf(base());
+    expect(r.fiscal.status).toBe('desligado');
+    expect(movs()).toHaveLength(1);
+  });
+
+  it('NF com fiscal ja feito (fonte do espelho de NF): nao exige a finalidade e ignora a enviada', async () => {
+    cfopHabilitado = true;
+    detalheMock.mockResolvedValue(detalhe([item()], { fiscal: 'concluido', nIdReceb: 500 }));
+    const r = await processarRecebimentoNacionalPorNf(base());
+    expect(fiscalSpy).not.toHaveBeenCalled();
+    expect(cfopHabilitadoSpy).not.toHaveBeenCalled();
+    expect(r.fiscal.status).toBe('nao_aplicavel');
+    expect(movs()).toHaveLength(1);
+
+    const r2 = await processarRecebimentoNacionalPorNf(comFinalidade('industrializacao'));
+    expect(fiscalSpy).not.toHaveBeenCalled();
+    expect(r2.fiscal.status).toBe('nao_aplicavel');
+  });
+
+  it('nenhum item a gravar (todos bloqueados por unidade): nao exige a finalidade — o fiscal nao roda', async () => {
+    cfopHabilitado = true;
+    detalheMock.mockResolvedValue(detalhe([item({ q: 1.375, u: 'KG', v: 19731.26 })]));
+    const r = await processarRecebimentoNacionalPorNf(base(1375));
+    expect(fiscalSpy).not.toHaveBeenCalled();
+    expect(inserts).toHaveLength(0);
+    expect(r.produtos[0]!.status).toBe('bloqueado_unidade_incoerente');
+    expect(r.fiscal.status).toBe('nao_aplicavel');
   });
 });

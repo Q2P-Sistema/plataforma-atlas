@@ -181,6 +181,17 @@ const envSchema = z.object({
   // deste percentual da NF do item nao vai ao PC (provavel erro de digitacao, ex.: 133.820 em vez de
   // 13.382, com motivo); o item segue pela NF. Default 10.
   STOCKBRIDGE_PC_PESO_CONFERIDO_MAX_PCT: z.coerce.number().min(0.1).max(100).default(10),
+  // Feature 017 (research D23, 06/11/2026, NF 979 da ACXE): CFOP de entrada do fiscal pelo
+  // Atlas. Ligada (e com a chave da 016 e a migration 0062), o operador escolhe a finalidade
+  // da compra da NF (industrializacao = x.101, comercializacao = x.102; pre-selecionada pela
+  // empresa: ACXE industrializacao, Q2P comercializacao) e o EDITAR do fiscal manda o
+  // itensAjustes.cCFOPEntrada com o 1o digito do CFOP sugerido pelo OMIE. Sem ela vale a
+  // sugestao do OMIE (comportamento de antes). Default DESLIGADA: o OMIE nunca recebeu o
+  // campo pela API; ligar com o primeiro uso acompanhado (quickstart cenario 13).
+  STOCKBRIDGE_FISCAL_CFOP_ENTRADA_ENABLED: z
+    .enum(['true', 'false', '1', '0', ''])
+    .default('false')
+    .transform((v) => v === 'true' || v === '1'),
   // Feature 017, Historia 5 (ACXEGDP-437): NF de compra nacional da ACXE na mesma
   // fila, com fiscal e vinculo de PC no OMIE da ACXE e entrada de estoque no local
   // escolhido pelo operador: local que tambem e da Q2P (11.1, 12.1, 21.1, 31.1) entra

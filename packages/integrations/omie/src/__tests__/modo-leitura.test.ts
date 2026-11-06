@@ -9,7 +9,12 @@ import {
   consultarRecebimentoNfe,
   parseRecebimentoNfeConsultado,
 } from '../stockbridge/recebimento-nfe.js';
-import { __resetMockState, registrarSombraRecebimentoNfe, sombraPedidoCompra } from '../stockbridge/mock.js';
+import {
+  __resetMockState,
+  registrarSombraRecebimentoNfe,
+  sombraPedidoCompra,
+  sombraRecebimentoNfe,
+} from '../stockbridge/mock.js';
 
 // ACXEGDP-405: o UAT virou ambiente de testes, mas tem chaves OMIE de produção.
 // OMIE_MODE=leitura: leituras vão ao OMIE real, escritas são simuladas e nunca
@@ -434,6 +439,63 @@ describe('OMIE_MODE=leitura — vínculo do item com o PC na sombra (ACXEGDP-437
     const depois = await consultarRecebimentoNfe('q2p', { nIdReceb: rec.nIdReceb });
     expect(depois.itens[0]).toMatchObject({ nQtdeNFe: 8.25, nQtdeRecebida: 8250, cNaoGerarMovEstoque: 'S', nIdPedido: PC, nIdItPedido: ITEM_PC });
     // só a consulta inicial saiu pela rede; o AlterarRecebimento nunca
+    expect(metodosEnviados()).toEqual(['ConsultarRecebimento']);
+  });
+
+  // Research D23 da 017 (06/11/2026): o CFOP de entrada escolhido pela finalidade da compra também é escrita
+  // do AlterarRecebimento — no UAT fica simulado e a sombra o guarda, sem nunca sair pela rede.
+  it('EDITAR com cCFOPEntrada (finalidade da compra) é simulado: a sombra guarda o CFOP e a reconsulta o enxerga, sem rede', async () => {
+    responder({ ConsultarRecebimento: blocoRecebimento() });
+    const rec = await consultarRecebimentoNfe('q2p', { cChaveNfe: CHAVE });
+    expect(rec.itens[0]!.cCFOPEntrada).toBe('1.102');
+
+    await alterarRecebimentoNfeItens('q2p', {
+      nIdReceb: rec.nIdReceb,
+      itens: [{ nSequencia: 1, cAcao: 'EDITAR', itensAjustes: { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', cCFOPEntrada: '1.101' } }],
+    });
+
+    const porId = await consultarRecebimentoNfe('q2p', { nIdReceb: rec.nIdReceb });
+    const porChave = await consultarRecebimentoNfe('q2p', { cChaveNfe: CHAVE });
+    for (const sombra of [porId, porChave]) {
+      expect(sombra.itens[0]).toMatchObject({ cCFOPEntrada: '1.101', cNaoGerarMovEstoque: 'S' });
+    }
+    // só a consulta inicial saiu pela rede; o AlterarRecebimento nunca
+    expect(metodosEnviados()).toEqual(['ConsultarRecebimento']);
+  });
+
+  it('EDITAR sem cCFOPEntrada na sombra preserva o CFOP sugerido pelo OMIE; com ele, a receita completa até o Concluir mantém o CFOP novo', async () => {
+    responder({ ConsultarRecebimento: blocoRecebimento() });
+    const rec = await consultarRecebimentoNfe('q2p', { cChaveNfe: CHAVE });
+
+    await alterarRecebimentoNfeItens('q2p', { nIdReceb: rec.nIdReceb, itens: [EDITAR] });
+    expect((await consultarRecebimentoNfe('q2p', { nIdReceb: rec.nIdReceb })).itens[0]!.cCFOPEntrada).toBe('1.102');
+
+    await alterarRecebimentoNfeItens('q2p', {
+      nIdReceb: rec.nIdReceb,
+      itens: [{ nSequencia: 1, cAcao: 'EDITAR', itensAjustes: { ...EDITAR.itensAjustes, cCFOPEntrada: '1.101' } }],
+    });
+    await alterarRecebimentoNfeItens('q2p', { nIdReceb: rec.nIdReceb, itens: [{ nSequencia: 1, cAcao: 'IGNORAR' }] });
+    await concluirRecebimentoNfe('q2p', { nIdReceb: rec.nIdReceb, cEtapa: '60' });
+
+    const depois = await consultarRecebimentoNfe('q2p', { nIdReceb: rec.nIdReceb });
+    expect(depois).toMatchObject({ cRecebido: 'S', cEtapa: '60' });
+    expect(depois.itens[0]!.cCFOPEntrada).toBe('1.101');
+    expect(metodosEnviados()).toEqual(['ConsultarRecebimento']);
+  });
+
+  it('cCFOPEntrada fora do formato é recusado antes da simulação e da rede: nenhuma sombra é criada', async () => {
+    responder({ ConsultarRecebimento: blocoRecebimento() });
+    const rec = await consultarRecebimentoNfe('q2p', { cChaveNfe: CHAVE });
+
+    await expect(
+      alterarRecebimentoNfeItens('q2p', {
+        nIdReceb: rec.nIdReceb,
+        itens: [{ nSequencia: 1, cAcao: 'EDITAR', itensAjustes: { cCFOPEntrada: '1101' } }],
+      }),
+    ).rejects.toThrow(/cCFOPEntrada invalido/);
+
+    // a validação vem antes de semear a sombra: nada foi simulado e nada além da leitura inicial saiu
+    expect(sombraRecebimentoNfe('q2p', { nIdReceb: rec.nIdReceb })).toBeNull();
     expect(metodosEnviados()).toEqual(['ConsultarRecebimento']);
   });
 

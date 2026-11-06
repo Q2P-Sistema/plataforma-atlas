@@ -40,16 +40,19 @@ import type { ItemRecebimentoEditar } from '@atlas/integration-omie';
 // 12 transicoes; 13 ledger ja concluido; 14 lock orfao e duplo clique; 15 empresa;
 // 16 vinculos divergentes (fiscal-01); 17 recusas sem releitura do PC (fiscal-02);
 // 18 mensagem do erro cita o PC (fiscal-04); 19 fiscal revertido no portal (D21 da 017: o ledger
-// concluido e reaberto e o fiscal roda de novo com o PC escolhido).
+// concluido e reaberto e o fiscal roda de novo com o PC escolhido); 20 CFOP de entrada pela finalidade da
+// compra (D23 da 017, 06/11/2026: o ASSOCIAR-PEDIDO segue sem itensAjustes e so o EDITAR leva cCFOPEntrada).
 //
 // D21: o sinal de reversao e a marcacao (que tambem move os vinculos de PC da tentativa antiga para
 // 'revertido', na mesma transacao) tem testes proprios — aqui sao spies, com a D21 desligada por default: o
 // SQL do sinal nunca chega ao responder abaixo, e a guarda de SQL nao reconhecido segue estrita.
 
-const { loggerMock, relerSpy, revertido } = vi.hoisted(() => ({
+const { loggerMock, relerSpy, revertido, cfopCfg } = vi.hoisted(() => ({
   loggerMock: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
   relerSpy: vi.fn(),
   revertido: { habilitado: vi.fn(), nfRevertida: vi.fn(), marcar: vi.fn() },
+  // D23 da 017 (CFOP de entrada pela finalidade): a chave propria; default DESLIGADA, como em producao
+  cfopCfg: { chave: false },
 }));
 const poolQuerySpy = vi.fn();
 const consultarSpy = vi.fn();
@@ -60,7 +63,7 @@ vi.mock('@atlas/core', () => ({
   createLogger: () => loggerMock,
   getDb: vi.fn(),
   getPool: () => ({ query: (sql: string, params?: unknown[]) => poolQuerySpy(sql, params) }),
-  getConfig: () => ({ STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED: true }),
+  getConfig: () => ({ STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED: true, STOCKBRIDGE_FISCAL_CFOP_ENTRADA_ENABLED: cfopCfg.chave }),
 }));
 
 vi.mock('@atlas/integration-omie', () => ({
@@ -108,6 +111,7 @@ import {
   instanteConclusaoOmie,
 } from '../services/recebimento-fiscal.service.js';
 import { EstoqueJaLancadoPeloOmieError } from '../services/fila-nacional.service.js';
+import { __resetColunaFinalidadeEntrada } from '../services/cfop-entrada.js';
 import {
   PcVinculoInvalidoError,
   PcRecemUsadoAguardeError,
@@ -350,6 +354,8 @@ let orfasFechadas: string[] = [];
 /** INSERTs em estado final no ja_concluido da 1a consulta (registrarVinculosJaConcluido): params $1..$19. */
 let registros: unknown[][] = [];
 let registroLanca = false;
+/** D23: params de cada UPDATE da finalidade/CFOP de entrada no ledger ($1 id, $2 finalidade, $3 cfops json, $4 token) */
+let finalidades: unknown[][] = [];
 /** Linha registrada como objeto legivel (posicoes do INSERT de registrarVinculosJaConcluido). */
 const registro = (p: unknown[]) => ({
   ledgerId: p[0], nSequencia: p[3], origem: p[4], nCodPed: p[5], nCodItem: p[6], pcNumero: p[7], anteriorPed: p[8], anteriorItem: p[9],
@@ -412,6 +418,11 @@ function responder(sql: string, params: unknown[] = []) {
   if (sql.includes('make_interval(mins')) {
     ordem.push('ledger:retomar');
     return { rows: retomadaOk ? [{ id: String(linhaViva?.id ?? 'ledger-0'), token: 'TOKEN-RETOMADA' }] : [] };
+  }
+  if (sql.includes('UPDATE stockbridge.recebimento_fiscal') && sql.includes('SET finalidade_entrada')) {
+    ordem.push('ledger:finalidade');
+    finalidades.push(params);
+    return { rows: [{ id: String(params[0]) }] };
   }
   if (sql.includes('UPDATE stockbridge.recebimento_fiscal') && sql.includes('SET status = $2')) {
     ordem.push(`ledger:${String(params[1])}`);
@@ -498,6 +509,9 @@ beforeEach(() => {
   orfasFechadas = [];
   registros = [];
   registroLanca = false;
+  finalidades = [];
+  cfopCfg.chave = false;
+  __resetColunaFinalidadeEntrada();
   for (const f of Object.values(loggerMock)) f.mockClear();
   revertido.habilitado.mockReset().mockResolvedValue(false);
   revertido.nfRevertida.mockReset().mockResolvedValue(false);
@@ -2704,5 +2718,195 @@ describe('concluirRecebimentoFiscal com PC — ja_concluido guarda o kg baixado 
       expect(reservasFechadas).toEqual([{ id: 'reserva-1', para: 'concluido' }]);
       expect(sqlDe('WHERE id = $1 AND status IN')[0]).not.toContain('kg_recebido_pc');
     });
+  });
+});
+
+// ── Cenario 20 — CFOP de entrada pela finalidade da compra (D23 da 017, 06/11/2026) ───────────────────
+//
+// NF 979 da ACXE (Solutec x PC 581): o OMIE sugeriu 2.102 e a ACXE compra para industrializacao (2.101). Com a
+// finalidade escolhida e o recurso habilitado (chave da 016 + STOCKBRIDGE_FISCAL_CFOP_ENTRADA_ENABLED + 0062),
+// so o EDITAR leva itensAjustes.cCFOPEntrada: o ASSOCIAR-PEDIDO e o IGNORAR seguem sem itensAjustes (erro 151).
+// O CFOP convive com os outros ajustes do EDITAR (nQtdeRecebida da trava de unidade e do peso conferido). O
+// guard em si (chaves + coluna) e a funcao pura tem testes proprios em cfop-entrada.test.ts; aqui o guard e o
+// REAL (getConfig mutavel + information_schema do harness respondendo coluna presente).
+describe('concluirRecebimentoFiscal com PC — CFOP de entrada pela finalidade (cenário 20, D23)', () => {
+  const sugerido = (cfopSugerido: string | null, over: Record<string, unknown> = {}) => ({ cCFOPEntrada: cfopSugerido, ...over });
+  const editarDe = (seq: number) => chamadasAlterar().flatMap((c) => c.itens).find((i) => i.cAcao === 'EDITAR' && i.nSequencia === seq);
+  const updatesDaFinalidade = () => sqlDe('SET finalidade_entrada');
+
+  beforeEach(() => {
+    cfopCfg.chave = true;
+  });
+
+  it('item sem vínculo (NF 979): ASSOCIAR-PEDIDO sem itensAjustes; EDITAR com os ajustes de sempre + cCFOPEntrada 2.101; a escolha vai ao ledger antes da 1ª escrita', async () => {
+    consultaUnica({ itens: [itemRec(1, sugerido('2.102'))] });
+
+    const r = await concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304)], finalidadeEntrada: 'industrializacao' }));
+
+    expect(ordemSemEspera()).toEqual([
+      'ledger:insert',
+      'omie:consultar',
+      'pc:reler',
+      'ledger:finalidade',
+      'omie:associar-pedido',
+      'pc:associado',
+      'omie:editar',
+      'omie:concluir',
+      'ledger:concluido',
+      'pc:concluido',
+    ]);
+    const [associar, editar] = chamadasAlterar();
+    expect(associar).toEqual({
+      nIdReceb: N_ID_RECEB,
+      itens: [{ nSequencia: 1, cAcao: 'ASSOCIAR-PEDIDO', nIdPedidoExistente: PC304.nCodPed, nIdItPedidoExistente: PC304.nCodItem }],
+    });
+    expect(associar!.itens[0]).not.toHaveProperty('itensAjustes');
+    expect(editar).toEqual({
+      nIdReceb: N_ID_RECEB,
+      itens: [{ nSequencia: 1, cAcao: 'EDITAR', itensAjustes: { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', cCFOPEntrada: '2.101' } }],
+    });
+    const rastro = [{ nSequencia: 1, cfopSugerido: '2.102', cfopAlvo: '2.101', enviado: true }];
+    expect(finalidades).toEqual([['ledger-1', 'industrializacao', JSON.stringify(rastro), TOKEN]]);
+    expect(r).toMatchObject({ status: 'concluido', finalidadeEntrada: 'industrializacao', cfopsEntrada: rastro });
+    expect(r.vinculos).toEqual([{ nSequencia: 1, pcNumero: '304', origem: 'sugestao', status: 'concluido' }]);
+  });
+
+  it('a releitura do PC recusada (PC_VINCULO_INVALIDO) vem antes da escolha: nenhum UPDATE da finalidade e nenhuma escrita', async () => {
+    consultaUnica({ itens: [itemRec(1, sugerido('2.102'))] });
+    relerFalhaCom(new PcVinculoInvalidoError('7813', '304', 'não tem saldo disponível (saldo atual: 0 kg)'));
+
+    await expect(concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304)], finalidadeEntrada: 'industrializacao' }))).rejects.toBeInstanceOf(PcVinculoInvalidoError);
+
+    expect(updatesDaFinalidade()).toHaveLength(0);
+    expect(alterarSpy).not.toHaveBeenCalled();
+  });
+
+  it('vínculo do OMIE mantido, sem os ajustes: sem ASSOCIAR; só o EDITAR, com cCFOPEntrada', async () => {
+    consultaUnica({ itens: [itemRec(1, sugerido('2.102', vinculadoA(PC304)))] });
+
+    await concluirRecebimentoFiscal(input({ vinculos: [escolhaVendo(PC304, PC304, { origem: 'omie' })], finalidadeEntrada: 'industrializacao' }));
+
+    expect(acoesPorChamada()).toEqual([['EDITAR']]);
+    expect(editarDe(1)!.itensAjustes).toEqual({ cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', cCFOPEntrada: '2.101' });
+  });
+
+  it('vínculo mantido, ajustes aplicados e CFOP ja no alvo: nenhum AlterarRecebimento, só o Concluir (CFOP igual não força EDITAR)', async () => {
+    consultaUnica({ itens: [itemRec(1, sugerido('2.101', { ...vinculadoA(PC304), ...comAjustes }))] });
+
+    const r = await concluirRecebimentoFiscal(input({ vinculos: [escolhaVendo(PC304, PC304, { origem: 'omie' })], finalidadeEntrada: 'industrializacao' }));
+
+    expect(alterarSpy).not.toHaveBeenCalled();
+    expect(concluirSpy).toHaveBeenCalledTimes(1);
+    expect(r.cfopsEntrada).toEqual([{ nSequencia: 1, cfopSugerido: '2.101', cfopAlvo: '2.101', enviado: false }]);
+  });
+
+  it('vínculo mantido e ajustes aplicados, mas CFOP diferente do alvo (retomada/reversão): EDITAR só por causa do CFOP — sem ASSOCIAR', async () => {
+    consultaUnica({ itens: [itemRec(1, sugerido('2.102', { ...vinculadoA(PC304), ...comAjustes }))] });
+
+    await concluirRecebimentoFiscal(input({ vinculos: [escolhaVendo(PC304, PC304, { origem: 'omie' })], finalidadeEntrada: 'industrializacao' }));
+
+    expect(seqsDaAcao('ASSOCIAR-PEDIDO')).toEqual([]);
+    expect(seqsDaAcao('EDITAR')).toEqual([1]);
+    expect(editarDe(1)!.itensAjustes).toEqual({ cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', cCFOPEntrada: '2.101' });
+  });
+
+  it('troca de PC (vivo 302, escolhido 304): o ASSOCIAR-PEDIDO nunca leva itensAjustes; o EDITAR seguinte leva o CFOP', async () => {
+    consultaUnica({ itens: [itemRec(1, sugerido('2.102', vinculadoA(PC302)))] });
+    const troca = escolhaVendo(PC304, PC302, { nCodPedOmieAnterior: PC302.nCodPed, nCodItemPedOmieAnterior: PC302.nCodItem, justificativa: 'Compras pediu o 304' });
+
+    await concluirRecebimentoFiscal(input({ vinculos: [troca], finalidadeEntrada: 'industrializacao' }));
+
+    expect(acoesPorChamada()).toEqual([['ASSOCIAR-PEDIDO'], ['EDITAR']]);
+    expect(chamadasAlterar()[0]!.itens[0]).not.toHaveProperty('itensAjustes');
+    expect(editarDe(1)!.itensAjustes).toMatchObject({ cCFOPEntrada: '2.101' });
+  });
+
+  it('NF mista: seq 1 com PC, seq 2 sem vínculo (IGNORAR) e seq 3 com vínculo do OMIE fora do recorte — o EDITAR leva o CFOP nas três; o IGNORAR só da seq 2, sem itensAjustes', async () => {
+    consultaUnica({ itens: [itemRec(1, sugerido('2.102')), itemRec(2, sugerido('2.102')), itemRec(3, sugerido('2.102', vinculadoA(PC302)))] });
+
+    await concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304, { sequencias: [1] })], sequenciasSemVinculo: [2], finalidadeEntrada: 'industrializacao' }));
+
+    expect(acoesPorChamada()).toEqual([['ASSOCIAR-PEDIDO'], ['EDITAR'], ['IGNORAR']]);
+    const editar = chamadasAlterar()[1]!;
+    expect(editar.itens.map((i) => [i.nSequencia, i.itensAjustes?.cCFOPEntrada])).toEqual([[1, '2.101'], [2, '2.101'], [3, '2.101']]);
+    const ignorar = chamadasAlterar()[2]!;
+    expect(ignorar.itens).toEqual([{ nSequencia: 2, cAcao: 'IGNORAR' }]);
+    expect(ignorar.itens[0]).not.toHaveProperty('itensAjustes');
+  });
+
+  it('CFOP sugerido fora do recorte (2.556 uso e consumo): o EDITAR vai sem cCFOPEntrada e o rastro marca cfopAlvo nulo', async () => {
+    consultaUnica({ itens: [itemRec(1, sugerido('2.556'))] });
+
+    const r = await concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304)], finalidadeEntrada: 'industrializacao' }));
+
+    expect(editarDe(1)!.itensAjustes).toEqual({ cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N' });
+    expect(editarDe(1)!.itensAjustes).not.toHaveProperty('cCFOPEntrada');
+    expect(r.cfopsEntrada).toEqual([{ nSequencia: 1, cfopSugerido: '2.556', cfopAlvo: null, enviado: false }]);
+  });
+
+  it('convive com a quantidade recebida do PC (trava de unidade / peso conferido): o EDITAR leva nQtdeRecebida E cCFOPEntrada', async () => {
+    consultaUnica({ itens: [itemRec(1, sugerido('2.102', { nQtdeNFe: 8.25 }))] });
+    relerSpy.mockImplementationOnce(async (a: { escolhas: EscolhaPcValidada[] }) => {
+      ordem.push('pc:reler');
+      return reservasDe(a.escolhas).map((rv) => ({ ...rv, nQtdeRecebida: 8250 }));
+    });
+
+    await concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304, { qtdNfKg: 8250, kgPorSequencia: { 1: 8250 } })], finalidadeEntrada: 'industrializacao' }));
+
+    expect(editarDe(1)!.itensAjustes).toEqual({ cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', nQtdeRecebida: 8250, cCFOPEntrada: '2.101' });
+  });
+
+  it('Q2P (1.102) + comercializacao: CFOP ja igual — o EDITAR acontece por causa do ASSOCIAR, mas sai SEM cCFOPEntrada (como antes)', async () => {
+    consultaUnica({ itens: [itemRec(1, sugerido('1.102'))] });
+    const r = await concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304)], finalidadeEntrada: 'comercializacao' }));
+    expect(editarDe(1)!.itensAjustes).toEqual({ cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N' });
+    expect(r.cfopsEntrada).toEqual([{ nSequencia: 1, cfopSugerido: '1.102', cfopAlvo: '1.102', enviado: false }]);
+  });
+
+  it('ACXE (2.102) + industrializacao com ASSOCIAR: o EDITAR depois do ASSOCIAR leva o 2.101 (CFOP a trocar)', async () => {
+    consultaUnica({ itens: [itemRec(1, sugerido('2.102'))] });
+    await concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304)], finalidadeEntrada: 'industrializacao' }));
+    expect(editarDe(1)!.itensAjustes).toEqual({ cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', cCFOPEntrada: '2.101' });
+  });
+
+  it('sem finalidade (ou chave desligada): payload exatamente como antes — ASSOCIAR sem ajustes, EDITAR só com os dois ajustes, sem UPDATE e sem campos novos no resultado', async () => {
+    // sem finalidade no input, chave ligada
+    const semFinalidade = await concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304)] }));
+    expect(editarDe(1)!.itensAjustes).toEqual({ cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N' });
+    expect(semFinalidade).not.toHaveProperty('cfopsEntrada');
+    expect(semFinalidade).not.toHaveProperty('finalidadeEntrada');
+
+    // com finalidade no input, chave desligada
+    alterarSpy.mockClear();
+    cfopCfg.chave = false;
+    __resetColunaFinalidadeEntrada();
+    const chaveOff = await concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304)], finalidadeEntrada: 'industrializacao' }));
+    expect(editarDe(1)!.itensAjustes).toEqual({ cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N' });
+    expect(chaveOff).not.toHaveProperty('cfopsEntrada');
+    expect(updatesDaFinalidade()).toHaveLength(0);
+  });
+
+  it('migration 0062 ausente (information_schema sem a coluna): vale a sugestão do OMIE, como antes — sem UPDATE, sem cCFOPEntrada', async () => {
+    poolQuerySpy.mockImplementation(async (sql: string, params?: unknown[]) => (sql.includes('information_schema') ? { rows: [{ ok: false }] } : responder(sql, params)));
+    consultaUnica({ itens: [itemRec(1, sugerido('2.102'))] });
+
+    const r = await concluirRecebimentoFiscal(input({ vinculos: [escolha(PC304)], finalidadeEntrada: 'industrializacao' }));
+
+    expect(r.status).toBe('concluido');
+    expect(editarDe(1)!.itensAjustes).toEqual({ cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N' });
+    expect(updatesDaFinalidade()).toHaveLength(0);
+    expect(r).not.toHaveProperty('cfopsEntrada');
+    expect(loggerMock.error).toHaveBeenCalledWith(expect.stringContaining('migration 0062'));
+  });
+
+  it('fiscal concluído no portal (ja_concluido na 1ª consulta): nada é escrito nem gravado — nem o UPDATE da finalidade', async () => {
+    consultaUnica(concluidoSemEstoque([itemRec(1, sugerido('2.102', { ...vinculadoA(PC304), ...comAjustes }))]));
+
+    const r = await concluirRecebimentoFiscal(input({ vinculos: [escolhaVendo(PC304, PC304, { origem: 'omie' })], finalidadeEntrada: 'industrializacao' }));
+
+    expect(r.status).toBe('ja_concluido');
+    expect(r).not.toHaveProperty('cfopsEntrada');
+    expect(updatesDaFinalidade()).toHaveLength(0);
+    expect(alterarSpy).not.toHaveBeenCalled();
   });
 });

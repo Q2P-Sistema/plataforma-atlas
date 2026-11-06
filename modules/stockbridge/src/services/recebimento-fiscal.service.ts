@@ -27,6 +27,14 @@ import {
   type OrigemVinculoPc,
   type ReservaPc,
 } from './pc-sugestao.service.js';
+import {
+  cfopEntradaHabilitado,
+  cfopEntradaParaFinalidade,
+  colunaFinalidadeEntradaExiste,
+  ehFinalidadeEntrada,
+  type CfopEntradaItemLedger,
+  type FinalidadeEntrada,
+} from './cfop-entrada.js';
 
 const logger = createLogger('stockbridge:recebimento-fiscal');
 
@@ -89,6 +97,16 @@ const logger = createLogger('stockbridge:recebimento-fiscal');
  * NF e liberada — o indice parcial lista so os status vivos. `adquirirLedger` percebe pelo espelho; o
  * clique do recebimento (recebimento-nacional.service.ts) percebe pela leitura ao vivo; a varredura do
  * cron cobre o resto. A NF volta a fila como fiscal pendente e o proximo clique conclui o fiscal de novo.
+ *
+ * Feature 017, research D23 — CFOP de entrada pela finalidade da compra (06/11/2026, NF 979 da ACXE: a
+ * sugestao do OMIE foi 2.102 e a ACXE compra para industrializacao, 2.101). Com `finalidadeEntrada` no
+ * input e `cfopEntradaHabilitado()` (chave da 016 + STOCKBRIDGE_FISCAL_CFOP_ENTRADA_ENABLED + migration
+ * 0062), o EDITAR do item leva `itensAjustes.cCFOPEntrada` = 1o digito do CFOP SUGERIDO pelo OMIE
+ * (lido ao vivo na consulta) + final 101/102 da finalidade, so quando difere do CFOP lido (CFOP ja igual nao
+ * vai); sugerido fora de x.101/x.102 ou ausente = o Atlas nao mexe. Item cujo EDITAR ja estava aplicado so
+ * refaz o EDITAR se o CFOP lido difere do alvo (retomada/reversao); nunca em IGNORAR/ASSOCIAR-PEDIDO (erro
+ * 151) nem em item ja ignorado (fica no rastro como nao aplicado, com warn). A escolha e o rastro por item vao
+ * ao ledger (finalidade_entrada, cfops_entrada) ANTES da primeira escrita no OMIE.
  */
 
 export type StatusFiscalLedger = 'em_andamento' | 'concluido' | 'ja_concluido' | 'falha' | 'revertido';
@@ -258,6 +276,12 @@ export interface ConcluirRecebimentoFiscalInput {
   vinculos?: EscolhaPcValidada[];
   /** 017: sequencias que seguem SEM vinculo (modo "receber sem vinculo") */
   sequenciasSemVinculo?: number[];
+  /**
+   * 017 (research D23): finalidade da compra escolhida pelo operador. Com o CFOP de entrada habilitado
+   * (`cfopEntradaHabilitado()`), o EDITAR manda `itensAjustes.cCFOPEntrada` = 1o digito sugerido + 101/102.
+   * Ausente = vale a sugestao do OMIE (comportamento de antes).
+   */
+  finalidadeEntrada?: FinalidadeEntrada;
 }
 
 /** Vinculo concluido no OMIE neste fiscal (contrato §3, `fiscal.vinculos`). */
@@ -278,6 +302,13 @@ export interface ConcluirRecebimentoFiscalResult {
   vinculos: VinculoFiscalConcluido[];
   /** 017: sequencias concluidas sem vinculo (IGNORAR, modo "receber sem vinculo") */
   semVinculo: number[];
+  /**
+   * 017 (research D23): CFOP de entrada por item quando o Atlas aplicou a finalidade neste fiscal.
+   * Ausente = o Atlas nao mandou CFOP (desligado, sem finalidade ou ja_concluido).
+   */
+  cfopsEntrada?: CfopEntradaItemLedger[];
+  /** 017 (research D23): finalidade aplicada neste fiscal (ausente = nao aplicada). */
+  finalidadeEntrada?: FinalidadeEntrada;
 }
 
 // ── Ledger (raw SQL via getPool — espelha o padrao da fila; facil de mockar) ──
@@ -481,6 +512,66 @@ async function fecharLedgerSeguro(ledger: Ledger, a: FecharLedgerArgs): Promise<
   }
 }
 
+// ── CFOP de entrada pela finalidade (D23 da 017, migration 0062) ─────────────
+
+/**
+ * CFOP de entrada alvo por sequencia: o 1o digito do CFOP SUGERIDO lido ao vivo (itensAjustes.cCFOPEntrada
+ * do ConsultarRecebimento) + o final da finalidade. Sequencia ausente do mapa = fora do recorte
+ * (x.101/x.102): o Atlas nao mexe naquele item.
+ */
+function cfopsAlvoDoRecebimento(rec: RecebimentoNfeConsultado, finalidade: FinalidadeEntrada): Map<number, string> {
+  const alvos = new Map<number, string>();
+  for (const it of rec.itens) {
+    const alvo = cfopEntradaParaFinalidade(it.cCFOPEntrada, finalidade);
+    if (alvo) alvos.set(it.nSequencia, alvo);
+  }
+  return alvos;
+}
+
+/**
+ * Rastro por item para o ledger: TODOS os itens do recebimento. `enviado` = o EDITAR PLANEJADO desta tentativa
+ * leva o cCFOPEntrada (o rastro e gravado antes das chamadas ao OMIE: so vale como aplicado com o ledger
+ * `concluido`; numa falha, `passo_falha` diz ate onde a receita foi). `cfopAlvo` com `enviado=false` e
+ * `cfopSugerido` igual = o CFOP ja estava no alvo; diferente = nao aplicado (item ja ignorado no OMIE).
+ */
+function rastroCfopsEntrada(rec: RecebimentoNfeConsultado, alvos: Map<number, string>, plano: PlanoFiscal): CfopEntradaItemLedger[] {
+  const enviados = new Set(plano.editar.filter((e) => e.itensAjustes?.cCFOPEntrada != null).map((e) => e.nSequencia));
+  return rec.itens.map((it) => ({
+    nSequencia: it.nSequencia,
+    cfopSugerido: it.cCFOPEntrada ?? null,
+    cfopAlvo: alvos.get(it.nSequencia) ?? null,
+    enviado: enviados.has(it.nSequencia),
+  }));
+}
+
+/**
+ * Grava a finalidade escolhida e o rastro por item no ledger, ANTES da primeira escrita no OMIE. So a
+ * requisicao dona do lock (status em_andamento + mesmo `iniciado_em`) grava, como fecharLedger. Devolve
+ * false se perdeu o lock para uma retomada (a requisicao segue, como no fechamento: warn). Erro de banco
+ * sobe — sem o rastro da escolha nada e escrito no OMIE (cai no catch geral: falha antes de qualquer escrita).
+ */
+async function gravarFinalidadeNoLedger(ledger: Ledger, finalidade: FinalidadeEntrada, cfops: CfopEntradaItemLedger[]): Promise<boolean> {
+  try {
+    const r = await getPool().query<{ id: string }>(
+      `UPDATE stockbridge.recebimento_fiscal
+          SET finalidade_entrada = $2,
+              cfops_entrada = $3::jsonb,
+              updated_at = now()
+        WHERE id = $1 AND status = 'em_andamento' AND iniciado_em = $4::timestamptz
+        RETURNING id`,
+      [ledger.id, finalidade, JSON.stringify(cfops), ledger.token],
+    );
+    if (r.rows.length === 0) {
+      logger.warn({ ledgerId: ledger.id, finalidade }, 'Lock fiscal perdido para uma retomada — finalidade e CFOP de entrada desta requisição não gravados no ledger');
+      return false;
+    }
+    return true;
+  } catch (err) {
+    logger.error({ err, ledgerId: ledger.id, finalidade }, 'Não foi possível gravar a finalidade e o CFOP de entrada no ledger fiscal — nada foi escrito no OMIE');
+    throw err;
+  }
+}
+
 // ── OMIE ────────────────────────────────────────────────────────────────────
 
 /** Extrai codigo/mensagem de um OmieApiError (ou qualquer erro) sem depender de instanceof. */
@@ -502,25 +593,43 @@ const RE_SEM_FORNECEDOR = /fornecedor[^.!]*(n[aã]o (cadastrad|informad|encontra
  * Ajustes do EDITAR ja gravados no item: nao movimentar estoque, gerar financeiro e, quando o
  * Atlas manda a quantidade recebida (PC em unidade diferente da NF no modo 'converter', ou peso
  * conferido acima da NF — research D20), essa quantidade na unidade do PC (`qtdRecebida`;
- * undefined = nao se aplica, o OMIE usa a da NF).
+ * undefined = nao se aplica, o OMIE usa a da NF). Com `cfopAlvo` (D23: CFOP de entrada pela finalidade),
+ * o CFOP de entrada lido precisa ja ser o alvo — retomada/reversao com CFOP diferente refaz o EDITAR;
+ * CFOP ja igual nao forca EDITAR (null/undefined = o Atlas nao mexe no CFOP).
  */
-const ajustesJaAplicados = (it: ItemRecebimentoNfe, qtdRecebida?: number) =>
+const ajustesJaAplicados = (it: ItemRecebimentoNfe, qtdRecebida?: number, cfopAlvo?: string | null) =>
   it.cNaoGerarMovEstoque === 'S' &&
   it.cNaoGerarFinanceiro === 'N' &&
-  (qtdRecebida === undefined || (it.nQtdeRecebida != null && Math.abs(it.nQtdeRecebida - qtdRecebida) < 1e-6));
+  (qtdRecebida === undefined || (it.nQtdeRecebida != null && Math.abs(it.nQtdeRecebida - qtdRecebida) < 1e-6)) &&
+  (cfopAlvo == null || (it.cCFOPEntrada ?? '').trim() === cfopAlvo);
 const ignorado = (it: ItemRecebimentoNfe) => it.cIgnorarItem === 'S';
+
+/**
+ * CFOP de entrada que vai no EDITAR do item (D23): o alvo so quando difere do CFOP lido. CFOP ja igual nao
+ * vai (revisao de 06/11/2026): no caminho comum da Q2P (sugerido x.102 + comercializacao) o EDITAR segue
+ * exatamente como antes, e o campo — que o OMIE nunca recebeu pela API antes do primeiro uso acompanhado —
+ * so e mandado quando ha CFOP a trocar.
+ */
+const cfopAEnviar = (it: ItemRecebimentoNfe, cfopAlvo?: string | null): string | undefined =>
+  cfopAlvo != null && (it.cCFOPEntrada ?? '').trim() !== cfopAlvo ? cfopAlvo : undefined;
 
 /** Vinculo vivo do item com um item de PC (017): nIdPedido > 0 ja normalizado pelo parser. */
 const vinculoVivo = (it: ItemRecebimentoNfe): { nIdPedido: number; nIdItPedido: number | null } | null =>
   it.nIdPedido != null ? { nIdPedido: it.nIdPedido, nIdItPedido: it.nIdItPedido } : null;
 
-const editarItem = (nSequencia: number, qtdRecebida?: number): ItemRecebimentoEditar => ({
+const editarItem = (nSequencia: number, qtdRecebida?: number, cfopEntrada?: string | null): ItemRecebimentoEditar => ({
   nSequencia,
   cAcao: 'EDITAR',
   // nQtdeRecebida so quando o Atlas a define: unidade do PC diferente da NF (modo 'converter') ou
   // peso conferido acima da NF (research D20). O OMIE copia o valor para nQtdeRec do PC sem
   // converter (NF 60199 x PC 306, 22/10/2026) e refaz a nota de entrada com ele (NF 67988, D19).
-  itensAjustes: { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', ...(qtdRecebida !== undefined ? { nQtdeRecebida: qtdRecebida } : {}) },
+  // cCFOPEntrada so quando o Atlas troca o CFOP de entrada pela finalidade da compra (D23, 06/11/2026).
+  itensAjustes: {
+    cNaoGerarMovEstoque: 'S',
+    cNaoGerarFinanceiro: 'N',
+    ...(qtdRecebida !== undefined ? { nQtdeRecebida: qtdRecebida } : {}),
+    ...(cfopEntrada != null ? { cCFOPEntrada: cfopEntrada } : {}),
+  },
 });
 
 interface PlanoFiscal {
@@ -545,6 +654,8 @@ function planejarAcoes(
   semVinculo: Set<number>,
   /** quantidade recebida na unidade do PC, por sequencia — so nas que o Atlas define (reserva: conversao ou peso conferido) */
   qtdRecebidaPorSeq: Map<number, number> = new Map(),
+  /** CFOP de entrada alvo por sequencia (D23) — so nas que o Atlas troca; vazio = comportamento de antes */
+  cfopAlvoPorSeq: Map<number, string> = new Map(),
 ): PlanoFiscal {
   const escolhaPorSeq = new Map<number, EscolhaPcValidada>();
   for (const e of escolhas) for (const seq of e.sequencias) escolhaPorSeq.set(seq, e);
@@ -558,6 +669,7 @@ function planejarAcoes(
     }
     const e = escolhaPorSeq.get(it.nSequencia);
     const vivo = vinculoVivo(it);
+    const cfop = cfopAlvoPorSeq.get(it.nSequencia);
     if (e) {
       plano.vinculados++;
       const mesmo = vivo != null && vivo.nIdPedido === e.candidato.nCodPed && vivo.nIdItPedido === e.candidato.nCodItem;
@@ -570,12 +682,12 @@ function planejarAcoes(
         });
       }
       const qtd = qtdRecebidaPorSeq.get(it.nSequencia);
-      if (!mesmo || !ajustesJaAplicados(it, qtd)) plano.editar.push(editarItem(it.nSequencia, qtd));
+      if (!mesmo || !ajustesJaAplicados(it, qtd, cfop)) plano.editar.push(editarItem(it.nSequencia, qtd, cfopAEnviar(it, cfop)));
     } else if (vivo) {
       plano.vinculados++;
-      if (!ajustesJaAplicados(it)) plano.editar.push(editarItem(it.nSequencia));
+      if (!ajustesJaAplicados(it, undefined, cfop)) plano.editar.push(editarItem(it.nSequencia, undefined, cfopAEnviar(it, cfop)));
     } else {
-      if (!ajustesJaAplicados(it)) plano.editar.push(editarItem(it.nSequencia));
+      if (!ajustesJaAplicados(it, undefined, cfop)) plano.editar.push(editarItem(it.nSequencia, undefined, cfopAEnviar(it, cfop)));
       plano.ignorar.push({ nSequencia: it.nSequencia, cAcao: 'IGNORAR' });
       if (semVinculo.has(it.nSequencia)) plano.semVinculo.push(it.nSequencia);
     }
@@ -1018,7 +1130,26 @@ export async function concluirRecebimentoFiscal(input: ConcluirRecebimentoFiscal
     // 3–6. Escritas, na ordem, so do que falta — SEM retry (STK-23).
     const qtdRecebidaPorSeq = new Map<number, number>();
     for (const r of reservas) if (r.nQtdeRecebida != null) qtdRecebidaPorSeq.set(r.nSequencia, r.nQtdeRecebida);
-    const plano = planejarAcoes(rec, escolhas, semVinculo, qtdRecebidaPorSeq);
+    // D23: CFOP de entrada pela finalidade da compra — so com a finalidade escolhida e o recurso habilitado
+    // (chave da 016 + chave propria + migration 0062). Lido o CFOP SUGERIDO ao vivo, so troca o final 101/102.
+    const finalidade = input.finalidadeEntrada;
+    const cfopAtivo = finalidade != null && ehFinalidadeEntrada(finalidade) && (await cfopEntradaHabilitado());
+    const cfopAlvos = cfopAtivo ? cfopsAlvoDoRecebimento(rec, finalidade) : new Map<number, string>();
+    const plano = planejarAcoes(rec, escolhas, semVinculo, qtdRecebidaPorSeq, cfopAlvos);
+    let cfopsEntrada: CfopEntradaItemLedger[] | undefined;
+    if (cfopAtivo) {
+      cfopsEntrada = rastroCfopsEntrada(rec, cfopAlvos, plano);
+      // Item ja ignorado no OMIE (IGNORAR de tentativa anterior) nao recebe EDITAR: se o CFOP dele difere do alvo,
+      // a finalidade nao vale para ele — fica no rastro e no log, e a tela avisa pelo resultado (revisao 06/11/2026).
+      const naoAplicados = cfopsEntrada.filter((c) => c.cfopAlvo != null && !c.enviado && (c.cfopSugerido ?? '').trim() !== c.cfopAlvo);
+      if (naoAplicados.length > 0) {
+        logger.warn(
+          { ledgerId: ledger.id, nf: input.notaFiscal, finalidade, sequencias: naoAplicados.map((c) => c.nSequencia) },
+          'CFOP de entrada da finalidade não aplicado em item já ignorado no OMIE (sem EDITAR) — o item mantém o CFOP atual',
+        );
+      }
+      await gravarFinalidadeNoLedger(ledger, finalidade, cfopsEntrada);
+    }
     if (plano.associar.length > 0) {
       passo = 'associar';
       await alterarRecebimentoNfeItens(empresa, { nIdReceb, itens: plano.associar });
@@ -1048,6 +1179,7 @@ export async function concluirRecebimentoFiscal(input: ConcluirRecebimentoFiscal
       {
         ledgerId: ledger.id, nf: input.notaFiscal, nIdReceb, itens: rec.itens.length, associados: plano.associar.length,
         editados: plano.editar.length, ignorados: plano.ignorar.length, vinculados: plano.vinculados,
+        ...(cfopsEntrada ? { finalidadeEntrada: finalidade, cfopsEnviados: cfopsEntrada.filter((c) => c.enviado).length } : {}),
       },
       'Recebimento fiscal concluído no OMIE pelo Atlas',
     );
@@ -1058,6 +1190,7 @@ export async function concluirRecebimentoFiscal(input: ConcluirRecebimentoFiscal
       itensTotal: rec.itens.length,
       vinculos: reservas.map((r) => ({ nSequencia: r.nSequencia, pcNumero: r.pcNumero, origem: r.origem, status: 'concluido' as const })),
       semVinculo: plano.semVinculo,
+      ...(cfopsEntrada && finalidade ? { cfopsEntrada, finalidadeEntrada: finalidade } : {}),
     };
   } catch (err) {
     // Erros de dominio ja fecharam o ledger (e as reservas) acima.
@@ -1164,6 +1297,13 @@ export interface LedgerFiscalItem {
   revertidoEm: string | null;
   revertidoOrigem: OrigemReversao | null;
   revertidoOmieEm: string | null;
+  /**
+   * D23 (0062): finalidade da compra escolhida pelo operador para o CFOP de entrada e o rastro por item
+   * (CFOP sugerido pelo OMIE, alvo e se foi no EDITAR). null = o Atlas nao aplicou CFOP (chave desligada,
+   * tentativa anterior a 0062, ou sem a migration).
+   */
+  finalidadeEntrada: FinalidadeEntrada | null;
+  cfopsEntrada: CfopEntradaItemLedger[] | null;
 }
 
 /** ISO de um timestamptz lido como texto; null para ausente ou invalido. */
@@ -1173,6 +1313,19 @@ function isoOuNull(v: string | null | undefined): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
+/** `cfops_entrada` (jsonb) lido do banco -> rastro tipado; qualquer coisa fora do formato vira null (nunca derruba a listagem). */
+function cfopsEntradaDoBanco(v: unknown): CfopEntradaItemLedger[] | null {
+  if (!Array.isArray(v)) return null;
+  return v
+    .filter((x): x is Record<string, unknown> => x != null && typeof x === 'object')
+    .map((x) => ({
+      nSequencia: Number(x.nSequencia),
+      cfopSugerido: typeof x.cfopSugerido === 'string' ? x.cfopSugerido : null,
+      cfopAlvo: typeof x.cfopAlvo === 'string' ? x.cfopAlvo : null,
+      enviado: x.enviado === true,
+    }));
+}
+
 /** Lista o ledger para o gestor — SEM erro_omie_* (fica no banco e no log; ACXEGDP-313). */
 export async function listarLedgerFiscal(params: { status?: StatusFiscalLedger | null; limit?: number } = {}): Promise<LedgerFiscalItem[]> {
   const pool = getPool();
@@ -1180,6 +1333,10 @@ export async function listarLedgerFiscal(params: { status?: StatusFiscalLedger |
   const colunasRevertido = (await colunaRevertidoExiste())
     ? 'rf.revertido_em::text AS revertido_em, rf.revertido_origem, rf.revertido_omie_em::text AS revertido_omie_em'
     : 'NULL::text AS revertido_em, NULL::text AS revertido_origem, NULL::text AS revertido_omie_em';
+  // D23: idem para as colunas da 0062 (finalidade e CFOP de entrada por item).
+  const colunasCfopEntrada = (await colunaFinalidadeEntradaExiste())
+    ? 'rf.finalidade_entrada, rf.cfops_entrada'
+    : 'NULL::text AS finalidade_entrada, NULL::jsonb AS cfops_entrada';
   const limit = Math.min(200, Math.max(1, params.limit ?? 100));
   const args: unknown[] = [limit];
   let filtro = '';
@@ -1192,11 +1349,13 @@ export async function listarLedgerFiscal(params: { status?: StatusFiscalLedger |
     passo_falha: PassoFiscal | null; itens_total: number | null; confirmado_por: string; confirmado_por_nome: string | null;
     iniciado_em: string; finalizado_em: string | null; empresa: EmpresaPc | null;
     revertido_em?: string | null; revertido_origem?: OrigemReversao | null; revertido_omie_em?: string | null;
+    finalidade_entrada?: string | null; cfops_entrada?: unknown;
   }>(
     `SELECT rf.id, rf.nf_chave_acesso, rf.nota_fiscal, rf.fornecedor_nome, rf.status, rf.passo_falha, rf.itens_total,
             rf.confirmado_por, u.name AS confirmado_por_nome,
             rf.iniciado_em::text AS iniciado_em, rf.finalizado_em::text AS finalizado_em, rf.empresa,
-            ${colunasRevertido}
+            ${colunasRevertido},
+            ${colunasCfopEntrada}
        FROM stockbridge.recebimento_fiscal rf
        LEFT JOIN atlas.users u ON u.id = rf.confirmado_por
        ${filtro}
@@ -1250,5 +1409,7 @@ export async function listarLedgerFiscal(params: { status?: StatusFiscalLedger |
     revertidoEm: isoOuNull(x.revertido_em),
     revertidoOrigem: x.revertido_origem ?? null,
     revertidoOmieEm: isoOuNull(x.revertido_omie_em),
+    finalidadeEntrada: ehFinalidadeEntrada(x.finalidade_entrada) ? x.finalidade_entrada : null,
+    cfopsEntrada: cfopsEntradaDoBanco(x.cfops_entrada),
   }));
 }

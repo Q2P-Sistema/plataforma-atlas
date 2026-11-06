@@ -45,6 +45,7 @@ import { normalizarDescricaoNf } from './descricao-nf.js';
 import { registrarUsoCorrelacao } from './correlacao-produto.service.js';
 import { ROTULO_EMPRESA, type EmpresaNacional } from './empresa-nacional.js';
 import { resolverGemeosQ2p } from './produto-gemeo-q2p.js';
+import { cfopEntradaHabilitado, ehFinalidadeEntrada, type CfopEntradaItemLedger, type FinalidadeEntrada } from './cfop-entrada.js';
 import type { UnidadeMedida, SubtipoMovimento } from '../types.js';
 
 const logger = createLogger('stockbridge:recebimento-nacional');
@@ -696,6 +697,8 @@ export type CodigoValidacaoPorNf =
   | 'ITEM_NAO_ENCONTRADO'
   | 'QUANTIDADE_INVALIDA'
   | 'NF_INCOMPLETA'
+  // Feature 017 (research D23): fiscal pelo Atlas com o CFOP de entrada habilitado e sem a finalidade da compra
+  | 'FINALIDADE_ENTRADA_OBRIGATORIA'
   // Historia 5: o campo do produto (Q2P ou ACXE) nao e o da empresa da NF
   | 'PRODUTO_EMPRESA_INCOMPATIVEL';
 
@@ -739,6 +742,11 @@ export interface ProcessarRecebimentoPorNfInput {
   observacoes?: string | null;
   itens: ItemPorNfInput[];
   userId: string;
+  /**
+   * Feature 017 (research D23): finalidade da compra da NF (CFOP de entrada x.101/x.102 do fiscal pelo Atlas).
+   * Obrigatoria quando o Atlas faz o fiscal com o CFOP de entrada habilitado; ignorada fora disso.
+   */
+  finalidadeEntrada?: FinalidadeEntrada | null;
 }
 
 export type StatusProdutoPorNf =
@@ -799,6 +807,10 @@ export interface FiscalPorNfResult {
   semVinculo: number[];
   /** Feature 017: um aviso a compras foi disparado neste clique */
   avisoCompras: boolean;
+  /** Feature 017 (research D23): CFOP de entrada por item quando o Atlas aplicou a finalidade neste fiscal */
+  cfopsEntrada?: CfopEntradaItemLedger[];
+  /** Feature 017 (research D23): finalidade da compra aplicada neste fiscal (ausente = nao aplicada) */
+  finalidadeEntrada?: FinalidadeEntrada;
 }
 
 /**
@@ -1256,6 +1268,28 @@ export async function processarRecebimentoNacionalPorNf(
     );
   }
 
+  // ── Feature 017 (research D23): finalidade da compra -> CFOP de entrada do fiscal pelo Atlas ──
+  // Obrigatoria quando o Atlas faz o fiscal com o CFOP de entrada habilitado (chave da 016 + chave propria +
+  // migration 0062); decidida AQUI, antes de qualquer escrita ou chamada ao OMIE. Fora do fluxo fiscal ou com
+  // o recurso desligado, o valor enviado e ignorado. `cfopEntradaHabilitado()` uma vez so por POST.
+  let finalidadeEntrada: FinalidadeEntrada | undefined;
+  if (fluxoPc && (await cfopEntradaHabilitado())) {
+    if (!ehFinalidadeEntrada(input.finalidadeEntrada)) {
+      throw new ValidacaoRecebimentoNacionalError(
+        'FINALIDADE_ENTRADA_OBRIGATORIA',
+        'Escolha a finalidade da compra (industrialização ou comercialização) para concluir o recebimento fiscal.',
+      );
+    }
+    finalidadeEntrada = input.finalidadeEntrada;
+  } else if (input.finalidadeEntrada) {
+    logger.info(
+      { nf: detalhe.notaFiscal },
+      fluxoPc
+        ? 'Finalidade da compra enviada com o CFOP de entrada desligado — ignorada'
+        : 'Finalidade da compra enviada para NF sem fiscal pelo Atlas — ignorada',
+    );
+  }
+
   // ── Feature 017: estoque ja lancado pelo OMIE (D7, FR-021a) — chave em qualquer posicao ──
   if (detalhe.estoqueLancadoPeloOmie) throw new EstoqueJaLancadoPeloOmieError(detalhe.notaFiscal, detalhe.fornecedorNome);
   // FR-021a: sem a conclusao CONFIRMADA localmente (espelho ausente, defasado ou nao casado),
@@ -1346,7 +1380,12 @@ export async function processarRecebimentoNacionalPorNf(
   // que este POST leu o detalhe — confere de novo antes de escrever no OMIE/estoque.
   // A dispensa vale com a chave em qualquer posicao (achado fila-v01).
   await garantirNaoDispensada(detalhe);
-  const fiscal = await executarFiscalSeNecessario(detalhe, input.userId, { interno, escolhas: escolhasPc, sequenciasSemVinculo });
+  const fiscal = await executarFiscalSeNecessario(detalhe, input.userId, {
+    interno,
+    escolhas: escolhasPc,
+    sequenciasSemVinculo,
+    ...(finalidadeEntrada ? { finalidadeEntrada } : {}),
+  });
   // Feature 017 (D6): modo "receber sem vinculo" — compras e avisado depois que o fiscal concluiu
   // (tambem em ja_concluido: o Concluir de uma tentativa anterior pode ter passado sem resposta).
   if ((fiscal.status === 'concluido' || fiscal.status === 'ja_concluido') && fiscal.semVinculo.length > 0) {
@@ -1695,7 +1734,7 @@ function textoVinculos(vinculos: VinculoFiscalConcluido[]): string {
 async function executarFiscalSeNecessario(
   detalhe: DetalheNfNacional,
   userId: string,
-  pc: { interno: DetalheNfNacionalInterno; escolhas: EscolhaPcValidada[]; sequenciasSemVinculo: number[] },
+  pc: { interno: DetalheNfNacionalInterno; escolhas: EscolhaPcValidada[]; sequenciasSemVinculo: number[]; finalidadeEntrada?: FinalidadeEntrada },
 ): Promise<FiscalPorNfResult> {
   if (!recebimentoFiscalHabilitado() || detalhe.fiscal !== 'pendente') {
     return fiscalSemAcao(`O recebimento fiscal da NF ${detalhe.notaFiscal} já estava concluído no OMIE.`);
@@ -1716,9 +1755,18 @@ async function executarFiscalSeNecessario(
     fornecedorCodigo: pc.interno.fornecedorCodigo,
     vinculos: pc.escolhas,
     sequenciasSemVinculo: pc.sequenciasSemVinculo,
+    // 017 (research D23): so quando habilitado e escolhido — o fiscal calcula o CFOP de cada item
+    ...(pc.finalidadeEntrada ? { finalidadeEntrada: pc.finalidadeEntrada } : {}),
   });
   const rotulo = `NF ${detalhe.notaFiscal} (${detalhe.fornecedorNome})`;
-  const comum = { vinculos: r.vinculos, semVinculo: r.semVinculo, avisoCompras: false };
+  const comum = {
+    vinculos: r.vinculos,
+    semVinculo: r.semVinculo,
+    avisoCompras: false,
+    // 017 (research D23): o que o fiscal aplicou (ausente quando o Atlas nao mandou CFOP)
+    ...(r.cfopsEntrada ? { cfopsEntrada: r.cfopsEntrada } : {}),
+    ...(r.finalidadeEntrada ? { finalidadeEntrada: r.finalidadeEntrada } : {}),
+  };
   return r.status === 'concluido'
     ? { status: 'concluido', concluidoEm: r.concluidoEm, mensagem: `Recebimento fiscal da ${rotulo} concluído no OMIE${textoVinculos(r.vinculos)}.`, ...comum }
     : {

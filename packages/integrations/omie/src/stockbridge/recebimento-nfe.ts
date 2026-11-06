@@ -32,6 +32,14 @@ import {
  *    [ASSOCIAR-PEDIDO ->] EDITAR -> Concluir. Item ja vinculado + EDITAR +
  *    Concluir validado na NF 7813 (21/10/2026); o OMIE atualiza sozinho o
  *    nQtdeRec do PC ao concluir.
+ *  - Feature 017, research D23 (06/11/2026): o EDITAR pode levar tambem
+ *    `itensAjustes.cCFOPEntrada` (CFOP de entrada do item, com ponto: '2.101'),
+ *    escolhido pela finalidade da compra (industrializacao x.101 / comercializacao
+ *    x.102) — sem ele vale a sugestao do OMIE. Receita completa por item:
+ *    [ASSOCIAR-PEDIDO ->] EDITAR {cNaoGerarMovEstoque 'S', cNaoGerarFinanceiro 'N',
+ *    [nQtdeRecebida], [cCFOPEntrada]} -> [IGNORAR so em item sem PC] -> Concluir.
+ *    O OMIE nunca recebeu cCFOPEntrada pela API: o 1o uso e acompanhado e o cliente
+ *    recusa localmente valor fora de /^[123]\.\d{3}$/.
  *
  * Gotchas medidos:
  *  - IGNORAR com `itensAjustes` no mesmo item devolve SOAP-ENV:Client-151 e nao
@@ -124,6 +132,12 @@ export interface AjustesItemRecebimento {
    * nQtdeNFe. So com cAcao='EDITAR'.
    */
   nQtdeRecebida?: number;
+  /**
+   * CFOP de entrada do item, com ponto ('2.101'). Sem ele vale a sugestao do OMIE (lida em
+   * ConsultarRecebimento itensAjustes.cCFOPEntrada). O Atlas so troca o final 101/102 (finalidade
+   * da compra) e preserva o 1o digito sugerido (research D23 da 017, 06/11/2026). So com cAcao='EDITAR'.
+   */
+  cCFOPEntrada?: string;
 }
 
 export interface ItemRecebimentoEditar {
@@ -276,9 +290,13 @@ export async function consultarRecebimentoNfe(
   return rec;
 }
 
+/** CFOP de entrada no formato do OMIE: 1o digito 1/2/3 (UF/outra UF/exterior), ponto e 3 digitos. */
+const CFOP_ENTRADA_REGEX = /^[123]\.\d{3}$/;
+
 /**
  * Valida localmente o que o OMIE recusaria com erro 151 — recusar ANTES de
- * chamar evita gastar a chamada e deixar a sequencia pela metade.
+ * chamar evita gastar a chamada e deixar a sequencia pela metade. Tambem recusa
+ * `itensAjustes.cCFOPEntrada` fora do formato (017, D23).
  */
 export function validarItensRecebimentoEditar(itens: ItemRecebimentoEditar[]): void {
   if (itens.length === 0) throw new Error('alterarRecebimentoNfeItens exige ao menos um item');
@@ -288,6 +306,16 @@ export function validarItensRecebimentoEditar(itens: ItemRecebimentoEditar[]): v
       throw new Error(
         `alterarRecebimentoNfeItens: item ${it.nSequencia} com cAcao='${it.cAcao}' nao pode levar itensAjustes ` +
           '(o OMIE recusa com SOAP-ENV:Client-151). Faca EDITAR com ajustes e a outra acao numa chamada separada.',
+      );
+    }
+    // CFOP de entrada (017, D23): formato 'D.DDD' com 1o digito 1/2/3 (mesmo estado, outro estado,
+    // importacao). Recusar antes da rede evita gravar lixo na nota de entrada (o OMIE nunca recebeu
+    // este campo pela API). A regra de negocio (so x.101/x.102) e do Atlas, nao deste cliente.
+    const cfopEntrada = it.itensAjustes?.cCFOPEntrada;
+    if (cfopEntrada !== undefined && !(typeof cfopEntrada === 'string' && CFOP_ENTRADA_REGEX.test(cfopEntrada))) {
+      throw new Error(
+        `alterarRecebimentoNfeItens: item ${it.nSequencia} com cCFOPEntrada invalido (${JSON.stringify(cfopEntrada)}) — ` +
+          "esperado o CFOP de entrada com ponto, 1o digito 1, 2 ou 3 (ex.: '2.101').",
       );
     }
     if (it.cAcao === 'ASSOCIAR-PEDIDO') {

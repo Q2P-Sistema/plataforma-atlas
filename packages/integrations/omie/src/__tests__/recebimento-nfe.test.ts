@@ -803,3 +803,255 @@ describe('consultarRecebimentoNfe — retries no modo real (D21 da 017)', () => 
     expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 });
+
+// ── CFOP de entrada pela finalidade da compra (06/11/2026, research D23 da 017) ──────────────────
+//
+// O Atlas passa a mandar `itensAjustes.cCFOPEntrada` no EDITAR (so troca o final 101/102 do CFOP que o OMIE
+// sugeriu — NF 979 da ACXE: sugestao 2.102, compra para industrializacao 2.101). O cliente leva a chave no corpo
+// real, valida o formato antes da rede e o mock grava no item (a sombra do OMIE_MODE=leitura usa o mesmo caminho).
+
+describe('validarItensRecebimentoEditar — cCFOPEntrada (D23 da 017)', () => {
+  const editarCom = (cCFOPEntrada: unknown) =>
+    validarItensRecebimentoEditar([
+      { nSequencia: 1, cAcao: 'EDITAR', itensAjustes: { cNaoGerarMovEstoque: 'S', cCFOPEntrada: cCFOPEntrada as string } },
+    ]);
+
+  it.each(['1.101', '1.102', '2.101', '2.102', '3.102', '1.556'])('aceita o formato do OMIE: %s', (cfop) => {
+    expect(() => editarCom(cfop)).not.toThrow();
+  });
+
+  // ' 2.101x' tem espaco e sufixo; '1101' nao tem ponto; '4.101' e '5.102' nao sao CFOP de entrada; '2.10' e '2.1011' tem
+  // digitos a menos/mais; '' e o que o Atlas nunca deve mandar (a chave simplesmente nao vai).
+  it.each(['1101', ' 2.101x', '', '4.101', '5.102', '2.10', '2.1011', '2.101\n', 'a.101'])(
+    'recusa antes da rede o valor fora do formato: %j',
+    (cfop) => {
+      expect(() => editarCom(cfop)).toThrow(/cCFOPEntrada invalido/);
+    },
+  );
+
+  it('recusa valor que nao e texto (numero, null)', () => {
+    expect(() => editarCom(2.101)).toThrow(/cCFOPEntrada invalido/);
+    expect(() => editarCom(null)).toThrow(/cCFOPEntrada invalido/);
+  });
+
+  it('a chave ausente (ou undefined) nao e validada: o EDITAR sem CFOP segue valendo', () => {
+    expect(() => validarItensRecebimentoEditar([{ nSequencia: 1, cAcao: 'EDITAR', itensAjustes: { cNaoGerarMovEstoque: 'S' } }])).not.toThrow();
+    expect(() => editarCom(undefined)).not.toThrow();
+  });
+
+  it('aponta o item com o CFOP invalido quando so um dos itens da chamada esta errado', () => {
+    expect(() =>
+      validarItensRecebimentoEditar([
+        { nSequencia: 1, cAcao: 'EDITAR', itensAjustes: { cCFOPEntrada: '2.101' } },
+        { nSequencia: 2, cAcao: 'EDITAR', itensAjustes: { cCFOPEntrada: '2101' } },
+      ]),
+    ).toThrow(/item 2/);
+  });
+
+  it('IGNORAR/ASSOCIAR-PEDIDO com itensAjustes (inclusive cCFOPEntrada) seguem recusados pelo erro 151, nao pelo formato', () => {
+    expect(() =>
+      validarItensRecebimentoEditar([{ nSequencia: 1, cAcao: 'IGNORAR', itensAjustes: { cCFOPEntrada: '2.101' } }]),
+    ).toThrow(/Client-151/);
+    expect(() =>
+      validarItensRecebimentoEditar([
+        { nSequencia: 1, cAcao: 'ASSOCIAR-PEDIDO', nIdPedidoExistente: 1, nIdItPedidoExistente: 2, itensAjustes: { cCFOPEntrada: '2.101' } },
+      ]),
+    ).toThrow(/Client-151/);
+  });
+});
+
+describe('OMIE recebimento de NF-e — corpo enviado no modo real: cCFOPEntrada no EDITAR', () => {
+  const mockFetch = vi.fn();
+  const ENV_ORIGINAL = { ...process.env };
+  const respostaOk = (body: unknown) => ({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(body)) });
+  const corpoEnviado = (n = 0) =>
+    JSON.parse((mockFetch.mock.calls[n]![1] as { body: string }).body) as { call: string; param: Array<Record<string, unknown>> };
+  const statusOk = { nIdReceb: 8516900001, cCodStatus: '0', cDescStatus: 'Recebimento alterado com sucesso!' };
+  const ajustesEnviados = (n = 0) =>
+    (corpoEnviado(n).param[0]!.itensRecebimentoEditar as Array<{ itensAjustes: Record<string, unknown> }>)[0]!.itensAjustes;
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', mockFetch);
+    mockFetch.mockReset();
+    delete process.env.ATLAS_ENV;
+    process.env.OMIE_MODE = 'real';
+    process.env.OMIE_Q2P_KEY = 'q2p-key';
+    process.env.OMIE_Q2P_SECRET = 'q2p-secret';
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    process.env = { ...ENV_ORIGINAL };
+  });
+
+  it('EDITAR leva cCFOPEntrada dentro de itensAjustes, junto dos outros ajustes, e nada de ids de pedido', async () => {
+    mockFetch.mockResolvedValue(respostaOk(statusOk));
+    await alterarRecebimentoNfeItens('q2p', {
+      nIdReceb: 8516900001,
+      itens: [
+        {
+          nSequencia: 1,
+          cAcao: 'EDITAR',
+          itensAjustes: { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', nQtdeRecebida: 13750, cCFOPEntrada: '2.101' },
+        },
+      ],
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(corpoEnviado().call).toBe('AlterarRecebimento');
+    expect(corpoEnviado().param[0]).toEqual({
+      ide: { nIdReceb: 8516900001 },
+      itensRecebimentoEditar: [
+        {
+          itensIde: { nSequencia: 1, cAcao: 'EDITAR' },
+          itensAjustes: { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', nQtdeRecebida: 13750, cCFOPEntrada: '2.101' },
+        },
+      ],
+    });
+  });
+
+  it('EDITAR sem cCFOPEntrada nao leva a chave (o OMIE mantem a sugestao dele)', async () => {
+    mockFetch.mockResolvedValue(respostaOk(statusOk));
+    await alterarRecebimentoNfeItens('q2p', {
+      nIdReceb: 8516900001,
+      itens: [{ nSequencia: 1, cAcao: 'EDITAR', itensAjustes: { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N' } }],
+    });
+    expect(ajustesEnviados()).toEqual({ cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N' });
+    expect(ajustesEnviados()).not.toHaveProperty('cCFOPEntrada');
+  });
+
+  it('cCFOPEntrada undefined explicito tambem nao vai no corpo (JSON descarta)', async () => {
+    mockFetch.mockResolvedValue(respostaOk(statusOk));
+    await alterarRecebimentoNfeItens('q2p', {
+      nIdReceb: 8516900001,
+      itens: [{ nSequencia: 1, cAcao: 'EDITAR', itensAjustes: { cNaoGerarMovEstoque: 'S', cCFOPEntrada: undefined } }],
+    });
+    expect(ajustesEnviados()).not.toHaveProperty('cCFOPEntrada');
+  });
+
+  it('cada item da chamada leva o seu CFOP: um com 2.101 e outro sem a chave', async () => {
+    mockFetch.mockResolvedValue(respostaOk(statusOk));
+    await alterarRecebimentoNfeItens('q2p', {
+      nIdReceb: 8516900001,
+      itens: [
+        { nSequencia: 1, cAcao: 'EDITAR', itensAjustes: { cNaoGerarMovEstoque: 'S', cCFOPEntrada: '2.101' } },
+        { nSequencia: 2, cAcao: 'EDITAR', itensAjustes: { cNaoGerarMovEstoque: 'S' } },
+      ],
+    });
+    const itens = corpoEnviado().param[0]!.itensRecebimentoEditar as Array<{ itensAjustes: Record<string, unknown> }>;
+    expect(itens[0]!.itensAjustes).toEqual({ cNaoGerarMovEstoque: 'S', cCFOPEntrada: '2.101' });
+    expect(itens[1]!.itensAjustes).toEqual({ cNaoGerarMovEstoque: 'S' });
+  });
+
+  it('CFOP fora do formato e recusado ANTES da rede', async () => {
+    await expect(
+      alterarRecebimentoNfeItens('q2p', {
+        nIdReceb: 8516900001,
+        itens: [{ nSequencia: 1, cAcao: 'EDITAR', itensAjustes: { cCFOPEntrada: '2101' } }],
+      }),
+    ).rejects.toThrow(/cCFOPEntrada invalido/);
+    await expect(
+      alterarRecebimentoNfeItens('q2p', {
+        nIdReceb: 8516900001,
+        itens: [{ nSequencia: 1, cAcao: 'EDITAR', itensAjustes: { cCFOPEntrada: '' } }],
+      }),
+    ).rejects.toThrow(/cCFOPEntrada invalido/);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('IGNORAR com cCFOPEntrada em itensAjustes e recusado ANTES da rede (erro 151)', async () => {
+    await expect(
+      alterarRecebimentoNfeItens('q2p', {
+        nIdReceb: 8516900001,
+        itens: [{ nSequencia: 1, cAcao: 'IGNORAR', itensAjustes: { cCFOPEntrada: '2.101' } }],
+      }),
+    ).rejects.toThrow(/Client-151/);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('OMIE recebimento de NF-e — mock: EDITAR com cCFOPEntrada (D23 da 017)', () => {
+  const originalMode = process.env.OMIE_MODE;
+  const editar = (nIdReceb: number, itensAjustes: Record<string, unknown>, nSequencia = 1) =>
+    alterarRecebimentoNfeItens('q2p', {
+      nIdReceb,
+      itens: [{ nSequencia, cAcao: 'EDITAR', itensAjustes: itensAjustes as never }],
+    });
+
+  beforeEach(() => {
+    process.env.OMIE_MODE = 'mock';
+    __resetMockState();
+  });
+  afterEach(() => {
+    process.env.OMIE_MODE = originalMode;
+  });
+
+  it('o EDITAR grava cCFOPEntrada no item e a reconsulta reflete (1.102 sugerido -> 1.101)', async () => {
+    const base = await consultarRecebimentoNfe('q2p', { nIdReceb: 930 });
+    expect(base.itens[0]!.cCFOPEntrada).toBe('1.102');
+    await editar(930, { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', cCFOPEntrada: '1.101' });
+    const depois = await consultarRecebimentoNfe('q2p', { nIdReceb: 930 });
+    expect(depois.itens[0]!.cCFOPEntrada).toBe('1.101');
+    // o resto do item segue o que o EDITAR mandou / o que ja era
+    expect(depois.itens[0]!.cNaoGerarMovEstoque).toBe('S');
+    expect(depois.itens[0]!.cCFOP).toBe(base.itens[0]!.cCFOP);
+    expect(__getMockRecebimentoNfe('q2p', 930)!.itens[0]!.cCFOPEntrada).toBe('1.101');
+  });
+
+  it('um EDITAR sem a chave nao apaga nem altera o CFOP ja gravado (nem o sugerido)', async () => {
+    await consultarRecebimentoNfe('q2p', { nIdReceb: 931 });
+    await editar(931, { cCFOPEntrada: '2.101' });
+    await editar(931, { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N' });
+    expect((await consultarRecebimentoNfe('q2p', { nIdReceb: 931 })).itens[0]!.cCFOPEntrada).toBe('2.101');
+
+    // e sem nenhum CFOP gravado, o sugerido do OMIE fica como estava
+    await consultarRecebimentoNfe('q2p', { nIdReceb: 932 });
+    await editar(932, { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N' });
+    expect((await consultarRecebimentoNfe('q2p', { nIdReceb: 932 })).itens[0]!.cCFOPEntrada).toBe('1.102');
+  });
+
+  it('um novo EDITAR com outro CFOP substitui o anterior', async () => {
+    await consultarRecebimentoNfe('q2p', { nIdReceb: 933 });
+    await editar(933, { cCFOPEntrada: '1.101' });
+    await editar(933, { cCFOPEntrada: '1.102' });
+    expect((await consultarRecebimentoNfe('q2p', { nIdReceb: 933 })).itens[0]!.cCFOPEntrada).toBe('1.102');
+  });
+
+  it('so o item editado muda: o outro item do recebimento fica com o CFOP que tinha', async () => {
+    const base = await consultarRecebimentoNfe('q2p', { nIdReceb: 934 });
+    __injectMockRecebimentoNfe('q2p', { ...base, itens: [base.itens[0]!, { ...base.itens[0]!, nSequencia: 2 }] });
+    await editar(934, { cCFOPEntrada: '1.101' }, 1);
+    const depois = await consultarRecebimentoNfe('q2p', { nIdReceb: 934 });
+    expect(depois.itens.map((i) => i.cCFOPEntrada)).toEqual(['1.101', '1.102']);
+  });
+
+  it('o CFOP gravado sobrevive ao IGNORAR e ao Concluir (a receita EDITAR -> IGNORAR -> Concluir)', async () => {
+    await consultarRecebimentoNfe('q2p', { nIdReceb: 935 });
+    await editar(935, { cNaoGerarMovEstoque: 'S', cNaoGerarFinanceiro: 'N', cCFOPEntrada: '1.101' });
+    await alterarRecebimentoNfeItens('q2p', { nIdReceb: 935, itens: [{ nSequencia: 1, cAcao: 'IGNORAR' }] });
+    await concluirRecebimentoNfe('q2p', { nIdReceb: 935 });
+    const rec = await consultarRecebimentoNfe('q2p', { nIdReceb: 935 });
+    expect(rec.cRecebido).toBe('S');
+    expect(rec.itens[0]!.cCFOPEntrada).toBe('1.101');
+  });
+
+  it('IGNORAR e ASSOCIAR-PEDIDO com itensAjustes (inclusive cCFOPEntrada) seguem recusados e o CFOP nao muda', async () => {
+    await consultarRecebimentoNfe('q2p', { nIdReceb: 936 });
+    await expect(
+      alterarRecebimentoNfeItens('q2p', { nIdReceb: 936, itens: [{ nSequencia: 1, cAcao: 'IGNORAR', itensAjustes: { cCFOPEntrada: '1.101' } }] }),
+    ).rejects.toThrow(/nao pode levar itensAjustes/);
+    await expect(
+      alterarRecebimentoNfeItens('q2p', {
+        nIdReceb: 936,
+        itens: [{ nSequencia: 1, cAcao: 'ASSOCIAR-PEDIDO', nIdPedidoExistente: 1, nIdItPedidoExistente: 2, itensAjustes: { cCFOPEntrada: '1.101' } }],
+      }),
+    ).rejects.toThrow(/nao pode levar itensAjustes/);
+    expect((await consultarRecebimentoNfe('q2p', { nIdReceb: 936 })).itens[0]!.cCFOPEntrada).toBe('1.102');
+  });
+
+  it('CFOP fora do formato e recusado antes de tocar no recebimento', async () => {
+    await consultarRecebimentoNfe('q2p', { nIdReceb: 937 });
+    await expect(editar(937, { cNaoGerarMovEstoque: 'S', cCFOPEntrada: '1101' })).rejects.toThrow(/cCFOPEntrada invalido/);
+    const rec = await consultarRecebimentoNfe('q2p', { nIdReceb: 937 });
+    expect(rec.itens[0]!.cCFOPEntrada).toBe('1.102');
+    expect(rec.itens[0]!.cNaoGerarMovEstoque).toBe('N');
+  });
+});

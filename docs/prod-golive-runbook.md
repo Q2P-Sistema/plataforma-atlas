@@ -693,3 +693,113 @@ anterior também usa.
 **Feito em 28/10/2026**: 0061 aplicada em PROD (39 entradas) e UAT (38); PR #146 mesclado = `v1.1.32`, em
 PROD desde ~12h47. Fila conferida depois da imagem: ficaram só a 60323 e a 91292 (NFs novas); a 36624
 (dispensada por compras) não voltou. Cópias `zz_bkp_437_*` apagadas no PROD no mesmo dia.
+
+## CFOP de entrada do fiscal pelo Atlas (ACXEGDP-437, research D23)
+
+No primeiro recebimento da ACXE pelo Atlas (NF 979 da Solutec × PC 581, 03/11/2026) o fiscal concluiu com o
+CFOP de entrada que o OMIE sugeriu, 2.102 (comercialização), porque o `EDITAR` não mandava CFOP; a ACXE compra
+para industrialização (2.101), e o financeiro corrigiu a nota de entrada à mão em 06/11/2026. A D23 faz o
+operador escolher a **finalidade da compra** por NF (Industrialização = final 101, Comercialização = final 102,
+pré-selecionada pela empresa: ACXE industrialização, Q2P comercialização), e o Atlas manda
+`itensAjustes.cCFOPEntrada` no `EDITAR` do item quando ele difere do CFOP lido (CFOP já igual não vai: no caminho
+comum da Q2P, x.102 com Comercialização, o `EDITAR` sai como antes). O 1º dígito vem do CFOP sugerido pelo OMIE (1 mesmo
+estado, 2 outro estado, 3 importação) e o Atlas só troca o final 101/102; CFOP sugerido fora de x.101/x.102
+(uso e consumo x.556, outros) ou ausente, não mexe. A escolha fica no ledger do fiscal. Desenho e decisões em
+`specs/017-recebimento-nacional-com-pc/research.md` (D23); passo a passo de teste no quickstart, cenário 13.
+
+Vale só com `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED=true` e com a migration 0062 aplicada. A chave nova,
+`STOCKBRIDGE_FISCAL_CFOP_ENTRADA_ENABLED`, vem **desligada** por padrão: o OMIE nunca recebeu `cCFOPEntrada`
+pela API (aceitação, formato com ponto e se o `IGNORAR` preserva o CFOP não foram testados), então o primeiro
+uso é acompanhado. Desligada, nada muda: o fiscal segue com a sugestão do OMIE.
+
+**Ordem** (a 0062 vem antes da imagem)
+
+1. **Migration 0062** em PROD, **antes** da imagem, com o dono dos objetos (`postgres`):
+
+   ```bash
+   export PROD_USER=<usuario-prod>
+   PGOPTIONS='-c lock_timeout=5s' psql -h db.manager01.q2p.com.br -p 5432 -U "$PROD_USER" -d acxe_q2p \
+     -1 -q -v ON_ERROR_STOP=1 -f packages/db/migrations/0062_stockbridge_recebimento_fiscal_cfop_entrada.sql
+   echo "exit=$?"
+   ```
+
+   - Esperado: `exit=0` e nenhuma linha `ERROR`. `NOTICE ... does not exist, skipping` (os
+     `DROP CONSTRAINT IF EXISTS` da 1ª execução) é normal. Reaplicar é seguro. `exit=3` ou
+     `canceling statement due to lock timeout`: nada foi aplicado (`-1` = tudo ou nada); achar quem segura o lock
+     em `pg_stat_activity` e repetir.
+   - O que muda: duas colunas nulas em `stockbridge.recebimento_fiscal` (`finalidade_entrada` e `cfops_entrada`),
+     dois `CHECK`s novos (`recebimento_fiscal_finalidade_entrada_check`, os dois valores da finalidade; e
+     `recebimento_fiscal_cfops_entrada_check`, array e exige a finalidade) e dois `COMMENT`s. Sem backfill: as
+     tentativas anteriores ficam com `NULL`. A tabela é pequena; o `ADD COLUMN` sem default é imediato e o
+     `ADD CONSTRAINT` vale um lock curto. O trigger de auditoria da 0053 grava as colunas novas sozinho.
+   - **Sem a 0062** a imagem sobe e funciona como antes da D23: o código confere a coluna `finalidade_entrada`
+     no `information_schema` e, ausente, deixa o CFOP de entrada desligado, com a mensagem "Coluna
+     stockbridge.recebimento_fiscal.finalidade_entrada ausente (migration 0062)" no log (`WARN` com a chave
+     desligada, `ERROR` com ela ligada), repetindo a conferência a cada 5 min. Aplicada a migration com a API no ar e a chave ligada, o tratamento liga sozinho em até 5 min, sem
+     redeploy. Mesmo assim, aplicar antes da imagem.
+   - **UAT**: o mesmo arquivo, com `psql -1 -f` no banco do UAT (`-p 5437 -U postgres`; não pelo
+     `apply-migrations-uat.sh`), antes da imagem `:uat`.
+   - Conferência (somente leitura):
+
+     ```sql
+     SELECT (SELECT count(*) FROM information_schema.columns
+              WHERE table_schema = 'stockbridge' AND table_name = 'recebimento_fiscal'
+                AND column_name IN ('finalidade_entrada', 'cfops_entrada')) AS colunas_ledger,   -- 2
+            (SELECT count(*) FROM pg_constraint
+              WHERE conname IN ('recebimento_fiscal_finalidade_entrada_check',
+                                'recebimento_fiscal_cfops_entrada_check')) AS checks;             -- 2
+     ```
+
+2. **Variável** no Portainer: `STOCKBRIDGE_FISCAL_CFOP_ENTRADA_ENABLED` já está no `atlas.stack.yml` (default
+   `false`); **deixar o default**. A stack lista variável por variável, então conferir que ela consta no YAML da
+   stack no Portainer. No UAT a chave também está no YAML do repositório (`uat-atlas - web e api.yaml`); conferir
+   lá e no Portainer.
+3. **Imagem nova** (nova `ATLAS_VERSION`), com a chave da 016 já `true` e a nova `false`.
+4. **Conferir** (chave ainda desligada): o detalhe de uma NF com fiscal pendente traz
+   `finalidadeEntradaHabilitada: false` e a tela não mostra o bloco "Finalidade da compra"; o log não tem
+   "finalidade_entrada ausente"; o recebimento de uma NF segue como antes.
+5. **Primeiro uso acompanhado** (T114, **com autorização do usuário**: o fiscal escreve no OMIE de PROD e o OMIE
+   nunca recebeu `cCFOPEntrada`): ligar `STOCKBRIDGE_FISCAL_CFOP_ENTRADA_ENABLED=true` com "Update the stack"
+   quando houver a próxima NF nacional da ACXE (ou da Q2P) para receber. O operador abre a NF e confere o bloco
+   "Finalidade da compra" (ACXE: Industrialização pré-selecionada, com o CFOP que será usado) e dá entrada.
+   Conferir ao vivo no OMIE da empresa da NF (workflow de leitura no n8n):
+   - o CFOP de entrada do recebimento e o da **nota de entrada** gerada pelo `Concluir`, iguais ao alvo (ACXE em
+     NF de outro estado: 2.101);
+   - se a NF tiver item sem PC (modo `STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC=false`), que o `IGNORAR` dele não
+     desfez o CFOP;
+   - o ledger:
+
+     ```sql
+     SELECT rf.nota_fiscal, rf.empresa, rf.status, rf.finalidade_entrada,
+            c->>'nSequencia' AS seq, c->>'cfopSugerido' AS sugerido,
+            c->>'cfopAlvo' AS alvo, c->>'enviado' AS enviado
+       FROM stockbridge.recebimento_fiscal rf
+       CROSS JOIN LATERAL jsonb_array_elements(rf.cfops_entrada) c
+      WHERE rf.finalidade_entrada IS NOT NULL
+      ORDER BY rf.iniciado_em DESC, (c->>'nSequencia')::int
+      LIMIT 40;
+     ```
+
+   - aproveitar para comparar o vencimento do título com a duplicata da NF (research, pendência 11: na
+     NF 979 saiu 30/11/2026 em vez de 19/12/2026) e o local do item no recebimento (pendência 12).
+
+   Se o OMIE recusar o campo, o `EDITAR` falha (`502 RECEBIMENTO_FISCAL_FAIL`, passo `editar`, sem gravar
+   movimentação): desligar a chave e registrar a mensagem. Se o OMIE aceitar e ignorar o campo, o CFOP segue o
+   sugerido e a conferência acima mostra: desligar a chave também. Registrar o resultado na research (D23) e na
+   ACXEGDP-437.
+
+**Desligar** (kill switch): `STOCKBRIDGE_FISCAL_CFOP_ENTRADA_ENABLED=false` e "Update the stack" (a chave é lida
+na subida do processo: é um redeploy rápido, sem trocar a imagem nem mexer em migration). O bloco some da tela,
+o POST volta a não mandar CFOP e um `finalidade_entrada` enviado é ignorado. As linhas já gravadas ficam como
+histórico. `STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED=false` também desliga. A 0062 pode ficar (é aditiva) e
+convive com a imagem anterior, que ignora as colunas novas.
+
+**Comunicar à operação**: com a chave ligada, a tela passa a pedir a **finalidade da compra** em toda NF com
+fiscal pendente. A ACXE vem com Industrialização e a Q2P com Comercialização; trocar quando a compra for outra
+(por exemplo, a ACXE comprando para revender). NF de uso e consumo (CFOP x.556) não muda com a escolha.
+**Comunicar ao financeiro**: as NFs recebidas pelo Atlas depois da ativação saem com o CFOP de entrada da
+finalidade escolhida, sem a correção à mão da NF 979; conferir a primeira. As NFs concluídas antes continuam como
+o OMIE as gerou.
+
+**Estado em 06/11/2026**: código e documentação prontos; falta aplicar a 0062 em PROD e no UAT, subir a imagem
+e fazer o primeiro uso acompanhado, com a chave desligada até lá (T113 e T114 pendentes).

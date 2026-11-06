@@ -118,6 +118,7 @@ import {
 } from '../services/pc-sugestao.service.js';
 import { RecebimentoFiscalError, RecebimentoFiscalSemFornecedorError } from '../services/recebimento-fiscal.service.js';
 import { converterItemNfParaKg } from '../services/unidade-nf.js';
+import { __resetColunaFinalidadeEntrada } from '../services/cfop-entrada.js';
 import type { DetalheNfNacional, DetalheNfNacionalInterno, ItemNfNacional } from '../services/fila-nacional.service.js';
 
 const CHAVE = '35261011111111000111550010000078131000078131';
@@ -217,6 +218,9 @@ beforeEach(() => {
   inserts.length = 0;
   config.STOCKBRIDGE_RECEBIMENTO_FISCAL_ENABLED = true;
   config.STOCKBRIDGE_RECEBIMENTO_NACIONAL_EXIGE_PC = true;
+  // 017 D23: CFOP de entrada desligado por padrao; os testes da finalidade o ligam por conta propria
+  delete config.STOCKBRIDGE_FISCAL_CFOP_ENTRADA_ENABLED;
+  __resetColunaFinalidadeEntrada();
   det = detalhe();
   usarPc(comCandidato());
   spies.detalhe.mockReset();
@@ -811,5 +815,62 @@ describe('NF recebida por inteiro com o fiscal pelo Atlas (D27 — achado fila-v
     usarPc(null);
     await processarRecebimentoNacionalPorNf(post());
     expect(movOuAprovacao().length).toBeGreaterThan(0);
+  });
+});
+
+// ── Feature 017, research D23: a finalidade da compra e conferida antes de qualquer efeito (escrita, OMIE, e-mail) e das
+// regras de PC da NF (NF_SEM_PC, copia defasada, fornecedor, trava de estoque) — depois da escolha de PC de cada item e do NF_INCOMPLETA ──
+describe('finalidade da compra x regras de PC (research D23)', () => {
+  const MSG = 'Escolha a finalidade da compra (industrialização ou comercialização) para concluir o recebimento fiscal.';
+  const pcEscolhido = { n_cod_ped: PC304.nCodPed, n_cod_item: PC304.nCodItem, n_cod_item_omie_visto: null };
+
+  /** CFOP de entrada habilitado de verdade: chave propria ligada e a coluna da 0062 presente (information_schema). */
+  const habilitarCfopEntrada = () => {
+    config.STOCKBRIDGE_FISCAL_CFOP_ENTRADA_ENABLED = true;
+    __resetColunaFinalidadeEntrada();
+    poolQuerySpy.mockImplementation((sql: string, params?: unknown[]) =>
+      Promise.resolve(String(sql).includes('finalidade_entrada') ? { rows: [{ ok: true }] } : poolPadrao(sql, params)),
+    );
+  };
+  it('NF sem PC possivel e SEM finalidade: a finalidade vem primeiro — nenhum aviso a compras, nada gravado, fiscal nao roda', async () => {
+    habilitarCfopEntrada();
+    usarPc(semPc('sem_pc'));
+    const err = (await processarRecebimentoNacionalPorNf(post()).catch((e: Error) => e)) as ValidacaoRecebimentoNacionalError;
+    expect(err).toBeInstanceOf(ValidacaoRecebimentoNacionalError);
+    expect(err.code).toBe('FINALIDADE_ENTRADA_OBRIGATORIA');
+    expect(err.message).toBe(MSG);
+    expect(spies.aviso).not.toHaveBeenCalled();
+    expect(spies.fiscal).not.toHaveBeenCalled();
+    expect(spies.consultarRecebimento).not.toHaveBeenCalled();
+    expect(movOuAprovacao()).toHaveLength(0);
+  });
+
+  it('com PC escolhido e finalidade: o fiscal recebe os vinculos E a finalidade', async () => {
+    habilitarCfopEntrada();
+    const r = await processarRecebimentoNacionalPorNf({ ...post(pcEscolhido), finalidadeEntrada: 'industrializacao' });
+    expect(spies.fiscal).toHaveBeenCalledTimes(1);
+    const input = spies.fiscal.mock.calls[0]![0] as { vinculos: unknown[]; finalidadeEntrada?: string };
+    expect(input.vinculos).toHaveLength(1);
+    expect(input.finalidadeEntrada).toBe('industrializacao');
+    expect(r.fiscal.status).toBe('concluido');
+  });
+
+  it('com finalidade mas sem a coluna da 0062: o recurso fica desligado — nao exige, nao repassa (so a sugestao do OMIE)', async () => {
+    config.STOCKBRIDGE_FISCAL_CFOP_ENTRADA_ENABLED = true;
+    __resetColunaFinalidadeEntrada();
+    // poolPadrao devolve linhas vazias ao information_schema: coluna ausente
+    await processarRecebimentoNacionalPorNf(post(pcEscolhido));
+    const input = spies.fiscal.mock.calls[0]![0] as Record<string, unknown>;
+    expect('finalidadeEntrada' in input).toBe(false);
+
+    spies.fiscal.mockClear();
+    await processarRecebimentoNacionalPorNf({ ...post(pcEscolhido), finalidadeEntrada: 'comercializacao' });
+    expect('finalidadeEntrada' in (spies.fiscal.mock.calls[0]![0] as Record<string, unknown>)).toBe(false);
+  });
+
+  it('chave propria desligada (default): a regra de PC segue como antes e a finalidade enviada e ignorada', async () => {
+    usarPc(semPc('sem_pc'));
+    await expect(processarRecebimentoNacionalPorNf({ ...post(), finalidadeEntrada: 'industrializacao' })).rejects.toBeInstanceOf(NfSemPcError);
+    expect(spies.aviso).toHaveBeenCalledTimes(1);
   });
 });
